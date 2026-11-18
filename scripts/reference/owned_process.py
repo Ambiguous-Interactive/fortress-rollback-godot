@@ -1027,10 +1027,13 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
     own = cancel.claim(swept) if cancel is not None else swept
     candidates = merged_survivors(report, own)
     stopped = cancel is not None and cancel.cancelled and cancel.stopped_run
+    if tail_anomaly is not None:
+        # The anomaly line lands before any classified raise: a cancellation
+        # or escape that wins this tail must not hide the tooling failure
+        # behind its own marker.
+        output += f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n'
     if candidates:
         output += f'OWNED_PROCESSES: terminated {candidates}\n'
-        if tail_anomaly is not None:
-            output += f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n'
         if stopped:
             output += 'CANCELLED: the owning handle stopped this command\n'
         text = _write_final(log, cancel, output)
@@ -1055,10 +1058,10 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
         text = _write_final(log, cancel, output)
         raise Cancelled(text) from None
     if tail_anomaly is not None:
-        # Every sweep ran; the anomaly is evidence, not a skip: the log keeps
-        # the named survivors (none) beside it, then the tooling failure
-        # propagates exactly as an uncontained sweep would have.
-        _write_final(log, cancel, output + f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n')
+        # Every sweep ran and the anomaly line is already in `output`; no
+        # classified outcome won, so the tooling failure propagates with its
+        # evidence written.
+        _write_final(log, cancel, output)
         raise tail_anomaly
     if post_exit_bytes or feed_failures:
         _write_final(log, cancel, output)
@@ -1112,13 +1115,15 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
     own = cancel.claim(swept) if cancel is not None else swept
     candidates = merged_survivors(report, own)
     stopped = cancel is not None and cancel.cancelled and cancel.stopped_run
+    # The anomaly line lands before any classified raise: a cancellation or
+    # escape that wins this tail must not hide the tooling failure behind
+    # its own marker.
+    anomaly_note = f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n' if tail_anomaly is not None else ''
     if candidates:
         # The child's own trusted output stays in the log beside the note,
         # so an escaped or cancelled run keeps its diagnosis where the caller
         # looks, with every terminated pid named exactly once (#381's class).
-        text = ''.join(parts.values()) + f'OWNED_PROCESSES: terminated {candidates}\n'
-        if tail_anomaly is not None:
-            text += f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n'
+        text = ''.join(parts.values()) + f'OWNED_PROCESSES: terminated {candidates}\n' + anomaly_note
         if stopped:
             text += 'CANCELLED: the owning handle stopped this command\n'
         _write_final(log, cancel, text)
@@ -1128,19 +1133,19 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
             raise Cancelled(text) from None
         raise EscapedDescendants(candidates)
     if stopped and returncode != 0:
-        text = ''.join(parts.values()) + 'CANCELLED: the owning handle stopped this command\n'
+        text = ''.join(parts.values()) + anomaly_note + 'CANCELLED: the owning handle stopped this command\n'
         _write_final(log, cancel, text)
         raise Cancelled(text) from None
     late = cancel.settle() if cancel is not None else []
     if late:
         stopped = stopped or (cancel is not None and cancel.cancelled and cancel.stopped_run)
-        text = ''.join(parts.values()) + f'OWNED_PROCESSES: terminated {late}\n'
+        text = ''.join(parts.values()) + f'OWNED_PROCESSES: terminated {late}\n' + anomaly_note
         if stopped:
             text += 'CANCELLED: the owning handle stopped this command\n'
         _write_final(log, cancel, text)
         raise Cancelled(text) from None
     if tail_anomaly is not None:
-        _write_final(log, cancel, ''.join(parts.values()) + f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n')
+        _write_final(log, cancel, ''.join(parts.values()) + anomaly_note)
         raise tail_anomaly
     if post_exit_bytes:
         note = (f'POST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '

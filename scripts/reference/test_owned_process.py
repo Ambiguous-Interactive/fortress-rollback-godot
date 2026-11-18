@@ -1130,6 +1130,48 @@ time.sleep(0.05)
             except (ProcessLookupError, ChildProcessError):
                 pass
 
+    def test_a_cancelled_run_with_a_tail_anomaly_keeps_both_markers(self):
+        """A cancellation winning the tail must not hide a sweep failure (#403 review).
+
+        The child exits nonzero on its own and is reaped; the cancel flips
+        after the collect (stopping nothing, still recording the run as
+        stopped) and the tail's token scan raises with no survivors: the
+        stopped branch writes the log, so the anomaly must already be in it
+        beside the CANCELLED marker, never dropped.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            log = Path(folder) / 'cancel-anomaly.log'
+            log.write_text('')
+            real_collect = owned_process._collect
+            real_terminate = owned_process.terminate
+            flip_done = threading.Event()
+
+            def flipping_collect(process, deadline):
+                result = real_collect(process, deadline)  # the child exits and is reaped here
+                handle.cancel()  # still pinned: the run reads as stopped, nothing named
+                flip_done.set()
+                return result
+
+            def tail_exploding_terminate(token_value):
+                # The cancel's own sweep ran before flip_done; only the run's
+                # tail sweep raises.
+                if flip_done.is_set():
+                    raise ValueError('tail token scan exploded')
+                return real_terminate(token_value)
+
+            with mock.patch.object(owned_process, '_collect', side_effect=flipping_collect), \
+                 mock.patch.object(owned_process, 'terminate', side_effect=tail_exploding_terminate), \
+                 mock.patch.object(owned_process, 'terminate_group', return_value=[]):
+                with self.assertRaises(owned_process.Cancelled):
+                    owned_process.run([PYTHON, '-c', 'import sys; sys.exit(3)'], {}, log, 30,
+                                      cancel=handle)
+            self.assertTrue(handle.stopped_run, 'the schedule only binds with the run read as stopped')
+            text = log.read_text()
+            self.assertIn('CANCELLED:', text, 'the cancellation marker must stand')
+            self.assertIn('OWNED_PROCESS_SWEEP_ANOMALY: tail token scan exploded', text,
+                          'the tail sweep failure must not hide behind the cancellation marker')
+
     def test_a_handle_pins_exactly_one_run_and_refuses_a_second(self):
         with tempfile.TemporaryDirectory() as folder:
             handle = owned_process.CancelHandle()

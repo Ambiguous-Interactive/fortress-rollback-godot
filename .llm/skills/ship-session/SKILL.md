@@ -129,7 +129,7 @@ session log or linked issue. Do not make an automated clean claim from counts.
    whose polling burns the API rate limit. `gh pr view --json` has no
    merge-queue field (`mergeQueueEntry` fails with `Unknown JSON field`), so
    read `state` plus the queue entry through authenticated GraphQL:
-   `gh api graphql -f query='query($n:Int!,$o:String!,$r:String!){repository(owner:$o,name:$r){pullRequest(number:$n){state mergeQueueEntry{state}}}}'`
+   `gh api graphql -f query='query($n:Int!,$o:String!,$r:String!){repository(owner:$o,name:$r){pullRequest(number:$n){state mergeQueueEntry{state}}}}' -F n=<number> -F o=<owner> -F r=<repository>`
    — an empty `mergeQueueEntry` means the entry was dropped and the PR needs
    re-enqueueing after a fresh scan.
 2. Confirm the API reports merged and read the resulting merge commit SHA.
