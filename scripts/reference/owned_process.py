@@ -465,6 +465,10 @@ class CancelHandle:
             self._pinned = pinned
             self._process, self._token, self._log = process, token_value, log
             self._report = []
+            # The once-only registry serves one run's cancel-versus-owner
+            # pair; a later run on this handle must name its own pids, even
+            # when one recycled an earlier run's named id (#403 re-review).
+            self._named = set()
             self._closed = False
             self._reporting = True
             return True
@@ -855,9 +859,11 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                 named = merged_survivors(report, fresh)
                 if named:
                     text += f'OWNED_PROCESSES: terminated {named}\n'
-                text += 'CANCELLED: the owning handle stopped this command\n'
                 if sweep_anomaly is not None:
+                    # Same invariant as the runners' tails: the anomaly line
+                    # lands before any classified marker.
                     text += f'OWNED_PROCESS_SWEEP_ANOMALY: {sweep_anomaly}\n'
+                text += 'CANCELLED: the owning handle stopped this command\n'
                 text = cancel.emit(text)
                 if fresh:
                     raise EscapedDescendants(fresh) from None
