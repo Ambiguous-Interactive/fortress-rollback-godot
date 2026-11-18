@@ -792,6 +792,35 @@ print('child exits', flush=True)
             self.assertLessEqual(len(os.listdir('/proc/self/fd')), opened_before + 4,
                                  'each cancel must close its pinned descriptor, not leak one per run')
 
+    def test_an_interrupt_survives_a_sweep_anomaly_and_still_reaps(self):
+        """The interrupt path must unpack the tree result, keep the interrupt and reap."""
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'interrupt-anomaly.log'
+            log.write_text('')
+            marker = Path(folder) / 'ia.pid'
+            command = [PYTHON, '-c', self.SLOW_TREE, str(marker)]
+
+            def interrupting_collect(process, deadline):
+                deadline_marker = time.monotonic() + 5
+                while not marker.exists() and time.monotonic() < deadline_marker:
+                    time.sleep(0.01)
+                raise KeyboardInterrupt
+
+            with mock.patch.object(owned_process, '_collect', side_effect=interrupting_collect), \
+                 mock.patch.object(owned_process, '_terminate_tree',
+                                   return_value=([{'pid': 424242, 'name': 'swept'}], ValueError('sweep exploded'))):
+                with self.assertRaises(KeyboardInterrupt):
+                    owned_process.run(command, {}, log, 30)
+            text = log.read_text()
+            self.assertIn('OWNED_PROCESSES: terminated', text, 'the sweeps names survive the interrupt')
+            self.assertIn('OWNED_PROCESS_SWEEP_ANOMALY', text, 'the sweep anomaly is recorded, never masking the interrupt')
+            pid = int(marker.read_text())
+            try:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)  # the seam's mocked sweep cannot kill the real child; this test owns it
+            except (ProcessLookupError, ChildProcessError):
+                pass
+
     def test_the_pinned_group_signal_targets_the_process_group(self):
         process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
         pinned = os.pidfd_open(process.pid)

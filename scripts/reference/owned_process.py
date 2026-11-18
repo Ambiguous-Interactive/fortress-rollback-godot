@@ -632,12 +632,15 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
             # child is reaped, and no cleanup failure replaces the interrupt.
             try:
                 named = cancel.stopped_report() if cancel is not None and cancel.cancelled else []
-                candidates = _terminate_tree(process, token_value)
+                candidates, sweep_anomaly = _terminate_tree(process, token_value)
                 if cancel is not None:
                     candidates = merged_survivors(named, cancel.claim(candidates))
-                if candidates:
+                if candidates or sweep_anomaly is not None:
+                    note = f'OWNED_PROCESSES: terminated {candidates}\n' if candidates else ''
+                    if sweep_anomaly is not None:
+                        note += f'OWNED_PROCESS_SWEEP_ANOMALY: {sweep_anomaly}\n'
                     try:
-                        log.write_text(f'OWNED_PROCESSES: terminated {candidates}\n')
+                        log.write_text(note)
                     except OSError:
                         pass  # A failing log sink must not replace the interrupt either.
                 try:
