@@ -31,6 +31,27 @@ def alive(pid):
     return True
 
 
+def terminated(pid):
+    """Whether the pid exited: gone entirely, or a zombie this test cannot reap.
+
+    A descendant whose parent died reparents to init, and a container init
+    does not always reap promptly — a killed grandchild can stay a zombie
+    answering kill(0). A zombie has taken SIGKILL, which is the contract
+    under test; only a live process fails it. A /proc read error is never
+    termination: the caller keeps probing instead of passing on a process
+    that may still be alive (#403 review).
+    """
+    if not alive(pid):
+        return True
+    try:
+        state = Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[-1].split()[0]
+    except FileNotFoundError:
+        return True  # gone from /proc: reaped between the probes
+    except OSError:
+        return False  # a transient read error proves nothing; keep probing
+    return state == 'Z'
+
+
 def escape_child(mode, marker):
     """A parent that exits as soon as its one long-lived descendant is live."""
     return f"""
@@ -359,10 +380,14 @@ time.sleep(60)
                 time.sleep(0.1)
             self.assertFalse(alive(pid), 'an interrupted command must not strand its process tree')
             # The handler reaps before propagating: the pid is gone entirely,
-            # never left behind as a zombie of this test.
+            # never left behind as a zombie of this test. The waitpid probe
+            # names the reap directly — a zombie child would still answer.
             stat = Path(f'/proc/{pid}/stat')
             if stat.exists():
                 self.assertNotEqual(stat.read_text().rsplit(') ', 1)[-1].split()[0], 'Z')
+            with self.assertRaises((ChildProcessError, ProcessLookupError),
+                                   msg='the interrupt path must reap the direct child itself'):
+                os.waitpid(pid, os.WNOHANG)
             # When SIGKILL delivery beats both sweeps, nothing survives to be
             # named and the log stays empty; the pid liveness check above is
             # the contract under test.
@@ -479,6 +504,8 @@ class SpawnedProcessTests(unittest.TestCase):
             marker = Path(folder) / 'late-fork.pid'
             # The host ignores SIGTERM, forks a token-scrubbed grandchild in the
             # same process group once the teardown is already running, then exits.
+            # The grandchild records its own pid, so the test asserts the
+            # descendant's recorded pid is gone — not the host's (#400 review).
             host, token = owned_process.spawn([PYTHON, '-c', f"""
 import os, signal, sys, time
 open(sys.argv[1] + '.tmp', 'w').write(str(os.getpid()))
@@ -487,6 +514,8 @@ signal.signal(signal.SIGTERM, signal.SIG_IGN)
 time.sleep(0.4)
 pid = os.fork()
 if pid == 0:
+    open(sys.argv[1] + '.grand.tmp', 'w').write(str(os.getpid()))
+    os.rename(sys.argv[1] + '.grand.tmp', sys.argv[1] + '.grand')
     scrubbed = {{k: v for k, v in os.environ.items() if k != {owned_process.TOKEN_VARIABLE!r}}}
     os.execve(sys.executable, [sys.executable, '-c', 'import time; time.sleep(30)'], scrubbed)
 time.sleep(0.2)
@@ -503,6 +532,19 @@ time.sleep(0.2)
                     time.sleep(0.1)
                 self.assertFalse(alive(pid),
                                  'a grandchild forked during the teardown grace must not outlive finish()')
+                # The recorded grandchild, not the host pid, is the escape the
+                # sweeps must have stopped (#400 review). Termination, not
+                # reaping: the orphan can zombie under this container's init.
+                deadline = time.monotonic() + 5
+                while not Path(str(marker) + '.grand').exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                grand_pid = int(Path(str(marker) + '.grand').read_text())
+                self.assertNotEqual(grand_pid, pid, 'the grandchild marker must not name the host')
+                deadline = time.monotonic() + 5
+                while not terminated(grand_pid) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(terminated(grand_pid),
+                                'the recorded grandchild pid must be terminated before finish() returns')
             finally:
                 process = host
                 if process.poll() is None:
@@ -516,6 +558,26 @@ time.sleep(0.2)
             process.wait(timeout=10)
             owned_process.finish(process, token, grace=5)
             self.assertEqual(process.returncode, 0, 'a clean host keeps its own exit code')
+
+    def test_finish_survives_a_failing_token_scan_and_still_scans_the_group(self):
+        """finish() must contain its sweeps like the runners' tails (#398 review)."""
+        process, token_value = owned_process.spawn([PYTHON, '-c', 'import sys; sys.exit(0)'],
+                                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            process.wait(timeout=10)
+            with mock.patch.object(owned_process, 'terminate',
+                                   side_effect=ValueError('finish token scan exploded')), \
+                 mock.patch.object(owned_process, 'terminate_group',
+                                   return_value=[]) as terminate_group:
+                with self.assertRaises(ValueError):
+                    owned_process.finish(process, token_value)
+            self.assertGreater(terminate_group.call_count, 0,
+                               'the group scan must run even though the token scan raised')
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
+
 
 class CancelHandleTests(unittest.TestCase):
     """Value: one running owned command can be cancelled from outside its call (#397)."""
@@ -546,11 +608,14 @@ time.sleep(60)
     # and the cancel lands mid-drain: late enough to race the natural rc-0
     # exit, early enough that one side of the race owns the carrier. Both
     # outcomes must name the carrier exactly once; neither may read as an
-    # unrecorded success.
+    # unrecorded success. The descendant writes its own marker so the test
+    # can assert its recorded pid, not the host's (#398 review).
     LATE_ESCAPE_TREE = """
 import os, sys, time
 pid = os.fork()
 if pid == 0:
+    open(sys.argv[1] + '.grand.tmp', 'w').write(str(os.getpid()))
+    os.rename(sys.argv[1] + '.grand.tmp', sys.argv[1] + '.grand')
     time.sleep(60)
 print('bye', flush=True)
 marker = sys.argv[1] + '.tmp'
@@ -610,6 +675,19 @@ print('child exits', flush=True)
         while alive(pid) and time.monotonic() < deadline:
             time.sleep(0.1)
         self.assertFalse(alive(pid), 'a cancelled tree must be reaped before the cancel returns its join')
+
+    def assert_descendant_terminated(self, pid):
+        """A forked orphan is terminated when it exited; this test cannot reap it.
+
+        After its parent is reaped the descendant reparents to init, and this
+        container's init does not always reap promptly — a killed orphan can
+        stay a zombie answering kill(0). A zombie has taken SIGKILL, which is
+        the contract under test; only a live process fails it.
+        """
+        deadline = time.monotonic() + 5
+        while not terminated(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(terminated(pid), f'the recorded descendant {pid} must be terminated')
 
     def test_cancel_stops_a_live_tree_once_and_refuses_a_double_cancel(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -728,15 +806,29 @@ print('child exits', flush=True)
                 process.wait(timeout=10)
 
     def test_a_failing_verification_sweep_still_runs_the_token_sweep_and_reaps(self):
-        """A failing group pass inside the cancelled-deadline branch strands nothing."""
+        """A failing group pass inside the cancelled-deadline branch strands nothing.
+
+        Whether the stop's own anomaly resurfaces depends on a race this
+        schedule cannot pin: after the cancel's group kill, the owning call
+        can reap and unregister before the post-kill pass probes the leader,
+        and a genuinely reaped leader skips its group scans (the id is free),
+        leaving no anomaly to raise. Both outcomes are bounded and complete:
+        the run still resolves to a classified cancellation, the token sweep
+        names the tree in either outcome, and the child is reaped. The
+        containment property itself — a raising sweep never discards names or
+        skips the other sweep — is pinned deterministically by
+        `test_the_final_token_sweep_survives_a_failing_group_pass`.
+        """
         with tempfile.TemporaryDirectory() as folder:
             handle = owned_process.CancelHandle()
             thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE, timeout=5)
             self.assertIsNotNone(pid, 'the control only holds with a live tree')
             with mock.patch.object(owned_process, 'terminate_group', side_effect=ValueError('group pass exploded')), \
                  mock.patch.object(owned_process.os, 'killpg', side_effect=OSError(1, 'broken')):
-                with self.assertRaises(ValueError):
-                    handle.cancel()  # the stop's anomaly surfaces only after every sweep ran
+                try:
+                    handle.cancel()  # the stop's anomaly surfaces only when the passes still ran
+                except ValueError:
+                    pass
             thread.join(timeout=20)
             self.assertFalse(thread.is_alive(), 'the run must resolve bounded behind a failed verification sweep')
             error = outcome.get('error')
@@ -754,6 +846,16 @@ print('child exits', flush=True)
                 handle = owned_process.CancelHandle()
                 thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.LATE_ESCAPE_TREE)
                 self.assertIsNotNone(pid, 'the control only holds with an armed tree')
+                # The descendant writes its marker before the parent's, but a
+                # slow scheduler could still delay the fork's write: wait for
+                # the grand marker before cancelling, so a cancellation that
+                # worked correctly can never fail the recorded-pid assertion
+                # by killing an unready descendant (#403 review).
+                grand_marker = Path(folder) / 'run.pid.grand'
+                deadline_marker = time.monotonic() + 5
+                while not grand_marker.exists() and time.monotonic() < deadline_marker:
+                    time.sleep(0.02)
+                self.assertTrue(grand_marker.exists(), 'the fixture must arm the descendant before the cancel')
                 began = time.monotonic()
                 while time.monotonic() - began < delay:
                     time.sleep(0.02)
@@ -769,6 +871,26 @@ print('child exits', flush=True)
                 reports = [line for line in text.splitlines() if line.startswith('OWNED_PROCESSES:')]
                 self.assertTrue(reports, 'a terminated carrier must be named, not silently buried')
                 self.assertLessEqual(text.count(f"'pid': {pid}"), 1, 'no pid may be named twice (#381)')
+                # The recorded descendant, not the host pid, must reach the
+                # log exactly once and be gone before the call resolves
+                # (#398 review): the marker file names the forked escapee.
+                grand_marker = Path(folder) / 'run.pid.grand'
+                deadline_marker = time.monotonic() + 5
+                while not grand_marker.exists() and time.monotonic() < deadline_marker:
+                    time.sleep(0.05)
+                self.assertTrue(grand_marker.exists(), 'the fixture must record the descendant pid')
+                grand_pid = int(grand_marker.read_text())
+                self.assertNotEqual(grand_pid, pid, 'the descendant marker must not name the host')
+                named_text = '\n'.join(reports)
+
+                def occurrences(recorded):
+                    # The run's merged report uses the dict repr; a late append uses pid N (name).
+                    return named_text.count(f"'pid': {recorded}") + named_text.count(f'pid {recorded} ')
+
+                self.assertGreaterEqual(occurrences(grand_pid), 1,
+                                        f'the descendant pid {grand_pid} never reached the log ({text})')
+                self.assertLessEqual(occurrences(grand_pid), 1, f'pid {grand_pid} named twice (#381)')
+                self.assert_descendant_terminated(grand_pid)
 
     def test_a_cancel_whose_sweep_fails_still_publishes_its_outcome(self):
         """A sweep error inside cancel must never leave an owning run waiting forever."""
@@ -871,6 +993,7 @@ time.sleep(30)
                 self.assertGreaterEqual(occurrences(pid), 1,
                                         f'killed pid {pid} never reached the written log ({text})')
                 self.assertLessEqual(occurrences(pid), 1, f'pid {pid} named twice across reports (#381)')
+                self.assert_descendant_terminated(pid)
 
     # Value: protects=the no-write exit paths' final report drain (#399);
     # fails_when=a report published after absorb sits unconsumed past a clean return;
@@ -965,6 +1088,173 @@ time.sleep(0.05)
             self.assert_tree_gone(pid)
             self.assertIn('CANCELLED:', log.read_text())
 
+    def test_a_tail_token_scan_failure_still_runs_the_group_sweep(self):
+        """A raising token scan in the runners' tails must not skip the group scan (#398 review)."""
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'tail-anomaly.log'
+            log.write_text('')
+            # The child leaves a same-group descendant alive, so the tail's
+            # group scan is armed (group_alive) and the raised token scan
+            # must not skip it.
+            command = [PYTHON, '-c', self.LATE_ESCAPE_TREE, str(Path(folder) / 'tail.pid')]
+            try:
+                with mock.patch.object(owned_process, 'terminate',
+                                       side_effect=ValueError('token scan exploded')), \
+                     mock.patch.object(owned_process, 'terminate_group',
+                                       return_value=[]) as terminate_group:
+                    with self.assertRaises(ValueError):
+                        owned_process.run(command, {}, log, 10)
+                self.assertGreater(terminate_group.call_count, 0,
+                                   'the group scan must run even though the token scan raised')
+                self.assertIn('OWNED_PROCESS_SWEEP_ANOMALY: token scan exploded', log.read_text(),
+                              'the contained anomaly is recorded in the run log before the failure propagates')
+            finally:
+                self.kill_marker_tree(Path(folder) / 'tail.pid.grand')
+
+    def kill_marker_tree(self, marker):
+        """SIGKILL one marker-named straggler a mock spared; the test owns its cleanup."""
+        try:
+            os.kill(int(marker.read_text()), signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
+
+    def test_a_tail_token_scan_failure_in_split_still_runs_the_group_sweep(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'tail-anomaly-split.log'
+            log.write_text('')
+            command = [PYTHON, '-c', self.LATE_ESCAPE_TREE, str(Path(folder) / 'tail-split.pid')]
+            try:
+                with mock.patch.object(owned_process, 'terminate',
+                                       side_effect=ValueError('token scan exploded')), \
+                     mock.patch.object(owned_process, 'terminate_group',
+                                       return_value=[]) as terminate_group:
+                    with self.assertRaises(ValueError):
+                        owned_process.run_split(command, {}, log, 10)
+                self.assertGreater(terminate_group.call_count, 0,
+                                   'the group scan must run even though the token scan raised')
+                self.assertIn('OWNED_PROCESS_SWEEP_ANOMALY: token scan exploded', log.read_text())
+            finally:
+                self.kill_marker_tree(Path(folder) / 'tail-split.pid.grand')
+
+    def test_a_deadline_sweep_anomaly_still_writes_the_timeout_log(self):
+        """A failing deadline sweep must not replace the timeout with the anomaly."""
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'deadline-anomaly.log'
+            log.write_text('')
+            marker = Path(folder) / 'da.pid'
+            command = [PYTHON, '-c', self.SLOW_TREE, str(marker)]
+            with mock.patch.object(owned_process, '_terminate_tree',
+                                   return_value=([], ValueError('deadline sweep exploded'))):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    owned_process.run(command, {}, log, 0.5)
+            text = log.read_text()
+            self.assertIn('TIMEOUT:', text, 'the deadline result must survive a sweep anomaly')
+            self.assertIn('OWNED_PROCESS_SWEEP_ANOMALY: deadline sweep exploded', text)
+            self.assertIn('OWNED_PROCESSES: terminated', text, 'the sweeps pass their (empty) names through')
+            pid = int(marker.read_text())
+            try:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)  # the mocked sweep cannot kill the real child; this test owns it
+            except (ProcessLookupError, ChildProcessError):
+                pass
+
+    def test_a_cancelled_run_with_a_tail_anomaly_keeps_both_markers(self):
+        """A cancellation winning the tail must not hide a sweep failure (#403 review).
+
+        The child exits nonzero on its own and is reaped; the cancel flips
+        after the collect (stopping nothing, still recording the run as
+        stopped) and the tail's token scan raises with no survivors: the
+        stopped branch writes the log, so the anomaly must already be in it
+        beside the CANCELLED marker, never dropped.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            log = Path(folder) / 'cancel-anomaly.log'
+            log.write_text('')
+            real_collect = owned_process._collect
+            real_terminate = owned_process.terminate
+            flip_done = threading.Event()
+
+            def flipping_collect(process, deadline):
+                result = real_collect(process, deadline)  # the child exits and is reaped here
+                handle.cancel()  # still pinned: the run reads as stopped, nothing named
+                flip_done.set()
+                return result
+
+            def tail_exploding_terminate(token_value):
+                # The cancel's own sweep ran before flip_done; only the run's
+                # tail sweep raises.
+                if flip_done.is_set():
+                    raise ValueError('tail token scan exploded')
+                return real_terminate(token_value)
+
+            with mock.patch.object(owned_process, '_collect', side_effect=flipping_collect), \
+                 mock.patch.object(owned_process, 'terminate', side_effect=tail_exploding_terminate), \
+                 mock.patch.object(owned_process, 'terminate_group', return_value=[]):
+                with self.assertRaises(owned_process.Cancelled):
+                    owned_process.run([PYTHON, '-c', 'import sys; sys.exit(3)'], {}, log, 30,
+                                      cancel=handle)
+            self.assertTrue(handle.stopped_run, 'the schedule only binds with the run read as stopped')
+            text = log.read_text()
+            self.assertIn('CANCELLED:', text, 'the cancellation marker must stand')
+            self.assertIn('OWNED_PROCESS_SWEEP_ANOMALY: tail token scan exploded', text,
+                          'the tail sweep failure must not hide behind the cancellation marker')
+
+    def test_a_post_settle_write_targets_the_owning_run_s_log(self):
+        """A note written after the handoff closed must not steal a later run's log or report.
+
+        The late/anomaly/post-exit branches settle, then write. If another
+        run registered in that gap, an emit-shaped write would land the first
+        run's note in the second run's log and drain the second run's report
+        stream (#403 adversarial review round).
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            own_log = Path(folder) / 'own.log'
+            own_log.write_text('')
+            later_log = Path(folder) / 'later.log'
+            later_log.write_text('')
+            real_settle = owned_process.CancelHandle.settle
+            later_process, _ = owned_process._start([PYTHON, '-c', 'import time; time.sleep(60)'], {}, None, False)
+            published = [{'pid': 424242, 'name': 'later-carrier'}]
+
+            def settling_then_registering(handle_self):
+                report = real_settle(handle_self)  # the phase closes and releases here
+                # A later run registers on the released handle and its cancel
+                # publishes a report before the owning call's final write.
+                assert handle_self.register(later_process, 'token-b', later_log), \
+                    'the control only holds with a released handle'
+                handle_self._publish(published)
+                return report
+
+            def collected_without_leak(process, deadline):
+                deadline_wait = time.monotonic() + 5
+                while process.poll() is None and time.monotonic() < deadline_wait:
+                    time.sleep(0.02)  # poll reaps the exited child: no zombie leak
+                process.poll()
+                return (0, {process.stdout.fileno(): 'out\n'}, 7, False, 0)
+
+            try:
+                with mock.patch.object(owned_process.CancelHandle, 'settle',
+                                       settling_then_registering), \
+                     mock.patch.object(owned_process, '_collect', side_effect=collected_without_leak):
+                    returncode, output = owned_process.run(
+                        [PYTHON, '-c', 'import sys; sys.exit(0)'], {}, own_log, 10, cancel=handle)
+                self.assertEqual(returncode, 0)
+                self.assertIn('POST_EXIT_OUTPUT', output, 'the control only binds with a post-settle write')
+                self.assertIn('POST_EXIT_OUTPUT', own_log.read_text(),
+                              "the owning run's note must land in its own log")
+                self.assertEqual(later_log.read_text(), '',
+                                 "a post-settle write must never reach a later run's log")
+                self.assertEqual(handle.absorb(), published,
+                                 "the later run's pending report stays its reader's")
+            finally:
+                handle.unregister()
+                handle.settle()
+                if later_process.poll() is None:
+                    later_process.kill()
+                later_process.wait(timeout=10)
+
     def test_a_handle_pins_exactly_one_run_and_refuses_a_second(self):
         with tempfile.TemporaryDirectory() as folder:
             handle = owned_process.CancelHandle()
@@ -985,10 +1275,27 @@ time.sleep(0.05)
         process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
         pinned = os.pidfd_open(process.pid)
         try:
-            self.assertFalse(owned_process._leader_reaped(pinned), 'a live pinned leader reads unreaped')
+            self.assertFalse(owned_process._leader_reaped(pinned, process.pid),
+                             'a live pinned leader reads unreaped')
             process.kill()
-            process.wait(timeout=10)
-            self.assertTrue(owned_process._leader_reaped(pinned),
+            # Exited but unreaped: the pidfd probe already fails on the
+            # zombie — its signal state is gone — so /proc decides, and a
+            # zombie's id cannot be recycled until its owner reaps it. The
+            # probe must not call Popen.poll()/wait() before the check:
+            # either would reap the child and erase the state under test.
+            deadline = time.monotonic() + 5
+            def zombie_state():
+                try:
+                    return Path(f'/proc/{process.pid}/stat').read_text().rsplit(') ', 1)[-1].split()[0]
+                except OSError:
+                    return None
+            while zombie_state() != 'Z' and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertEqual(zombie_state(), 'Z', 'the fixture only binds with an exited-but-unreaped leader')
+            self.assertFalse(owned_process._leader_reaped(pinned, process.pid),
+                             'an exited-but-unreaped leader must not read as reaped')
+            os.waitpid(process.pid, 0)
+            self.assertTrue(owned_process._leader_reaped(pinned, process.pid),
                             'once the owner reaps, the pin must read reaped — a recycled id can never fool it')
         finally:
             os.close(pinned)
@@ -1025,6 +1332,93 @@ time.sleep(0.05)
             self.assertEqual(returncode, 3, 'a completed run keeps its own return code')
             self.assertFalse(handle.stopped_run, 'the cancel stopped nothing and must not claim it did')
             self.assertNotIn('CANCELLED', log.read_text())
+
+    def test_a_failed_emit_write_restores_its_drained_report(self):
+        """A failing sink must not swallow the report emit() drained (#403 review).
+
+        emit() takes the pending report before writing; a sink failure used
+        to lose those names. The report comes back for the run's defensive
+        settle, which appends it through the same door a cancel uses.
+        """
+        process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(60)'], {}, None, False)
+        try:
+            handle = owned_process.CancelHandle()
+
+            class FailingSink:
+                def write_text(self, text):
+                    raise OSError('sink exploded')
+
+            self.assertTrue(handle.register(process, token_value, FailingSink()))
+            handle._publish([{'pid': 999777, 'name': 'cancel-carrier'}])
+            with self.assertRaises(OSError):
+                handle.emit('run text\n')
+            report = handle.settle()
+            self.assertEqual([item['name'] for item in report], ['cancel-carrier'],
+                             'the drained report must survive a failed write')
+        finally:
+            handle.unregister()
+            handle.settle()
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
+
+    def test_registration_stays_refused_until_the_report_phase_closes(self):
+        """A run finishing its report keeps the handle to itself (#398/#400 review).
+
+        The window between unregister and the final emit/settle is where a
+        second registration handed the first run's emit() the second run's
+        log and its report stream. Registration must refuse through that
+        whole phase and succeed again once the handoff closed.
+        """
+        first, _ = owned_process._start([PYTHON, '-c', 'import time; time.sleep(60)'], {}, None, False)
+        second, _ = owned_process._start([PYTHON, '-c', 'import time; time.sleep(60)'], {}, None, False)
+        try:
+            handle = owned_process.CancelHandle()
+            with tempfile.TemporaryDirectory() as folder:
+                first_log = Path(folder) / 'first.log'
+                second_log = Path(folder) / 'second.log'
+                self.assertTrue(handle.register(first, 'token-a', first_log),
+                                'the control only holds with an accepted registration')
+                handle.unregister()  # the pin is released; the report phase is not
+                self.assertFalse(handle.register(second, 'token-b', second_log),
+                                 'a second registration during the report phase would hand the first '
+                                 'run\'s emit() the second run\'s log')
+                handle.settle()  # the first run's no-write exit closes and releases
+                self.assertTrue(handle.register(second, 'token-b', second_log),
+                                'the handle must accept a run again after the report phase closed')
+                handle.unregister()
+                handle.settle()
+            self.assertFalse(handle._reporting, 'a released handle carries no open report phase')
+        finally:
+            for process in (first, second):
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=10)
+
+    def test_the_run_log_names_every_survivor_beyond_the_cap(self):
+        """The written report carries every claimed pid; the cap is for exception summaries only."""
+        process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(60)'], {}, None, False)
+        try:
+            handle = owned_process.CancelHandle()
+            with tempfile.TemporaryDirectory() as folder:
+                log = Path(folder) / 'capped.log'
+                self.assertTrue(handle.register(process, token_value, log))
+                survivors = [{'pid': 5000 + index, 'name': f'sweep{index}'} for index in range(9)]
+                fresh = handle._publish(survivors)  # handoff open: the report waits for its one reader
+                self.assertEqual(len(fresh), 9)
+                text = handle.emit('run finished\n')
+                handle.unregister()
+                self.assertNotIn('and 1 more', text, 'the run log must not truncate a claimed pid')
+                for survivor in survivors:
+                    self.assertIn(f"pid {survivor['pid']} ({survivor['name']})", text,
+                                  f"claimed pid {survivor['pid']} must reach the run log")
+                self.assertIn(f"pid {survivors[-1]['pid']}", log.read_text(),
+                              'the written log carries the complete report')
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
+
 
     def test_the_final_token_sweep_survives_a_failing_group_pass(self):
         """A failing post-kill group pass must not skip the token sweep or discard collected names."""
@@ -1114,6 +1508,46 @@ time.sleep(0.05)
             if process.poll() is None:
                 process.kill()
             process.wait(timeout=10)
+
+    # Value: protects=the pinned group kill's real reach (#398 review rounds
+    # disagreed about the pidfd flag value); proves=the flag the module passes
+    # reaches the whole process group through the pinned leader on this kernel;
+    # seam=_signal_group against a live leader that owns its group.
+    def test_the_pinned_group_signal_reaches_a_same_group_descendant(self):
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder) / 'group-leader.pid'
+            process, token_value = owned_process._start(
+                [PYTHON, '-c', """
+import os, sys, time
+pid = os.fork()
+if pid == 0:
+    open(sys.argv[1] + '.grand.tmp', 'w').write(str(os.getpid()))
+    os.rename(sys.argv[1] + '.grand.tmp', sys.argv[1] + '.grand')
+    time.sleep(60)
+open(sys.argv[1], 'w').write(str(os.getpid()))
+time.sleep(60)
+""", str(marker)], {}, None, False)
+            deadline = time.monotonic() + 10
+            while not (marker.exists() and Path(str(marker) + '.grand').exists()) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            leader = int(marker.read_text())
+            descendant = int(Path(str(marker) + '.grand').read_text())
+            self.assertEqual(process.pid, leader, 'the direct child must own its group for this probe')
+            pinned = os.pidfd_open(process.pid)
+            try:
+                owned_process._signal_group(process, pinned)
+                deadline = time.monotonic() + 5
+                while (not terminated(descendant) or process.poll() is None) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                process.wait(timeout=5)  # reap the killed leader; a zombie still answers kill(0)
+                self.assertTrue(terminated(descendant),
+                                'the pinned process-group signal must reach a same-group descendant')
+                self.assertFalse(alive(leader), 'the pinned signal must stop the leader itself')
+            finally:
+                os.close(pinned)
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=10)
 
     def test_a_cancelled_handle_refuses_a_new_run_before_any_process_starts(self):
         handle = owned_process.CancelHandle()
