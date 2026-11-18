@@ -107,7 +107,7 @@ def identities(token_value):
     return sorted(found, key=lambda item: item['pid'])
 
 
-def group_members(group, proc=None, started_before=None):
+def group_members(group, proc=None, started_before=None, token_value=None):
     """Name the live members of one process group; zombies are already dead.
 
     A grandchild that exited before its parent is a zombie until init reaps
@@ -118,15 +118,20 @@ def group_members(group, proc=None, started_before=None):
 
     A scan that runs after the owning call reaped its child reads a group id
     the kernel may already have reissued to an unrelated new group leader.
-    That leader started after our child died; every descendant of ours
-    predates the exit. started_before carries that exit boundary in
-    scheduler ticks since boot, and members that started after it are left
-    unnamed and unharmed — a true descendant forked inside the boundary
-    window inherits the run token and stays the token sweep's catch, so the
-    filter can only spare an unrelated process, never strand one of ours
-    (#399).
+    That leader started after our child died, so started_before carries an
+    exit-or-teardown boundary in scheduler ticks since boot: members that
+    started after it are named only when they carry the run token
+    (token_value), because a tokened member is ours wherever it started,
+    while a tokenless one that started after our tree's death can only be
+    the recycled group. What remains unknowable from /proc is a descendant
+    that forked after the boundary and scrubbed its environment before the
+    scan — it is spared here, and containing that class needs the
+    cgroup-backed ownership work in #290. A starttime that cannot be parsed
+    counts as ours: naming biases toward killing what we own, never toward
+    stranding it.
     """
     found = []
+    marker = (TOKEN_VARIABLE + '=' + token_value).encode('utf-8') + b'\0' if token_value else None
     for entry in (proc or Path('/proc')).iterdir():
         if not entry.name.isdigit():
             continue
@@ -136,10 +141,24 @@ def group_members(group, proc=None, started_before=None):
             continue
         if not fields or fields[0] in ('Z', 'X') or int(fields[2]) != group:
             continue
-        if started_before is not None and int(fields[19]) > started_before + START_TICK_SLACK:
-            continue  # Started after the owned tree died: a reissued group, not a descendant.
+        if started_before is not None:
+            try:
+                started = int(fields[19])
+            except (IndexError, ValueError):
+                started = None  # A stat line without a parsable starttime is treated as ours below.
+            if started is not None and started > started_before + START_TICK_SLACK:
+                if marker is None or not _carries_token(entry, marker):
+                    continue  # Started after the boundary without our token: a reissued group.
         found.append({'pid': int(entry.name), 'name': _name(entry)})
     return sorted(found, key=lambda item: item['pid'])
+
+
+def _carries_token(entry, marker):
+    """Whether one live process carries the ownership token in its environment."""
+    try:
+        return marker in (entry / 'environ').read_bytes()
+    except OSError:
+        return False  # An unreadable environment cannot be attributed to a run we started.
 
 
 def _boot_ticks():
@@ -184,14 +203,15 @@ def terminate(token_value):
     return survivors
 
 
-def terminate_group(group, proc=None, started_before=None):
+def terminate_group(group, proc=None, started_before=None, token_value=None):
     """Kill every live member of one process group and return their identities.
 
     started_before bounds the scan the way group_members does; a post-reap
-    caller passes the owned tree's exit boundary so a recycled group id
-    names nothing it does not own.
+    caller passes the owned tree's exit-or-teardown boundary and its token,
+    so a recycled group id names nothing it does not own while a forked
+    descendant carrying the token is still named.
     """
-    members = group_members(group, proc=proc, started_before=started_before)
+    members = group_members(group, proc=proc, started_before=started_before, token_value=token_value)
     for item in members:
         _send_kill(item['pid'])
     return members
@@ -463,20 +483,20 @@ class CancelHandle:
     def emit(self, text):
         """Write the run's final log text and close the sighting handoff.
 
-        The close re-drains the report first, so a cancel that published in
-        the gap since the owning call's absorb() still reaches this write.
-        The write itself serializes on the log lock, never on the state
-        lock: a cancel starting while this write runs flips its flag and
-        sweeps immediately, and its sightings append to the same log after
-        the write instead of being lost in the gap (#399).
+        The log lock spans the close and the write: the close re-drains the
+        report, so a cancel that published in the gap since the owning
+        call's absorb() folds into this write, and a cancel publishing while
+        the write runs appends strictly after it instead of losing its line
+        to the write's truncation. The state lock never spans a log write,
+        so a cancel starting now flips and sweeps immediately (#399).
         """
-        with self._lock:
-            report, self._report = self._report, []
-            self._closed = True
-            if report:
-                text = (text or '') + f'OWNED_PROCESSES: terminated {_named(report)}\n'
-        if text and self._log is not None:
-            with self._log_lock:
+        with self._log_lock:
+            with self._lock:
+                report, self._report = self._report, []
+                self._closed = True
+                if report:
+                    text = (text or '') + f'OWNED_PROCESSES: terminated {_named(report)}\n'
+            if text and self._log is not None:
                 self._log.write_text(text)
         return text
 
@@ -488,7 +508,7 @@ class CancelHandle:
             with self._log_lock:
                 with self._log.open('a', encoding='utf-8') as sink:
                     sink.write(f'OWNED_PROCESSES: terminated {_named(named)}\n')
-        except OSError:
+        except Exception:
             pass  # The cancel's return value still names them; a failing sink must not break the stop.
 
     def _publish(self, candidates):
@@ -496,15 +516,19 @@ class CancelHandle:
 
         The owning call drains the stored report through absorb(); after its
         emit() closed the handoff, this append is the only way a late
-        sighting still reaches the log the caller reads.
+        sighting still reaches the log the caller reads. The state lock is
+        released before the append runs, so the append's file work never
+        delays a reader and emit's log-lock-then-state-lock order holds
+        without a cycle.
         """
         with self._lock:
             fresh = self._claim_locked(candidates)
-            if self._closed:
-                self._append_sightings(fresh)
-            else:
+            closed = self._closed
+            if not closed:
                 self._report = fresh
-            return fresh
+        if closed:
+            self._append_sightings(fresh)
+        return fresh
 
     def cancel(self):
         """Stop the pinned tree once; a second cancel is refused.
@@ -523,10 +547,12 @@ class CancelHandle:
             self._cancelled = True
             process, token_value, pinned = self._process, self._token, self._pinned
             self._process = self._token = self._pinned = None
+            # Stored under the lock with the flip, so a reader never sees one
+            # flag without the other (#399 review round).
+            self._stopped_run = process is not None
         fresh = []
         try:
             candidates = []
-            self._stopped_run = process is not None
             if process is not None:
                 # The leader's pidfd was pinned at registration, before
                 # anything could reap it, so every group decision below is
@@ -815,7 +841,9 @@ def _refused_run(cancel, process, token_value, log):
     run. The tree stop mirrors the deadline path — sweeps and kill run even
     when one pass raises, everything terminated is named, and the child is
     reaped — so the unpinnable tree strands nothing before the ValueError
-    refuses the run.
+    refuses the run. The diagnosis goes to this run's own log directly: the
+    handle's registered log belongs to the run it is pinning, and closing
+    that handoff here would corrupt the pinned run's report flow.
     """
     try:
         candidates, refused_anomaly = _terminate_tree(process, token_value)
@@ -823,7 +851,7 @@ def _refused_run(cancel, process, token_value, log):
             candidates = cancel.claim(candidates)
         if candidates:
             try:
-                _write_final(log, cancel, f'OWNED_PROCESSES: terminated {candidates}\n')
+                log.write_text(f'OWNED_PROCESSES: terminated {candidates}\n')
             except OSError:
                 pass  # A failing log sink must not replace the refusal either.
     finally:
@@ -895,8 +923,13 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
     # class, #399's windows). The post-reap group scan carries the child's
     # exit boundary, so a group id the kernel reissued names nothing.
     report = cancel.absorb() if cancel is not None else []
-    members = terminate_group(process.pid, started_before=exit_ticks) if group_alive else []
-    swept = merged_survivors(members, terminate(token_value))
+    # The token sweep runs before the group scan so a failing scan can never
+    # skip it, and the group scan carries the child's exit boundary and the
+    # token: post-exit forks carrying the token stay named, a recycled
+    # tokenless group does not (#399).
+    carriers = terminate(token_value)
+    members = terminate_group(process.pid, started_before=exit_ticks, token_value=token_value) if group_alive else []
+    swept = merged_survivors(members, carriers)
     own = cancel.claim(swept) if cancel is not None else swept
     candidates = merged_survivors(report, own)
     stopped = cancel is not None and cancel.cancelled and cancel.stopped_run
@@ -966,11 +999,12 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
     stderr = ''.join(data for descriptor, data in parts.items() if descriptor != stdout_descriptor)
     if feed_failures:
         stderr += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
-    # The same report handoff and exit-bounded group scan the merged runner
-    # uses (#381's class, #399's windows).
+    # The same report handoff, sweep order and exit-bounded group scan the
+    # merged runner uses (#381's class, #399's windows).
     report = cancel.absorb() if cancel is not None else []
-    members = terminate_group(process.pid, started_before=exit_ticks) if group_alive else []
-    swept = merged_survivors(members, terminate(token_value))
+    carriers = terminate(token_value)
+    members = terminate_group(process.pid, started_before=exit_ticks, token_value=token_value) if group_alive else []
+    swept = merged_survivors(members, carriers)
     own = cancel.claim(swept) if cancel is not None else swept
     candidates = merged_survivors(report, own)
     stopped = cancel is not None and cancel.cancelled and cancel.stopped_run
@@ -1028,12 +1062,12 @@ def finish(process, token_value, grace=5.0):
     The direct child is asked to terminate first and is killed at the grace
     deadline, mirroring the previous host teardown; then both ownership
     checks run, so any surviving descendant is killed and named instead of
-    being adopted by init. The group scan carries the teardown boundary in
-    boottime ticks, so a group id the kernel already reissued to an
-    unrelated new leader names nothing (#399). Returns once nothing owned is
-    alive.
+    being adopted by init. The group scan runs with the teardown boundary
+    sampled after the child is dead and the token in hand, so descendants
+    forked during the teardown grace are still named while a group id the
+    kernel reissued afterwards names nothing (#399). Returns once nothing
+    owned is alive.
     """
-    boundary = _boot_ticks()
     try:
         if process.poll() is None:
             process.terminate()
@@ -1045,7 +1079,8 @@ def finish(process, token_value, grace=5.0):
                 except OSError:
                     process.kill()
                 process.wait(timeout=grace)
-        members = terminate_group(process.pid, started_before=boundary)
+        boundary = _boot_ticks()
+        members = terminate_group(process.pid, started_before=boundary, token_value=token_value)
         survivors = merged_survivors(members, terminate(token_value))
         if process.poll() is None:
             try:
