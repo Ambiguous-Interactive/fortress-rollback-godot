@@ -605,6 +605,37 @@ print('child exits', flush=True)
                     process.kill()
                 process.wait(timeout=10)
 
+    def test_a_failing_verification_sweep_still_runs_the_token_sweep_and_reaps(self):
+        """A failing group pass inside the cancelled-deadline branch strands nothing."""
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE, timeout=1)
+            self.assertIsNotNone(pid, 'the control only holds with a live tree')
+            real_terminate = owned_process.terminate
+
+            def flipping_terminate(token_value):
+                if not handle.cancelled:
+                    raise ValueError('token sweep exploded during the stop')
+                return real_terminate(token_value)
+
+            patches = (
+                mock.patch.object(owned_process, '_terminate_tree', side_effect=ValueError('stop exploded')),
+                mock.patch.object(owned_process.os, 'killpg', side_effect=OSError(1, 'broken')),
+                mock.patch.object(owned_process, 'terminate_group', side_effect=ValueError('group pass exploded')),
+                mock.patch.object(owned_process, 'terminate', flipping_terminate),
+            )
+            with patches[0], patches[1], patches[2], patches[3]:
+                with self.assertRaises(ValueError):
+                    handle.cancel()  # the stop fails without killing anything; the deadline still fires
+                thread.join(timeout=20)
+            self.assertFalse(thread.is_alive(), 'the run must resolve bounded behind a failed verification sweep')
+            error = outcome.get('error')
+            self.assertIsInstance(error, (owned_process.Cancelled, owned_process.EscapedDescendants),
+                                  f'the deadline branch must classify the run ({outcome.get("result")})')
+            self.assert_tree_gone(pid)
+            self.assertIn('OWNED_PROCESSES: terminated', log.read_text(),
+                          'the token sweep must name the tree even with the group pass broken')
+
     def test_a_cancel_racing_a_natural_rc_zero_exit_never_reads_as_unrecorded_success(self):
         """The F1 shape: same-group carrier alive, child exiting zero, cancel mid-drain."""
         for delay in (0.05, 1.0):

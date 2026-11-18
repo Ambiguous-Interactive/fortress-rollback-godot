@@ -572,12 +572,24 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                 report = cancel.stopped_report()
                 text = ''.join(data.decode('utf-8', errors='replace') for data in expired.buffers.values())
                 text += _drain_after_kill(process) + '\n'
-                fresh = cancel.claim(merged_survivors(terminate_group(process.pid), terminate(token_value)))
-                named = merged_survivors(report, fresh)
+                # Each verification sweep stands on its own: a failing pass
+                # never skips the token sweep or the reap, so a carrier the
+                # token sweep can still reach is named and stopped, and the
+                # child is reaped, whatever the group pass did.
+                fresh = []
+                try:
+                    fresh = cancel.claim(terminate_group(process.pid))
+                except Exception:
+                    fresh = []
+                try:
+                    fresh = merged_survivors(fresh, cancel.claim(terminate(token_value)))
+                except Exception:
+                    fresh = fresh or []
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     pass  # The sweeps already killed every group member and carrier.
+                named = merged_survivors(report, fresh)
                 if named:
                     text += f'OWNED_PROCESSES: terminated {named}\n'
                 text += 'CANCELLED: the owning handle stopped this command\n'
