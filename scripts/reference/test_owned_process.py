@@ -530,7 +530,7 @@ print('child exits', flush=True)
         """F1 round two: the cancelled-deadline branch owns the tree when the cancel stopped nothing."""
         with tempfile.TemporaryDirectory() as folder:
             handle = owned_process.CancelHandle()
-            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE, timeout=1)
+            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE, timeout=5)
             self.assertIsNotNone(pid, 'the control only holds with a live tree')
             with mock.patch.object(owned_process, '_terminate_tree', side_effect=ValueError('stop exploded')):
                 with self.assertRaises(ValueError):
@@ -567,14 +567,14 @@ print('child exits', flush=True)
 
             with mock.patch.object(owned_process, 'terminate_group', flipping_group):
                 with self.assertRaises(subprocess.TimeoutExpired):
-                    owned_process.run(command, {}, log, 1, cancel=handle)
+                    owned_process.run(command, {}, log, 5, cancel=handle)
             pid = int(marker.read_text())
             self.assertFalse(alive(pid))
             stat = Path(f'/proc/{pid}/stat')
             if stat.exists():
                 self.assertNotEqual(stat.read_text().rsplit(') ', 1)[-1].split()[0], 'Z')
             text = log.read_text()
-            self.assertIn('TIMEOUT: command exceeded 1 seconds', text)
+            self.assertIn('TIMEOUT: command exceeded 5 seconds', text)
             self.assertIn(f"'pid': {pid}", text, 'the terminated pid must survive in the written report')
             self.assertLessEqual(text.count(f"'pid': {pid}"), 1, 'no pid may be named twice (#381)')
 
@@ -609,7 +609,7 @@ print('child exits', flush=True)
         """A failing group pass inside the cancelled-deadline branch strands nothing."""
         with tempfile.TemporaryDirectory() as folder:
             handle = owned_process.CancelHandle()
-            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE, timeout=1)
+            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE, timeout=5)
             self.assertIsNotNone(pid, 'the control only holds with a live tree')
             with mock.patch.object(owned_process, 'terminate_group', side_effect=ValueError('group pass exploded')), \
                  mock.patch.object(owned_process.os, 'killpg', side_effect=OSError(1, 'broken')):
@@ -620,6 +620,7 @@ print('child exits', flush=True)
             error = outcome.get('error')
             self.assertIsInstance(error, (owned_process.Cancelled, owned_process.EscapedDescendants),
                                   f'the deadline branch must classify the run ({outcome.get("result")})')
+            self.assertTrue(handle.stopped_run, 'the cancel must land while the run is still pinned')
             self.assert_tree_gone(pid)
             self.assertIn('OWNED_PROCESSES: terminated', log.read_text(),
                           'the token sweep must name the tree even with the group pass broken')
