@@ -82,8 +82,11 @@ def run_wave(labels, overlap, operation):
                 # Submission sits inside this handler too, so an interrupt
                 # that lands mid-submission still cancels every handle — one
                 # whose member never started is cancelled before it can, and
-                # each attempt is isolated so a failed cancellation neither
-                # skips the remaining handles nor replaces the interrupt.
+                # each attempt is isolated against failures (a second
+                # interrupt arriving inside one cancel is die-now by
+                # convention and is not isolated), so a failed cancellation
+                # neither skips the remaining handles nor replaces the
+                # interrupt.
                 broken = []
                 for label in wave:
                     try:

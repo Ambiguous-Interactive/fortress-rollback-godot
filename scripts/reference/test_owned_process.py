@@ -526,40 +526,96 @@ print('child exits', flush=True)
             self.assertEqual(len(reports), 1, f'the survivor report must be written once, got {reports}')
             self.assertEqual(text.count(f"'pid': {pid}"), 1, 'the cancelled pid must be named exactly once (#381)')
 
-    def test_a_cancel_racing_a_natural_rc_zero_exit_never_reads_as_unrecorded_success(self):
-        """The F1 shape: same-group carrier alive, child exiting zero, cancel mid-drain."""
+    def test_a_deadline_during_a_failed_cancel_still_verifies_and_reaps(self):
+        """F1 round two: the cancelled-deadline branch owns the tree when the cancel stopped nothing."""
         with tempfile.TemporaryDirectory() as folder:
             handle = owned_process.CancelHandle()
-            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.LATE_ESCAPE_TREE)
-            self.assertIsNotNone(pid, 'the control only holds with an armed tree')
-            began = time.monotonic()
-            handle.cancel()
-            thread.join(timeout=15)
-            self.assertFalse(thread.is_alive(), 'the cancelled run must finish long before its 30-second deadline')
-            self.assertLess(time.monotonic() - began, 15)
-            error = outcome.get('error')
-            self.assertIsInstance(error, (owned_process.Cancelled, owned_process.EscapedDescendants),
-                                  'the tree must resolve to a named cancellation or a named escape, never a '
-                                  f'plain return ({outcome.get("result")})')
-            text = log.read_text()
-            reports = [line for line in text.splitlines() if line.startswith('OWNED_PROCESSES:')]
-            self.assertTrue(reports, 'a terminated carrier must be named, not silently buried')
-            self.assertLessEqual(text.count(f"'pid': {pid}"), 1, 'no pid may be named twice (#381)')
-
-    def test_a_cancel_whose_sweep_fails_still_publishes_its_outcome(self):
-        """A sweep error inside cancel must never leave an owning run waiting forever."""
-        with tempfile.TemporaryDirectory() as folder:
-            handle = owned_process.CancelHandle()
-            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE)
+            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE, timeout=1)
             self.assertIsNotNone(pid, 'the control only holds with a live tree')
-            with mock.patch.object(owned_process, 'identities', side_effect=ValueError('sweep exploded')):
+            with mock.patch.object(owned_process, '_terminate_tree', side_effect=ValueError('stop exploded')):
                 with self.assertRaises(ValueError):
                     handle.cancel()
             thread.join(timeout=15)
-            self.assertFalse(thread.is_alive(), 'the owning run must finish bounded after a failed cancel sweep')
-            self.assertIsInstance(outcome.get('error'), owned_process.Cancelled,
-                                  'the group kill landed, so the run still resolves to a cancellation')
+            self.assertFalse(thread.is_alive(), 'the run must resolve bounded even when the cancel stopped nothing')
+            error = outcome.get('error')
+            self.assertIsInstance(error, (owned_process.Cancelled, owned_process.EscapedDescendants),
+                                  f'the cancelled deadline must resolve with evidence ({outcome.get("result")})')
             self.assert_tree_gone(pid)
+            stat = Path(f'/proc/{pid}/stat')
+            if stat.exists():
+                self.assertNotEqual(stat.read_text().rsplit(') ', 1)[-1].split()[0], 'Z',
+                                    'the killed child must be reaped, never left a zombie of this test')
+            text = log.read_text()
+            self.assertIn('CANCELLED:', text)
+            self.assertIn('OWNED_PROCESSES: terminated', text,
+                          'the verification sweep must name the tree it had to stop itself')
+
+    def test_a_cancel_landing_mid_sweep_of_the_deadline_keeps_every_name(self):
+        """F2 round two: a cancel claiming victims mid-handler cannot strip the timeout report."""
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            log = Path(folder) / 'flip.log'
+            log.write_text('')
+            marker = Path(folder) / 'flip.pid'
+            command = [PYTHON, '-c', self.SLOW_TREE, str(marker)]
+            real_group = owned_process.terminate_group
+
+            def flipping_group(group_pid):
+                if not handle.cancelled:
+                    handle.cancel()  # the real cancel fires inside the deadline handler's own sweep
+                return real_group(group_pid)
+
+            with mock.patch.object(owned_process, 'terminate_group', flipping_group):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    owned_process.run(command, {}, log, 1, cancel=handle)
+            pid = int(marker.read_text())
+            self.assertFalse(alive(pid))
+            stat = Path(f'/proc/{pid}/stat')
+            if stat.exists():
+                self.assertNotEqual(stat.read_text().rsplit(') ', 1)[-1].split()[0], 'Z')
+            text = log.read_text()
+            self.assertIn('TIMEOUT: command exceeded 1 seconds', text)
+            self.assertIn(f"'pid': {pid}", text, 'the terminated pid must survive in the written report')
+            self.assertLessEqual(text.count(f"'pid': {pid}"), 1, 'no pid may be named twice (#381)')
+
+    def test_a_cancel_racing_a_natural_rc_zero_exit_never_reads_as_unrecorded_success(self):
+        """The F1 shape: same-group carrier alive, child exiting zero, cancel mid-drain."""
+        for delay in (0.05, 1.0):
+            with self.subTest(cancel_after=delay), tempfile.TemporaryDirectory() as folder:
+                handle = owned_process.CancelHandle()
+                thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.LATE_ESCAPE_TREE)
+                self.assertIsNotNone(pid, 'the control only holds with an armed tree')
+                began = time.monotonic()
+                while time.monotonic() - began < delay:
+                    time.sleep(0.02)
+                handle.cancel()
+                thread.join(timeout=15)
+                self.assertFalse(thread.is_alive(), 'the cancelled run must finish long before its 30-second deadline')
+                self.assertLess(time.monotonic() - began, 15)
+                error = outcome.get('error')
+                self.assertIsInstance(error, (owned_process.Cancelled, owned_process.EscapedDescendants),
+                                      'the tree must resolve to a named cancellation or a named escape, never a '
+                                      f'plain return ({outcome.get("result")})')
+                text = log.read_text()
+                reports = [line for line in text.splitlines() if line.startswith('OWNED_PROCESSES:')]
+                self.assertTrue(reports, 'a terminated carrier must be named, not silently buried')
+                self.assertLessEqual(text.count(f"'pid': {pid}"), 1, 'no pid may be named twice (#381)')
+
+    def test_a_cancel_whose_sweep_fails_still_publishes_its_outcome(self):
+        """A sweep error inside cancel must never leave an owning run waiting forever."""
+        for broken in ('identities', 'terminate_group'):
+            with self.subTest(broken=broken), tempfile.TemporaryDirectory() as folder:
+                handle = owned_process.CancelHandle()
+                thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE)
+                self.assertIsNotNone(pid, 'the control only holds with a live tree')
+                with mock.patch.object(owned_process, broken, side_effect=ValueError('sweep exploded')):
+                    with self.assertRaises(ValueError):
+                        handle.cancel()
+                thread.join(timeout=15)
+                self.assertFalse(thread.is_alive(), 'the owning run must finish bounded after a failed cancel sweep')
+                self.assertIsInstance(outcome.get('error'), owned_process.Cancelled,
+                                      'the group kill landed, so the run still resolves to a cancellation')
+                self.assert_tree_gone(pid)
 
     def test_a_stdin_holder_cannot_block_the_sweeps_behind_the_feeder(self):
         """A descendant holding stdin open must not stall the ownership sweeps behind a close."""
