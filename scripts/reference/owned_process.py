@@ -445,6 +445,21 @@ class CancelHandle:
             report, self._report = self._report, []
             return report
 
+    def settle(self):
+        """Drain anything published since absorb() and close the sighting handoff.
+
+        The owning call's writing exit paths close through emit(); the paths
+        that end without a write — a verified-clean exit inside the cancel
+        race, or a plain healthy return — close here instead, so a report
+        published in the gap still comes back and can be named before the
+        run ends. A cancel starting after this close appends its own
+        sightings to the registered log itself.
+        """
+        with self._lock:
+            report, self._report = self._report, []
+            self._closed = True
+            return report
+
     def emit(self, text):
         """Write the run's final log text and close the sighting handoff.
 
@@ -895,12 +910,21 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
         if stopped:
             raise Cancelled(text) from None
         raise EscapedDescendants(candidates)
-    if stopped:
-        if returncode != 0:
-            text = _write_final(log, cancel, output + 'CANCELLED: the owning handle stopped this command\n')
-            raise Cancelled(text) from None
-        # The command finished its own clean exit inside the cancel race and
-        # nothing had to be terminated; its verified-clean result stands.
+    if stopped and returncode != 0:
+        text = _write_final(log, cancel, output + 'CANCELLED: the owning handle stopped this command\n')
+        raise Cancelled(text) from None
+    # The no-write exits settle before returning: a report published since
+    # absorb() comes back here and is named instead of sitting unconsumed in
+    # the handle, and the handoff closes so any later cancel appends to the
+    # registered log itself (#399).
+    late = cancel.settle() if cancel is not None else []
+    if late:
+        stopped = stopped or (cancel is not None and cancel.cancelled and cancel.stopped_run)
+        output += f'OWNED_PROCESSES: terminated {late}\n'
+        if stopped:
+            output += 'CANCELLED: the owning handle stopped this command\n'
+        text = _write_final(log, cancel, output)
+        raise Cancelled(text) from None
     if post_exit_bytes or feed_failures:
         _write_final(log, cancel, output)
     return returncode, output
@@ -965,6 +989,14 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
         raise EscapedDescendants(candidates)
     if stopped and returncode != 0:
         text = ''.join(parts.values()) + 'CANCELLED: the owning handle stopped this command\n'
+        _write_final(log, cancel, text)
+        raise Cancelled(text) from None
+    late = cancel.settle() if cancel is not None else []
+    if late:
+        stopped = stopped or (cancel is not None and cancel.cancelled and cancel.stopped_run)
+        text = ''.join(parts.values()) + f'OWNED_PROCESSES: terminated {late}\n'
+        if stopped:
+            text += 'CANCELLED: the owning handle stopped this command\n'
         _write_final(log, cancel, text)
         raise Cancelled(text) from None
     if post_exit_bytes:

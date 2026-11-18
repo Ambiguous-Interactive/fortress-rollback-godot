@@ -725,6 +725,44 @@ print('child exits', flush=True)
             named = [item['pid'] for item in raised.exception.survivors]
             self.assertEqual(named.count(pid), 1, 'the stdin holder must be named terminated exactly once')
 
+    # Value: protects=the no-write exit paths' final report drain (#399);
+    # fails_when=a report published after absorb sits unconsumed past a clean return;
+    # seam=owned_process.terminate_group flipping into a pinned cancel
+    def test_a_report_published_after_absorb_is_named_before_the_run_ends(self):
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            log = Path(folder) / 'settle.log'
+            log.write_text('')
+            marker = Path(folder) / 'settle.pid'
+            # The child exits zero and leaves a same-group carrier alive, so the
+            # tail's group sweep runs with the tree still owning a live member.
+            command = [PYTHON, '-c', """
+import os, sys, time
+pid = os.fork()
+if pid == 0:
+    marker = sys.argv[1] + '.tmp'
+    open(marker, 'w').write(str(os.getpid()))
+    os.rename(marker, sys.argv[1])
+    time.sleep(60)
+time.sleep(0.05)
+""", str(marker)]
+            real_group = owned_process.terminate_group
+
+            def flipping_group(group_pid, started_before=None):
+                if not handle.cancelled:
+                    handle.cancel()  # the cancel publishes after this run's absorb already returned
+                return real_group(group_pid)
+
+            with mock.patch.object(owned_process, 'terminate_group', flipping_group):
+                with self.assertRaises((owned_process.Cancelled, owned_process.EscapedDescendants)):
+                    owned_process.run(command, {}, log, 30, cancel=handle)
+            pid = int(marker.read_text())
+            self.assert_tree_gone(pid)
+            text = log.read_text()
+            self.assertIn(f"'pid': {pid}", text,
+                          'the late-published report must be named before the run ends')
+            self.assertLessEqual(text.count(f"'pid': {pid}"), 1, 'no pid may be named twice (#381)')
+
     def test_split_cancel_shares_the_same_surface(self):
         with tempfile.TemporaryDirectory() as folder:
             handle = owned_process.CancelHandle()
