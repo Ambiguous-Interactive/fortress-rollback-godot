@@ -388,6 +388,16 @@ class Cancelled(RuntimeError):
         self.output = output
 
 
+class _Registration:
+    """One successful registration's unique identity.
+
+    Log objects are not identity enough — two runs may share one sink — and
+    process objects die at unregister, so the owning call's defensive settle
+    compares against the handle's current registration identity instead,
+    under the same lock hold as the drain (#403 review).
+    """
+
+
 class CancelHandle:
     """Bounded, thread-safe cancellation for one owned run in flight.
 
@@ -425,6 +435,7 @@ class CancelHandle:
         self._stopped_run = False
         self._cancelled = False
         self._reporting = False
+        self._registration = None
         self._done = threading.Event()
 
     def refuse_cancelled(self):
@@ -471,7 +482,8 @@ class CancelHandle:
             self._named = set()
             self._closed = False
             self._reporting = True
-            return True
+            self._registration = _Registration()
+            return self._registration
 
     def refusal_reason(self):
         """Why the last register refusal happened, read under the lock."""
@@ -482,15 +494,15 @@ class CancelHandle:
                 return ("this handle is still publishing another run's report")
             return 'this handle already pins another concurrent run'
 
-    def settle_if_owned(self, log):
-        """Settle only while the open phase still belongs to the given run's log.
+    def settle_if_owned(self, registration):
+        """Settle only while the open phase still belongs to this registration.
 
         The ownership check and the drain happen under one lock hold, so a
         run registering in the gap cannot have its phase closed or its
         pending report drained by this run's cleanup (#403 review).
         """
         with self._lock:
-            if self._log is not log:
+            if self._registration is not registration:
                 return []
             report, self._report = self._report, []
             self._closed = True
@@ -843,7 +855,7 @@ def _feed_stdin(process, input_text, failures):
     threading.Thread(target=feed, daemon=True).start()
 
 
-def _run_until_exit(process, token_value, log, timeout, cancel=None):
+def _run_until_exit(process, token_value, log, timeout, cancel=None, registration=None):
     """Collect one owned child, owning the deadline and interruption paths.
 
     Both public runners share this tail: a deadline kills the group, keeps the
@@ -919,7 +931,7 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                     # a concurrent cancel published instead of locking the
                     # handle behind the report phase. Skipped when a later run
                     # already owns the phase — its report stream is not ours.
-                    _append_log(log, cancel.settle_if_owned(log))
+                    _append_log(log, cancel.settle_if_owned(registration))
         except BaseException:
             # An interruption must not strand the tree either: the new session
             # never saw the terminal signal, so both ownership checks run, the
@@ -945,7 +957,10 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                         # release below no longer depends on the sink.
                         _append_log(log, candidates)
                 elif cancel is not None:
-                    cancel.settle_if_owned(log)  # No write remains: close and release here.
+                    # No write remains: close, release, and append whatever a
+                    # concurrent cancel published — draining without writing
+                    # would discard it (#403 review).
+                    _append_log(log, cancel.settle_if_owned(registration))
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
@@ -962,7 +977,7 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                     # skipped both writes still drains and appends whatever a
                     # concurrent cancel published. Skipped when a later run
                     # already owns the phase.
-                    _append_log(log, cancel.settle_if_owned(log))
+                    _append_log(log, cancel.settle_if_owned(registration))
             process.poll()
             raise
         return returncode, parts, post_exit_bytes, group_alive, exit_ticks
@@ -1052,14 +1067,15 @@ def _refused_run(cancel, process, token_value, log):
     raise ValueError(f'{refusal}; the started tree was cleaned up before refusing')
 
 
-def _abandon_started_run(cancel, process, token_value, log):
+def _abandon_started_run(cancel, process, token_value, log, registration):
     """Stop a started tree whose registration can no longer be served, then release.
 
     A feeder failure or any escape before the runners' cleanup guards leaves
     the child running, the pin held and the report phase open: the tree is
     swept and reaped exactly like a refusal, a note lands in the run's own
-    log, and the handle's phase releases through the ownership-checked
-    settle — the caller re-raises its original exception either way.
+    log, and the registration releases (pin included) through the
+    ownership-checked settle — the caller re-raises its original exception
+    either way.
     """
     try:
         candidates, sweep_anomaly = _terminate_tree(process, token_value)
@@ -1077,7 +1093,8 @@ def _abandon_started_run(cancel, process, token_value, log):
             pass  # The sweeps already killed every group member and carrier.
     finally:
         if cancel is not None:
-            _append_log(log, cancel.settle_if_owned(log))
+            _append_log(log, cancel.settle_if_owned(registration))
+            cancel.unregister()  # the pin and its descriptor belong to the abandoned run
     process.poll()
 
 
@@ -1112,7 +1129,8 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
     if cancel is not None:
         cancel.refuse_cancelled()
     process, token_value = _start(command, environment, cwd, input_text is not None)
-    if cancel is not None and not cancel.register(process, token_value, log):
+    registration = cancel.register(process, token_value, log) if cancel is not None else True
+    if cancel is not None and not registration:
         _refused_run(cancel, process, token_value, log)
     feed_failures = []
     try:
@@ -1122,22 +1140,22 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
         # A feeder failure must not strand the started tree or the handle's
         # reservation: the tree is stopped and reaped, the phase releases,
         # and the original failure propagates (#403 review).
-        _abandon_started_run(cancel, process, token_value, log)
+        _abandon_started_run(cancel, process, token_value, log, registration)
         raise
-    returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(process, token_value, log, timeout, cancel)
-    # Both ownership checks always run before any escape raises: a command
-    # can leave a same-group descendant and a setsid token carrier at once,
-    # and reporting only the first would strand the second. The handle's
-    # report is consumed through absorb() — the one point that waits out a
-    # started cancel — before the sweeps, so the written report covers both
-    # sides' kills and no pid is ever named twice, or named nowhere (#381's
-    # class, #399's windows). The post-reap group scan carries the child's
-    # exit boundary, so a group id the kernel reissued names nothing. The
-    # whole tail — output assembly included — releases the reservation on
-    # any exit: an interrupt landing here must not lock the handle behind
-    # the report phase, and a report published after a classified raise
-    # still reaches the run's own log through the append door (#403 review).
     try:
+        returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(process, token_value, log, timeout, cancel, registration)
+        # Both ownership checks always run before any escape raises: a command
+        # can leave a same-group descendant and a setsid token carrier at once,
+        # and reporting only the first would strand the second. The handle's
+        # report is consumed through absorb() — the one point that waits out a
+        # started cancel — before the sweeps, so the written report covers both
+        # sides' kills and no pid is ever named twice, or named nowhere (#381's
+        # class, #399's windows). The post-reap group scan carries the child's
+        # exit boundary, so a group id the kernel reissued names nothing. The
+        # whole tail — output assembly included — releases the reservation on
+        # any exit: an interrupt landing here must not lock the handle behind
+        # the report phase, and a report published after a classified raise
+        # still reaches the run's own log through the append door (#403 review).
         output = ''.join(parts.values())
         if feed_failures:
             output += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
@@ -1204,7 +1222,7 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
             # emit(): a mid-tail interrupt drains and appends whatever a
             # concurrent cancel published instead of locking the handle.
             # Skipped when a later run already owns the phase.
-            _append_log(log, cancel.settle_if_owned(log))
+            _append_log(log, cancel.settle_if_owned(registration))
 
 
 def run_split(command, environment, log, timeout, cwd=None, input_text=None, cancel=None):
@@ -1233,7 +1251,8 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
     if cancel is not None:
         cancel.refuse_cancelled()
     process, token_value = _start(command, environment, cwd, input_text is not None)
-    if cancel is not None and not cancel.register(process, token_value, log):
+    registration = cancel.register(process, token_value, log) if cancel is not None else True
+    if cancel is not None and not registration:
         _refused_run(cancel, process, token_value, log)
     stdout_descriptor = process.stdout.fileno()
     feed_failures = []
@@ -1244,14 +1263,14 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
         # A feeder failure must not strand the started tree or the handle's
         # reservation: the tree is stopped and reaped, the phase releases,
         # and the original failure propagates (#403 review).
-        _abandon_started_run(cancel, process, token_value, log)
+        _abandon_started_run(cancel, process, token_value, log, registration)
         raise
-    returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(process, token_value, log, timeout, cancel)
-    # The same report handoff, contained sweep pair and exit-bounded group
-    # scan the merged runner uses (#381's class, #399's windows, #398 review).
-    # The whole tail — output assembly included — releases the reservation on
-    # any exit, exactly like the merged runner's (#403 review).
     try:
+        returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(process, token_value, log, timeout, cancel, registration)
+        # The same report handoff, contained sweep pair and exit-bounded group
+        # scan the merged runner uses (#381's class, #399's windows, #398 review).
+        # The whole tail — output assembly included — releases the reservation on
+        # any exit, exactly like the merged runner's (#403 review).
         stderr = ''.join(data for descriptor, data in parts.items() if descriptor != stdout_descriptor)
         if feed_failures:
             stderr += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
@@ -1308,7 +1327,7 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
             # emit(): a mid-tail interrupt drains and appends whatever a
             # concurrent cancel published instead of locking the handle.
             # Skipped when a later run already owns the phase.
-            _append_log(log, cancel.settle_if_owned(log))
+            _append_log(log, cancel.settle_if_owned(registration))
 
 
 def spawn(command, environment=None, stdout=None, stderr=None, cwd=None):
