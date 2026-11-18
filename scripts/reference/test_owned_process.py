@@ -789,8 +789,28 @@ print('child exits', flush=True)
                 handle.cancel()
                 thread.join(timeout=15)
                 self.assertIsInstance(outcome.get('error'), owned_process.Cancelled)
-            self.assertLessEqual(len(os.listdir('/proc/self/fd')), opened_before + 2,
+            self.assertLessEqual(len(os.listdir('/proc/self/fd')), opened_before + 4,
                                  'each cancel must close its pinned descriptor, not leak one per run')
+
+    def test_the_pinned_group_signal_targets_the_process_group(self):
+        process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
+        pinned = os.pidfd_open(process.pid)
+        try:
+            with mock.patch.object(owned_process.signal, 'pidfd_send_signal') as pidfd, \
+                 mock.patch.object(owned_process.os, 'killpg') as killpg:
+                owned_process._signal_group(process, pinned)
+            self.assertEqual(pidfd.call_count, 1, 'the pinned leader carries the group signal')
+            arguments = pidfd.call_args.args
+            self.assertEqual(arguments[0], pinned)
+            self.assertEqual(arguments[1], signal.SIGKILL)
+            self.assertEqual(arguments[3], 4, 'flags must select PIDFD_SIGNAL_PROCESS_GROUP (4), '
+                                              'not the thread group (1) — a leader-only kill strands descendants')
+            killpg.assert_not_called()
+        finally:
+            os.close(pinned)
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
 
     def test_a_cancelled_handle_refuses_a_new_run_before_any_process_starts(self):
         handle = owned_process.CancelHandle()

@@ -185,7 +185,11 @@ def _signal_group(process, pinned):
     """SIGKILL one owned process group through its pinned leader when possible."""
     if pinned is not None:
         try:
-            signal.pidfd_send_signal(pinned, signal.SIGKILL, None, 1)  # PIDFD_SIGNAL_PROCESS_GROUP
+            # PIDFD_SIGNAL_PROCESS_GROUP (4): signal the whole process group
+            # behind the pinned leader. Value 1 would signal only the
+            # leader's own thread group and leave same-group descendants to
+            # the sweeps.
+            signal.pidfd_send_signal(pinned, signal.SIGKILL, None, 4)
             return
         except OSError as error:
             if error.errno == errno.ESRCH:
@@ -746,11 +750,17 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
     # and reporting only the first would strand the second. A sighting the
     # cancellation already claimed comes back from its report, so no pid is
     # ever named twice — or named nowhere — across the cancel and the run's
-    # own reports (#381's class).
-    report = cancel.stopped_report() if cancel is not None and cancel.cancelled else []
+    # own reports (#381's class). The claim runs before the flag is re-read:
+    # a cancel flipping mid-claim records its victims in its own report, and
+    # the re-read merges that report instead of the empty snapshot an
+    # earlier read took.
     members = terminate_group(process.pid) if group_alive else []
-    fresh = cancel.claim(merged_survivors(members, terminate(token_value))) if cancel is not None \
-        else merged_survivors(members, terminate(token_value))
+    if cancel is not None:
+        fresh = cancel.claim(merged_survivors(members, terminate(token_value)))
+        report = cancel.stopped_report() if cancel.cancelled else []
+    else:
+        fresh = merged_survivors(members, terminate(token_value))
+        report = []
     candidates = merged_survivors(report, fresh)
     if candidates:
         output += f'OWNED_PROCESSES: terminated {candidates}\n'
@@ -811,9 +821,12 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
     if feed_failures:
         stderr += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
     members = terminate_group(process.pid) if group_alive else []
-    report = cancel.stopped_report() if cancel is not None and cancel.cancelled else []
-    fresh = cancel.claim(merged_survivors(members, terminate(token_value))) if cancel is not None \
-        else merged_survivors(members, terminate(token_value))
+    if cancel is not None:
+        fresh = cancel.claim(merged_survivors(members, terminate(token_value)))
+        report = cancel.stopped_report() if cancel.cancelled else []
+    else:
+        fresh = merged_survivors(members, terminate(token_value))
+        report = []
     candidates = merged_survivors(report, fresh)
     if candidates:
         # The child's own trusted output stays in the log beside the note,
