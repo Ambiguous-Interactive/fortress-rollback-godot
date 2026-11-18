@@ -55,6 +55,11 @@ outside-input decision is not addressed feedback and must remain explicit.
 
 ## Scan feedback after the Gate is green
 
+Advisory PR callers include `converted_to_draft` with workflow-level concurrency.
+Test cancellation on a fresh head: completed-head deduplication can finish before
+conversion arrives, which does not prove cancellation failed. Add no separate
+cancellation job unless a controlled probe shows it is needed.
+
 Scan once per push: after the Gate is green and immediately before merging.
 These are the same moment unless a new push happened; a new push restarts the
 Gate and the scan. CI success alone says nothing about feedback received during
