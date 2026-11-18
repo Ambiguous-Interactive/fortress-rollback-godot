@@ -191,6 +191,13 @@ both engine pins by default; `--godot` requires one matching `--version`.
 Independent Chromium processes run 2/4/8-player matches and observe actual
 channel traffic and closure. Synthetic send drops/delays exercise recovery;
 snapshot corruption must fail at an original-input canonical comparison.
+
+On a Chromium pair the launcher overlaps independent labels while their live
+pages stay within one eight-player room's page count, the busiest shape a
+hosted runner already proves; every label keeps its own rooms, validators,
+logs and timeouts, and the receipt lists records in label order. A Firefox
+pair keeps the fully serial run its shared display placement pins. Label
+walls, not receipts, are what shrink.
 Mixed runs use both default and selected work budgets. They inject one-link send
 pressure and correlate the same input bytes across physical direct and addressed
 relay delivery. A fallback-disabled control must fail the gameplay watchdog.

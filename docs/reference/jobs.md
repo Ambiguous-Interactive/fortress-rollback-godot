@@ -57,8 +57,8 @@ gh run view 42570092471 --attempt 4 --json jobs \
 
 | Job | Browser work |
 | --- | --- |
-| SignalFish relay and Chromium WebRTC `direct` | One web export, then the `clean`, `faults`, `corrupt`, `default` and `mixed-disabled` labels: eleven rooms in total |
-| SignalFish relay and Chromium WebRTC `mixed` | One web export, then the `mixed`, `mixed-default` and `mixed-close` labels: nine rooms in total |
+| SignalFish relay and Chromium WebRTC `direct` | One web export, then the `clean`, `faults`, `corrupt`, `default`, `mixed-disabled` and five `peer-drop` labels: ten labels, fourteen rooms in total |
+| SignalFish relay and Chromium WebRTC `mixed` | One web export, then the `mixed`, `mixed-default`, `mixed-close` and `recording-pressure` labels: four labels, ten rooms in total |
 | SignalFish relay and Chromium WebRTC `online` | The shipped online example in two browsers, then the native relay and late-event controls |
 | Godot `suites` | The native suites, then the exported representation and protocol probes |
 | Godot `oracles` | No browser work; the five actual upstream oracle launchers |
@@ -68,6 +68,39 @@ One room launches one exported page per peer, completes a real handshake, submit
 40 frames per peer and compares 38 canonical prefixes per peer. The room count
 and the page count therefore set the browser time; the export and the engine
 bootstrap are already restored from the cache and are not the dominant part.
+
+## Overlapped browser labels
+
+The `direct` and `mixed` jobs used to run their label processes one after
+another. On a Chromium pair the launcher now overlaps independent labels
+while their combined live pages stay within one eight-player room's page
+count — the busiest shape a hosted SignalFish job already proves, so overlap
+cannot exceed the #104 runner-contention budget. Every label keeps its own
+rooms, browser processes, validators, logs, timeouts and events file, and
+the receipt lists records in label order. Headed Firefox pairs keep the
+fully serial run because concurrent windows would stack on one display and
+break the pinned per-peer placement; the planner reproduces the historical
+serial schedule there (`webrtc_runner.label_waves` with `overlap=False`).
+
+The `direct` job's ten labels pack into six waves (`clean` and `faults`
+stay exclusive at eight live pages each; `corrupt`, `default` and
+`mixed-disabled` share one wave; the `peer-drop` pairs share two waves).
+The `mixed` job's four labels keep four waves because every eight-page
+label excludes every other; its wall shape is unchanged by this change.
+
+Controlled same-host measurement (arm64 devcontainer, warm caches, Godot
+4.3, Chromium pair, fixed export/setup overhead included):
+
+| Scope | Serial | Overlapped |
+| --- | --- | --- |
+| `corrupt`, `default`, `mixed-disabled`, `peer-drop`, `peer-drop-answer` (5 labels, 7 rooms) | 80.0s wall (5+4+25+11+11s labels) | 60.2s wall (waves 25s + 13s; labels 5+5+25+12+13s) |
+| `clean`, `faults` (2 labels, 6 rooms, both eight-page exclusive) | 56.3s wall (16s+19s labels) | 58.1s wall (16s+20s labels) — unchanged shape |
+
+Both runs passed the unchanged validators and receipts. The recorded
+66-minute summed target dates from the pre-tier workflow whose inventory
+this file already documents as incomparable; the standing measure for this
+family is now the per-job table and the two consecutive warm-key runs the
+#148/#164 acceptance names, with the gates themselves unchanged.
 
 ## Negative-control job deadline
 
