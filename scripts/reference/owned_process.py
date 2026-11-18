@@ -388,6 +388,11 @@ class CancelHandle:
                 candidates = terminate(token_value) if reaped else _terminate_tree(process, token_value, pinned)
             fresh = self.claim(candidates)
         finally:
+            if pinned is not None:
+                try:
+                    os.close(pinned)
+                except OSError:
+                    pass  # The pin's job is done; an unclosed fd would leak per cancel.
             with self._lock:
                 self._report = fresh
             self._swept.set()

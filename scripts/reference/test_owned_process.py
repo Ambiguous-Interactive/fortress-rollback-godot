@@ -733,6 +733,21 @@ print('child exits', flush=True)
             self.assertFalse(handle.stopped_run, 'the cancel stopped nothing and must not claim it did')
             self.assertNotIn('CANCELLED', log.read_text())
 
+    def test_cancel_closes_the_pinned_descriptor(self):
+        with tempfile.TemporaryDirectory() as folder:
+            opened_before = len(os.listdir('/proc/self/fd'))
+            for index in range(10):
+                iteration = Path(folder) / f'iter{index}'
+                iteration.mkdir()
+                handle = owned_process.CancelHandle()
+                thread, outcome, log, pid = self.start_cancel_run(iteration, owned_process.run, handle, self.SLOW_TREE)
+                self.assertIsNotNone(pid, 'the control only holds with a live tree')
+                handle.cancel()
+                thread.join(timeout=15)
+                self.assertIsInstance(outcome.get('error'), owned_process.Cancelled)
+            self.assertLessEqual(len(os.listdir('/proc/self/fd')), opened_before + 2,
+                                 'each cancel must close its pinned descriptor, not leak one per run')
+
     def test_a_cancelled_handle_refuses_a_new_run_before_any_process_starts(self):
         handle = owned_process.CancelHandle()
         self.assertEqual(handle.cancel(), [], 'an empty handle has nothing to cancel')
