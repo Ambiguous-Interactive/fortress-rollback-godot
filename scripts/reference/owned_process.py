@@ -228,8 +228,15 @@ def _terminate_tree(process, token_value, pinned=None):
         except Exception:
             continue  # The kill and the second sweep still run and name what remains.
     group_phase(lambda: _signal_group(process, pinned))
-    named = merged_survivors(named, group_phase(lambda: terminate_group(process.pid)))
-    return merged_survivors(named, terminate(token_value))
+    anomaly = None
+    try:
+        named = merged_survivors(named, group_phase(lambda: terminate_group(process.pid)))
+    except Exception as error:
+        anomaly = error  # The final token sweep still runs before the anomaly resurfaces.
+    named = merged_survivors(named, terminate(token_value))
+    if anomaly is not None:
+        raise anomaly
+    return named
 
 
 class _Deadline(Exception):

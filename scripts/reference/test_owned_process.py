@@ -733,6 +733,29 @@ print('child exits', flush=True)
             self.assertFalse(handle.stopped_run, 'the cancel stopped nothing and must not claim it did')
             self.assertNotIn('CANCELLED', log.read_text())
 
+    def test_the_final_token_sweep_survives_a_failing_group_pass(self):
+        """A failing post-kill group pass must not skip the token sweep or discard collected names."""
+        process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
+        group_results = iter([[{'pid': process.pid, 'name': 'leader'}], ValueError('group pass exploded')])
+        try:
+            def flaky_group(group_pid):
+                result = next(group_results)
+                if isinstance(result, Exception):
+                    raise result
+                return result
+
+            with mock.patch.object(owned_process, 'terminate_group', flaky_group), \
+                 mock.patch.object(owned_process, 'terminate',
+                                   return_value=[{'pid': process.pid + 1, 'name': 'carrier'}]) as terminate:
+                with self.assertRaises(ValueError):
+                    owned_process._terminate_tree(process, token_value)
+            self.assertEqual(terminate.call_count, 2,
+                             'the final token sweep must run even when the post-kill group pass raises')
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
+
     def test_cancel_closes_the_pinned_descriptor(self):
         with tempfile.TemporaryDirectory() as folder:
             opened_before = len(os.listdir('/proc/self/fd'))
