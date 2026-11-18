@@ -1,5 +1,87 @@
 """Bound each browser label by its actual room count and bootstrap allowance."""
+from concurrent.futures import ThreadPoolExecutor
+
 from run import capture
+
+# Live-page peaks per label: the largest room a label runs. A three-room label
+# runs 2/4/8-player rooms serially inside its own browser process, so its peak
+# is one eight-player room; single-room labels peak at their only room size.
+PEAK_PLAYERS = {'clean': 8, 'faults': 8, 'mixed': 8, 'mixed-default': 8, 'mixed-close': 8,
+                'corrupt': 2, 'default': 2, 'mixed-disabled': 2, 'recording-pressure': 2,
+                'peer-drop': 3, 'peer-drop-corrupt': 3, 'peer-drop-close': 3,
+                'peer-drop-answer': 3, 'peer-drop-relay': 3}
+ROOM_COUNTS = {'clean': 3, 'faults': 3, 'mixed': 3, 'mixed-default': 3, 'mixed-close': 3,
+               'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1,
+               'peer-drop': 1, 'peer-drop-corrupt': 1, 'peer-drop-close': 1,
+               'peer-drop-answer': 1, 'peer-drop-relay': 1}
+# Overlapping labels never hold more live pages than one eight-player room, the
+# busiest shape a hosted runner already proves (#104's runner-contention budget).
+MAX_CONCURRENT_PLAYERS = 8
+
+
+def room_count(label):
+    if label not in ROOM_COUNTS:
+        raise ValueError(f'unknown browser witness label: {label}')
+    return ROOM_COUNTS[label]
+
+
+def label_waves(labels, overlap):
+    """Plan waves of concurrently runnable labels in the caller's order.
+
+    Every wave holds live pages within MAX_CONCURRENT_PLAYERS. Without overlap
+    every label gets its own wave, which reproduces the historical serial run.
+    The tables above restate the room ternary in webrtc.cjs and are pinned to
+    its literal source by the probe suite, so the two cannot drift apart.
+    """
+    waves = []
+    for label in labels:
+        room_count(label)
+        peak = PEAK_PLAYERS[label]
+        if not overlap:
+            waves.append([label])
+            continue
+        for wave in waves:
+            if peak + sum(PEAK_PLAYERS[member] for member in wave) <= MAX_CONCURRENT_PLAYERS:
+                wave.append(label)
+                break
+        else:
+            waves.append([label])
+    return waves
+
+
+def run_wave(labels, overlap, operation):
+    """Run label waves concurrently, joining every member before naming failures.
+
+    Single-label waves call the operation inline, so a serial plan keeps the
+    historical raw-exception behavior exactly. Packed waves join all members
+    first — an interrupt in the joining caller waits for the running members
+    to reach their own deadlines, and every member's owned-process cleanup
+    runs on its own worker path — and then name every failed label in the
+    caller's label order. Returns one result per label under its label name.
+    """
+    results = {}
+    for wave in label_waves(labels, overlap):
+        if len(wave) == 1:
+            results[wave[0]] = operation(wave[0])
+            continue
+        failures = {}
+        with ThreadPoolExecutor(max_workers=len(wave)) as pool:
+            waits = [pool.submit(_guarded, operation, label, results, failures) for label in wave]
+            for wait in waits:
+                wait.result()
+        if failures:
+            named = '; '.join(f'{label}: {type(failures[label]).__name__}: {failures[label]}'
+                              for label in labels if label in failures)
+            raise ValueError(f'browser witness label failed: {named}')
+    return results
+
+
+def _guarded(operation, label, results, failures):
+    try:
+        results[label] = operation(label)
+    except Exception as error:
+        failures[label] = error
+
 
 def run_browser(command, environment, log, rooms):
     if type(rooms) is not int or rooms not in (1, 3, 4, 5):

@@ -12,13 +12,14 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import zipfile
 
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_drop import validate_drop_browser
 from browser.webrtc_recording import engine_identity, validate_recording, validate_pressure
-from browser.webrtc_runner import run_browser
+from browser.webrtc_runner import room_count, run_browser, run_wave
 from browser.webrtc_matrix import PAIRS, prepare_firefox, validate_identity
 from browser.owned_server import OwnedServer
 from fetch import CACHE, ROOT, digest, fetch, load_manifest, prepare_zip
@@ -35,6 +36,9 @@ import host_capacity  # noqa: E402
 
 HOST_LEASE_NAME = 'webrtc-witness'
 HOST_WAIT_SECONDS = 900.0
+# Overlapped labels print completion lines from wave threads; one lock keeps
+# each line whole on the shared stderr stream.
+PRINT_LOCK = threading.Lock()
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
           'peer-drop-answer', 'peer-drop-relay', 'recording-pressure')
 
@@ -592,7 +596,7 @@ def main():
                     recording_engine = engine_identity(clock_output, version, actual)
                     run(command + ['--export-release', 'Web', str(export / 'index.html')], environment, args.output / f'{version}-export.log')
                     export_before = inventory({'export': export})
-                    for label in labels:
+                    def run_label(label):
                         started = time.monotonic()
                         faults = label == 'faults'
                         browser_command = [str(sources['node']), str(sources['browser_launcher']), str(export),
@@ -603,8 +607,7 @@ def main():
                             validate_identity(result, pair, pins)
                         else:
                             output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log',
-                                                 rooms=1 if label in ('corrupt', 'default', 'peer-drop', 'peer-drop-corrupt',
-                                                              'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay', 'recording-pressure') else 3)
+                                                 rooms=room_count(label))
                             validate_identity(json.loads(output), pair, pins)
                             if label.startswith('peer-drop'):
                                 result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt', label == 'peer-drop-close',
@@ -616,9 +619,17 @@ def main():
                             else:
                                 result = validate_browser(json.loads(output), faults, mixed=label.startswith('mixed'),
                                                           default_budgets=label == 'mixed-default', physical_close=label == 'mixed-close', expected_engine=recording_engine)
-                        records.append({'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default', 'mixed-disabled', 'peer-drop-corrupt') else None,
-                                        'command': browser_command, 'result': result})
-                        print(f'{version} {label} passed in {time.monotonic() - started:.0f}s', file=sys.stderr, flush=True)
+                        with PRINT_LOCK:
+                            print(f'{version} {label} passed in {time.monotonic() - started:.0f}s', file=sys.stderr, flush=True)
+                        return {'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default', 'mixed-disabled', 'peer-drop-corrupt') else None,
+                                'command': browser_command, 'result': result}
+
+                    # Chromium pairs overlap labels while their live pages stay within one
+                    # eight-player room's budget; headed Firefox pairs keep the serial run
+                    # their shared display placement pins.
+                    results = run_wave(labels, pair == ('chromium', 'chromium'), run_label)
+                    for label in labels:
+                        records.append(results[label])
                     if inventory(executed) != frozen or inventory({'export': export}) != export_before:
                         raise ValueError('executed Web sources changed')
                     executed_records.append({'engine': actual, 'source_inventory': frozen, 'export_inventory': export_before})

@@ -57,8 +57,8 @@ gh run view 42570092471 --attempt 4 --json jobs \
 
 | Job | Browser work |
 | --- | --- |
-| SignalFish relay and Chromium WebRTC `direct` | One web export, then the `clean`, `faults`, `corrupt`, `default` and `mixed-disabled` labels: eleven rooms in total |
-| SignalFish relay and Chromium WebRTC `mixed` | One web export, then the `mixed`, `mixed-default` and `mixed-close` labels: nine rooms in total |
+| SignalFish relay and Chromium WebRTC `direct` | One web export, then the `clean`, `faults`, `corrupt`, `default`, `mixed-disabled` and five `peer-drop` labels: ten labels, fourteen rooms in total |
+| SignalFish relay and Chromium WebRTC `mixed` | One web export, then the `mixed`, `mixed-default`, `mixed-close` and `recording-pressure` labels: four labels, ten rooms in total |
 | SignalFish relay and Chromium WebRTC `online` | The shipped online example in two browsers, then the native relay and late-event controls |
 | Godot `suites` | The native suites, then the exported representation and protocol probes |
 | Godot `oracles` | No browser work; the five actual upstream oracle launchers |
@@ -68,6 +68,60 @@ One room launches one exported page per peer, completes a real handshake, submit
 40 frames per peer and compares 38 canonical prefixes per peer. The room count
 and the page count therefore set the browser time; the export and the engine
 bootstrap are already restored from the cache and are not the dominant part.
+
+## Overlapped browser labels
+
+The `direct` and `mixed` jobs used to run their label processes one after
+another. On a Chromium pair the launcher now overlaps independent labels
+while their combined live pages stay within one eight-player room's page
+count — the busiest shape a hosted SignalFish job already proves. The page
+bound is the same measure the hosted eight-player room proves; a packed
+wave also multiplies Node processes and browser instances (two instances
+per label), which the page count does not capture, so the constrained-CPU
+measurement below pins the packed gates on two CPUs. Every label keeps its
+own rooms, browser processes, validators, logs, timeouts and events file,
+and the receipt lists records in label order. Headed Firefox pairs keep the
+fully serial run because concurrent windows would stack on one display and
+break the pinned per-peer placement; the planner reproduces the historical
+serial schedule there (`webrtc_runner.label_waves` with `overlap=False`).
+
+The `direct` job's ten labels pack into six waves (`clean` and `faults`
+stay exclusive at eight live pages each; `corrupt`, `default` and
+`mixed-disabled` share one wave; the five `peer-drop` labels share three
+waves — two pairs and one single). The `mixed` job's four labels keep four waves because every eight-page
+label excludes every other; its wall shape is unchanged by this change.
+
+Controlled same-host measurement (arm64 devcontainer, warm caches, Godot
+4.3, Chromium pair; every wall includes ≈22s of fixed export/setup that
+the per-label and per-wave numbers exclude. A packed wave also multiplies
+Node processes and browser instances — two instances per label — which
+the page bound does not capture, so the second row repeats the pair on
+two pinned CPUs, the control that diagnosed #104's hosted starvation):
+
+| Scope | Serial | Overlapped |
+| --- | --- | --- |
+| `corrupt`, `default`, `mixed-disabled`, `peer-drop`, `peer-drop-answer` (5 labels, 5 rooms) | 80.0s wall (5+4+25+11+11s labels) | 60.2s wall (waves 25s + 13s; labels 5+5+25+12+13s) |
+| Same five labels under `taskset -c 0,1` | 97.0s wall (7+7+27+18+16s labels) | 92.2s wall (waves 43s + 28s) — CPU-bound, both pass |
+| `clean`, `faults` (2 labels, 6 rooms, both eight-page exclusive) | 56.3s wall (16s+19s labels) | 58.1s wall (16s+20s labels) — unchanged shape |
+
+Every run passed the unchanged validators and receipts. Hosted single pairs
+sit inside this file's documented run-to-run spread, so they record the
+shapes rather than a delta: the grouped pre-change run 44204943160 ran
+4.3 direct 275s, 4.7.2 direct 396s, 4.3 mixed 392s and 4.7.2 mixed 298s;
+the branch dispatch at `d9c07a7` (run 44221042233, all six SignalFish legs
+green) ran 400s/316s/333s/350s. The controlled local A/B above carries the
+causal claim, exactly as this file's methodology notes treat single-run
+comparisons of changing trees. Within the page
+budget the issue's literal lever is infeasible for the labels that own
+most of the wall: a three-room label's own rooms hold 2+4+8 = 14 live
+pages, more than the whole eight-page budget, so its rooms stay serial
+inside their process and the delivered reduction overlaps labels instead
+(`clean`/`faults` are therefore unchanged, as the second local row and
+their exclusive waves predict). The recorded
+66-minute summed target dates from the pre-tier workflow whose inventory
+this file already documents as incomparable; the standing measure for this
+family is now the per-job table and the two consecutive warm-key runs the
+#148/#164 acceptance names, with the gates themselves unchanged.
 
 ## Negative-control job deadline
 

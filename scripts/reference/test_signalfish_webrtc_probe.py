@@ -7,6 +7,7 @@ import hashlib
 import struct
 from unittest.mock import patch
 from browser import webrtc_runner
+from fetch import ROOT
 import unittest
 from pathlib import Path
 import tempfile
@@ -440,16 +441,84 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         arguments = [keyword.value for keyword in calls[0].keywords if keyword.arg == 'rooms']
         self.assertEqual(len(arguments), 1, 'actual launcher must supply the room budget')
         expression = compile(ast.Expression(arguments[0]), 'actual_launcher_budget', 'eval')
-        for label, expected in [('clean', 1500), ('faults', 1500), ('corrupt', 540), ('default', 540), ('peer-drop', 540), ('peer-drop-corrupt', 540),
-                                ('peer-drop-close', 540), ('peer-drop-answer', 540), ('peer-drop-relay', 540), ('recording-pressure', 540)]:
-            rooms = eval(expression, {'label': label})
+        waves = [node for node in ast.walk(source) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == 'run_wave']
+        self.assertEqual(len(waves), 1, 'the launcher must route every label through one wave runner')
+        overlap = ast.dump(waves[0].args[1])
+        self.assertEqual(overlap, ast.dump(ast.parse("pair == ('chromium', 'chromium')", mode='eval').body),
+                         'only the exact all-chromium pair may overlap; headed pairs must stay serial')
+        expected_rooms = {'clean': 3, 'faults': 3, 'mixed': 3, 'mixed-default': 3, 'mixed-close': 3,
+                          'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1,
+                          'peer-drop': 1, 'peer-drop-corrupt': 1, 'peer-drop-close': 1,
+                          'peer-drop-answer': 1, 'peer-drop-relay': 1}
+        for label, expected in expected_rooms.items():
+            rooms = eval(expression, {'label': label, 'room_count': webrtc_runner.room_count})
+            self.assertEqual(rooms, expected, f'{label} must budget its actual room count')
+            timeout = 1500 if rooms == 3 else 540
             with self.subTest(label=label), patch.object(webrtc_runner, 'capture', return_value=(0, 'ok')) as capture:
                 self.assertEqual(webrtc_runner.run_browser(['node', label], {}, Path('owned.log'), rooms), 'ok')
-                capture.assert_called_once_with(['node', label], {}, Path('owned.log'), timeout=expected)
+                capture.assert_called_once_with(['node', label], {}, Path('owned.log'), timeout=timeout)
         with patch.object(webrtc_runner, 'capture') as capture:
             with self.assertRaises(ValueError):
                 webrtc_runner.run_browser(['node'], {}, Path('owned.log'), True)
             capture.assert_not_called()
+            with self.assertRaises(ValueError):
+                webrtc_runner.room_count('unknown-label')
+            capture.assert_not_called()
+
+    def test_room_tables_bind_the_browser_ground_truth(self):
+        source = (ROOT / 'scripts/reference/browser/webrtc.cjs').read_text()
+        self.assertIn("for (const count of (recordingPressure ? [2] : peerDrop ? [3] : "
+                      "(corrupt || defaultFactory || disableFallback) ? [2] : [2, 4, 8])) {", source,
+                      'the room ternary changed; revisit PEAK_PLAYERS and ROOM_COUNTS beside it')
+        for label, rooms in webrtc_runner.ROOM_COUNTS.items():
+            self.assertIn(label, webrtc_runner.PEAK_PLAYERS)
+            peak = webrtc_runner.PEAK_PLAYERS[label]
+            if rooms == 3:
+                self.assertEqual(peak, 8, f'{label} runs 2/4/8-player rooms, so its peak is one eight-player room')
+            else:
+                # A single-room peak drifting 2<->3 passes this class check; the
+                # 3->2 direction fails the exact wave-plan assertions above and
+                # 2->3 only packs more conservatively, so the blind spot errs safe.
+                self.assertIn(peak, (2, 3), f'{label} runs one room of two or three players')
+            self.assertLessEqual(peak, webrtc_runner.MAX_CONCURRENT_PLAYERS)
+
+    def test_label_waves_hold_the_hosted_page_budget_and_serial_pairs_repeat_history(self):
+        serial = webrtc_runner.label_waves(['clean', 'faults'], overlap=False)
+        self.assertEqual(serial, [['clean'], ['faults']], 'a headed pair keeps the historical serial run')
+        direct = webrtc_runner.label_waves(['clean', 'faults', 'corrupt', 'default', 'mixed-disabled',
+                                            'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
+                                            'peer-drop-answer', 'peer-drop-relay'], overlap=True)
+        self.assertEqual(direct, [['clean'], ['faults'], ['corrupt', 'default', 'mixed-disabled'],
+                                  ['peer-drop', 'peer-drop-corrupt'], ['peer-drop-close', 'peer-drop-answer'],
+                                  ['peer-drop-relay']])
+        mixed = webrtc_runner.label_waves(['mixed', 'mixed-default', 'mixed-close', 'recording-pressure'], overlap=True)
+        self.assertEqual(mixed, [['mixed'], ['mixed-default'], ['mixed-close'], ['recording-pressure']])
+        for plan in (direct, mixed, serial):
+            for wave in plan:
+                self.assertLessEqual(sum(webrtc_runner.PEAK_PLAYERS[label] for label in wave),
+                                     webrtc_runner.MAX_CONCURRENT_PLAYERS, f'wave {wave} exceeds the hosted page budget')
+        with self.assertRaises(ValueError):
+            webrtc_runner.label_waves(['unknown-label'], overlap=True)
+
+    def test_run_wave_joins_packed_members_and_names_failures_in_label_order(self):
+        started, finished = [], []
+        def operation(label):
+            started.append(label)
+            if label == 'corrupt':
+                raise ValueError('corrupt exploded')
+            finished.append(label)
+            return f'{label}-record'
+        with self.assertRaises(ValueError) as raised:
+            webrtc_runner.run_wave(['corrupt', 'default', 'mixed-disabled'], True, operation)
+        self.assertIn('corrupt: ValueError: corrupt exploded', str(raised.exception),
+                      'the failure class must survive the joined report')
+        self.assertEqual(sorted(finished), ['default', 'mixed-disabled'], 'every packed sibling still joins')
+        results = webrtc_runner.run_wave(['corrupt', 'default', 'mixed-disabled'], True, lambda label: f'{label}-record')
+        self.assertEqual(results, {'corrupt': 'corrupt-record', 'default': 'default-record', 'mixed-disabled': 'mixed-disabled-record'})
+        serial_results = []
+        webrtc_runner.run_wave(['corrupt', 'default'], False, serial_results.append)
+        self.assertEqual(serial_results, ['corrupt', 'default'], 'a serial plan runs labels one at a time in order')
 
 
 if __name__ == '__main__':
