@@ -80,6 +80,27 @@ def _named(survivors):
     return ', '.join(f"pid {item['pid']} ({item['name']})" for item in shown) + suffix
 
 
+def _named_all(survivors):
+    """Every survivor named, with no cap.
+
+    The cap exists for exception summaries; a run or cancellation log is the
+    evidence a diagnosis reads, so a ninth terminated pid must reach it
+    instead of disappearing behind "and 1 more" (issue #398 review).
+    """
+    return ', '.join(f"pid {item['pid']} ({item['name']})" for item in survivors)
+
+
+def _append_log(log, named):
+    """Append a terminated-survivors note to one log; a failing sink never breaks the stop."""
+    if not named or log is None:
+        return
+    try:
+        with log.open('a', encoding='utf-8') as sink:
+            sink.write(f'OWNED_PROCESSES: terminated {_named_all(named)}\n')
+    except Exception:
+        pass  # The caller's return value still names them; a failing sink must not break the stop.
+
+
 def _name(entry):
     try:
         command = (entry / 'cmdline').read_bytes().split(b'\0')
@@ -232,18 +253,27 @@ def merged_survivors(members, survivors):
     return members + [item for item in survivors if item['pid'] not in named]
 
 
-def _leader_reaped(pinned):
+def _leader_reaped(pinned, pid=None):
     """Whether a pinned leader has been reaped; the pin never lies about a recycled id.
 
     A pidfd pinned while the leader lived keeps referring to that one
     process: after the owning call reaps it, signals to the pin fail instead
-    of reaching whatever process later reused the numeric id.
+    of reaching whatever process later reused the numeric id. The probe also
+    fails for an exited-but-unreaped leader — a zombie has already released
+    its signal state — so the /proc directory decides that case: a zombie's
+    numeric id cannot be recycled until its owner reaps it, which makes the
+    group kill safe, while a reaped leader is gone entirely and its id is
+    free again (#398 review). Only a reaped leader therefore skips the group
+    phases; a zombie still gets its surviving descendants named and killed.
     """
     try:
         signal.pidfd_send_signal(pinned, 0)
+        return False  # The pinned process is alive; the group phases stay armed.
     except OSError:
-        return True  # The pinned process is gone; existence checks fail on it alone.
-    return False
+        pass  # The pin names no live process: a zombie or a reaped leader.
+    if pid is not None and Path(f'/proc/{pid}').exists():
+        return False  # A zombie still owns its id; the group is still ours to kill.
+    return True
 
 
 def _signal_group(process, pinned):
@@ -286,7 +316,7 @@ def _terminate_tree(process, token_value, pinned=None):
     Merging the passes keeps every pid named exactly once (#381's class).
     """
     def group_phase(action):
-        if pinned is not None and _leader_reaped(pinned):
+        if pinned is not None and _leader_reaped(pinned, process.pid):
             return []  # The owning call reaped the leader; the token sweep below still runs.
         return action()
 
@@ -306,6 +336,24 @@ def _terminate_tree(process, token_value, pinned=None):
         named = merged_survivors(named, terminate(token_value))
     except Exception as error:
         anomaly = anomaly or error  # Every sweep ran; the first anomaly is the one reported.
+    return named, anomaly
+
+
+def _contained_sweeps(sweeps):
+    """Run every ownership sweep, never letting one failure skip a later one.
+
+    Returns the merged names and the first anomaly. A failing token scan must
+    not skip the group scan, or the reverse: a token-scrubbed same-group
+    descendant has to be named and killed even when the other sweep raises,
+    and the anomaly surfaces only after both sweeps have run (#398 review).
+    """
+    named = []
+    anomaly = None
+    for sweep in sweeps:
+        try:
+            named = merged_survivors(named, sweep())
+        except Exception as error:
+            anomaly = anomaly if anomaly is not None else error
     return named, anomaly
 
 
@@ -365,11 +413,13 @@ class CancelHandle:
         self._token = None
         self._pinned = None
         self._log = None
+        self._append_target = None
         self._named = set()
         self._report = []
         self._closed = False
         self._stopped_run = False
         self._cancelled = False
+        self._reporting = False
         self._done = threading.Event()
 
     def refuse_cancelled(self):
@@ -381,19 +431,25 @@ class CancelHandle:
     def register(self, process, token_value, log=None):
         """Pin one starting run; False means the handle cannot pin it.
 
-        False covers a handle that already cancelled and one that is already
-        pinning another concurrent run: a handle carries one run at a time,
-        and silently overwriting the pin would leave the earlier run
-        uncancellable until its own deadline. The leader's pidfd is opened
-        here — the child was just started and nothing can have reaped it, so
-        the pin can never capture a recycled id — and retained for the
-        cancellation to signal through. The log is retained too: it is where
-        the owning call writes its final text through emit(), and where this
-        handle appends its own sightings when a cancel lands after that
-        write closed the handoff.
+        False covers a handle that already cancelled, one that is already
+        pinning another concurrent run, and one whose earlier run has not
+        finished its report phase: a handle carries one run at a time, and
+        silently overwriting the pin would leave the earlier run
+        uncancellable until its own deadline. The report phase runs from a
+        successful register until the owning call's final write or settle
+        closes the handoff — it spans the runners' final sweeps, where the
+        owning call still emits and drains through this handle, so a second
+        registration during it would give the first run's emit() the second
+        run's log and its report stream (issue #398/#400 review). The
+        leader's pidfd is opened here — the child was just started and
+        nothing can have reaped it, so the pin can never capture a recycled
+        id — and retained for the cancellation to signal through. The log is
+        retained too: it is where the owning call writes its final text
+        through emit(), and where this handle appends its own sightings when
+        a cancel lands after that write closed the handoff.
         """
         with self._lock:
-            if self._cancelled or self._process is not None:
+            if self._cancelled or self._process is not None or self._reporting:
                 return False
             pinned = None
             try:
@@ -404,6 +460,7 @@ class CancelHandle:
             self._process, self._token, self._log = process, token_value, log
             self._report = []
             self._closed = False
+            self._reporting = True
             return True
 
     def unregister(self):
@@ -472,12 +529,14 @@ class CancelHandle:
         that end without a write — a verified-clean exit inside the cancel
         race, or a plain healthy return — close here instead, so a report
         published in the gap still comes back and can be named before the
-        run ends. A cancel starting after this close appends its own
-        sightings to the registered log itself.
+        run ends. Closing also ends the report phase, so the handle accepts
+        a later registration again. A cancel starting after this close
+        appends its own sightings to the registered log itself.
         """
         with self._lock:
             report, self._report = self._report, []
             self._closed = True
+            self._reporting = False
             return report
 
     def emit(self, text):
@@ -488,28 +547,37 @@ class CancelHandle:
         call's absorb() folds into this write, and a cancel publishing while
         the write runs appends strictly after it instead of losing its line
         to the write's truncation. The state lock never spans a log write,
-        so a cancel starting now flips and sweeps immediately (#399).
+        so a cancel starting now flips and sweeps immediately (#399). The
+        report phase ends whether or not the write succeeds: the run is over
+        either way, and a handle locked by a failed write would strand every
+        later run on this handle behind the refusal.
         """
         with self._log_lock:
-            with self._lock:
-                report, self._report = self._report, []
-                self._closed = True
-                if report:
-                    text = (text or '') + f'OWNED_PROCESSES: terminated {_named(report)}\n'
-            if text and self._log is not None:
-                self._log.write_text(text)
+            try:
+                with self._lock:
+                    report, self._report = self._report, []
+                    self._closed = True
+                    if report:
+                        text = (text or '') + f'OWNED_PROCESSES: terminated {_named_all(report)}\n'
+                if text and self._log is not None:
+                    self._log.write_text(text)
+            finally:
+                with self._lock:
+                    self._reporting = False
         return text
 
     def _append_sightings(self, named):
-        """Append this cancel's own sightings to the registered log once."""
-        if not named or self._log is None:
+        """Append this cancel's own sightings to the stopped run's log once.
+
+        The target is the log captured at the flip — the run this cancel
+        actually stopped — never the handle's current registration, which a
+        later run may already own. The log lock orders the append after an
+        emit() write that could still be running on the owning thread.
+        """
+        if not named:
             return
-        try:
-            with self._log_lock:
-                with self._log.open('a', encoding='utf-8') as sink:
-                    sink.write(f'OWNED_PROCESSES: terminated {_named(named)}\n')
-        except Exception:
-            pass  # The cancel's return value still names them; a failing sink must not break the stop.
+        with self._log_lock:
+            _append_log(self._append_target, named)
 
     def _publish(self, candidates):
         """Claim the sweeps' sightings once and hand them to their one reader.
@@ -546,6 +614,10 @@ class CancelHandle:
                 raise ValueError('this run was already cancelled')
             self._cancelled = True
             process, token_value, pinned = self._process, self._token, self._pinned
+            # Captured with the flip: every sighting this cancel publishes
+            # after the owning call closed the handoff belongs to the run it
+            # stopped, never to whatever registered later (#398/#400 review).
+            self._append_target = self._log
             self._process = self._token = self._pinned = None
             # Stored under the lock with the flip, so a reader never sees one
             # flag without the other (#399 review round).
@@ -561,7 +633,7 @@ class CancelHandle:
                 # ours — a kill then could reach a recycled id — and only
                 # the pidfd-pinned token sweep runs, which can never
                 # misaddress. Without pidfd support the poll guard decides.
-                reaped = _leader_reaped(pinned) if pinned is not None else process.poll() is not None
+                reaped = _leader_reaped(pinned, process.pid) if pinned is not None else process.poll() is not None
                 if reaped:
                     candidates = terminate(token_value)
                 else:
@@ -783,8 +855,15 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
             try:
                 named = cancel.absorb() if cancel is not None else []
                 candidates, sweep_anomaly = _terminate_tree(process, token_value)
+                late = []
                 if cancel is not None:
                     candidates = merged_survivors(named, cancel.claim(candidates))
+                    # The handoff closes here on every interruption: a report
+                    # published since absorb() is named like any other, and
+                    # the handle is released for its next run even when the
+                    # note below never lands (#398/#400 review).
+                    late = cancel.settle()
+                    candidates = merged_survivors(candidates, late)
                 if candidates or sweep_anomaly is not None:
                     note = f'OWNED_PROCESSES: terminated {candidates}\n' if candidates else ''
                     if sweep_anomaly is not None:
@@ -802,6 +881,13 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                     log.write_text(f'OWNED_PROCESS_CLEANUP_FAILED: {cleanup_failure}\n')
                 except OSError:
                     pass
+            finally:
+                if cancel is not None:
+                    # A cleanup failure above can leave names drained but
+                    # unwritten; they still reach the run's own log, after
+                    # the handoff close, through the same append door a
+                    # cancel uses.
+                    _append_log(log, cancel.settle())
             process.poll()
             raise
         return returncode, parts, post_exit_bytes, group_alive, exit_ticks
@@ -837,13 +923,14 @@ def _write_final(log, cancel, text):
 def _refused_run(cancel, process, token_value, log):
     """Clean up a tree the handle could not pin, then refuse.
 
-    The handle either already cancelled or already pins another concurrent
-    run. The tree stop mirrors the deadline path — sweeps and kill run even
-    when one pass raises, everything terminated is named, and the child is
-    reaped — so the unpinnable tree strands nothing before the ValueError
-    refuses the run. The diagnosis goes to this run's own log directly: the
-    handle's registered log belongs to the run it is pinning, and closing
-    that handoff here would corrupt the pinned run's report flow.
+    The handle either already cancelled, already pins another concurrent
+    run, or is still publishing an earlier run's report. The tree stop
+    mirrors the deadline path — sweeps and kill run even when one pass
+    raises, everything terminated is named, and the child is reaped — so
+    the unpinnable tree strands nothing before the ValueError refuses the
+    run. The diagnosis goes to this run's own log directly: the handle's
+    registered log belongs to the run it is pinning, and closing that
+    handoff here would corrupt the pinned run's report flow.
     """
     try:
         candidates, refused_anomaly = _terminate_tree(process, token_value)
@@ -868,6 +955,9 @@ def _refused_run(cancel, process, token_value, log):
         process.poll()
     if cancel is not None and cancel.cancelled:
         raise ValueError('this handle already cancelled its run; the started tree was cleaned up before refusing')
+    if cancel is not None and cancel._reporting:
+        raise ValueError('this handle is still publishing another run\'s report; the started tree '
+                         'was cleaned up before refusing')
     raise ValueError('this handle already pins another concurrent run; the started tree was cleaned up before refusing')
 
 
@@ -923,18 +1013,24 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
     # class, #399's windows). The post-reap group scan carries the child's
     # exit boundary, so a group id the kernel reissued names nothing.
     report = cancel.absorb() if cancel is not None else []
-    # The token sweep runs before the group scan so a failing scan can never
-    # skip it, and the group scan carries the child's exit boundary and the
+    # Both sweeps are contained: a failing token scan must not skip the group
+    # scan, so a token-scrubbed same-group descendant is named and killed even
+    # when the scan raises, and the anomaly surfaces only after both ran
+    # (#398 review). The group scan carries the child's exit boundary and the
     # token: post-exit forks carrying the token stay named, a recycled
     # tokenless group does not (#399).
-    carriers = terminate(token_value)
-    members = terminate_group(process.pid, started_before=exit_ticks, token_value=token_value) if group_alive else []
-    swept = merged_survivors(members, carriers)
+    swept, tail_anomaly = _contained_sweeps([
+        lambda: terminate(token_value),
+        (lambda: terminate_group(process.pid, started_before=exit_ticks, token_value=token_value))
+        if group_alive else (lambda: []),
+    ])
     own = cancel.claim(swept) if cancel is not None else swept
     candidates = merged_survivors(report, own)
     stopped = cancel is not None and cancel.cancelled and cancel.stopped_run
     if candidates:
         output += f'OWNED_PROCESSES: terminated {candidates}\n'
+        if tail_anomaly is not None:
+            output += f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n'
         if stopped:
             output += 'CANCELLED: the owning handle stopped this command\n'
         text = _write_final(log, cancel, output)
@@ -958,6 +1054,12 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
             output += 'CANCELLED: the owning handle stopped this command\n'
         text = _write_final(log, cancel, output)
         raise Cancelled(text) from None
+    if tail_anomaly is not None:
+        # Every sweep ran; the anomaly is evidence, not a skip: the log keeps
+        # the named survivors (none) beside it, then the tooling failure
+        # propagates exactly as an uncontained sweep would have.
+        _write_final(log, cancel, output + f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n')
+        raise tail_anomaly
     if post_exit_bytes or feed_failures:
         _write_final(log, cancel, output)
     return returncode, output
@@ -999,12 +1101,14 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
     stderr = ''.join(data for descriptor, data in parts.items() if descriptor != stdout_descriptor)
     if feed_failures:
         stderr += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
-    # The same report handoff, sweep order and exit-bounded group scan the
-    # merged runner uses (#381's class, #399's windows).
+    # The same report handoff, contained sweep pair and exit-bounded group
+    # scan the merged runner uses (#381's class, #399's windows, #398 review).
     report = cancel.absorb() if cancel is not None else []
-    carriers = terminate(token_value)
-    members = terminate_group(process.pid, started_before=exit_ticks, token_value=token_value) if group_alive else []
-    swept = merged_survivors(members, carriers)
+    swept, tail_anomaly = _contained_sweeps([
+        lambda: terminate(token_value),
+        (lambda: terminate_group(process.pid, started_before=exit_ticks, token_value=token_value))
+        if group_alive else (lambda: []),
+    ])
     own = cancel.claim(swept) if cancel is not None else swept
     candidates = merged_survivors(report, own)
     stopped = cancel is not None and cancel.cancelled and cancel.stopped_run
@@ -1013,6 +1117,8 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
         # so an escaped or cancelled run keeps its diagnosis where the caller
         # looks, with every terminated pid named exactly once (#381's class).
         text = ''.join(parts.values()) + f'OWNED_PROCESSES: terminated {candidates}\n'
+        if tail_anomaly is not None:
+            text += f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n'
         if stopped:
             text += 'CANCELLED: the owning handle stopped this command\n'
         _write_final(log, cancel, text)
@@ -1033,6 +1139,9 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
             text += 'CANCELLED: the owning handle stopped this command\n'
         _write_final(log, cancel, text)
         raise Cancelled(text) from None
+    if tail_anomaly is not None:
+        _write_final(log, cancel, ''.join(parts.values()) + f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n')
+        raise tail_anomaly
     if post_exit_bytes:
         note = (f'POST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '
                 'exited and were withheld\n')
@@ -1080,11 +1189,15 @@ def finish(process, token_value, grace=5.0):
                     process.kill()
                 process.wait(timeout=grace)
         boundary = _boot_ticks()
-        # The token sweep runs before the group scan, matching the runners'
-        # tails, so a failing group scan can never skip it.
-        carriers = terminate(token_value)
-        members = terminate_group(process.pid, started_before=boundary, token_value=token_value)
-        survivors = merged_survivors(members, carriers)
+        # Both sweeps are contained, matching the runners' tails: a failing
+        # token scan must never skip the group scan, so a token-scrubbed
+        # same-group descendant is named and killed even when the scan
+        # raises, and the anomaly surfaces only after both sweeps ran
+        # (#398 review).
+        survivors, sweep_anomaly = _contained_sweeps([
+            lambda: terminate(token_value),
+            lambda: terminate_group(process.pid, started_before=boundary, token_value=token_value),
+        ])
         if process.poll() is None:
             try:
                 process.wait(timeout=grace)
@@ -1092,6 +1205,10 @@ def finish(process, token_value, grace=5.0):
                 pass  # The sweeps already killed every group member and carrier.
         if survivors:
             raise EscapedDescendants(survivors)
+        if sweep_anomaly is not None:
+            # No survivor was found to raise instead: a sweep that could not
+            # complete its scan is a tooling failure, never a clean teardown.
+            raise sweep_anomaly
     finally:
         for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:

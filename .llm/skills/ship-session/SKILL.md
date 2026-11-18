@@ -118,14 +118,20 @@ session log or linked issue. Do not make an automated clean claim from counts.
 
 1. Re-read PR head/base, checks, statuses and feedback just before merge. If the
    head changed, repeat all candidate gates. Merge through the merge queue:
-   `gh pr merge <n> --squash --auto` enqueues the PR, the queue builds a grouped
+   `gh pr merge <n> --squash --auto --match-head-commit <scanned-head-sha>` enqueues
+   the PR with the scanned head pinned — the CLI refuses to enroll a newer head that
+   never went through the feedback scan — then the queue builds a grouped
    candidate, and main lands only when the required checks (the Gate jobs and
    the qualification summary) pass on that candidate. Direct merges to `main`
    are blocked by the branch ruleset; do not bypass it. A dropped queue entry
    (failed or cancelled group) leaves the PR unmerged: fix, rescan, re-enqueue.
-   Watch the entry with cheap polls (`gh pr view <n> --json state,mergeQueueEntry`
-   every minute) instead of `gh run watch`, whose polling burns the API rate
-   limit.
+   Watch the entry with cheap polls every minute instead of `gh run watch`,
+   whose polling burns the API rate limit. `gh pr view --json` has no
+   merge-queue field (`mergeQueueEntry` fails with `Unknown JSON field`), so
+   read `state` plus the queue entry through authenticated GraphQL:
+   `gh api graphql -f query='query($n:Int!,$o:String!,$r:String!){repository(owner:$o,name:$r){pullRequest(number:$n){state mergeQueueEntry{state}}}}'`
+   — an empty `mergeQueueEntry` means the entry was dropped and the PR needs
+   re-enqueueing after a fresh scan.
 2. Confirm the API reports merged and read the resulting merge commit SHA.
    A successful auto-merge request or closed PR is not proof of a merge.
    After an uncertain response, read state before retrying the mutation.

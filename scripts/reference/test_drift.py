@@ -99,6 +99,38 @@ class DriftClassificationTests(unittest.TestCase):
         self.assertTrue(record['requires_review'])
         self.assertEqual(report['requires_review'], ['weird.bin'])
 
+    def test_indentation_significant_formats_never_classify_as_noise(self):
+        # Issue #382 review: a YAML re-indent moves mappings between nesting
+        # levels, so the whitespace-only noise label must not exempt it from
+        # review. The same re-indent in an indentation-insensitive format
+        # keeps its historical noise classification.
+        cases = [
+            ('src/config.yml', 'outer:\n  enabled: true\n', 'outer:\nenabled: true\n', True),
+            ('src/config.yaml', 'outer:\n  enabled: true\n', 'outer:\nenabled: true\n', True),
+            ('src/aligned.rs', 'pub fn a() {\n\tstep();\n}\n', 'pub fn a() {\nstep();\n}\n', False),
+        ]
+        for path, old_text, new_text, review in cases:
+            with self.subTest(path=path):
+                report = self.classify_pair({path: old_text}, {path: new_text})
+                record = report['records'][0]
+                self.assertIn('whitespace_or_comment_only', record['signals'])
+                self.assertEqual(record['requires_review'], review)
+                self.assertEqual(report['requires_review'], ([path] if review else []))
+
+    def test_non_text_bytes_gate_instead_of_diffing_to_nothing(self):
+        # Issue #382 review: `FF` and `FE` both decode to U+FFFD with
+        # errors='replace', so a real content change could diff to nothing
+        # and classify as no drift. Undecodable content gates instead.
+        with make_tree({'fixtures/packet.bin': 'placeholder'}) as old_base, \
+                make_tree({'fixtures/packet.bin': 'placeholder'}) as new_base:
+            (old_base / 'fixtures' / 'packet.bin').write_bytes(b'\xff\xfe\x01\n')
+            (new_base / 'fixtures' / 'packet.bin').write_bytes(b'\xfe\xfe\x01\n')
+            report = drift.build_report('fortress', old_base, new_base)
+            record = report['records'][0]
+            self.assertEqual(record['signals'], ['non_text_bytes'])
+            self.assertTrue(record['requires_review'])
+            self.assertEqual(report['requires_review'], ['fixtures/packet.bin'])
+
     def test_addition_deletion_and_rename(self):
         old = {'src/kept.rs': 'pub fn a() {}\n', 'src/gone.rs': 'pub fn b() {}\n',
                'src/old_name.rs': 'pub fn stable() {}\n'}
@@ -200,6 +232,20 @@ class DriftInputBoundTests(unittest.TestCase):
                     drift.build_report('fortress', base, base)
             finally:
                 (base / 'src' / 'a.rs').chmod(0o644)
+
+    def test_unlistable_directory_is_a_tooling_error(self):
+        # A directory whose listing fails must fail the whole comparison
+        # (issue #382 review): os.walk's default silently skips it, so two
+        # trees that differ only inside unlistable directories could compare
+        # as equal and report no drift.
+        with make_tree({'src/a.rs': 'a\n', 'src/deep/b.rs': 'b\n'}) as old_base, \
+                make_tree({'src/a.rs': 'a\n', 'src/deep/b.rs': 'changed\n'}) as new_base:
+            (old_base / 'src' / 'deep').chmod(0)
+            try:
+                with self.assertRaises(ValueError):
+                    drift.build_report('fortress', old_base, new_base)
+            finally:
+                (old_base / 'src' / 'deep').chmod(0o755)
 
     def test_git_directory_is_ignored(self):
         with make_tree({'src/a.rs': 'a\n'}) as base:

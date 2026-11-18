@@ -12,7 +12,10 @@ advances. Anything the classifier cannot place fails closed as
 `requires_review` rather than passing as known. A missing, unreadable or
 bounded-out input is a tooling error with a nonzero exit — never a "no drift"
 report (issue #51: rewritten history, unreachable baselines and truncated
-comparisons must not report no drift).
+comparisons must not report no drift). Noise labels also never exempt
+indentation-significant formats (`YAML`) or non-text bytes from review: a
+re-indent can restructure a mapping and a replaced undecodable byte can
+hide a real content change.
 
 Usage:
     python3 scripts/reference/drift.py --source fortress --old OLD_TREE --new NEW_TREE
@@ -71,6 +74,11 @@ CATEGORY_RULES = (
 )
 UNMATCHED = 'requires_review'
 
+# Formats whose grammar gives leading whitespace structural meaning: a pure
+# re-indent can move mappings between nesting levels, so the whitespace-only
+# noise label must never exempt them from review (issue #382 review).
+INDENTATION_SIGNIFICANT = ('.yml', '.yaml')
+
 COMMENT_PREFIXES = ('//', '///', '//!')
 CONST_PREFIXES = ('const ', 'pub const ', 'static ', 'pub static ')
 ATTRIBUTE_PREFIXES = ('#[', '#![')
@@ -79,6 +87,11 @@ CFG_MARKER = '#[cfg('
 # Signal values that name pure formatting or comment churn; every other
 # signal routes the path to review.
 NOISE_SIGNALS = {'whitespace_or_comment_only'}
+
+# Sentinel a `_read_lines` side returns when its bytes are not valid UTF-8.
+# Replacing undecodable bytes would make different byte sequences compare
+# equal after decoding, so binary content must gate instead of diffing.
+_NON_TEXT = 'non_text_bytes'
 
 
 def digest(path):
@@ -89,20 +102,33 @@ def digest(path):
     return hasher.hexdigest()
 
 
+def _scan_error(error):
+    """Fail the whole walk on a directory-listing failure (issue #382 review).
+
+    os.walk's default silently skips directories it cannot list, so two
+    trees with differently-readable directories could compare as equal and
+    report no drift. A listing failure is a truncated comparison: raise
+    instead, so the comparison exits as a tooling error.
+    """
+    raise ValueError(f'cannot list source directory: {error.filename}') from error
+
+
 def inventory(tree):
     """Every file under the tree: relative path -> {sha256, bytes}, bounded.
 
     The walk prunes `.git` directories during descent and enforces both bounds
     while traversing, so a pathological input fails closed instead of paying
-    an unbounded enumeration first. A file past `MAX_FILE_BYTES` is a tooling
-    error: hashing it would silently turn an oversized-file content change
-    into "unchanged" and report no drift.
+    an unbounded enumeration first. A file past `MAX_FILE_BYTES` and a
+    directory that cannot be listed are tooling errors: the first would
+    silently turn an oversized-file content change into "unchanged", the
+    second could hide whole directories from both inventories, and either
+    must never report no drift.
     """
     root = Path(tree)
     if not root.is_dir():
         raise ValueError(f'source tree is missing or not a directory: {root}')
     files = {}
-    for folder, directories, names in os.walk(root):
+    for folder, directories, names in os.walk(root, onerror=_scan_error):
         directories[:] = sorted(name for name in directories if name != '.git')
         for name in sorted(names):
             if len(files) >= MAX_FILES:
@@ -179,15 +205,21 @@ def classify_path(relative):
 
 
 def _read_lines(tree, name):
-    """File lines, or None when the file does not exist on that side.
+    """File lines, the `_NON_TEXT` marker, or None when the file is absent.
 
-    Read failures propagate: a file that exists but cannot be read is a
-    tooling error, never a silently unclassified change.
+    Decoding is strict: with `errors='replace'` two different byte sequences
+    (`FF` and `FE`) both decode to U+FFFD and a real content change could
+    diff to nothing, so undecodable content comes back marked instead and
+    gates as non-text bytes. Read failures propagate: a file that exists but
+    cannot be read is a tooling error, never a silently unclassified change.
     """
     path = Path(tree) / name
     if not path.is_file():
         return None
-    return path.read_text(encoding='utf-8', errors='replace').splitlines()
+    try:
+        return path.read_bytes().decode('utf-8').splitlines()
+    except UnicodeDecodeError:
+        return _NON_TEXT
 
 
 def classify_change(name, old_tree, new_tree, old_entry, new_entry, old_name=None):
@@ -197,10 +229,12 @@ def classify_change(name, old_tree, new_tree, old_entry, new_entry, old_name=Non
     lines are not pure whitespace/comment noise needs review, whatever its
     category — a constant, an attribute, a documentation edit and an unmatched
     path can all move behavior or evidence, and the classifier cannot prove
-    otherwise. A rename gates unconditionally: the path is the ledger key, so
-    moving bytes between paths moves the mapping even when the bytes match.
-    Content reads use each tree's own path (`old_name` names a rename's
-    source), so a renamed file's diff compares the real old bytes.
+    otherwise. Indentation-significant formats (`.yml`/`.yaml`) never earn
+    the noise exemption, and non-text bytes gate unconditionally. A rename
+    gates unconditionally: the path is the ledger key, so moving bytes
+    between paths moves the mapping even when the bytes match. Content reads
+    use each tree's own path (`old_name` names a rename's source), so a
+    renamed file's diff compares the real old bytes.
     """
     record = {'path': name, 'kind': 'changed', 'category': classify_path(name), 'signals': [],
               'requires_review': False}
@@ -213,9 +247,19 @@ def classify_change(name, old_tree, new_tree, old_entry, new_entry, old_name=Non
             # A declared file that cannot be read at classification time is a
             # truncated comparison: gate it instead of passing it silently.
             record['requires_review'] = True
+        elif old_lines == _NON_TEXT or new_lines == _NON_TEXT:
+            # Non-text bytes cannot diff meaningfully, and different bytes
+            # with the same replacement decoding would otherwise classify as
+            # no change: gate every undecodable side (issue #382 review).
+            record['signals'] = [_NON_TEXT]
+            record['requires_review'] = True
         else:
             record['signals'] = line_signals(old_lines, new_lines)
-            if any(signal not in NOISE_SIGNALS for signal in record['signals']):
+            if (any(signal not in NOISE_SIGNALS for signal in record['signals'])
+                    or (name.lower().endswith(INDENTATION_SIGNIFICANT) and record['signals'])):
+                # An indentation-significant format never earns the noise
+                # exemption: a re-indent can restructure its mapping, so any
+                # signal there routes the path to review.
                 record['requires_review'] = True
     return record
 
