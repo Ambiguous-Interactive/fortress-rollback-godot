@@ -477,6 +477,9 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
             if rooms == 3:
                 self.assertEqual(peak, 8, f'{label} runs 2/4/8-player rooms, so its peak is one eight-player room')
             else:
+                # A single-room peak drifting 2<->3 passes this class check; the
+                # 3->2 direction fails the exact wave-plan assertions above and
+                # 2->3 only packs more conservatively, so the blind spot errs safe.
                 self.assertIn(peak, (2, 3), f'{label} runs one room of two or three players')
             self.assertLessEqual(peak, webrtc_runner.MAX_CONCURRENT_PLAYERS)
 

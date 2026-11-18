@@ -92,10 +92,11 @@ waves — two pairs and one single). The `mixed` job's four labels keep four wav
 label excludes every other; its wall shape is unchanged by this change.
 
 Controlled same-host measurement (arm64 devcontainer, warm caches, Godot
-4.3, Chromium pair, fixed export/setup overhead included; the packed waves
-also multiply Node processes and browser instances — two instances per
-label — which the page bound does not capture, so the second row repeats
-the pair on two pinned CPUs, the measurement that exposed #104):
+4.3, Chromium pair; every wall includes ≈22s of fixed export/setup that
+the per-label and per-wave numbers exclude. A packed wave also multiplies
+Node processes and browser instances — two instances per label — which
+the page bound does not capture, so the second row repeats the pair on
+two pinned CPUs, the control that diagnosed #104's hosted starvation):
 
 | Scope | Serial | Overlapped |
 | --- | --- | --- |
@@ -103,7 +104,7 @@ the pair on two pinned CPUs, the measurement that exposed #104):
 | Same five labels under `taskset -c 0,1` | 97.0s wall (7+7+27+18+16s labels) | 92.2s wall (waves 43s + 28s) — CPU-bound, both pass |
 | `clean`, `faults` (2 labels, 6 rooms, both eight-page exclusive) | 56.3s wall (16s+19s labels) | 58.1s wall (16s+20s labels) — unchanged shape |
 
-Both runs passed the unchanged validators and receipts. Within the page
+Every run passed the unchanged validators and receipts. Within the page
 budget the issue's literal lever is infeasible for the labels that own
 most of the wall: a three-room label's own rooms hold 2+4+8 = 14 live
 pages, more than the whole eight-page budget, so its rooms stay serial
