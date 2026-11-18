@@ -551,7 +551,9 @@ import os, sys, time
 pid = os.fork()
 if pid == 0:
     os.setsid()
-    open(sys.argv[1], 'w').write(str(os.getpid()))
+    marker = sys.argv[1] + '.tmp'
+    open(marker, 'w').write(str(os.getpid()))
+    os.rename(marker, sys.argv[1])
     time.sleep(60)
 print('ready', flush=True)
 time.sleep(60)
@@ -563,18 +565,29 @@ time.sleep(60)
                 return label
             labels = ('corrupt', 'default')
             began = time.monotonic()
+            stop, interrupt_lock = threading.Event(), threading.Lock()
 
             def interrupt_when_both_children_are_live():
                 deadline = time.monotonic() + 20
                 while any(not (root / f'{label}.pid').exists() for label in labels) and time.monotonic() < deadline:
-                    time.sleep(0.05)
-                time.sleep(0.5)  # both workers are inside their collect loop and the joiner inside its join
-                os.kill(os.getpid(), signal.SIGINT)
+                    if stop.wait(0.05):
+                        return
+                if stop.wait(0.5):  # both workers are inside their collect loop and the joiner inside its join
+                    return
+                with interrupt_lock:
+                    if not stop.is_set():
+                        os.kill(os.getpid(), signal.SIGINT)
 
             interrupter = threading.Thread(target=interrupt_when_both_children_are_live, daemon=True)
             interrupter.start()
-            with self.assertRaises(KeyboardInterrupt):
-                webrtc_runner.run_wave(list(labels), True, operation)
+            try:
+                with self.assertRaises(KeyboardInterrupt):
+                    webrtc_runner.run_wave(list(labels), True, operation)
+            finally:
+                with interrupt_lock:
+                    stop.set()
+                interrupter.join(timeout=5)
+            self.assertFalse(interrupter.is_alive(), 'the signal sender must stop before the test ends')
             elapsed = time.monotonic() - began
             self.assertLess(elapsed, 15, 'the join must not wait out the members\' own 30-second deadlines')
             for label in labels:
@@ -589,6 +602,46 @@ time.sleep(60)
                 self.assertLessEqual(len(reports), 1, f'{label} must name its terminations once')
                 self.assertEqual(text.count(f"'pid': {pid}"), 1,
                                  f'{label} must name its escaped carrier exactly once (#381)')
+
+    def test_submission_sits_inside_the_interrupt_handler_that_cancels_the_wave(self):
+        """An interrupt landing mid-submission must still cancel every handle (#398 feedback)."""
+        source = ast.parse(inspect.getsource(webrtc_runner.run_wave))
+        loops = [node for node in ast.walk(source) if isinstance(node, ast.Try)]
+        handler = next(node for node in loops
+                       if any(isinstance(inner, ast.For) for inner in ast.walk(node))
+                       and any(isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                               and call.func.attr == 'cancel' for call in ast.walk(node)))
+        submits = [node for node in ast.walk(source) if isinstance(node, ast.ListComp)
+                   and any(isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                           and call.func.attr == 'submit' for call in ast.walk(node))]
+        self.assertEqual(len(submits), 1, 'the wave submits its members through one comprehension')
+        self.assertTrue(submits[0].lineno >= handler.lineno and submits[0].lineno <= handler.end_lineno,
+                        'the submission must sit inside the try whose handler cancels every handle')
+        cancels = [call for call in ast.walk(handler) if isinstance(call, ast.Call)
+                   and isinstance(call.func, ast.Attribute) and call.func.attr == 'cancel']
+        self.assertGreaterEqual(len(cancels), 1, 'the handler must cancel the wave handles')
+
+    def test_a_failed_cancel_neither_skips_siblings_nor_replaces_the_interrupt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            real_cancel = owned_process.CancelHandle.cancel
+            calls = []
+
+            def flaky_cancel(self):
+                calls.append(self)
+                if len(calls) == 1:
+                    raise ValueError('sweep exploded')
+                return real_cancel(self)
+
+            def operation(label, cancel):
+                if label == 'corrupt':
+                    raise KeyboardInterrupt  # a worker-side abort drives the joiner's handler
+                return f'{label}-record'
+
+            with patch.object(webrtc_runner.owned_process.CancelHandle, 'cancel', flaky_cancel):
+                with self.assertRaises(KeyboardInterrupt):
+                    webrtc_runner.run_wave(['corrupt', 'default'], True, operation)
+            self.assertEqual(len(calls), 2, 'the failing first cancel must not skip the second handle')
 
     def test_without_an_interrupt_a_failed_member_still_joins_its_slow_sibling(self):
         """The control: no interrupt, so the join keeps its all-members failure semantics."""

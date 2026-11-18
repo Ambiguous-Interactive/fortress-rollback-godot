@@ -1,5 +1,6 @@
 """Bound each browser label by its actual room count and bootstrap allowance."""
 from concurrent.futures import ThreadPoolExecutor
+import sys
 
 import owned_process
 from run import capture
@@ -70,15 +71,28 @@ def run_wave(labels, overlap, operation):
         handles = {label: owned_process.CancelHandle() for label in wave}
         failures = {}
         with ThreadPoolExecutor(max_workers=len(wave)) as pool:
-            waits = [pool.submit(_guarded, operation, label, handles[label], results, failures) for label in wave]
             try:
+                waits = [pool.submit(_guarded, operation, label, handles[label], results, failures)
+                         for label in wave]
                 for wait in waits:
                     wait.result()
             except BaseException:
                 # Cancel first: every active tree terminates now, so the join
                 # below waits for the workers' cleanup, never for a deadline.
+                # Submission sits inside this handler too, so an interrupt
+                # that lands mid-submission still cancels every handle — one
+                # whose member never started is cancelled before it can, and
+                # each attempt is isolated so a failed cancellation neither
+                # skips the remaining handles nor replaces the interrupt.
+                broken = []
                 for label in wave:
-                    handles[label].cancel()
+                    try:
+                        handles[label].cancel()
+                    except Exception as cancel_failure:
+                        broken.append(f'{label}: {type(cancel_failure).__name__}: {cancel_failure}')
+                if broken:
+                    print('browser witness wave: cancel failures — ' + '; '.join(broken),
+                          file=sys.stderr, flush=True)
                 raise
         if failures:
             named = '; '.join(f'{label}: {type(failures[label]).__name__}: {failures[label]}'

@@ -407,8 +407,10 @@ class CancelHandleTests(unittest.TestCase):
 
     SLOW_TREE = """
 import os, sys, time
-open(sys.argv[1], 'w').write(str(os.getpid()))
 print('started', flush=True)
+marker = sys.argv[1] + '.tmp'
+open(marker, 'w').write(str(os.getpid()))
+os.rename(marker, sys.argv[1])
 time.sleep(60)
 """
 
@@ -417,10 +419,44 @@ import os, sys, time
 pid = os.fork()
 if pid == 0:
     os.setsid()
-    open(sys.argv[1], 'w').write(str(os.getpid()))
+    marker = sys.argv[1] + '.tmp'
+    open(marker, 'w').write(str(os.getpid()))
+    os.rename(marker, sys.argv[1])
     time.sleep(60)
 print('started', flush=True)
 time.sleep(60)
+"""
+
+    # The direct child arms a same-group escapee, exits zero shortly after,
+    # and the cancel lands mid-drain: late enough to race the natural rc-0
+    # exit, early enough that one side of the race owns the carrier. Both
+    # outcomes must name the carrier exactly once; neither may read as an
+    # unrecorded success.
+    LATE_ESCAPE_TREE = """
+import os, sys, time
+pid = os.fork()
+if pid == 0:
+    time.sleep(60)
+print('bye', flush=True)
+marker = sys.argv[1] + '.tmp'
+open(marker, 'w').write(str(os.getpid()))
+os.rename(marker, sys.argv[1])
+time.sleep(0.3)
+"""
+
+    # The child exits at once and leaves a setsid descendant that inherits
+    # stdin and never reads it, so a large stdin payload blocks the feeder on
+    # a full pipe that only the ownership sweeps can drain.
+    STDIN_HOLDER_TREE = """
+import os, sys, time
+pid = os.fork()
+if pid == 0:
+    os.setsid()
+    marker = sys.argv[1] + '.tmp'
+    open(marker, 'w').write(str(os.getpid()))
+    os.rename(marker, sys.argv[1])
+    time.sleep(60)
+print('child exits', flush=True)
 """
 
     def start_cancel_run(self, folder, entry, cancel, tree, timeout=30):
@@ -478,8 +514,10 @@ time.sleep(60)
             thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.ESCAPE_TREE)
             self.assertIsNotNone(pid, 'the control only holds with a live escaped carrier')
             survivors = handle.cancel()
-            self.assertEqual([item['pid'] for item in survivors], [pid],
+            named = [item['pid'] for item in survivors]
+            self.assertEqual(named.count(pid), 1,
                              'the group kill cannot reach a setsid carrier, so the token sweep names it')
+            self.assertLessEqual(len(survivors), 2, 'only the direct child may join the carrier in the report')
             thread.join(timeout=15)
             self.assertIsInstance(outcome.get('error'), owned_process.Cancelled)
             self.assert_tree_gone(pid)
@@ -487,6 +525,58 @@ time.sleep(60)
             reports = [line for line in text.splitlines() if line.startswith('OWNED_PROCESSES:')]
             self.assertEqual(len(reports), 1, f'the survivor report must be written once, got {reports}')
             self.assertEqual(text.count(f"'pid': {pid}"), 1, 'the cancelled pid must be named exactly once (#381)')
+
+    def test_a_cancel_racing_a_natural_rc_zero_exit_never_reads_as_unrecorded_success(self):
+        """The F1 shape: same-group carrier alive, child exiting zero, cancel mid-drain."""
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.LATE_ESCAPE_TREE)
+            self.assertIsNotNone(pid, 'the control only holds with an armed tree')
+            began = time.monotonic()
+            handle.cancel()
+            thread.join(timeout=15)
+            self.assertFalse(thread.is_alive(), 'the cancelled run must finish long before its 30-second deadline')
+            self.assertLess(time.monotonic() - began, 15)
+            error = outcome.get('error')
+            self.assertIsInstance(error, (owned_process.Cancelled, owned_process.EscapedDescendants),
+                                  'the tree must resolve to a named cancellation or a named escape, never a '
+                                  f'plain return ({outcome.get("result")})')
+            text = log.read_text()
+            reports = [line for line in text.splitlines() if line.startswith('OWNED_PROCESSES:')]
+            self.assertTrue(reports, 'a terminated carrier must be named, not silently buried')
+            self.assertLessEqual(text.count(f"'pid': {pid}"), 1, 'no pid may be named twice (#381)')
+
+    def test_a_cancel_whose_sweep_fails_still_publishes_its_outcome(self):
+        """A sweep error inside cancel must never leave an owning run waiting forever."""
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE)
+            self.assertIsNotNone(pid, 'the control only holds with a live tree')
+            with mock.patch.object(owned_process, 'identities', side_effect=ValueError('sweep exploded')):
+                with self.assertRaises(ValueError):
+                    handle.cancel()
+            thread.join(timeout=15)
+            self.assertFalse(thread.is_alive(), 'the owning run must finish bounded after a failed cancel sweep')
+            self.assertIsInstance(outcome.get('error'), owned_process.Cancelled,
+                                  'the group kill landed, so the run still resolves to a cancellation')
+            self.assert_tree_gone(pid)
+
+    def test_a_stdin_holder_cannot_block_the_sweeps_behind_the_feeder(self):
+        """A descendant holding stdin open must not stall the ownership sweeps behind a close."""
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'holder.log'
+            log.write_text('')
+            marker = Path(folder) / 'holder.pid'
+            command = [PYTHON, '-c', self.STDIN_HOLDER_TREE, str(marker)]
+            began = time.monotonic()
+            with self.assertRaises(owned_process.EscapedDescendants) as raised:
+                owned_process.run_split(command, {}, log, 10, input_text='x' * (200 * 1024))
+            self.assertLess(time.monotonic() - began, 10,
+                            'the feeder must not hold the cleanup hostage on a full pipe')
+            pid = int(marker.read_text())
+            self.assert_tree_gone(pid)
+            named = [item['pid'] for item in raised.exception.survivors]
+            self.assertEqual(named.count(pid), 1, 'the stdin holder must be named terminated exactly once')
 
     def test_split_cancel_shares_the_same_surface(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -545,8 +635,9 @@ time.sleep(60)
             process = started['process']
             self.assert_tree_gone(process.pid)
             process.wait(timeout=10)  # the cleanup reaps before refusing, so nothing is left to this test
-            self.assertNotIn('OWNED_PROCESSES', log.read_text(),
-                             'a tree killed before it could fork names no survivors')
+            named = [int(part.split("'pid': ")[1].split(',')[0]) for part in log.read_text().split('OWNED_PROCESSES:')[1:]]
+            self.assertEqual([pid for pid in named if pid != process.pid], [],
+                             'a tree killed before it could fork may name only its own direct child')
 
     def test_cancellation_requires_the_kernel_ownership_surface(self):
         handle = owned_process.CancelHandle()
