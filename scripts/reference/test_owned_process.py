@@ -578,6 +578,33 @@ print('child exits', flush=True)
             self.assertIn(f"'pid': {pid}", text, 'the terminated pid must survive in the written report')
             self.assertLessEqual(text.count(f"'pid': {pid}"), 1, 'no pid may be named twice (#381)')
 
+    def test_a_concurrent_cancel_claiming_mid_handler_reaches_the_timeout_report(self):
+        """The claim/read inversion: a survivor the cancel claimed must still reach the written report."""
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            log = Path(folder) / 'mid.log'
+            log.write_text('')
+            process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
+            real_claim = handle.claim
+
+            def claiming_mid_sweep(candidates):
+                handle._cancelled = True  # the concurrent cancel wins the claim race here
+                return real_claim(candidates)
+
+            try:
+                with mock.patch.object(handle, 'claim', claiming_mid_sweep), \
+                     mock.patch.object(handle, 'stopped_report',
+                                       return_value=[{'pid': process.pid, 'name': 'swept'}]), \
+                     mock.patch.object(owned_process, '_terminate_tree', return_value=[]):
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        owned_process._run_until_exit(process, token_value, log, 0.4, handle)
+                self.assertIn(f"'pid': {process.pid}", log.read_text(),
+                              'the concurrent cancel claimed survivor must reach the written timeout report')
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=10)
+
     def test_a_cancel_racing_a_natural_rc_zero_exit_never_reads_as_unrecorded_success(self):
         """The F1 shape: same-group carrier alive, child exiting zero, cancel mid-drain."""
         for delay in (0.05, 1.0):

@@ -510,8 +510,13 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                 raise Cancelled(text) from None
             survivors = _terminate_tree(process, token_value)
             if cancel is not None:
-                survivors = merged_survivors(cancel.stopped_report() if cancel.cancelled else [],
-                                             cancel.claim(survivors))
+                own = cancel.claim(survivors)
+                # The flag is re-read after the claim: a cancel that flipped
+                # mid-sweep claims its victims into its own report, and this
+                # line must merge that report rather than the empty snapshot
+                # an earlier read took.
+                report = cancel.stopped_report() if cancel.cancelled else []
+                survivors = merged_survivors(report, own)
             process.poll()
             text = ''.join(data.decode('utf-8', errors='replace') for data in expired.buffers.values())
             text += _drain_after_kill(process) + '\n'
