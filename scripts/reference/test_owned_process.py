@@ -713,6 +713,26 @@ print('child exits', flush=True)
             self.assert_tree_gone(pid)
             self.assertIn('CANCELLED:', log.read_text())
 
+    def test_a_cancel_arriving_after_completion_keeps_the_run_result(self):
+        """A cancel landing on an empty handle must not relabel a completed run."""
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            log = Path(folder) / 'late.log'
+            log.write_text('')
+            real_terminate = owned_process.terminate
+
+            def flipping_terminate(token_value):
+                if not handle.cancelled:
+                    handle.cancel()  # lands after unregister: nothing to stop
+                return real_terminate(token_value)
+
+            with mock.patch.object(owned_process, 'terminate', flipping_terminate):
+                returncode, output = owned_process.run([PYTHON, '-c', 'import sys; sys.exit(3)'],
+                                                       {}, log, 10, cancel=handle)
+            self.assertEqual(returncode, 3, 'a completed run keeps its own return code')
+            self.assertFalse(handle.stopped_run, 'the cancel stopped nothing and must not claim it did')
+            self.assertNotIn('CANCELLED', log.read_text())
+
     def test_a_cancelled_handle_refuses_a_new_run_before_any_process_starts(self):
         handle = owned_process.CancelHandle()
         self.assertEqual(handle.cancel(), [], 'an empty handle has nothing to cancel')

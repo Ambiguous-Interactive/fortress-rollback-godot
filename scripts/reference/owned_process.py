@@ -283,8 +283,10 @@ class CancelHandle:
         self._lock = threading.Lock()
         self._process = None
         self._token = None
+        self._pinned = None
         self._named = set()
         self._report = []
+        self._stopped_run = False
         self._cancelled = False
         self._swept = threading.Event()
 
@@ -300,11 +302,20 @@ class CancelHandle:
         False covers a handle that already cancelled and one that is already
         pinning another concurrent run: a handle carries one run at a time,
         and silently overwriting the pin would leave the earlier run
-        uncancellable until its own deadline.
+        uncancellable until its own deadline. The leader's pidfd is opened
+        here — the child was just started and nothing can have reaped it, so
+        the pin can never capture a recycled id — and retained for the
+        cancellation to signal through.
         """
         with self._lock:
             if self._cancelled or self._process is not None:
                 return False
+            pinned = None
+            try:
+                pinned = os.pidfd_open(process.pid)
+            except (AttributeError, OSError):
+                pinned = None  # Without pidfd support the poll guard decides below.
+            self._pinned = pinned
             self._process, self._token = process, token_value
             return True
 
@@ -312,11 +323,28 @@ class CancelHandle:
         """Release the pin; a later cancel then finds nothing left to stop."""
         with self._lock:
             self._process = self._token = None
+            pinned, self._pinned = self._pinned, None
+        if pinned is not None:
+            try:
+                os.close(pinned)
+            except OSError:
+                pass  # A closed pin is already the state the probe reads as reaped.
 
     @property
     def cancelled(self):
         with self._lock:
             return self._cancelled
+
+    @property
+    def stopped_run(self):
+        """Whether this cancel actually stopped a run it had pinned.
+
+        A cancel landing on an empty handle — the run already finished and
+        unpinned itself — stopped nothing, so the owning call keeps its own
+        completed result instead of reading as cancelled.
+        """
+        with self._lock:
+            return self._stopped_run
 
     def claim(self, candidates):
         """Name the not-yet-named candidates and mark every pid claimed exactly once."""
@@ -342,23 +370,20 @@ class CancelHandle:
             if self._cancelled:
                 raise ValueError('this run was already cancelled')
             self._cancelled = True
-            process, token_value = self._process, self._token
-            self._process = self._token = None
+            process, token_value, pinned = self._process, self._token, self._pinned
+            self._process = self._token = self._pinned = None
         fresh = []
         try:
             candidates = []
+            self._stopped_run = process is not None
             if process is not None:
-                # The leader's pidfd is pinned before anything can reap it, so
-                # every group decision below is made against the process the
-                # handle actually owned: after the owning call reaps its
-                # child the group is no longer ours — a kill then could reach
-                # a recycled id — and only the pidfd-pinned token sweep runs,
-                # which can never misaddress.
-                pinned = None
-                try:
-                    pinned = os.pidfd_open(process.pid)
-                except (AttributeError, OSError):
-                    pinned = None
+                # The leader's pidfd was pinned at registration, before
+                # anything could reap it, so every group decision below is
+                # made against the process the handle actually owned: after
+                # the owning call reaps its child the group is no longer
+                # ours — a kill then could reach a recycled id — and only
+                # the pidfd-pinned token sweep runs, which can never
+                # misaddress. Without pidfd support the poll guard decides.
                 reaped = _leader_reaped(pinned) if pinned is not None else process.poll() is not None
                 candidates = terminate(token_value) if reaped else _terminate_tree(process, token_value, pinned)
             fresh = self.claim(candidates)
@@ -525,7 +550,7 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
         try:
             returncode, parts, post_exit_bytes, group_alive = _collect(process, time.monotonic() + timeout)
         except _Deadline as expired:
-            if cancel is not None and cancel.cancelled:
+            if cancel is not None and cancel.cancelled and cancel.stopped_run:
                 # The handle stopped this run; the deadline only won the poll
                 # race. The tree is still verified here — a cancel whose kill
                 # or sweeps failed stops nothing, so this branch sweeps,
@@ -698,7 +723,7 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
     candidates = merged_survivors(report, fresh)
     if candidates:
         output += f'OWNED_PROCESSES: terminated {candidates}\n'
-        if cancel is not None and cancel.cancelled:
+        if cancel is not None and cancel.cancelled and cancel.stopped_run:
             output += 'CANCELLED: the owning handle stopped this command\n'
             log.write_text(output)
             if fresh:
@@ -706,7 +731,7 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
             raise Cancelled(output) from None
         log.write_text(output)
         raise EscapedDescendants(candidates)
-    if cancel is not None and cancel.cancelled:
+    if cancel is not None and cancel.cancelled and cancel.stopped_run:
         if returncode != 0:
             text = output + 'CANCELLED: the owning handle stopped this command\n'
             log.write_text(text)
@@ -764,7 +789,7 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
         # so an escaped or cancelled run keeps its diagnosis where the caller
         # looks, with every terminated pid named exactly once (#381's class).
         text = ''.join(parts.values()) + f'OWNED_PROCESSES: terminated {candidates}\n'
-        if cancel is not None and cancel.cancelled:
+        if cancel is not None and cancel.cancelled and cancel.stopped_run:
             text += 'CANCELLED: the owning handle stopped this command\n'
             log.write_text(text)
             if fresh:
@@ -772,7 +797,7 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
             raise Cancelled(text) from None
         log.write_text(text)
         raise EscapedDescendants(candidates)
-    if cancel is not None and cancel.cancelled:
+    if cancel is not None and cancel.cancelled and cancel.stopped_run:
         if returncode != 0:
             text = ''.join(parts.values()) + 'CANCELLED: the owning handle stopped this command\n'
             log.write_text(text)
