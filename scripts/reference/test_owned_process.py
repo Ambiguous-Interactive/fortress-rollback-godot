@@ -592,11 +592,17 @@ print('child exits', flush=True)
         thread.start()
         pid = None
         deadline = time.monotonic() + 10
-        while pid is None and time.monotonic() < deadline:
-            if marker.exists():
+        # The cancel must land on a pinned run: under load the worker can stall
+        # between _start() and register(), so the child's marker alone proves
+        # nothing about registration — a cancel firing in that gap is refused
+        # (ValueError) instead of raising Cancelled, which is production
+        # behavior but not what these tests exercise (CI run 44377842214).
+        while time.monotonic() < deadline:
+            if pid is None and marker.exists():
                 pid = int(marker.read_text())
-            else:
-                time.sleep(0.05)
+            if pid is not None and cancel._process is not None:
+                break
+            time.sleep(0.05)
         return thread, outcome, log, pid
 
     def assert_tree_gone(self, pid):
