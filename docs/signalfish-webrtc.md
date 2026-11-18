@@ -194,7 +194,9 @@ snapshot corruption must fail at an original-input canonical comparison.
 
 On a Chromium pair the launcher overlaps independent labels while their live
 pages stay within one eight-player room's page count, the busiest shape a
-hosted runner already proves; every label keeps its own rooms, validators,
+hosted runner already proves (the packed wave still multiplies browser
+processes, so the constrained-CPU measurement in the job-time record pins
+the packed gates on two CPUs). Every label keeps its own rooms, validators,
 logs and timeouts, and the receipt lists records in label order. A Firefox
 pair keeps the fully serial run its shared display placement pins. Label
 walls, not receipts, are what shrink.

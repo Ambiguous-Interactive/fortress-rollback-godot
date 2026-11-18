@@ -7,6 +7,7 @@ import hashlib
 import struct
 from unittest.mock import patch
 from browser import webrtc_runner
+from fetch import ROOT
 import unittest
 from pathlib import Path
 import tempfile
@@ -440,6 +441,12 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         arguments = [keyword.value for keyword in calls[0].keywords if keyword.arg == 'rooms']
         self.assertEqual(len(arguments), 1, 'actual launcher must supply the room budget')
         expression = compile(ast.Expression(arguments[0]), 'actual_launcher_budget', 'eval')
+        waves = [node for node in ast.walk(source) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == 'run_wave']
+        self.assertEqual(len(waves), 1, 'the launcher must route every label through one wave runner')
+        overlap = ast.dump(waves[0].args[1])
+        self.assertEqual(overlap, ast.dump(ast.parse("pair == ('chromium', 'chromium')", mode='eval').body),
+                         'only the exact all-chromium pair may overlap; headed pairs must stay serial')
         expected_rooms = {'clean': 3, 'faults': 3, 'mixed': 3, 'mixed-default': 3, 'mixed-close': 3,
                           'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1,
                           'peer-drop': 1, 'peer-drop-corrupt': 1, 'peer-drop-close': 1,
@@ -459,6 +466,20 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                 webrtc_runner.room_count('unknown-label')
             capture.assert_not_called()
 
+    def test_room_tables_bind_the_browser_ground_truth(self):
+        source = (ROOT / 'scripts/reference/browser/webrtc.cjs').read_text()
+        self.assertIn("for (const count of (recordingPressure ? [2] : peerDrop ? [3] : "
+                      "(corrupt || defaultFactory || disableFallback) ? [2] : [2, 4, 8])) {", source,
+                      'the room ternary changed; revisit PEAK_PLAYERS and ROOM_COUNTS beside it')
+        for label, rooms in webrtc_runner.ROOM_COUNTS.items():
+            self.assertIn(label, webrtc_runner.PEAK_PLAYERS)
+            peak = webrtc_runner.PEAK_PLAYERS[label]
+            if rooms == 3:
+                self.assertEqual(peak, 8, f'{label} runs 2/4/8-player rooms, so its peak is one eight-player room')
+            else:
+                self.assertIn(peak, (2, 3), f'{label} runs one room of two or three players')
+            self.assertLessEqual(peak, webrtc_runner.MAX_CONCURRENT_PLAYERS)
+
     def test_label_waves_hold_the_hosted_page_budget_and_serial_pairs_repeat_history(self):
         serial = webrtc_runner.label_waves(['clean', 'faults'], overlap=False)
         self.assertEqual(serial, [['clean'], ['faults']], 'a headed pair keeps the historical serial run')
@@ -474,7 +495,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
             for wave in plan:
                 self.assertLessEqual(sum(webrtc_runner.PEAK_PLAYERS[label] for label in wave),
                                      webrtc_runner.MAX_CONCURRENT_PLAYERS, f'wave {wave} exceeds the hosted page budget')
-        with self.assertRaises(KeyError):
+        with self.assertRaises(ValueError):
             webrtc_runner.label_waves(['unknown-label'], overlap=True)
 
     def test_run_wave_joins_packed_members_and_names_failures_in_label_order(self):
@@ -487,7 +508,8 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
             return f'{label}-record'
         with self.assertRaises(ValueError) as raised:
             webrtc_runner.run_wave(['corrupt', 'default', 'mixed-disabled'], True, operation)
-        self.assertIn('corrupt: corrupt exploded', str(raised.exception))
+        self.assertIn('corrupt: ValueError: corrupt exploded', str(raised.exception),
+                      'the failure class must survive the joined report')
         self.assertEqual(sorted(finished), ['default', 'mixed-disabled'], 'every packed sibling still joins')
         results = webrtc_runner.run_wave(['corrupt', 'default', 'mixed-disabled'], True, lambda label: f'{label}-record')
         self.assertEqual(results, {'corrupt': 'corrupt-record', 'default': 'default-record', 'mixed-disabled': 'mixed-disabled-record'})

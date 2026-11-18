@@ -74,10 +74,13 @@ bootstrap are already restored from the cache and are not the dominant part.
 The `direct` and `mixed` jobs used to run their label processes one after
 another. On a Chromium pair the launcher now overlaps independent labels
 while their combined live pages stay within one eight-player room's page
-count — the busiest shape a hosted SignalFish job already proves, so overlap
-cannot exceed the #104 runner-contention budget. Every label keeps its own
-rooms, browser processes, validators, logs, timeouts and events file, and
-the receipt lists records in label order. Headed Firefox pairs keep the
+count — the busiest shape a hosted SignalFish job already proves. The page
+bound is the same measure the hosted eight-player room proves; a packed
+wave also multiplies Node processes and browser instances (two instances
+per label), which the page count does not capture, so the constrained-CPU
+measurement below pins the packed gates on two CPUs. Every label keeps its
+own rooms, browser processes, validators, logs, timeouts and events file,
+and the receipt lists records in label order. Headed Firefox pairs keep the
 fully serial run because concurrent windows would stack on one display and
 break the pinned per-peer placement; the planner reproduces the historical
 serial schedule there (`webrtc_runner.label_waves` with `overlap=False`).
@@ -89,14 +92,24 @@ waves — two pairs and one single). The `mixed` job's four labels keep four wav
 label excludes every other; its wall shape is unchanged by this change.
 
 Controlled same-host measurement (arm64 devcontainer, warm caches, Godot
-4.3, Chromium pair, fixed export/setup overhead included):
+4.3, Chromium pair, fixed export/setup overhead included; the packed waves
+also multiply Node processes and browser instances — two instances per
+label — which the page bound does not capture, so the second row repeats
+the pair on two pinned CPUs, the measurement that exposed #104):
 
 | Scope | Serial | Overlapped |
 | --- | --- | --- |
-| `corrupt`, `default`, `mixed-disabled`, `peer-drop`, `peer-drop-answer` (5 labels, 7 rooms) | 80.0s wall (5+4+25+11+11s labels) | 60.2s wall (waves 25s + 13s; labels 5+5+25+12+13s) |
+| `corrupt`, `default`, `mixed-disabled`, `peer-drop`, `peer-drop-answer` (5 labels, 5 rooms) | 80.0s wall (5+4+25+11+11s labels) | 60.2s wall (waves 25s + 13s; labels 5+5+25+12+13s) |
+| Same five labels under `taskset -c 0,1` | 97.0s wall (7+7+27+18+16s labels) | 92.2s wall (waves 43s + 28s) — CPU-bound, both pass |
 | `clean`, `faults` (2 labels, 6 rooms, both eight-page exclusive) | 56.3s wall (16s+19s labels) | 58.1s wall (16s+20s labels) — unchanged shape |
 
-Both runs passed the unchanged validators and receipts. The recorded
+Both runs passed the unchanged validators and receipts. Within the page
+budget the issue's literal lever is infeasible for the labels that own
+most of the wall: a three-room label's own rooms hold 2+4+8 = 14 live
+pages, more than the whole eight-page budget, so its rooms stay serial
+inside their process and the delivered reduction overlaps labels instead
+(`clean`/`faults` are therefore unchanged, as the second local row and
+their exclusive waves predict). The recorded
 66-minute summed target dates from the pre-tier workflow whose inventory
 this file already documents as incomparable; the standing measure for this
 family is now the per-job table and the two consecutive warm-key runs the

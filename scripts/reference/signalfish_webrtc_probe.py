@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import zipfile
 
@@ -35,6 +36,9 @@ import host_capacity  # noqa: E402
 
 HOST_LEASE_NAME = 'webrtc-witness'
 HOST_WAIT_SECONDS = 900.0
+# Overlapped labels print completion lines from wave threads; one lock keeps
+# each line whole on the shared stderr stream.
+PRINT_LOCK = threading.Lock()
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
           'peer-drop-answer', 'peer-drop-relay', 'recording-pressure')
 
@@ -615,7 +619,8 @@ def main():
                             else:
                                 result = validate_browser(json.loads(output), faults, mixed=label.startswith('mixed'),
                                                           default_budgets=label == 'mixed-default', physical_close=label == 'mixed-close', expected_engine=recording_engine)
-                        print(f'{version} {label} passed in {time.monotonic() - started:.0f}s', file=sys.stderr, flush=True)
+                        with PRINT_LOCK:
+                            print(f'{version} {label} passed in {time.monotonic() - started:.0f}s', file=sys.stderr, flush=True)
                         return {'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default', 'mixed-disabled', 'peer-drop-corrupt') else None,
                                 'command': browser_command, 'result': result}
 

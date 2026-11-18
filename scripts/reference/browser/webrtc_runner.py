@@ -30,9 +30,12 @@ def label_waves(labels, overlap):
 
     Every wave holds live pages within MAX_CONCURRENT_PLAYERS. Without overlap
     every label gets its own wave, which reproduces the historical serial run.
+    The tables above restate the room ternary in webrtc.cjs and are pinned to
+    its literal source by the probe suite, so the two cannot drift apart.
     """
     waves = []
     for label in labels:
+        room_count(label)
         peak = PEAK_PLAYERS[label]
         if not overlap:
             waves.append([label])
@@ -51,8 +54,10 @@ def run_wave(labels, overlap, operation):
 
     Single-label waves call the operation inline, so a serial plan keeps the
     historical raw-exception behavior exactly. Packed waves join all members
-    first and then name every failed label in the caller's label order.
-    Returns one result per label under its label name.
+    first — an interrupt in the joining caller waits for the running members
+    to reach their own deadlines, and every member's owned-process cleanup
+    runs on its own worker path — and then name every failed label in the
+    caller's label order. Returns one result per label under its label name.
     """
     results = {}
     for wave in label_waves(labels, overlap):
@@ -65,7 +70,8 @@ def run_wave(labels, overlap, operation):
             for wait in waits:
                 wait.result()
         if failures:
-            named = '; '.join(f'{label}: {failures[label]}' for label in labels if label in failures)
+            named = '; '.join(f'{label}: {type(failures[label]).__name__}: {failures[label]}'
+                              for label in labels if label in failures)
             raise ValueError(f'browser witness label failed: {named}')
     return results
 
