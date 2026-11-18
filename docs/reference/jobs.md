@@ -84,8 +84,8 @@ serial schedule there (`webrtc_runner.label_waves` with `overlap=False`).
 
 The `direct` job's ten labels pack into six waves (`clean` and `faults`
 stay exclusive at eight live pages each; `corrupt`, `default` and
-`mixed-disabled` share one wave; the `peer-drop` pairs share two waves).
-The `mixed` job's four labels keep four waves because every eight-page
+`mixed-disabled` share one wave; the five `peer-drop` labels share three
+waves — two pairs and one single). The `mixed` job's four labels keep four waves because every eight-page
 label excludes every other; its wall shape is unchanged by this change.
 
 Controlled same-host measurement (arm64 devcontainer, warm caches, Godot
