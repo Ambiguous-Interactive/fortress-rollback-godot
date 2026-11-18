@@ -251,7 +251,10 @@ def classify_change(name, old_tree, new_tree, old_entry, new_entry, old_name=Non
         elif old_lines == _NON_TEXT or new_lines == _NON_TEXT:
             # Non-text bytes cannot diff meaningfully, and different bytes
             # with the same replacement decoding would otherwise classify as
-            # no change: gate every undecodable side (issue #382 review).
+            # no change: gate every undecodable side (issue #382 review). The
+            # signal is specific to changed-path records: a same-bytes rename
+            # reports `path_moved` instead (and still gates unconditionally),
+            # and an unmatched path gates before any decode happens.
             record['signals'] = [_NON_TEXT]
             record['requires_review'] = True
         else:

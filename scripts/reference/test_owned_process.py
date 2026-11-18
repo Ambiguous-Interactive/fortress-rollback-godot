@@ -828,6 +828,16 @@ print('child exits', flush=True)
                 handle = owned_process.CancelHandle()
                 thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.LATE_ESCAPE_TREE)
                 self.assertIsNotNone(pid, 'the control only holds with an armed tree')
+                # The descendant writes its marker before the parent's, but a
+                # slow scheduler could still delay the fork's write: wait for
+                # the grand marker before cancelling, so a cancellation that
+                # worked correctly can never fail the recorded-pid assertion
+                # by killing an unready descendant (#403 review).
+                grand_marker = Path(folder) / 'run.pid.grand'
+                deadline_marker = time.monotonic() + 5
+                while not grand_marker.exists() and time.monotonic() < deadline_marker:
+                    time.sleep(0.02)
+                self.assertTrue(grand_marker.exists(), 'the fixture must arm the descendant before the cancel')
                 began = time.monotonic()
                 while time.monotonic() - began < delay:
                     time.sleep(0.02)
