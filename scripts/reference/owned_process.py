@@ -260,10 +260,10 @@ def _leader_reaped(pinned, pid=None):
     process: after the owning call reaps it, signals to the pin fail instead
     of reaching whatever process later reused the numeric id. The probe also
     fails for an exited-but-unreaped leader — a zombie has already released
-    its signal state — so the /proc directory decides that case: a zombie's
-    numeric id cannot be recycled until its owner reaps it, which makes the
-    group kill safe, while a reaped leader is gone entirely and its id is
-    free again (#398 review). Only a reaped leader therefore skips the group
+    its signal state — so the /proc state decides that case, requiring our
+    zombie ('Z') specifically: a reaped leader whose pid was recycled is
+    never in the zombie state, so a recycled id can never re-arm the group
+    kill (#398 review). Only a reaped leader therefore skips the group
     phases; a zombie still gets its surviving descendants named and killed.
     """
     try:
@@ -271,8 +271,13 @@ def _leader_reaped(pinned, pid=None):
         return False  # The pinned process is alive; the group phases stay armed.
     except OSError:
         pass  # The pin names no live process: a zombie or a reaped leader.
-    if pid is not None and Path(f'/proc/{pid}').exists():
-        return False  # A zombie still owns its id; the group is still ours to kill.
+    if pid is not None:
+        try:
+            state = Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[-1].split()[0]
+            if state == 'Z':
+                return False  # Our zombie: unreaped, its id still pinned to it.
+        except (OSError, IndexError):
+            pass  # Gone from /proc, or an unreadable entry: treated as reaped.
     return True
 
 
@@ -445,8 +450,9 @@ class CancelHandle:
         nothing can have reaped it, so the pin can never capture a recycled
         id — and retained for the cancellation to signal through. The log is
         retained too: it is where the owning call writes its final text
-        through emit(), and where this handle appends its own sightings when
-        a cancel lands after that write closed the handoff.
+        through emit(), where this handle appends its own sightings when a
+        cancel lands after that write closed the handoff, and where the
+        owning call's post-settle notes land through write_final().
         """
         with self._lock:
             if self._cancelled or self._process is not None or self._reporting:
@@ -462,6 +468,15 @@ class CancelHandle:
             self._closed = False
             self._reporting = True
             return True
+
+    def refusal_reason(self):
+        """Why the last register refusal happened, read under the lock."""
+        with self._lock:
+            if self._cancelled:
+                return 'this handle already cancelled its run'
+            if self._reporting:
+                return ("this handle is still publishing another run's report")
+            return 'this handle already pins another concurrent run'
 
     def unregister(self):
         """Release the pin; a later cancel then finds nothing left to stop."""
@@ -564,6 +579,22 @@ class CancelHandle:
             finally:
                 with self._lock:
                     self._reporting = False
+        return text
+
+    def write_final(self, log, text):
+        """Write one owning run's note to the log the caller owns, after its handoff closed.
+
+        The target is passed by the owning call — its own registration log —
+        never read from the handle, whose registration a later run may
+        already own. The report stream is untouched: a report published for
+        the next run stays its reader's. The log lock serializes the
+        truncate write against the cancel-side append door on the same file.
+        Like emit(), a sink failure propagates: the caller's outcome path
+        owns the decision.
+        """
+        with self._log_lock:
+            if text and log is not None:
+                log.write_text(text)
         return text
 
     def _append_sightings(self, named):
@@ -869,7 +900,9 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                     if sweep_anomaly is not None:
                         note += f'OWNED_PROCESS_SWEEP_ANOMALY: {sweep_anomaly}\n'
                     try:
-                        _write_final(log, cancel, note)
+                        # Post-settle: the note belongs to this run's own log,
+                        # never to whatever registered after the release.
+                        _note_final(log, cancel, note)
                     except OSError:
                         pass  # A failing log sink must not replace the interrupt either.
                 try:
@@ -911,10 +944,28 @@ def _write_final(log, cancel, text):
 
     With a handle, emit() owns the write and the handoff close in one step;
     without one, the log is the plain sink. An empty text writes nothing but
-    still closes an open handoff.
+    still closes an open handoff. Only for pre-settle contexts: after the
+    handoff closed, use `_note_final` so the note targets the owning run's
+    own log instead of whatever registered since.
     """
     if cancel is not None:
         return cancel.emit(text)
+    if text:
+        log.write_text(text)
+    return text
+
+
+def _note_final(log, cancel, text):
+    """Write a post-settle note: the owning run's log, never the current registration.
+
+    The handoff is closed here, so the handle's report stream belongs to
+    whatever registered after the release — a drain here would steal it and
+    an emit() here would write into that run's log. The target is the
+    owning call's own log argument; the handle contributes only its log
+    lock.
+    """
+    if cancel is not None:
+        return cancel.write_final(log, text)
     if text:
         log.write_text(text)
     return text
@@ -924,14 +975,17 @@ def _refused_run(cancel, process, token_value, log):
     """Clean up a tree the handle could not pin, then refuse.
 
     The handle either already cancelled, already pins another concurrent
-    run, or is still publishing an earlier run's report. The tree stop
-    mirrors the deadline path — sweeps and kill run even when one pass
-    raises, everything terminated is named, and the child is reaped — so
-    the unpinnable tree strands nothing before the ValueError refuses the
-    run. The diagnosis goes to this run's own log directly: the handle's
-    registered log belongs to the run it is pinning, and closing that
-    handoff here would corrupt the pinned run's report flow.
+    run, or is still publishing an earlier run's report; the reason is read
+    under the lock before the teardown so the message cannot be misattributed
+    by a state change during the sweeps. The tree stop mirrors the deadline
+    path — sweeps and kill run even when one pass raises, everything
+    terminated is named, and the child is reaped — so the unpinnable tree
+    strands nothing before the ValueError refuses the run. The diagnosis
+    goes to this run's own log directly: the handle's registered log belongs
+    to the run it is pinning, and closing that handoff here would corrupt
+    the pinned run's report flow.
     """
+    refusal = cancel.refusal_reason() if cancel is not None else 'refused without a handle'
     try:
         candidates, refused_anomaly = _terminate_tree(process, token_value)
         if refused_anomaly is not None and cancel is not None:
@@ -953,12 +1007,7 @@ def _refused_run(cancel, process, token_value, log):
                 except OSError:
                     pass
         process.poll()
-    if cancel is not None and cancel.cancelled:
-        raise ValueError('this handle already cancelled its run; the started tree was cleaned up before refusing')
-    if cancel is not None and cancel._reporting:
-        raise ValueError('this handle is still publishing another run\'s report; the started tree '
-                         'was cleaned up before refusing')
-    raise ValueError('this handle already pins another concurrent run; the started tree was cleaned up before refusing')
+    raise ValueError(f'{refusal}; the started tree was cleaned up before refusing')
 
 
 def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=None):
@@ -1055,16 +1104,16 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
         output += f'OWNED_PROCESSES: terminated {late}\n'
         if stopped:
             output += 'CANCELLED: the owning handle stopped this command\n'
-        text = _write_final(log, cancel, output)
+        text = _note_final(log, cancel, output)
         raise Cancelled(text) from None
     if tail_anomaly is not None:
         # Every sweep ran and the anomaly line is already in `output`; no
         # classified outcome won, so the tooling failure propagates with its
         # evidence written.
-        _write_final(log, cancel, output)
+        _note_final(log, cancel, output)
         raise tail_anomaly
     if post_exit_bytes or feed_failures:
-        _write_final(log, cancel, output)
+        _note_final(log, cancel, output)
     return returncode, output
 
 
@@ -1142,15 +1191,15 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
         text = ''.join(parts.values()) + f'OWNED_PROCESSES: terminated {late}\n' + anomaly_note
         if stopped:
             text += 'CANCELLED: the owning handle stopped this command\n'
-        _write_final(log, cancel, text)
+        _note_final(log, cancel, text)
         raise Cancelled(text) from None
     if tail_anomaly is not None:
-        _write_final(log, cancel, ''.join(parts.values()) + anomaly_note)
+        _note_final(log, cancel, ''.join(parts.values()) + anomaly_note)
         raise tail_anomaly
     if post_exit_bytes:
         note = (f'POST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '
                 'exited and were withheld\n')
-        _write_final(log, cancel, note)
+        _note_final(log, cancel, note)
         stderr += f'\n{note}'
     return returncode, parts[stdout_descriptor], stderr
 

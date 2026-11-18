@@ -1172,6 +1172,61 @@ time.sleep(0.05)
             self.assertIn('OWNED_PROCESS_SWEEP_ANOMALY: tail token scan exploded', text,
                           'the tail sweep failure must not hide behind the cancellation marker')
 
+    def test_a_post_settle_write_targets_the_owning_run_s_log(self):
+        """A note written after the handoff closed must not steal a later run's log or report.
+
+        The late/anomaly/post-exit branches settle, then write. If another
+        run registered in that gap, an emit-shaped write would land the first
+        run's note in the second run's log and drain the second run's report
+        stream (#403 adversarial review round).
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            own_log = Path(folder) / 'own.log'
+            own_log.write_text('')
+            later_log = Path(folder) / 'later.log'
+            later_log.write_text('')
+            real_settle = owned_process.CancelHandle.settle
+            later_process, _ = owned_process._start([PYTHON, '-c', 'import time; time.sleep(60)'], {}, None, False)
+            published = [{'pid': 424242, 'name': 'later-carrier'}]
+
+            def settling_then_registering(handle_self):
+                report = real_settle(handle_self)  # the phase closes and releases here
+                # A later run registers on the released handle and its cancel
+                # publishes a report before the owning call's final write.
+                assert handle_self.register(later_process, 'token-b', later_log), \
+                    'the control only holds with a released handle'
+                handle_self._publish(published)
+                return report
+
+            def collected_without_leak(process, deadline):
+                deadline_wait = time.monotonic() + 5
+                while process.poll() is None and time.monotonic() < deadline_wait:
+                    time.sleep(0.02)  # poll reaps the exited child: no zombie leak
+                process.poll()
+                return (0, {process.stdout.fileno(): 'out\n'}, 7, False, 0)
+
+            try:
+                with mock.patch.object(owned_process.CancelHandle, 'settle',
+                                       settling_then_registering), \
+                     mock.patch.object(owned_process, '_collect', side_effect=collected_without_leak):
+                    returncode, output = owned_process.run(
+                        [PYTHON, '-c', 'import sys; sys.exit(0)'], {}, own_log, 10, cancel=handle)
+                self.assertEqual(returncode, 0)
+                self.assertIn('POST_EXIT_OUTPUT', output, 'the control only binds with a post-settle write')
+                self.assertIn('POST_EXIT_OUTPUT', own_log.read_text(),
+                              "the owning run's note must land in its own log")
+                self.assertEqual(later_log.read_text(), '',
+                                 "a post-settle write must never reach a later run's log")
+                self.assertEqual(handle.absorb(), published,
+                                 "the later run's pending report stays its reader's")
+            finally:
+                handle.unregister()
+                handle.settle()
+                if later_process.poll() is None:
+                    later_process.kill()
+                later_process.wait(timeout=10)
+
     def test_a_handle_pins_exactly_one_run_and_refuses_a_second(self):
         with tempfile.TemporaryDirectory() as folder:
             handle = owned_process.CancelHandle()

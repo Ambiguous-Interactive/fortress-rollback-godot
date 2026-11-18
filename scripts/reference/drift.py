@@ -75,9 +75,10 @@ CATEGORY_RULES = (
 UNMATCHED = 'requires_review'
 
 # Formats whose grammar gives leading whitespace structural meaning: a pure
-# re-indent can move mappings between nesting levels, so the whitespace-only
-# noise label must never exempt them from review (issue #382 review).
-INDENTATION_SIGNIFICANT = ('.yml', '.yaml')
+# re-indent can move mappings between nesting levels or change which lines a
+# makefile treats as recipes, so the whitespace-only noise label must never
+# exempt them from review (issue #382 review).
+INDENTATION_SIGNIFICANT = ('.yml', '.yaml', 'makefile', '.mk')
 
 COMMENT_PREFIXES = ('//', '///', '//!')
 CONST_PREFIXES = ('const ', 'pub const ', 'static ', 'pub static ')
