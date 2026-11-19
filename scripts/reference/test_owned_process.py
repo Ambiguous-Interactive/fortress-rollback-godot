@@ -1764,6 +1764,24 @@ time.sleep(60)
                             'a matching attribution still kills')
             self.assertEqual(delivered, [(4242, signal.SIGKILL)])
 
+    # Value: protects=the token recheck's strand bias (#404);
+    # fails_when=a live carrier inside the scan-to-kill window is skipped
+    # because its environment reads empty mid-execve;
+    # seam=owned_process._token_carrier_check against a fake /proc root
+    def test_the_token_recheck_keeps_carriers_whose_environment_reads_empty(self):
+        with tempfile.TemporaryDirectory() as folder:
+            proc = Path(folder)
+            for pid, environment in (('610', b''), ('611', b'OTHER=1\0'),
+                                     ('612', f'{owned_process.TOKEN_VARIABLE}=tok\0'.encode())):
+                entry = proc / pid
+                entry.mkdir()
+                (entry / 'environ').write_bytes(environment)
+            belongs = owned_process._token_carrier_check('tok', proc=proc)
+            self.assertTrue(belongs(610), 'an empty environment keeps the kill: a mid-execve or dead carrier')
+            self.assertFalse(belongs(611), 'a nonempty environment without the token is a recycled pid')
+            self.assertTrue(belongs(612), 'the token still attributes our carrier')
+            self.assertTrue(belongs(613), 'an unreadable entry keeps the kill')
+
     # Value: protects=the pin-bounded post-exit group scan (#404);
     # fails_when=a pinned scan keeps the boundary and spares a post-exit
     # scrubbed member, or the pinless fallback drops its only guard;

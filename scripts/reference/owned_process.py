@@ -241,15 +241,25 @@ def _send_kill(pid, belongs=None):
     return True
 
 
-def _token_carrier_check(token_value):
-    """A kill-time recheck that the pid still carries the run token (#404)."""
+def _token_carrier_check(token_value, proc=None):
+    """A kill-time recheck that the pid still carries the run token (#404).
+
+    An unreadable or empty environment keeps the kill: a carrier can sit
+    mid-execve — or already be a self-terminated zombie — inside the
+    scan-to-kill window, and both read as empty, while the module's bias
+    is toward what the scan owned, never toward stranding a live carrier.
+    A recycled pid's environment is nonempty without the token, so the
+    mismatch case still skips.
+    """
     marker = (TOKEN_VARIABLE + '=' + token_value).encode('utf-8') + b'\0'
+    root = proc if proc is not None else Path('/proc')
 
     def belongs(pid):
         try:
-            return marker in (Path('/proc') / str(pid) / 'environ').read_bytes()
+            environment = (root / str(pid) / 'environ').read_bytes()
         except OSError:
             return True  # Unreadable environment: bias toward the scan's attribution.
+        return not environment or marker in environment
     return belongs
 
 
