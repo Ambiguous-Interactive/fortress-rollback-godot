@@ -1508,11 +1508,18 @@ def _drain_after_kill(process):
     The idle grace stops a drain waiting for an EOF a surviving carrier will
     never send; the total grace stops a carrier that writes continuously, so
     the deadline path always reaches its verification sweeps, the reap and
-    the TimeoutExpired raise (#398 review)."""
+    the TimeoutExpired raise (#398 review). Each select wait is capped by the
+    remaining total budget, so a wait that starts just before the deadline
+    cannot overshoot the cap by one idle grace."""
     streams = {process.stdout.fileno(): bytearray(), process.stderr.fileno(): bytearray()}
     buffers = {descriptor: bytearray() for descriptor in streams}
     total_deadline = time.monotonic() + DRAIN_TOTAL_SECONDS
-    while streams and time.monotonic() < total_deadline and _wait_readable(streams, DRAIN_IDLE_SECONDS):
+    while streams:
+        remaining = total_deadline - time.monotonic()
+        if remaining <= 0:
+            break  # The total cap: a live writer cannot hold the deadline path past this.
+        if not _wait_readable(streams, min(DRAIN_IDLE_SECONDS, remaining)):
+            break  # The idle grace: nothing more arrived from a killed command.
         _read_available(streams, buffers)
     stdout = buffers.pop(process.stdout.fileno()).decode('utf-8', errors='replace')
     return stdout + ''.join(data.decode('utf-8', errors='replace') for data in buffers.values())

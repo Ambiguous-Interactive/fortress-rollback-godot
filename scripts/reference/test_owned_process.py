@@ -482,14 +482,23 @@ class SplitStreamTests(unittest.TestCase):
                                     'import time\nwhile True:\n'
                                     '    print("x" * 4096, flush=True)\n    time.sleep(0.005)'],
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # A watchdog bounds the regression itself: if the drain hangs again,
+        # killing the writer forces the EOF exit, so the test fails at its own
+        # assertions instead of hanging until an outer runner timeout.
+        watchdog_fired = []
+        watchdog = threading.Timer(owned_process.DRAIN_TOTAL_SECONDS + 15,
+                                   lambda: (watchdog_fired.append(True), process.kill()))
+        watchdog.start()
         began = time.monotonic()
         try:
             drained = owned_process._drain_after_kill(process)
         finally:
+            watchdog.cancel()
             process.kill()
             process.wait(timeout=10)
             for stream in (process.stdout, process.stderr):
                 stream.close()
+        self.assertFalse(watchdog_fired, 'the drain hung past its total bound; the watchdog had to stop the writer')
         self.assertLess(time.monotonic() - began, owned_process.DRAIN_TOTAL_SECONDS + 5,
                         'the drain must return while a live writer keeps producing')
         self.assertTrue(drained, 'the control only holds with flushed bytes captured')
