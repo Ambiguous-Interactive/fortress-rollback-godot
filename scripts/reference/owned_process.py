@@ -1577,6 +1577,7 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
             if group_note:
                 note += group_note
             _note_final(log, cancel, note)
+            stderr += f'\n{note}'
         return returncode, parts[stdout_descriptor], stderr
     finally:
         if cancel is not None:
