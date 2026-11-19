@@ -2306,8 +2306,44 @@ class KernelClassProbeTests(unittest.TestCase):
         """
         process = process if process is not None else self._FakeProcess()
         calls = {'spawn': 0, 'finish': [], 'sends': 0, 'closes': [], 'member_kills': [], 'alive': 0,
-                 'process': process}
+                 'process': process, 'reads': [], 'finish_reads': None}
         alive_reads_state = {pid: 0 for pid in self.FAKE_MEMBERS}
+
+        class _ScriptedClock:
+            """A monotonic clock that advances only while the probe sleeps."""
+
+            def __init__(self):
+                self.now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+            def sleep(self, seconds):
+                self.now += seconds
+
+        clock = _ScriptedClock()
+
+        def stat_line(pid, start):
+            tail = [str(value) for value in range(1, 26)]
+            tail[18] = str(start)  # the starttime sits at fields[19] after the ') ' cut
+            return f'{pid} (sleeper) S ' + ' '.join(tail) + '\n'
+
+        records = {pid: stat_line(pid, start) for start, pid in zip((2, 3), self.FAKE_MEMBERS)}
+        if recycled_pin:
+            # One record drifts from its scan value: the pinned pid is a stranger.
+            records[self.FAKE_MEMBERS[0]] = stat_line(self.FAKE_MEMBERS[0], 99)
+
+        class _FakeProcPath:
+            """A /proc-shaped root serving the fixture's stat records by pid."""
+
+            def __init__(self, segment=()):
+                self._segment = ((segment,) if isinstance(segment, str) else tuple(segment))
+
+            def __truediv__(self, name):
+                return _FakeProcPath(self._segment + (str(name),))
+
+            def read_text(self):
+                return records[int(self._segment[-2])]
 
         def scripted_alive(pid, pin, start):
             alive_reads_state[pid] += 1
@@ -2316,16 +2352,19 @@ class KernelClassProbeTests(unittest.TestCase):
                 raise OSError(errno.EACCES, 'proc refused')
             killed_pins = {killed_pin for killed_pin, _ in calls['member_kills']}
             if pin in killed_pins:
-                return post_kill_survives
-            if deaths == 'pre-send':
-                return pid != self.FAKE_MEMBERS[0]  # member-one is dead from its first read
-            if alive_reads_state[pid] <= alive_reads:
-                return True
-            if deaths == 'both':
-                return False
-            if deaths == 'one':
-                return pid != self.FAKE_MEMBERS[0]
-            return True
+                result = post_kill_survives
+            elif deaths == 'pre-send':
+                result = pid != self.FAKE_MEMBERS[0]  # member-one is dead from its first read
+            elif alive_reads_state[pid] <= alive_reads:
+                result = True
+            elif deaths == 'both':
+                result = False
+            elif deaths == 'one':
+                result = pid != self.FAKE_MEMBERS[0]
+            else:
+                result = True
+            calls['reads'].append((pid, result))
+            return result
 
         def fake_spawn(command, environment=None, stdout=None, stderr=None, cwd=None):
             calls['spawn'] += 1
@@ -2334,6 +2373,7 @@ class KernelClassProbeTests(unittest.TestCase):
             return process, 'probe-token'
 
         def fake_finish(proc, token, grace=5.0):
+            calls['finish_reads'] = list(calls['reads'])
             calls['finish'].append((proc, token))
             if finish_error is not None:
                 raise finish_error
@@ -2350,6 +2390,7 @@ class KernelClassProbeTests(unittest.TestCase):
 
         with mock.patch.object(owned_process, 'KERNEL_PROBE_START_SECONDS', 0.2), \
                 mock.patch.object(owned_process, 'KERNEL_PROBE_VERIFY_SECONDS', 0.1), \
+                mock.patch.object(owned_process, 'time', clock), \
                 mock.patch.object(owned_process, 'spawn', side_effect=fake_spawn), \
                 mock.patch.object(owned_process, 'finish', side_effect=fake_finish), \
                 mock.patch.object(owned_process, 'group_members', side_effect=fake_members), \
@@ -2359,19 +2400,8 @@ class KernelClassProbeTests(unittest.TestCase):
                 mock.patch.object(owned_process.os, 'pidfd_open', side_effect=fake_pidfd_open), \
                 mock.patch.object(owned_process.os, 'close', side_effect=lambda fd: calls['closes'].append(fd)), \
                 mock.patch.object(owned_process.signal, 'pidfd_send_signal',
-                                  side_effect=lambda fd, sig: calls['member_kills'].append((fd, sig))):
-            if recycled_pin:
-                # A /proc whose stat re-read reports a different starttime
-                # than the scan recorded: the pinned pid is a stranger.
-                tail = ' '.join(str(value) for value in range(1, 26))
-                stat_line = f'{self.FAKE_MEMBERS[0]} (sleeper) S {tail}\n'
-                fake_path = mock.MagicMock()
-                stat_mock = fake_path.return_value.__truediv__.return_value.__truediv__.return_value
-                stat_mock.read_text.return_value = stat_line
-                with mock.patch.object(owned_process, 'Path', fake_path):
-                    verdict = owned_process._measure_group_signal_kernel()
-                calls['sends'] = send.call_count
-                return verdict, calls
+                                  side_effect=lambda fd, sig: calls['member_kills'].append((fd, sig))), \
+                mock.patch.object(owned_process, 'Path', _FakeProcPath):
             verdict = owned_process._measure_group_signal_kernel()
         calls['sends'] = send.call_count
         return verdict, calls
@@ -2427,12 +2457,20 @@ class KernelClassProbeTests(unittest.TestCase):
                           'a surviving member is stopped recycle-proof through its own pin')
         with self.subTest(shape='the pin kills land inside the cleanup wait'):
             # The members die one read after their pin SIGKILLs: the waits
-            # exit before their deadline, so finish() sees an empty tree and
+            # exit before their deadline, finish() sees an empty tree, and
             # the measured spares verdict is never replaced by a downgrade.
+            # The reads ledger pins the order: each member's last liveness
+            # read before finish() must be its observed death, so removing
+            # the wait fails here instead of passing invisibly.
             verdict, calls = self._measure(outcome='empty', deaths='none', post_kill_survives=False)
             self.assertEqual(verdict, (owned_process.KERNEL_CLASS_SPARES, None))
             self.assertEqual(len(calls['member_kills']), 2, 'both spared members are stopped')
             self.assertEqual(len(calls['finish']), 1, 'the owned teardown still runs')
+            for pid in self.FAKE_MEMBERS:
+                reads_before_finish = [result for member, result in calls['finish_reads']
+                                       if member == pid]
+                self.assertEqual(reads_before_finish[-1:], [False],
+                                 f'member {pid} must be observed dead before the teardown begins')
         with self.subTest(shape='a cleanup that cannot verify an empty tree'):
             verdict, calls = self._measure(outcome='delivered', deaths='both',
                                            finish_error=owned_process.EscapedDescendants([]))

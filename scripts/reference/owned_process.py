@@ -85,7 +85,8 @@ SETTLE_MAX_BYTES = 4 * DRAIN_CHUNK
 GROUP_SIGNAL_VERIFY_SECONDS = 1.0
 GROUP_SIGNAL_VERIFY_POLL = 0.1
 # The kernel class behind an 'empty' group-signal outcome is measured once per
-# process (#408): two throwaway processes and a bounded wait buy every later
+# process (#408): three throwaway processes (one leader, two members) and a
+# bounded wait buy every later
 # 'empty' verdict a proven reading instead of a kernel-ambiguous one.
 KERNEL_PROBE_START_SECONDS = 5.0  # member fork plus leader exit, before the shape is broken
 KERNEL_PROBE_VERIFY_SECONDS = 1.5  # the member-death observation window after the send
@@ -643,10 +644,12 @@ _PROBE_LEADER_CODE = (
     'import os, time\n'
     'first = os.fork()\n'
     'if first == 0:\n'
-    '    time.sleep(120)\n'  # the members park until the probe's send or cleanup stops them
+    '    time.sleep(120)\n'
+    '    os._exit(0)\n'  # a first child cleanup failed to stop never forks a second sleeper
     'second = os.fork()\n'
     'if second == 0:\n'
     '    time.sleep(120)\n'
+    '    os._exit(0)\n'
     'os._exit(0)\n'  # the leader exits at once, leaving both same-group members behind
 )
 
@@ -656,17 +659,16 @@ def _probe_member_alive(member_pid, member_pin, member_start, proc=None):
 
     The sig-0 send through the member's own pin is recycle-proof: ESRCH
     names a fully terminated task even though the held pin still references
-    its struct pid. A success is still not a stop — a zombie cannot run and
-    come back, and a recycled pid reads a different starttime — so the
-    /proc state decides: zombie, exit state or a missing entry is dead, a
-    changed starttime is a recycled pid (dead), and an unreadable starttime
-    biases toward alive, which can only keep the probe waiting, never fake
-    a death. The sig-0 success also proves the pid cannot be recycled while
-    it is read: the original task still holds it. ESRCH on the send and a
-    missing stat entry are the only observations that report death; every
-    other error propagates, so a measurement records unknown instead of
-    faking a death and the cleanup falls back to finish()'s token sweep
-    (the caller's except keeps the verdict and the sweep both honest).
+    its struct pid, and a missing stat entry is the other observation read
+    as termination — those two are the only errors that report a death,
+    because a success can still hide a stop: a zombie cannot run and come
+    back, and a recycled pid reads a different starttime, so the /proc
+    state decides (zombie, exit state or a missing entry is dead, a changed
+    starttime is a recycled pid, dead, and an unreadable starttime biases
+    toward alive, which can only keep the probe waiting, never fake a
+    death). Every other read error propagates: a failed observation is
+    never evidence of a death. The sig-0 success also proves the pid cannot
+    be recycled while it is read: the original task still holds it.
     """
     try:
         signal.pidfd_send_signal(member_pin, 0)
@@ -816,41 +818,55 @@ def _measure_group_signal_kernel():
     except Exception as error:
         verdict['class'], verdict['note'] = KERNEL_CLASS_UNKNOWN, f'{error.__class__.__name__}: {error}'
     finally:
-        for member in members:
-            if member['pin'] is None:
-                continue
-            if member['start'] is not None:
-                # The pin kill fires only behind a verified identity: a
-                # member whose starttime could not be bound must never be
-                # signaled — finish()'s recycle-safe token sweep stops the
-                # real member instead.
+        # Finalization runs under every exit, including a BaseException
+        # interrupt landing inside a kill's wait: the interrupt is recorded,
+        # the remaining teardown still closes every pin and verifies the
+        # tree through finish()'s recycle-safe sweeps, and only then does it
+        # propagate — the cache stays unset for a later attempt, and the
+        # throwaway tree never leaks.
+        interrupt = None
+        try:
+            for member in members:
+                if member['pin'] is None or member['start'] is None:
+                    # No pin, or no verified identity to bind it: nothing
+                    # may be signaled — finish()'s recycle-safe token sweep
+                    # stops the real member instead.
+                    continue
                 try:
                     if _probe_member_alive(member['pid'], member['pin'], member['start']):
                         signal.pidfd_send_signal(member['pin'], signal.SIGKILL)
-                        # The kill is not delivery: wait out the scheduling
-                        # grace before finish() scans, so a mid-death member
-                        # is not named as a survivor and the measured verdict
-                        # is not replaced by a cleanup downgrade. A member
-                        # that survives the whole window still reaches
-                        # finish(), which names and stops it and triggers the
-                        # honest downgrade.
+                        # The kill is not delivery: wait out the scheduling grace
+                        # before finish() scans, so a mid-death member is not
+                        # named as a survivor and the measured verdict is not
+                        # replaced by a cleanup downgrade. A member that survives
+                        # the whole window still reaches finish(), which names
+                        # and stops it and triggers the honest downgrade.
                         deadline = time.monotonic() + KERNEL_PROBE_VERIFY_SECONDS
                         while _probe_member_alive(member['pid'], member['pin'], member['start']) \
                                 and time.monotonic() < deadline:
                             time.sleep(KERNEL_PROBE_POLL)
                 except (AttributeError, OSError):
                     pass  # finish()'s token sweep below still names and stops the carrier.
-            try:
-                os.close(member['pin'])
-            except OSError:
-                pass
-        if process is not None:
-            try:
-                finish(process, token_value)
-            except Exception as error:
-                verdict['class'] = KERNEL_CLASS_UNKNOWN
-                verdict['note'] = (f'the probe cleanup could not verify an empty tree: '
-                                   f'{error.__class__.__name__}: {error}')
+        except BaseException as caught:
+            interrupt = caught
+        for member in members:
+            if member['pin'] is not None:
+                try:
+                    os.close(member['pin'])
+                except OSError:
+                    pass
+        try:
+            if process is not None:
+                try:
+                    finish(process, token_value)
+                except Exception as error:
+                    verdict['class'] = KERNEL_CLASS_UNKNOWN
+                    verdict['note'] = (f'the probe cleanup could not verify an empty tree: '
+                                       f'{error.__class__.__name__}: {error}')
+        except BaseException as caught:
+            interrupt = interrupt or caught
+        if interrupt is not None:
+            raise interrupt
     return verdict['class'], verdict['note']
 
 
@@ -859,11 +875,13 @@ def _group_signal_kernel_class():
 
     Concurrent tails share one probe: the lock admits the first 'empty'
     verdict's classification and every later reader takes the cached answer,
-    so a wave of owned runs pays the two-process cost once — the first
+    so a wave of owned runs pays the three-process cost once — the first
     verifier blocks for one probe's bounded worst case, about
-    KERNEL_PROBE_START_SECONDS plus two KERNEL_PROBE_VERIFY_SECONDS plus
-    finish()'s sweeps, and the cached note travels beside a cached
-    'unknown' so every fallback verdict names why it is unclassified.
+    KERNEL_PROBE_START_SECONDS for the fork plus one KERNEL_PROBE_VERIFY_
+    SECONDS window before the send, one after it, and one cleanup grace per
+    surviving member, before finish()'s sweeps; the cached note travels
+    beside a cached 'unknown' so every fallback verdict names why it is
+    unclassified.
     """
     global _kernel_class, _kernel_probe_note
     if _kernel_class is not None:
