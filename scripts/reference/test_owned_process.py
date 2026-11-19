@@ -1774,7 +1774,21 @@ class LeaderPinTests(unittest.TestCase):
         # one kernel's semantics — unpinned runner kernels change under the
         # gate — it pins that the tail's verdict always matches what the
         # kernel actually did: delivered exactly when the member died, the
-        # failed-cleanup note with an error exactly when it did not.
+        # failed-cleanup note with an error exactly when it did not. The
+        # class cache is reset so an 'empty' outcome classifies against this
+        # runner's real kernel (#408) instead of inheriting a seed from an
+        # earlier test's mocked send.
+        saved_class = owned_process._kernel_class
+        saved_note = owned_process._kernel_probe_note
+        owned_process._kernel_class = None
+        owned_process._kernel_probe_note = None
+        try:
+            self._pinned_group_signal_reaches_members_after_the_leader_is_reaped()
+        finally:
+            owned_process._kernel_class = saved_class
+            owned_process._kernel_probe_note = saved_note
+
+    def _pinned_group_signal_reaches_members_after_the_leader_is_reaped(self):
         with tempfile.TemporaryDirectory() as folder:
             member_marker = Path(folder) / 'member.pid'
             leader = subprocess.Popen([PYTHON, '-c', """
@@ -1938,7 +1952,8 @@ time.sleep(60)
             self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL:')
             self.assertIsNone(error, 'a delivered signal is a completed cleanup')
             self.assertEqual(signal_mock.call_count, 1)
-        with mock.patch.object(owned_process, '_signal_group', return_value='empty') as signal_mock:
+        with mock.patch.object(owned_process, '_signal_group', return_value='empty') as signal_mock, \
+                mock.patch.object(owned_process, '_kernel_class', owned_process.KERNEL_CLASS_DELIVERS):
             note, error = owned_process._tail_group_signal(process, 9, True)
             self.assertIsNone(note, 'an emptied group is an ESRCH no-op, not a stop')
             self.assertIsNone(error)
@@ -1985,7 +2000,8 @@ time.sleep(60)
             note, error = owned_process._tail_group_signal(process, 9, True, verify=lambda boundary: [survivor])
             self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
             self.assertIsNotNone(error)
-        with mock.patch.object(owned_process, '_signal_group', return_value='empty'):
+        with mock.patch.object(owned_process, '_signal_group', return_value='empty'), \
+                mock.patch.object(owned_process, '_kernel_class', owned_process.KERNEL_CLASS_DELIVERS):
             note, error = owned_process._tail_group_signal(process, 9, True, verify=lambda boundary: [])
             self.assertIsNone(note, 'a measured-empty group stays the honest no-op')
             self.assertIsNone(error)
@@ -2107,7 +2123,8 @@ time.sleep(60)
             self.assertEqual(seen, [777], 'a delivered outcome scans at the send boundary')
         seen = []
         with mock.patch.object(owned_process, '_signal_group', return_value='empty'), \
-                mock.patch.object(owned_process, '_boot_ticks', return_value=777):
+                mock.patch.object(owned_process, '_boot_ticks', return_value=777), \
+                mock.patch.object(owned_process, '_kernel_class', owned_process.KERNEL_CLASS_DELIVERS):
             owned_process._tail_group_signal(process, 9, True, boundary=10,
                                              verify=lambda started_before: seen.append(started_before) or [])
             self.assertEqual(seen, [10], 'an emptied group scans at the caller\'s exit boundary')
@@ -2233,6 +2250,310 @@ os.rename(sys.argv[1] + '.tmp', sys.argv[1])
         for _, descriptor in opened:
             self.assertFalse(Path(f'/proc/self/fd/{descriptor}').exists(),
                              'the pin is released once the final sweep is done')
+
+
+class KernelClassProbeTests(unittest.TestCase):
+    """Value: the 'empty' group-signal verdict rests on a measured kernel class, not trust (#408).
+
+    The probe's measurement is pinned shape by shape with a scripted
+    throwaway tree — the send outcome and the member's scheduled death drive
+    the class — and the verdicts are pinned per class behind a seeded cache,
+    so a mid-band runner cannot flip a mocked-send test and a healthy runner
+    cannot pass one by luck. fails_when=an 'empty' outcome reads as a clean
+    teardown on a kernel that answers ESRCH beside live members, a probe
+    that leaked its own tree still lends its verdict, or the class is
+    measured more than once per process; seam=_measure_group_signal_kernel
+    behind scripted spawn/group_members/_signal_group/_probe_member_alive
+    seams, the verdicts through the seeded module cache, and one real
+    end-to-end measurement of the runner's own kernel.
+    """
+
+    class _FakeProcess:
+        """A leader-shaped stand-in: reaped from its first poll, pinned."""
+
+        def __init__(self, pid=4242, pin=77, exited=True):
+            self.pid = pid
+            self.owned_pin = pin
+            self._exited = exited
+
+        def poll(self):
+            return 0 if self._exited else None
+
+    def _measure(self, *, outcome='delivered', member_survives=True, process=None, members=None,
+                 spawn_error=None, finish_error=None, alive_reads=2):
+        """Run the real measurement against scripted seams; return (verdict, calls).
+
+        The scripted member answers alive for ``alive_reads`` reads — the
+        pre-send loop and its confirmation — and then follows
+        ``member_survives`` for every later read, which is the scheduled
+        death that separates the delivering kernel from the mid-band one.
+        One read answers alive only for the dead-before-the-send shape. The
+        probe's time bounds are shrunk so the unbounded shapes fail fast
+        instead of burning real seconds.
+        """
+        process = process if process is not None else self._FakeProcess()
+        calls = {'spawn': 0, 'finish': [], 'sends': 0, 'closes': [], 'member_kills': [], 'alive': 0,
+                 'process': process}
+        alive_state = {'reads': 0}
+
+        def scripted_alive(pid, pin, start):
+            alive_state['reads'] += 1
+            calls['alive'] = alive_state['reads']
+            if alive_state['reads'] <= alive_reads:
+                return True
+            return member_survives is True
+
+        def fake_spawn(command, environment=None, stdout=None, stderr=None, cwd=None):
+            calls['spawn'] += 1
+            if spawn_error is not None:
+                raise spawn_error
+            return process, 'probe-token'
+
+        def fake_finish(proc, token, grace=5.0):
+            calls['finish'].append((proc, token))
+            if finish_error is not None:
+                raise finish_error
+
+        def fake_members(group):
+            if members is not None:
+                return members
+            return [{'pid': process.pid, 'name': 'leader', 'start': 1},
+                    {'pid': process.pid + 1, 'name': 'member', 'start': 2}]
+
+        with mock.patch.object(owned_process, 'KERNEL_PROBE_START_SECONDS', 0.2), \
+                mock.patch.object(owned_process, 'KERNEL_PROBE_VERIFY_SECONDS', 0.1), \
+                mock.patch.object(owned_process, 'spawn', side_effect=fake_spawn), \
+                mock.patch.object(owned_process, 'finish', side_effect=fake_finish), \
+                mock.patch.object(owned_process, 'group_members', side_effect=fake_members), \
+                mock.patch.object(owned_process, '_signal_group',
+                                  side_effect=lambda proc_arg, pin_arg: outcome) as send, \
+                mock.patch.object(owned_process, '_probe_member_alive', side_effect=scripted_alive), \
+                mock.patch.object(owned_process.os, 'pidfd_open', return_value=778), \
+                mock.patch.object(owned_process.os, 'close', side_effect=lambda fd: calls['closes'].append(fd)), \
+                mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                                  side_effect=lambda fd, sig: calls['member_kills'].append((fd, sig))):
+            verdict = owned_process._measure_group_signal_kernel()
+        calls['sends'] = send.call_count
+        return verdict, calls
+
+    # Value: protects=the classification table the verdict machine leans on (#408);
+    # fails_when=a delivered send that stops the member reads as spares, an
+    # ESRCH beside a live member reads as delivers, or a contradictory or
+    # rejected send reads as any measured class;
+    # seam=_measure_group_signal_kernel with a scripted send and scheduled death
+    def test_the_probe_classifies_the_send_shapes(self):
+        shapes = [
+            ('a delivered send that stops the member', 'delivered', False,
+             owned_process.KERNEL_CLASS_DELIVERS, None),
+            ('a delivered send the member survives', 'delivered', True,
+             owned_process.KERNEL_CLASS_SPARES, None),
+            ('ESRCH beside the live member', 'empty', True,
+             owned_process.KERNEL_CLASS_SPARES, None),
+            ('ESRCH beside a dying member', 'empty', False,
+             owned_process.KERNEL_CLASS_UNKNOWN, 'the send answered ESRCH and the member died anyway'),
+            ('a rejected flag-4 send', 'failed', True,
+             owned_process.KERNEL_CLASS_UNKNOWN, 'the kernel rejected the flag-4 send'),
+        ]
+        for name, outcome, member_survives, expected_class, expected_note in shapes:
+            with self.subTest(shape=name):
+                verdict, calls = self._measure(outcome=outcome, member_survives=member_survives)
+                self.assertEqual(verdict, (expected_class, expected_note))
+                self.assertEqual(calls['sends'], 1, 'exactly one measured send per probe')
+                self.assertEqual(calls['spawn'], 1, 'one throwaway tree per probe')
+                self.assertEqual(calls['finish'], [(calls['process'], 'probe-token')],
+                                 'the tree always ends through the owned teardown')
+                self.assertIn(778, calls['closes'], 'the member pin is always released')
+
+    # Value: protects=the probe's owned cleanup of a surviving member (#408);
+    # fails_when=a member the kernel spared outlives the probe, or the probe
+    # lends its verdict after leaking its own tree;
+    # seam=_measure_group_signal_kernel with a recorded pin kill and a failing finish
+    def test_the_probe_stops_the_spared_member_through_its_pin_and_downgrades_on_leak(self):
+        verdict, calls = self._measure(outcome='empty', member_survives=True)
+        self.assertEqual(verdict, (owned_process.KERNEL_CLASS_SPARES, None))
+        self.assertIn((778, signal.SIGKILL), calls['member_kills'],
+                      'a surviving member is stopped recycle-proof through its own pin')
+        with self.subTest(shape='a cleanup that cannot verify an empty tree'):
+            verdict, calls = self._measure(outcome='delivered', member_survives=False,
+                                           finish_error=owned_process.EscapedDescendants([]))
+            self.assertEqual(verdict[0], owned_process.KERNEL_CLASS_UNKNOWN,
+                             'a probe that leaked its tree never lends a measured verdict')
+            self.assertIn('could not verify an empty tree', verdict[1])
+            self.assertIn('EscapedDescendants', verdict[1])
+
+    # Value: protects=the probe's fail-closed shapes (#408);
+    # fails_when=a shape the probe could not arrange reads as any measured
+    # class, or a probe error escapes to the caller;
+    # seam=_measure_group_signal_kernel with missing members, a stubborn
+    # leader, no pin, a failed spawn and no pidfd support
+    def test_the_probe_reports_the_broken_shapes_as_unknown(self):
+        for name, kwargs, note in [
+            ('the member never forks', {'members': [{'pid': 4242, 'name': 'leader', 'start': 1}]},
+             'the probe member never forked'),
+            ('the leader will not exit', {'process': self._FakeProcess(exited=False)},
+             'the probe leader would not exit'),
+            ('the member is dead before the send', {'member_survives': False, 'alive_reads': 1},
+             'the probe member died before the send'),
+            ('the leader could not be pinned', {'process': self._FakeProcess(pin=None)},
+             'the probe leader could not be pinned'),
+            ('the spawn itself fails', {'spawn_error': OSError(errno.EIO, 'no fork')}, 'OSError'),
+        ]:
+            with self.subTest(shape=name):
+                verdict, calls = self._measure(**kwargs)
+                self.assertEqual(verdict[0], owned_process.KERNEL_CLASS_UNKNOWN)
+                self.assertIn(note, verdict[1])
+                self.assertEqual(calls['sends'], 0, 'a broken shape is never measured')
+        with self.subTest(shape='no pidfd support'):
+            with mock.patch.object(owned_process, 'os', mock.MagicMock(spec=[])):
+                verdict = owned_process._measure_group_signal_kernel()
+            self.assertEqual(verdict, (owned_process.KERNEL_CLASS_UNKNOWN,
+                                       'no pidfd support; nothing to measure'))
+
+    # Value: protects=the scheduled-death distinction inside the pre-send shape (#408);
+    # fails_when=the member-alive seam cannot tell a live member from a
+    # zombie, a recycled pid or a fully terminated one;
+    # seam=_probe_member_alive against fake /proc entries and a scripted send
+    def test_the_member_liveness_check_reads_the_pinned_identity(self):
+        with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                               side_effect=OSError(errno.ESRCH, 'terminated')):
+            self.assertFalse(owned_process._probe_member_alive(100, 5, 3),
+                             'sig-0 ESRCH through the held pin is a fully terminated member')
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+
+            def stat_entry(pid, state, start):
+                entry = root / str(pid)
+                entry.mkdir()
+                # fields[0] is the state; the starttime sits at index 19
+                # after the ') ' split, which is tail's index 18.
+                tail = [str(value) for value in range(1, 26)]
+                if start is not None:
+                    tail[18] = str(start)
+                (entry / 'stat').write_text(f'{pid} (sleeper) {state} ' + ' '.join(tail) + '\n')
+
+            shapes = [
+                ('a live member', 101, 'S', 3, 3, True),
+                ('a zombie is dead for this verdict', 102, 'Z', 3, 3, False),
+                ('an exit state is dead', 103, 'X', 3, 3, False),
+                ('a missing entry is dead', 104, 'S', 3, None, False),
+                ('a recycled pid reads a new starttime', 105, 'S', 3, 4, False),
+                ('an unreadable starttime biases toward alive', 106, 'S', None, 3, True),
+            ]
+            for name, pid, state, recorded, on_disk, expected in shapes:
+                with self.subTest(shape=name):
+                    if on_disk is not None:
+                        stat_entry(pid, state, on_disk)
+                    with mock.patch.object(owned_process.signal, 'pidfd_send_signal'):
+                        alive = owned_process._probe_member_alive(pid, 5, recorded, proc=root)
+                    self.assertEqual(alive, expected)
+
+    # Value: protects=the per-class verdicts the tail returns (#408);
+    # fails_when=an 'empty' outcome reads clean on a spares kernel, carries
+    # an error on an unclassified kernel, or drops the probe's named note;
+    # seam=_empty_outcome_verdict behind a seeded module cache
+    def test_the_empty_verdict_per_class(self):
+        with mock.patch.object(owned_process, '_kernel_class', owned_process.KERNEL_CLASS_DELIVERS), \
+                mock.patch.object(owned_process, '_kernel_probe_note', None):
+            self.assertEqual(owned_process._empty_outcome_verdict(), (None, None),
+                             'a delivering kernel keeps the honest no-op')
+        with mock.patch.object(owned_process, '_kernel_class', owned_process.KERNEL_CLASS_SPARES):
+            note, error = owned_process._empty_outcome_verdict()
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error, 'a kernel that cannot prove an emptied group must not read clean')
+        with mock.patch.object(owned_process, '_kernel_class', owned_process.KERNEL_CLASS_UNKNOWN), \
+                mock.patch.object(owned_process, '_kernel_probe_note', 'the runner refused the probe'):
+            note, error = owned_process._empty_outcome_verdict()
+            self.assertRegex(note or '', r'OWNED_PROCESS_KERNEL_PROBE_FAILED:')
+            self.assertIn('the runner refused the probe', note)
+            self.assertIsNone(error, 'an unclassified kernel keeps the pre-probe verdict')
+
+    # Value: protects=the one-measurement-per-process contract (#408);
+    # fails_when=the class is measured twice, or the cached note is dropped
+    # from the fallback verdict;
+    # seam=_group_signal_kernel_class with a counting measurement
+    def test_the_kernel_class_is_probed_once_and_cached_with_its_note(self):
+        measurements = []
+
+        def scripted_measure():
+            measurements.append(1)
+            return owned_process.KERNEL_CLASS_UNKNOWN, 'once'
+
+        with mock.patch.object(owned_process, '_kernel_class', None), \
+                mock.patch.object(owned_process, '_kernel_probe_note', None), \
+                mock.patch.object(owned_process, '_measure_group_signal_kernel', side_effect=scripted_measure):
+            first = owned_process._group_signal_kernel_class()
+            second = owned_process._group_signal_kernel_class()
+            self.assertEqual(first, owned_process.KERNEL_CLASS_UNKNOWN)
+            self.assertEqual(second, first)
+            self.assertEqual(len(measurements), 1, 'one measurement per process')
+            self.assertEqual(owned_process._kernel_probe_note, 'once')
+            note, _ = owned_process._empty_outcome_verdict()
+            self.assertIn('once', note, 'the cached note travels beside the cached class')
+
+    # Value: protects=the tail's classify-before-verdict order (#408);
+    # fails_when=the first 'empty' verdict lands before the probe, or the
+    # classification does not persist for the later verdicts;
+    # seam=_tail_group_signal with a scripted measurement and an 'empty' send
+    def test_the_tail_probes_before_its_first_empty_verdict(self):
+        process = type('Probe', (), {'pid': 424242, 'poll': lambda self: 0})()
+        measurements = []
+
+        def scripted_measure():
+            measurements.append(1)
+            return owned_process.KERNEL_CLASS_SPARES, None
+
+        with mock.patch.object(owned_process, '_kernel_class', None), \
+                mock.patch.object(owned_process, '_kernel_probe_note', None), \
+                mock.patch.object(owned_process, '_measure_group_signal_kernel', side_effect=scripted_measure), \
+                mock.patch.object(owned_process, '_signal_group', return_value='empty'):
+            note, error = owned_process._tail_group_signal(process, 9, True)
+            self.assertEqual(len(measurements), 1, 'the first empty verdict probes before it lands')
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error)
+            self.assertEqual(owned_process._kernel_class, owned_process.KERNEL_CLASS_SPARES,
+                             'the classification persists on the module')
+            note, error = owned_process._tail_group_signal(process, 9, True)
+            self.assertEqual(len(measurements), 1, 'the second verdict takes the cached class')
+            self.assertIsNotNone(error)
+
+    # Value: protects=the probe end to end on the runner's real kernel (#408);
+    # fails_when=the measurement cannot classify a healthy runner kernel,
+    # measures twice, or skips the owned teardown;
+    # seam=_group_signal_kernel_class against the real spawn/send/cleanup seams
+    def test_the_probe_measures_this_kernel_once_and_leaves_no_tree(self):
+        saved_class = owned_process._kernel_class
+        saved_note = owned_process._kernel_probe_note
+        owned_process._kernel_class = None
+        owned_process._kernel_probe_note = None
+        real_finish = owned_process.finish
+        real_measure = owned_process._measure_group_signal_kernel
+        finishes = []
+
+        def recording_finish(process, token, grace=5.0):
+            finishes.append(process)
+            return real_finish(process, token, grace)
+
+        measurements = []
+
+        def counting_measure():
+            measurements.append(1)
+            return real_measure()
+
+        try:
+            with mock.patch.object(owned_process, 'finish', side_effect=recording_finish), \
+                    mock.patch.object(owned_process, '_measure_group_signal_kernel',
+                                      side_effect=counting_measure):
+                first = owned_process._group_signal_kernel_class()
+                second = owned_process._group_signal_kernel_class()
+            self.assertIn(first, (owned_process.KERNEL_CLASS_DELIVERS, owned_process.KERNEL_CLASS_SPARES),
+                          'a healthy runner kernel must classify; an unknown class is a probe defect here')
+            self.assertIsNone(owned_process._kernel_probe_note)
+            self.assertEqual(second, first)
+            self.assertEqual(len(measurements), 1, 'one real measurement per process')
+            self.assertEqual(len(finishes), 1, 'the throwaway tree ends through the owned teardown')
+        finally:
+            owned_process._kernel_class = saved_class
+            owned_process._kernel_probe_note = saved_note
 
 
 if __name__ == '__main__':

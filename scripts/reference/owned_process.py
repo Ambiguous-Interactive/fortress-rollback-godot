@@ -38,13 +38,19 @@ so a terminated pid can never vanish from the log between the run's last
 flag read and its write (#399). Post-reap ownership sweeps keep the exit
 boundary for the numeric group scans — the pin makes the group signal
 recycle-proof, not the number (#404) — and the tree stop stays armed in
-every leader state instead of degrading after a reap.
+every leader state instead of degrading after a reap. Since #408, an
+'empty' group-signal outcome is never trusted blind: the first one
+triggers a one-time probe that measures whether this kernel's flag-4
+send stops live members through a reaped leader's pin, and a kernel
+that cannot prove an emptied group fails the verdict closed instead of
+reporting a clean teardown.
 """
 import errno
 import os
 import select
 import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -78,6 +84,25 @@ SETTLE_MAX_BYTES = 4 * DRAIN_CHUNK
 # the group, so the caller's scan must empty within this bounded poll.
 GROUP_SIGNAL_VERIFY_SECONDS = 1.0
 GROUP_SIGNAL_VERIFY_POLL = 0.1
+# The kernel class behind an 'empty' group-signal outcome is measured once per
+# process (#408): two throwaway processes and a bounded wait buy every later
+# 'empty' verdict a proven reading instead of a kernel-ambiguous one.
+KERNEL_PROBE_START_SECONDS = 5.0  # member fork plus leader exit, before the shape is broken
+KERNEL_PROBE_VERIFY_SECONDS = 1.5  # the member-death observation window after the send
+KERNEL_PROBE_POLL = 0.02
+# The measured classes (#408). 'delivers': the flag-4 send stops a live member
+# through a reaped leader's pin, so an 'empty' outcome honestly names an
+# emptied group. 'spares': the send answers ESRCH beside live members or is
+# accepted without stopping them, so an 'empty' outcome cannot prove anything.
+# 'unknown': unmeasured or unmeasurable — verdicts keep the pre-probe behavior.
+KERNEL_CLASS_DELIVERS = 'delivers'
+KERNEL_CLASS_SPARES = 'spares'
+KERNEL_CLASS_UNKNOWN = 'unknown'
+# None reads "not probed yet"; KERNEL_CLASS_UNKNOWN reads "probed, could not
+# be classified" — an unknown class is cached, never re-measured.
+_kernel_class = None
+_kernel_probe_note = None
+_KERNEL_PROBE_LOCK = threading.Lock()
 
 
 def _undelivered_outcome(contained, confirmed):
@@ -446,7 +471,9 @@ def _signal_group(process, pinned):
     pidfd support at all, the numeric kill stays gated on an unreaped
     child, whose id is still reserved by the zombie or the live members.
     Returns the outcome: 'delivered' (a signal landed on the group),
-    'empty' (an emptied group is ESRCH, measured — a no-op, not a stop),
+    'empty' (ESRCH — an honestly emptied group on a delivering kernel, or
+    an ambiguous answer beside live members on a mid-band one; the tail
+    classifies before trusting it, see ``_empty_outcome_verdict``),
     or 'failed' (unsupported here or the call failed — the caller must
     never claim a termination that did not happen).
     """
@@ -482,7 +509,11 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None, 
     existed at the child's exit — with named escapees or without, because
     the spared member is exactly the one the scans cannot name. Returns
     (note, error): a delivered signal produces the group-signal note; an
-    emptied group is an ESRCH no-op that leaves the exit clean; a failed
+    emptied group is classified before it is trusted (#408) — on a kernel
+    the one-time probe measured as delivering, it stays the ESRCH no-op
+    that leaves the exit clean, on a mid-band kernel it reads as the
+    may-survive failure, and an unmeasurable kernel keeps the pre-probe
+    clean verdict with the probe's named note; a failed
     or unsupported signal produces the failed-cleanup note and an error,
     so the tail never reports a clean teardown while a spared member may
     survive (#404 review). A pinless platform has no flag-4 capability at
@@ -596,10 +627,213 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None, 
         return ('OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n',
                 None)
     if outcome == 'empty':
-        return None, None
+        return _empty_outcome_verdict()
     return ('OWNED_PROCESS_GROUP_SIGNAL_FAILED: the pinned group signal could not run; '
             'a same-group member the bounded scans spared may survive\n',
             RuntimeError('the pinned group signal failed; a spared same-group member may survive'))
+
+
+class _ProbeShape(Exception):
+    """A probe step could not arrange the measured shape; its message names which (#408)."""
+
+
+_PROBE_LEADER_CODE = (
+    'import os, time\n'
+    'child = os.fork()\n'
+    'if child == 0:\n'
+    '    time.sleep(120)\n'  # the member parks until the probe's send or cleanup stops it
+    'os._exit(0)\n'  # the leader exits at once, leaving the same-group member behind
+)
+
+
+def _probe_member_alive(member_pid, member_pin, member_start, proc=None):
+    """Whether the pinned probe member is still a live task (#408).
+
+    The sig-0 send through the member's own pin is recycle-proof: ESRCH
+    names a fully terminated task even though the held pin still references
+    its struct pid. A success is still not a stop — a zombie cannot run and
+    come back, and a recycled pid reads a different starttime — so the
+    /proc state decides: zombie, exit state or a missing entry is dead, a
+    changed starttime is a recycled pid (dead), and an unreadable starttime
+    biases toward alive, which can only keep the probe waiting, never fake
+    a death. The sig-0 success also proves the pid cannot be recycled while
+    it is read: the original task still holds it.
+    """
+    try:
+        signal.pidfd_send_signal(member_pin, 0)
+    except OSError:
+        return False
+    root = proc if proc is not None else Path('/proc')
+    try:
+        fields = (root / str(member_pid) / 'stat').read_text().rsplit(') ', 1)[-1].split()
+    except OSError:
+        return False  # Gone between the sig-0 probe and the read: it was dying.
+    if not fields or fields[0] in ('Z', 'X'):
+        return False
+    try:
+        return member_start is None or int(fields[19]) == member_start
+    except (IndexError, ValueError):
+        return True
+
+
+def _measure_group_signal_kernel():
+    """Measure the flag-4 delivery class against one throwaway tree (#408).
+
+    The shape is the ambiguous one the 2026-11-19 Gate runner measured: the
+    spawn-time leader pin is the only reference left to a leader that forked
+    a same-group member and exited, and the member is alive when the flag-4
+    send resolves the pin. What the kernel answers beside that member is the
+    class: a delivered send that stops the member is ``KERNEL_CLASS_DELIVERS``
+    — on such a kernel an 'empty' outcome honestly names an emptied group —
+    while an ESRCH beside the live member (the measured mid-band shape) or a
+    send accepted without stopping anyone makes every outcome unprovable and
+    reads ``KERNEL_CLASS_SPARES``. A send the kernel rejects outright, a
+    shape that cannot be arranged (no member, a leader that will not exit,
+    a member dead before the send, a missing leader pin) or any probe error
+    reads ``KERNEL_CLASS_UNKNOWN`` with a named note: verdicts keep the
+    pre-probe behavior there, and a rejecting kernel never reaches the
+    ambiguous verdict with a pin anyway — its sends fail closed already.
+
+    The probe never raises; it returns ``(classification, note)`` with a
+    None note exactly for a measured class. Its own processes go through the
+    owned spawn/finish surface, never the runners, because a runner-shaped
+    probe would recurse into the very tail that is asking. Cleanup stops a
+    surviving member through its own pin — recycle-proof, no numeric race —
+    and finish() runs the token and group sweeps that verify the tree is
+    gone and release the leader pin; the member carries the run token in its
+    forked environment, so a pin kill that could not run is still named and
+    stopped by the token sweep. A cleanup that cannot prove an empty tree
+    downgrades any verdict to ``KERNEL_CLASS_UNKNOWN`` with the failure
+    named, because the verdict machine must never rest on a probe that
+    leaked its own processes.
+    """
+    verdict = {'class': KERNEL_CLASS_UNKNOWN, 'note': 'the probe did not complete'}
+    process = None
+    token_value = None
+    member_pid = None
+    member_start = None
+    member_pin = None
+    try:
+        if not hasattr(os, 'pidfd_open') or not hasattr(signal, 'pidfd_send_signal'):
+            raise _ProbeShape('no pidfd support; nothing to measure')
+        process, token_value = spawn([sys.executable, '-c', _PROBE_LEADER_CODE],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if process.owned_pin is None:
+            raise _ProbeShape('the probe leader could not be pinned')
+        deadline = time.monotonic() + KERNEL_PROBE_START_SECONDS
+        while time.monotonic() < deadline:
+            if member_pid is None:
+                for entry in group_members(process.pid):
+                    if entry['pid'] != process.pid:
+                        member_pid, member_start = entry['pid'], entry['start']
+                        break
+            if member_pid is not None and process.poll() is not None:
+                break
+            time.sleep(KERNEL_PROBE_POLL)
+        if member_pid is None:
+            raise _ProbeShape('the probe member never forked')
+        if process.poll() is None:
+            raise _ProbeShape('the probe leader would not exit')
+        member_pin = os.pidfd_open(member_pid)
+        deadline = time.monotonic() + KERNEL_PROBE_VERIFY_SECONDS
+        while not _probe_member_alive(member_pid, member_pin, member_start) and time.monotonic() < deadline:
+            time.sleep(KERNEL_PROBE_POLL)
+        if not _probe_member_alive(member_pid, member_pin, member_start):
+            raise _ProbeShape('the probe member died before the send')
+        outcome = _signal_group(process, process.owned_pin)
+        member_died = False
+        deadline = time.monotonic() + KERNEL_PROBE_VERIFY_SECONDS
+        while time.monotonic() < deadline:
+            if not _probe_member_alive(member_pid, member_pin, member_start):
+                member_died = True
+                break
+            time.sleep(KERNEL_PROBE_POLL)
+        if outcome == 'delivered':
+            # A delivered send that stops the member is the healthy class; a
+            # send accepted without stopping the member is the other mid-band
+            # shape — no outcome proves an emptied group there either.
+            verdict['class'] = KERNEL_CLASS_DELIVERS if member_died else KERNEL_CLASS_SPARES
+            verdict['note'] = None
+        elif outcome == 'empty':
+            if member_died:
+                # ESRCH resolves nothing, so the send cannot have caused the
+                # death: the shape says nothing about this kernel's delivery.
+                raise _ProbeShape('the send answered ESRCH and the member died anyway')
+            # ESRCH beside a live member: the measured mid-band shape.
+            verdict['class'] = KERNEL_CLASS_SPARES
+            verdict['note'] = None
+        else:
+            raise _ProbeShape('the kernel rejected the flag-4 send')
+    except _ProbeShape as shape:
+        verdict['class'], verdict['note'] = KERNEL_CLASS_UNKNOWN, str(shape)
+    except Exception as error:
+        verdict['class'], verdict['note'] = KERNEL_CLASS_UNKNOWN, f'{error.__class__.__name__}: {error}'
+    finally:
+        if member_pin is not None:
+            try:
+                if member_pid is not None and _probe_member_alive(member_pid, member_pin, member_start):
+                    signal.pidfd_send_signal(member_pin, signal.SIGKILL)
+            except (AttributeError, OSError):
+                pass  # finish()'s token sweep below still names and stops the carrier.
+            try:
+                os.close(member_pin)
+            except OSError:
+                pass
+        if process is not None:
+            try:
+                finish(process, token_value)
+            except Exception as error:
+                verdict['class'] = KERNEL_CLASS_UNKNOWN
+                verdict['note'] = (f'the probe cleanup could not verify an empty tree: '
+                                   f'{error.__class__.__name__}: {error}')
+    return verdict['class'], verdict['note']
+
+
+def _group_signal_kernel_class():
+    """The kernel's measured flag-4 class, probed once per process (#408).
+
+    Concurrent tails share one probe: the lock admits the first 'empty'
+    verdict's classification and every later reader takes the cached answer,
+    so a wave of owned runs pays the two-process cost once, and the cached
+    note travels beside a cached 'unknown' so every fallback verdict names
+    why it is unclassified.
+    """
+    global _kernel_class, _kernel_probe_note
+    if _kernel_class is not None:
+        return _kernel_class
+    with _KERNEL_PROBE_LOCK:
+        if _kernel_class is not None:
+            return _kernel_class
+        _kernel_class, _kernel_probe_note = _measure_group_signal_kernel()
+        return _kernel_class
+
+
+def _empty_outcome_verdict():
+    """The tail's verdict for an 'empty' group-signal outcome, after classification (#408).
+
+    The ESRCH answer is kernel-ambiguous: on a kernel whose flag-4 semantics
+    predate recycle-proof delivery it happens beside live members, while on
+    a delivering kernel it honestly names an emptied group. The one-time
+    probe decides which kernel is running before this verdict lands.
+    'delivers' keeps the clean no-op the verdict has always been. 'spares' —
+    a measured mid-band kernel — fails the verdict closed, because a spared
+    tokenless member is exactly the shape this send exists to stop and the
+    kernel cannot prove there is none. 'unknown' falls back to the pre-probe
+    clean verdict with the probe's named note, never claiming a
+    classification it does not have.
+    """
+    kernel_class = _group_signal_kernel_class()
+    if kernel_class == KERNEL_CLASS_DELIVERS:
+        return None, None
+    if kernel_class == KERNEL_CLASS_SPARES:
+        return ('OWNED_PROCESS_GROUP_SIGNAL_FAILED: this kernel\'s flag-4 send is not recycle-proof delivery '
+                '(it answers ESRCH beside live members or is accepted without stopping them), so the '
+                'emptied-group outcome cannot prove the scans spared nothing; '
+                'a same-group member the bounded scans spared may survive\n',
+                RuntimeError('the pinned group signal reported an emptied group on a kernel that cannot prove it'))
+    note = _kernel_probe_note or 'the kernel class was not measured'
+    return (f'OWNED_PROCESS_KERNEL_PROBE_FAILED: {note}; the emptied-group verdict keeps the may-survive residual\n',
+            None)
 
 
 def _terminate_tree(process, token_value, pinned=None, boundary=None):
