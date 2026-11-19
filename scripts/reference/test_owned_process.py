@@ -1685,7 +1685,8 @@ time.sleep(60)
 import os, subprocess, sys, time
 scrubbed = {{k: v for k, v in os.environ.items() if k != {owned_process.TOKEN_VARIABLE!r}}}
 member = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], env=scrubbed)
-open(sys.argv[1], 'w').write(str(member.pid))
+open(sys.argv[1] + '.tmp', 'w').write(str(member.pid))
+os.rename(sys.argv[1] + '.tmp', sys.argv[1])
 time.sleep(0.2)
 """, str(marker)], {}, None, False)
             handle = owned_process.CancelHandle()
@@ -1770,7 +1771,8 @@ class LeaderPinTests(unittest.TestCase):
             leader = subprocess.Popen([PYTHON, '-c', """
 import os, subprocess, sys, time
 member = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
-open(sys.argv[1], 'w').write(str(member.pid))
+open(sys.argv[1] + '.tmp', 'w').write(str(member.pid))
+os.rename(sys.argv[1] + '.tmp', sys.argv[1])
 time.sleep(60)
 """, str(member_marker)], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             pinned = os.pidfd_open(leader.pid)
@@ -1905,7 +1907,8 @@ time.sleep(60)
 import os, subprocess, sys
 scrubbed = {k: v for k, v in os.environ.items() if k != 'FORTRESS_OWNED_RUN'}
 member = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], env=scrubbed)
-open(sys.argv[1], 'w').write(str(member.pid))
+open(sys.argv[1] + '.tmp', 'w').write(str(member.pid))
+os.rename(sys.argv[1] + '.tmp', sys.argv[1])
 """, str(marker)]
             handle = owned_process.CancelHandle()
             deliveries = []
