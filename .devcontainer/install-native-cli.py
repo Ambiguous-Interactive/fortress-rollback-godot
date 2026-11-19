@@ -27,6 +27,15 @@ JOURNAL_LIMIT_BYTES = 4 * 1024 * 1024
 # A pathological stream without newlines still fills the line buffer; past this
 # bound the partial line is flushed as complete evidence and counting resumes.
 PENDING_LIMIT_BYTES = 1024 * 1024
+# The failure diagnostic prints at most this many journal tail lines and at
+# most this many journal tail bytes: a stalled or killed CI context cannot read
+# the fixed journal path after the process is gone, so the tail itself must
+# reach the job log (issue #249) without one huge line or a pathological
+# journal flooding it. The backward read never loads more than this much of
+# the file, so a planted oversized file cannot exhaust memory either.
+JOURNAL_TAIL_LINES = 40
+JOURNAL_TAIL_BYTES = 16384
+JOURNAL_TAIL_READ_BYTES = 262144
 
 
 def redact_query_strings(text):
@@ -65,6 +74,66 @@ def _open_journal(path):
     except OSError as failure:
         return None, failure
     return os.fdopen(descriptor, 'wb'), None
+
+
+def journal_tail(package):
+    """The retained journal's redacted tail for a failure diagnostic (issue #249).
+
+    The retention note alone names a path the failing CI context can never read
+    again: a killed container or discarded Docker layer takes the file with it,
+    which is exactly what the 2026-11-18 occurrence's job log shows. The tail
+    therefore travels into the diagnostic stream itself. The read is bounded
+    twice — only the file's last ``JOURNAL_TAIL_READ_BYTES`` are loaded, so a
+    planted oversized file cannot exhaust memory, and the resulting lines are
+    capped by the line and byte budgets — and every line is re-redacted so the
+    diagnostic never depends on the writer. The first line of a truncated read
+    is dropped as partial unless the read begins at the file's start.
+    """
+    path = journal_path(package)
+    try:
+        with path.open('rb') as source:
+            start = source.seek(0, os.SEEK_END) - JOURNAL_TAIL_READ_BYTES
+            partial = start > 0
+            source.seek(max(0, start))
+            data = source.read(JOURNAL_TAIL_READ_BYTES)
+    except OSError:
+        return []
+    lines = data.decode('utf-8', errors='replace').splitlines()
+    if partial and lines:
+        # The cut can land inside a line; its consumed head is outside the read
+        # and the remainder is not evidence on its own.
+        lines = lines[1:]
+    if not lines:
+        return []
+    tail = lines[-JOURNAL_TAIL_LINES:]
+    if partial or len(lines) > JOURNAL_TAIL_LINES:
+        tail.insert(0, f'...[journal head truncated; showing the last {len(tail)} lines]')
+    # The budget bounds exactly what is printed, so each line is redacted
+    # before its size counts: redaction can lengthen a line (a short query
+    # becomes the longer ?<redacted>), and measuring the raw line first could
+    # print past the budget.
+    encoded = []
+    for line in tail:
+        redacted = redact_query_strings(line)
+        encoded.append((redacted, len(redacted.encode('utf-8', errors='replace')) + 1))
+    tail_marker = f'...[journal tail truncated at the {JOURNAL_TAIL_BYTES}-byte diagnostic budget]'
+    kept = []
+    remaining = JOURNAL_TAIL_BYTES
+    for line, size in reversed(encoded):
+        if size > remaining:
+            break
+        kept.append(line)
+        remaining -= size
+    if len(kept) < len(tail):
+        # The marker is part of the printed diagnostic, so its bytes come out
+        # of the same budget: lines are dropped from the oldest end until the
+        # marker fits, and the cut always names itself within the budget.
+        marker_size = len(tail_marker.encode('utf-8')) + 1
+        while kept and remaining < marker_size:
+            remaining += encoded[len(encoded) - len(kept)][1]
+            kept.pop()
+        kept.append(tail_marker)
+    return list(reversed(kept))
 
 
 class Installer:
@@ -194,10 +263,34 @@ class Installer:
             raise subprocess.TimeoutExpired(process.args, budget, output=''.join(collected)) from None
         return ''.join(collected)
 
+    def _print_journal_tail(self, merged):
+        """Print the retained journal's tail where the retention note is printed.
+
+        A disabled journal's path can hold planted foreign content, so only a
+        journal this run actually opened may be named, and its tail is never a
+        new failure: an unreadable file simply prints nothing.
+        """
+        if not (merged and self._journaled):
+            return
+        tail = journal_tail(self.args.package)
+        if tail:
+            print('retained install journal tail:', file=sys.stderr, flush=True)
+            for line in tail:
+                print(line, file=sys.stderr, flush=True)
+
     def command(self, command, publication=False, *, phase, merged=False):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
-            raise ValueError(f'publication retry budget exhausted before {phase} (elapsed time)')
+            if merged and self._journaled:
+                # The total deadline can expire between commands; the journal of
+                # the last failed install still holds its evidence, so this path
+                # reports the same tail-plus-retention shape as any other (issue
+                # #249 review).
+                self._print_journal_tail(True)
+                note = f'; partial output retained at {journal_path(self.args.package)}'
+            else:
+                note = ''
+            raise ValueError(f'publication retry budget exhausted before {phase} (elapsed time){note}')
         # The install phase merges the streams so the failure and timeout
         # diagnostics keep npm's original interleaving of lifecycle banners
         # (stdout) and registry logs (stderr). The JSON metadata lookups keep
@@ -248,7 +341,11 @@ class Installer:
                 print(redact_query_strings(text), end='', file=sys.stderr)
             # Only a journal this run actually opened may be named as retention;
             # a disabled journal's path can hold planted foreign content.
-            note = f'; partial output retained at {journal_path(self.args.package)}' if merged and self._journaled else ''
+            if merged and self._journaled:
+                self._print_journal_tail(merged)
+                note = f'; partial output retained at {journal_path(self.args.package)}'
+            else:
+                note = ''
             raise ValueError(f'CLI installation command timed out during {phase} within publication retry budget{note}') from failure
         result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         if result.returncode:
@@ -262,10 +359,17 @@ class Installer:
             missing = publication is True or (publication and any(spec in tokens for spec in publication))
             if missing and codes and codes <= {'ETARGET', 'E404'}:
                 raise PublicationPending(command[2] if publication is True else 'matching native dependency during install')
-            note = f'; partial output retained at {journal_path(self.args.package)}' if merged and self._journaled else ''
+            if merged and self._journaled:
+                self._print_journal_tail(merged)
+                note = f'; partial output retained at {journal_path(self.args.package)}'
+            else:
+                note = ''
             raise ValueError(f'CLI installation command failed during {phase} (exit {result.returncode}){note}')
-        if self._journaled:
-            # A healthy install removes the evidence journal it created.
+        if merged and self._journaled:
+            # A healthy install removes the evidence journal it created. Only
+            # the merged install may remove it: a later successful metadata
+            # lookup must not delete the previous failed attempt's evidence
+            # while publication retries are still running (issue #249 review).
             journal_path(self.args.package).unlink(missing_ok=True)
         return result.stdout.strip()
 
@@ -326,7 +430,17 @@ class Installer:
                 break
             except PublicationPending as failure:
                 if attempt == self.args.attempts or time.monotonic() + self.args.interval >= self.deadline:
-                    raise ValueError(f'publication retry budget exhausted for {package}@{version} after {attempt} attempts') from failure
+                    if self._journaled:
+                        # The last attempt's evidence is on disk and every earlier
+                        # attempt printed its own stream; the terminal summary still
+                        # carries the tail and the retention path, so the reader of
+                        # an exhausted budget sees the same evidence shape as any
+                        # other failed install (issue #249).
+                        self._print_journal_tail(merged=True)
+                        note = f'; partial output retained at {journal_path(package)}'
+                    else:
+                        note = ''
+                    raise ValueError(f'publication retry budget exhausted for {package}@{version} after {attempt} attempts{note}') from failure
                 print(f'native release pending ({failure}); retry {attempt + 1}/{self.args.attempts} '
                       f'in {self.args.interval:g}s; keeping {package}@{version}', file=sys.stderr, flush=True)
                 time.sleep(self.args.interval)

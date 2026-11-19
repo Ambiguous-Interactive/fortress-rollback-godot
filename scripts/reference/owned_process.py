@@ -73,6 +73,31 @@ START_TICK_SLACK = 1
 # unbounded hang; everything it cannot attribute is withheld later anyway.
 SETTLE_SECONDS = 2.0
 SETTLE_MAX_BYTES = 4 * DRAIN_CHUNK
+# A pinned group signal is verified, not trusted: kernels whose flag-4
+# semantics predate recycle-proof delivery accept the send without stopping
+# the group, so the caller's scan must empty within this bounded poll.
+GROUP_SIGNAL_VERIFY_SECONDS = 1.0
+GROUP_SIGNAL_VERIFY_POLL = 0.1
+
+
+def _undelivered_outcome(contained, confirmed):
+    """The failed-cleanup verdict for a pinned signal the kernel accepted without honoring.
+
+    The sweep's names are attempted stops, not proof: only a scan that
+    observed the group empty afterwards confirms the wording, and either way
+    the breach itself stays a tooling error, because a pinned kernel that
+    accepted the send without delivering it is exactly the regression the
+    verification exists to catch.
+    """
+    if contained and confirmed:
+        suffix = f'the boundary sweep stopped and named them: {contained}\n'
+    else:
+        suffix = 'a same-group member the bounded scans spared may survive\n'
+        if contained:
+            suffix = f'the boundary sweep reached: {contained}; ' + suffix[0].lower() + suffix[1:]
+    return (f'OWNED_PROCESS_GROUP_SIGNAL_FAILED: the kernel accepted the pinned group signal '
+            f'without stopping the members it resolved; {suffix}',
+            RuntimeError('the pinned group signal did not stop the surviving group members'))
 
 
 class EscapedDescendants(ValueError):
@@ -408,7 +433,11 @@ def _signal_group(process, pinned):
 
     The flag-4 group signal stays valid through a zombie and a reaped leader
     on the pinned kernels: the kernel resolves the group through the pinned
-    struct pid, whose object the pin keeps valid (#404). With a pin, this is
+    struct pid, whose object the pin keeps valid (#404). Kernels whose
+    flag-4 semantics predate that delivery accept the same call without
+    stopping the group — the send cannot be trusted as proof of a stop, so
+    every caller that claims a cleanup verifies it (see
+    ``_tail_group_signal`` and ``_terminate_tree``). With a pin, this is
     the only group signal: a failed attempt never degrades to a numeric
     killpg, because the child can exit and be reaped by its owner between
     the liveness check and the call, and a post-reap killpg by number could
@@ -444,7 +473,7 @@ def _signal_group(process, pinned):
     return 'empty'
 
 
-def _tail_group_signal(process, pinned, group_alive):
+def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None, boundary=None):
     """One tail cleanup pass: stop what the bounded scans had to spare.
 
     The post-exit group scan spares a tokenless member that forked after
@@ -460,10 +489,109 @@ def _tail_group_signal(process, pinned, group_alive):
     all and keeps main's behavior — the spared member survives unnamed,
     which is why `(None, None)` there is honest: the boundary-guard
     residual this whole design narrows is #404's to close.
+
+    ``verify`` is a callable receiving one starttime boundary (scheduler
+    ticks since boot, sampled immediately before the send) and returning
+    the live members of the group the signal was meant to stop. Kernels
+    whose flag-4 semantics predate recycle-proof delivery accept the send
+    through a reaped leader's pin without stopping anyone — a 2026-11-19
+    Gate runner measured exactly that shape while kernel 6.12.76 delivered
+    — so a claimed cleanup is measured, not trusted: the scan must empty
+    within a bounded poll or the tail reports the failed-cleanup note and
+    error. The boundary names every member alive at the send (the spared
+    class all started before it), and the caller's token union keeps the
+    window honest in both directions: a member forked between the boundary
+    sample and the send carries the run token and is named by the token
+    branch, while a group the kernel reissued after the send holds only
+    tokenless members started after the boundary, which stay excluded.
+    Only a descendant that both forked in that window and scrubbed its
+    environment escapes the scan — the same scrubbing residual the cgroup
+    work in #404 owns everywhere else.
+
+    That token-union rule leans on the send actually resolving the group.
+    When the outcome is ``'empty'`` — the kernel resolved nothing at the
+    send, which on the mid-band kernels happens beside live members, but
+    on a healthy kernel also happens when the group truly emptied — the
+    numeric id may already have been reissued to a foreign group whose
+    members started after the exit boundary, so the later send boundary
+    must not admit tokenless strangers: the scan then keeps the caller's
+    original exit boundary (``boundary``), staying with the members the
+    exit scans already owned plus the run token, and a spared tokenless
+    member it cannot see reads as the honest may-survive failure. Only a
+    delivered outcome proves the kernel resolved this group at the send,
+    which is what makes the later send boundary safe there.
+    ``contain`` is a callable with the same boundary argument that stops and
+    names the survivors the scan keeps finding — one send-boundary sweep with
+    the same token union the caller's verify uses. The grace comes first:
+    SIGKILL delivery is only visible after the member is scheduled, so a
+    member that dies within the verify window keeps the delivered verdict
+    and containment never runs. Only a member that survives the whole
+    window is contained, and the scan must then confirm the group empty —
+    the sweep's names are attempted stops, not proof, so unconfirmed
+    containment keeps the may-survive wording — while the breach itself
+    reports as the failed-cleanup error either way, because the pinned
+    signal did not do what the pinned kernels deliver and a regression
+    there must stay visible even when the sweep contained it. With no
+    contain callable the expiry keeps the original may-survive wording.
     """
     if not group_alive or pinned is None:
         return None, None
+    send_boundary = _boot_ticks()
     outcome = _signal_group(process, pinned)
+    # The scan boundary the verification and containment use: the send-time
+    # boundary only after a delivered outcome proved the kernel resolved this
+    # group at the send; an emptied group keeps the caller's exit boundary,
+    # because a reissued foreign group can hold members started after the
+    # exit that the later send boundary would wrongly admit.
+    scan_boundary = send_boundary if outcome == 'delivered' else boundary
+    contained = None
+    confirmed = False
+    grace_expired = False
+    if outcome in ('delivered', 'empty') and verify is not None:
+        # The grace: SIGKILL delivery waits for the member to be scheduled,
+        # so the scan polls the whole window before anything else reacts.
+        deadline = time.monotonic() + GROUP_SIGNAL_VERIFY_SECONDS
+        while True:
+            try:
+                remaining = verify(scan_boundary)
+            except OSError:
+                remaining = [object()]  # An unreadable scan is not evidence of a stop.
+            if not remaining:
+                confirmed = True
+                break
+            if time.monotonic() >= deadline:
+                grace_expired = True
+                break
+            time.sleep(GROUP_SIGNAL_VERIFY_POLL)
+        if not confirmed and contain is not None:
+            # The accepted signal did not stop these members: one send-boundary
+            # sweep stops and names them, then the scan confirms the outcome.
+            try:
+                contained = contain(scan_boundary)
+            except OSError:
+                contained = None  # The failure verdict continues without the sweep.
+            deadline = time.monotonic() + GROUP_SIGNAL_VERIFY_SECONDS
+            while not confirmed:
+                try:
+                    remaining = verify(send_boundary)
+                except OSError:
+                    remaining = [object()]
+                if not remaining:
+                    confirmed = True
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(GROUP_SIGNAL_VERIFY_POLL)
+        if contained:
+            # The sweep's names travel with the verdict; confirmation only
+            # decides whether the wording may claim a completed stop.
+            return _undelivered_outcome(contained, confirmed)
+        if not confirmed or grace_expired:
+            # An expired grace is a measured fact: the group stayed non-empty
+            # a full window past an accepted send, and a member that exits
+            # just before the sweep does not turn that into a delivered
+            # signal. Without containment, the members may still be running.
+            return _undelivered_outcome(contained, confirmed)
     if outcome == 'delivered':
         return ('OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n',
                 None)
@@ -509,6 +637,7 @@ def _terminate_tree(process, token_value, pinned=None, boundary=None):
             named = merged_survivors(named, sweep())
         except Exception:
             continue  # The kill and the second sweep still run and name what remains.
+    send_boundary = _boot_ticks() if pinned is not None else None
     signal_outcome = _signal_group(process, pinned)
     anomaly = None
     try:
@@ -519,6 +648,21 @@ def _terminate_tree(process, token_value, pinned=None, boundary=None):
         named = merged_survivors(named, terminate(token_value))
     except Exception as error:
         anomaly = anomaly or error  # Every sweep ran; the first anomaly is the one reported.
+    if pinned is not None and signal_outcome in ('delivered', 'empty'):
+        # The kernel accepted the pinned signal, and kernels whose flag-4
+        # semantics predate recycle-proof delivery can leave the class the
+        # bounded scans spared. One boundary sweep stops and names them: a
+        # delivered outcome proves the kernel resolved this group at the
+        # send, so the send boundary admits the members alive at the send;
+        # an emptied group keeps the caller's exit boundary, because a
+        # reissued foreign group can hold members started after the exit
+        # that the later send boundary would wrongly admit. The child is
+        # unreaped here, so the numeric id is still reserved.
+        try:
+            named = merged_survivors(named, terminate_group(process.pid, token_value=token_value,
+                                                            started_before=send_boundary if signal_outcome == 'delivered' else boundary))
+        except Exception as error:
+            anomaly = anomaly or error
     if signal_outcome == 'failed' and anomaly is None:
         # A failed pinned group signal during the tree stop is a tooling
         # failure, never a clean teardown: a same-group member born after the
@@ -1434,7 +1578,12 @@ def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
         ])
         own = cancel.claim(swept) if cancel is not None else swept
         candidates = merged_survivors(report, own)
-        group_note, group_error = _tail_group_signal(process, pinned, group_alive)
+        group_note, group_error = _tail_group_signal(
+            process, pinned, group_alive, boundary=exit_ticks,
+            verify=lambda started_before: group_members(process.pid, started_before=started_before,
+                                                        token_value=token_value),
+            contain=lambda started_before: terminate_group(process.pid, started_before=started_before,
+                                                           token_value=token_value))
         if group_note:
             output += group_note
         if group_error is not None and tail_anomaly is None:
@@ -1561,7 +1710,12 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
         # escape that wins this tail must not hide the tooling failure behind
         # its own marker.
         anomaly_note = f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n' if tail_anomaly is not None else ''
-        group_note, group_error = _tail_group_signal(process, pinned, group_alive)
+        group_note, group_error = _tail_group_signal(
+            process, pinned, group_alive, boundary=exit_ticks,
+            verify=lambda started_before: group_members(process.pid, started_before=started_before,
+                                                        token_value=token_value),
+            contain=lambda started_before: terminate_group(process.pid, started_before=started_before,
+                                                           token_value=token_value))
         if group_note:
             anomaly_note += group_note
         if group_error is not None and tail_anomaly is None:

@@ -258,6 +258,148 @@ class NativeCliInstallTests(unittest.TestCase):
                     except (ProcessLookupError, ValueError):
                         pass
 
+    def test_pre_launch_deadline_expiry_prints_the_journal_tail(self):
+        # Value: the total deadline can expire between commands, and the
+        # pre-launch refusal is the only failure path a journaled evidence
+        # stream could still miss (#249 review): it must carry the same
+        # tail-plus-retention shape as every other failed install.
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(helper.tempfile, 'tempdir', directory):
+                evidence = helper.journal_path('@opencode/cli')
+                evidence.write_text('npm http fetch GET https://registry.example/x.tgz?t=TOK\n',
+                                    encoding='utf-8')
+                args = SimpleNamespace(timeout=1, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
+                stderr = io.StringIO()
+                with patch.object(helper.time, 'monotonic', side_effect=[100.0, 200.0]), \
+                        contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                    installer = helper.Installer(args)
+                    installer._journaled = True  # the previous install attempt opened this journal
+                    with self.assertRaisesRegex(ValueError, 'publication retry budget exhausted before global installation') as raised:
+                        installer.command(['npm', 'install', '-g', '@opencode/cli@2.0.30'],
+                                          phase='global installation', merged=True)
+                self.assertIn('retained install journal tail:', stderr.getvalue())
+                self.assertIn('partial output retained at', str(raised.exception))
+                self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue())
+                self.assertNotIn('TOK', stderr.getvalue(), 'the tail never prints query credentials')
+                # Without a merged phase the deadline expiry keeps its plain form.
+                stderr = io.StringIO()
+                with patch.object(helper.time, 'monotonic', side_effect=[100.0, 200.0]), \
+                        contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(ValueError, 'publication retry budget exhausted before wrapper metadata'):
+                        helper.Installer(args).command(['npm', 'view', '@opencode/cli@latest', '--json'],
+                                                       phase='wrapper metadata')
+                self.assertNotIn('retained install journal tail', stderr.getvalue())
+                self.assertNotIn('partial output retained', stderr.getvalue(),
+                                 'a metadata expiry names no journal it never opened')
+
+    def test_timeout_prints_the_journal_tail_when_the_killed_pipes_yield_nothing(self):
+        # Value: the recurring #249 shape is a deadline whose kill lands while the
+        # post-kill collect returns nothing, so the job log showed only the
+        # retention path and the journaled evidence never reached it. The failure
+        # diagnostic must print the journal's redacted tail itself.
+        # fails_when=the tail stays on disk: the discarded container or Docker
+        # layer takes the journal with it and the stall stays unlocalized.
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(helper.tempfile, 'tempdir', directory):
+                script = ("printf 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\\n';"
+                          "printf 'npm sill log progress';"
+                          "sleep 60")
+                args = SimpleNamespace(timeout=2, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
+                stderr = io.StringIO()
+                collect = {}
+
+                def emptied_collect(self, **options):
+                    # The post-kill collect (the only timeout=5 call) returns
+                    # nothing, exactly like the observed occurrence's job log.
+                    if options.get('timeout') == 5:
+                        collect['used'] = True
+                        return '', ''
+                    return subprocess.Popen.communicate(self, **options)
+
+                with patch.object(helper.subprocess.Popen, 'communicate', emptied_collect), \
+                        contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(ValueError, 'timed out during global installation'):
+                        helper.Installer(args).command(['sh', '-c', script], phase='global installation', merged=True)
+                self.assertTrue(collect.get('used'), 'the post-kill collect must have been exercised')
+                self.assertIn('retained install journal tail:', stderr.getvalue())
+                self.assertIn('npm sill log progress', stderr.getvalue())
+                self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue(),
+                              'the tail keeps the host and path')
+                self.assertNotIn('TOK', stderr.getvalue(), 'the tail never prints query credentials')
+
+    def test_journal_tail_bounds_a_pathological_journal_and_survives_an_unreadable_file(self):
+        # Value: the tail is bounded evidence, never a new failure: a journal
+        # beyond the line budget keeps its newest lines behind an explicit
+        # truncation marker, and an unreadable file prints nothing.
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(helper.tempfile, 'tempdir', directory):
+                evidence = helper.journal_path('@opencode/cli')
+                evidence.write_text(''.join(f'line {number}\n' for number in range(1, 61)), encoding='utf-8')
+                tail = helper.journal_tail('@opencode/cli')
+                self.assertEqual(len(tail), 41)
+                self.assertIn('showing the last 40 lines', tail[0])
+                self.assertEqual(tail[1], 'line 21')
+                self.assertEqual(tail[-1], 'line 60')
+                evidence.write_text('npm http fetch GET https://registry.example/x.tgz?t=SECRET', encoding='utf-8')
+                self.assertEqual(helper.journal_tail('@opencode/cli'),
+                                 ['npm http fetch GET https://registry.example/x.tgz?<redacted>'],
+                                 'the tail re-redacts defensively')
+                # The byte budget bounds a journal of huge lines: the newest small
+                # lines survive, the oversized head line does not, and the cut
+                # names itself instead of flooding the diagnostic.
+                huge = 'x' * (helper.JOURNAL_TAIL_BYTES + 1)
+                evidence.write_text(f'{huge}\nnewest 1\nnewest 2\n', encoding='utf-8')
+                self.assertEqual(helper.journal_tail('@opencode/cli'),
+                                 ['...[journal tail truncated at the 16384-byte diagnostic budget]',
+                                  'newest 1', 'newest 2'])
+                # The marker's own bytes come out of the budget: when the newest
+                # line nearly fills it, older lines are dropped until the marker
+                # fits, and the printed diagnostic never exceeds the budget.
+                evidence.write_text(('é' * 5000 + '\n') * 2, encoding='utf-8')
+                tail = helper.journal_tail('@opencode/cli')
+                self.assertEqual(tail[0], '...[journal tail truncated at the 16384-byte diagnostic budget]')
+                self.assertLessEqual(sum(len(line.encode('utf-8')) + 1 for line in tail),
+                                     helper.JOURNAL_TAIL_BYTES,
+                                     'the marker is charged to the byte budget')
+                self.assertLessEqual(sum(len(line.encode('utf-8')) + 1 for line in tail[1:]),
+                                     helper.JOURNAL_TAIL_BYTES,
+                                     'the newest multibyte line is kept whole beside the marker')
+                # The read itself is bounded: a file larger than the read window
+                # loads only its newest bytes, drops the partial cut line, and
+                # keeps the newest complete lines with the head marker. The
+                # fixture size is asserted first, so the window cut is real.
+                stale = ''.join(f'stale {number}\n' for number in range(24000))
+                evidence.write_text(stale + 'fresh 1\nfresh 2\n', encoding='utf-8')
+                self.assertGreater(evidence.stat().st_size, helper.JOURNAL_TAIL_READ_BYTES,
+                                   'the fixture must exceed the read window for the cut to be real')
+                tail = helper.journal_tail('@opencode/cli')
+                self.assertIn('journal head truncated', tail[0])
+                self.assertEqual(tail[-2:], ['fresh 1', 'fresh 2'])
+                self.assertNotIn('stale 1\nstale 2', '\n'.join(tail), 'the cut line never leaks its head')
+                # Redaction happens before the budget counts: a short query that
+                # redacts into the longer ?<redacted> cannot print past it. The
+                # 40-line fixture's raw bytes fit the budget while its redacted
+                # bytes do not, which is exactly the ordering bug's shape.
+                line_template = 'npm http fetch GET https://r.example/' + 'a' * 364 + '?t=x'
+                evidence.write_text(''.join(line_template + '\n' for _ in range(40)), encoding='utf-8')
+                raw_total = sum(len(line.encode('utf-8')) + 1 for line in evidence.read_text(encoding='utf-8').splitlines())
+                self.assertLessEqual(raw_total, helper.JOURNAL_TAIL_BYTES,
+                                     "the fixture's raw bytes must fit the budget")
+                printed = helper.journal_tail('@opencode/cli')
+                self.assertLessEqual(sum(len(line.encode('utf-8')) + 1 for line in printed),
+                                     helper.JOURNAL_TAIL_BYTES,
+                                     'the redacted diagnostic stays within the byte budget')
+                self.assertTrue(all('t=x' not in line for line in printed),
+                                'the printed lines are the redacted ones')
+                evidence.chmod(0o000)
+                try:
+                    self.assertEqual(helper.journal_tail('@opencode/cli'), [])
+                finally:
+                    evidence.chmod(0o600)
+
     def test_hostile_journal_path_disables_journaling_without_failing_the_install(self):
         # Value: the journal is a diagnostic, never a new install failure: a
         # foreign-owned or planted file at the fixed path must neither stop the
@@ -293,6 +435,8 @@ class NativeCliInstallTests(unittest.TestCase):
                             self.assertIn('install evidence journal disabled', result.stderr)
                             self.assertNotIn('partial output retained', result.stderr,
                                              'a disabled journal must not be named as retention')
+                            self.assertNotIn('retained install journal tail', result.stderr,
+                                             'a disabled journal must not print a tail')
                         finally:
                             evidence.chmod(0o600)
 
@@ -430,6 +574,10 @@ class NativeCliInstallTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('publication retry budget exhausted', result.stderr)
         self.assertEqual(len([call for call in calls if call[0] == 'install']), 3)
+        # The terminal exhaustion summary carries the same evidence shape as any
+        # other failed install: the journaled tail and the retention path.
+        self.assertIn('retained install journal tail:', result.stderr)
+        self.assertIn('partial output retained at', result.stderr)
         result, _ = self.invoke(install_delay=True, missing_spec='@opencode/cli-linux-arm64@2.0.30')
         self.assertEqual(result.returncode, 0, result.stderr)
         for spec in ('@opencode/cli@2.0.30', '@unrelated/dependency@2.0.30', '@opencode/cli-linux-x64@2.0.29'):
