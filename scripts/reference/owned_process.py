@@ -428,15 +428,18 @@ def _tail_group_signal(process, pinned, group_alive, candidates):
     group signal stops that class recycle-proof. Runs whenever members
     existed at the child's exit — with named escapees or without, because
     the spared member is exactly the one the scans cannot name — and
-    returns the honest log note only when a signal actually landed; an
-    emptied group is an ESRCH no-op and a clean exit stays clean (#404
-    review).
+    returns the honest log note: delivered members produce the
+    group-signal note, a failed or unsupported signal produces a
+    group-signal-failed diagnostic so a run never reports clean while a
+    spared member may survive (#404 review), and an emptied group is an
+    ESRCH no-op that leaves the exit clean.
     """
     if not group_alive or pinned is None:
         return None
-    if not _signal_group(process, pinned):
-        return None
-    return 'OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n'
+    if _signal_group(process, pinned):
+        return 'OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n'
+    return ('OWNED_PROCESS_GROUP_SIGNAL_FAILED: the pinned group signal could not run; '
+            'a same-group member the bounded scans spared may survive\n')
 
 
 def _terminate_tree(process, token_value, pinned=None, boundary=None):

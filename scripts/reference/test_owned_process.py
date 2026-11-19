@@ -1896,8 +1896,9 @@ time.sleep(60)
 
     # Value: protects=the tail's spared-member cleanup (#404 review);
     # fails_when=a tokenless member forked after the boundary survives the run
-    # unnamed, or a healthy exit runs the group signal needlessly;
-    # seam=the runners' tails with a recorded _signal_group
+    # unnamed, a healthy exit runs the group signal needlessly, or a failed
+    # signal lets the run report clean while a spared member survives;
+    # seam=_tail_group_signal with a recorded and a failing _signal_group
     def test_the_tail_runs_the_pinned_group_signal_only_for_escaped_members(self):
         with tempfile.TemporaryDirectory() as folder:
             log = Path(folder) / 'tail-signal.log'
@@ -1913,11 +1914,13 @@ os.rename(sys.argv[1] + '.tmp', sys.argv[1])
             handle = owned_process.CancelHandle()
             deliveries = []
             with mock.patch.object(owned_process, '_signal_group',
-                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg)):
+                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg) or True):
                 with self.assertRaises(owned_process.EscapedDescendants):
                     owned_process.run(command, {}, log, 20, cancel=handle)
             self.assertEqual(len(deliveries), 1,
                              'the tail stops what the bounded scans had to spare through the pinned signal')
+            self.assertIn('OWNED_PROCESS_GROUP_SIGNAL:', log.read_text(),
+                          'the delivered group signal reaches the run log')
             member_pid = int(marker.read_text())
             deadline = time.monotonic() + 10
             while not terminated(member_pid) and time.monotonic() < deadline:
@@ -1927,10 +1930,18 @@ os.rename(sys.argv[1] + '.tmp', sys.argv[1])
             healthy_log = Path(folder) / 'tail-clean.log'
             healthy_log.write_text('')
             with mock.patch.object(owned_process, '_signal_group',
-                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg)):
+                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg) or True):
                 owned_process.run([PYTHON, '-c', 'import sys; sys.exit(0)'], {}, healthy_log, 10, cancel=handle)
             self.assertEqual(len(deliveries), 1,
                              'a healthy exit with no survivors never runs the group signal')
+            self.assertNotIn('OWNED_PROCESS_GROUP_SIGNAL', healthy_log.read_text())
+            failed_log = Path(folder) / 'tail-failed.log'
+            failed_log.write_text('')
+            with mock.patch.object(owned_process, '_signal_group', return_value=False):
+                with self.assertRaises(owned_process.EscapedDescendants):
+                    owned_process.run(command, {}, failed_log, 20, cancel=handle)
+            self.assertIn('OWNED_PROCESS_GROUP_SIGNAL_FAILED:', failed_log.read_text(),
+                          'a failed group signal is surfaced as an incomplete-cleanup diagnostic')
 
     # Value: protects=the pin lifecycle of every owned run (#404);
     # fails_when=a run never pins its leader, or leaves the pin descriptor open;
