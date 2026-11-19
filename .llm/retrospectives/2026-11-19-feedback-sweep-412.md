@@ -22,7 +22,7 @@
 
 | # | Finding | Type | Evidence |
 | --- | --- | --- | --- |
-| 1 | Unbounded-loop regression tests need an internal watchdog, and red is witnessed by simulating the broken shape, not by an outer timeout | technique | first drain-test shape hung the runner (external `timeout 25`, exit 124); watchdogged shape re-witnessed red with the bound inflated to 3600 (fired at 6 s) |
+| 1 | Unbounded-loop regression tests need an internal watchdog, and red is witnessed by simulating the broken shape, not by an outer timeout | technique | first drain-test shape hung the runner (external `timeout 25`, exit 124); red re-witnessed by an ad-hoc probe with `DRAIN_TOTAL_SECONDS` inflated to 3600 and its own `threading.Timer(6)` (fired at 6 s); the committed test's watchdog is `DRAIN_TOTAL_SECONDS + 15` |
 | 2 | A corrected factual claim must be swept across prose in the same round — the CHANGELOG contradicted the corrected code comment one commit later | rule | round-1 fixed `owned_process.py` wording; round-2 caught the identical claim still in the new CHANGELOG entry (`8b2c0b2` fixed it) |
 | 3 | GitHub MCP `search_issues` ignores offset/limit (duplicate pages); GraphQL brace tails should be generated, not hand-counted | harness | search returned the same issue 3x per page; two GraphQL RCURLY parse errors before `'}' * 7` |
 | 4 | The flag-4 pidfd knowledge row verified on touch: live probe 2026-11-19 accepts 1/2/4, rejects 8 (3/5 EINVAL via the kernel's single-scope check) | none (verify-on-touch) | local probe on 6.12.76 against the session-201 row |
