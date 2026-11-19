@@ -890,19 +890,22 @@ class CancelHandle:
         try:
             candidates = []
             if process is not None:
-                # A cancel flipping in the publish gap — the child exited but
-                # _collect had not published yet — reads no boundary while the
-                # owner's reap may already have freed the numeric id: sample
-                # an entry tick so the scans are bounded in that corner too
-                # (#404 review). An unreaped child keeps unbounded scans; its
-                # id cannot recycle until an owner reaps it. The one corner
-                # that stays unbounded by construction: a cancel that stops
-                # the tree itself frees the group id during its own kill
-                # sequence, so no valid boundary exists for the scans that
-                # straddle it — that residual is `_terminate_tree`'s
-                # documented trade, and the cgroup-backed identity work in
-                # #404 owns the mechanism that closes it.
-                if boundary is None and pinned is not None and process.poll() is not None:
+                # A cancel flipping before the owning call observed an exit
+                # reads no boundary — and at that point the child is alive or
+                # an unreaped zombie, whose id the zombie still reserves, so
+                # no recycled group can hold the numeric id yet. Sampling the
+                # entry tick unconditionally then bounds both scans for the
+                # whole cleanup: a group id the owner's later reap frees and
+                # reissues names nothing, because its members started after
+                # the sampled tick (#404 review). The one corner that stays
+                # unbounded by construction: a cancel that stops the tree
+                # itself frees the group id during its own kill sequence, so
+                # no valid boundary exists for the scans that straddle it —
+                # that residual is `_terminate_tree`'s documented trade, and
+                # the cgroup-backed identity work in #404 owns the mechanism
+                # that closes it.
+                if boundary is None and pinned is not None:
+                    boundary = _boot_ticks()
                     boundary = _boot_ticks()
                 if pinned is not None or process.poll() is None:
                     candidates, stop_anomaly = _terminate_tree(process, token_value, pinned, boundary)
