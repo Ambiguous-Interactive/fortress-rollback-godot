@@ -702,7 +702,9 @@ def _measure_group_signal_kernel():
     healthy kernels under the same race, so delivered-and-death keeps the
     delivered reading. A send the kernel rejects outright, a
     shape that cannot be arranged (no member, a leader that will not exit,
-    a member dead before the send, a missing leader pin) or any probe error
+    a member dead before the send, a missing leader pin, a member whose
+    starttime the scan could not read — the identity guard must be able to
+    bind the pin before anything is signaled) or any probe error
     reads ``KERNEL_CLASS_UNKNOWN`` with a named note: verdicts keep the
     pre-probe behavior there, and a rejecting kernel never reaches the
     ambiguous verdict with a pin anyway — its sends fail closed already.
@@ -753,6 +755,13 @@ def _measure_group_signal_kernel():
             raise _ProbeShape('the probe member never forked')
         if process.poll() is None:
             raise _ProbeShape('the probe leader would not exit')
+        if member_start is None:
+            # The identity guard needs the scan's starttime: without it a
+            # recycled pid cannot be told from the scanned member, and the
+            # cleanup pin kill could reach an unrelated process. The shape
+            # is refused before any pin exists; finish()'s token sweep, the
+            # recycle-safe killer, still covers the real member below.
+            raise _ProbeShape('the scan could not read the member starttime')
         member_pin = os.pidfd_open(member_pid)
         if member_start is not None:
             try:
@@ -800,20 +809,27 @@ def _measure_group_signal_kernel():
         verdict['class'], verdict['note'] = KERNEL_CLASS_UNKNOWN, f'{error.__class__.__name__}: {error}'
     finally:
         if member_pin is not None:
-            try:
-                if member_pid is not None and _probe_member_alive(member_pid, member_pin, member_start):
-                    signal.pidfd_send_signal(member_pin, signal.SIGKILL)
-                    # The kill is not delivery: wait out the scheduling grace
-                    # before finish() scans, so a member that is mid-death is
-                    # not named as a survivor and the measured verdict is not
-                    # replaced by a cleanup downgrade. A member that survives
-                    # the whole window still reaches finish(), which names and
-                    # stops it and triggers the honest downgrade.
-                    deadline = time.monotonic() + KERNEL_PROBE_VERIFY_SECONDS
-                    while _probe_member_alive(member_pid, member_pin, member_start) and time.monotonic() < deadline:
-                        time.sleep(KERNEL_PROBE_POLL)
-            except (AttributeError, OSError):
-                pass  # finish()'s token sweep below still names and stops the carrier.
+            if member_start is not None:
+                # The pin kill fires only behind a verified identity: a member
+                # whose starttime the scan could not read was refused above,
+                # and a pin held without that identity must never signal
+                # anyone — finish()'s recycle-safe token sweep stops the real
+                # member instead.
+                try:
+                    if member_pid is not None and _probe_member_alive(member_pid, member_pin, member_start):
+                        signal.pidfd_send_signal(member_pin, signal.SIGKILL)
+                        # The kill is not delivery: wait out the scheduling
+                        # grace before finish() scans, so a member that is
+                        # mid-death is not named as a survivor and the
+                        # measured verdict is not replaced by a cleanup
+                        # downgrade. A member that survives the whole window
+                        # still reaches finish(), which names and stops it
+                        # and triggers the honest downgrade.
+                        deadline = time.monotonic() + KERNEL_PROBE_VERIFY_SECONDS
+                        while _probe_member_alive(member_pid, member_pin, member_start) and time.monotonic() < deadline:
+                            time.sleep(KERNEL_PROBE_POLL)
+                except (AttributeError, OSError):
+                    pass  # finish()'s token sweep below still names and stops the carrier.
             try:
                 os.close(member_pin)
             except OSError:

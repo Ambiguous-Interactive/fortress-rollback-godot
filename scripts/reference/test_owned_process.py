@@ -2477,6 +2477,10 @@ class KernelClassProbeTests(unittest.TestCase):
              'the probe leader could not be pinned'),
             ('the scan pid was recycled before the pin', {'recycled_pin': True},
              'the probe pid was recycled before it was pinned'),
+            ('the scan could not read the member starttime',
+             {'members': [{'pid': 4242, 'name': 'leader', 'start': 1},
+                          {'pid': 4243, 'name': 'member', 'start': None}]},
+             'the scan could not read the member starttime'),
             ('the spawn itself fails', {'spawn_error': OSError(errno.EIO, 'no fork')}, 'OSError'),
         ]:
             with self.subTest(shape=name):
@@ -2484,6 +2488,13 @@ class KernelClassProbeTests(unittest.TestCase):
                 self.assertEqual(verdict[0], owned_process.KERNEL_CLASS_UNKNOWN)
                 self.assertIn(note, verdict[1])
                 self.assertEqual(calls['sends'], 0, 'a broken shape is never measured')
+        with self.subTest(shape='an unmeasurable starttime never earns a pin kill'):
+            verdict, calls = self._measure(members=[{'pid': 4242, 'name': 'leader', 'start': 1},
+                                                    {'pid': 4243, 'name': 'member', 'start': None}])
+            self.assertEqual(calls['member_kills'], [],
+                             'a pin without a verified identity must never signal anyone')
+            self.assertEqual(calls['closes'], [],
+                             'the shape is refused before any member pin exists')
         with self.subTest(shape='no pidfd support'):
             with mock.patch.object(owned_process, 'os', mock.MagicMock(spec=[])):
                 verdict = owned_process._measure_group_signal_kernel()
