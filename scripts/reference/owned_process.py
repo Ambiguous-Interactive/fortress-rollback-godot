@@ -483,16 +483,52 @@ def terminate_cgroup(leaf, proc=None):
     The sweep that replaced the post-exit numeric group scans under
     containment (#411): the membership set itself can never name a
     stranger, because a reissued numeric group never enters the leaf's
-    cgroup.procs, while the kills ride the same pinned identity check as
-    terminate_group — each member's scan-captured starttime is
-    re-verified after its pidfd is pinned, so a member that died and lost
-    its pid between the read and the signal cannot hand the kill to a
-    recycled pid (#404 review).
+    cgroup.procs, while the kills re-verify membership at kill time —
+    after the pidfd pins the pid, the leaf's record is read again and the
+    signal only proceeds while the pinned pid is still listed. A member
+    that exited and lost its pid between the scan and the pin cannot hand
+    the kill to a recycled stranger: the kernel's record no longer lists
+    that pid, whatever process now holds it (#411 review). The scan's
+    starttime still rides beside the record check, covering the
+    dying-member recycle the record alone cannot see, and a record that
+    cannot be read skips the kill: an unreadable membership cannot
+    authorize a signal. Both layers bias toward skipping an unverifiable
+    target over signaling it; the escape report still names what the scan
+    saw and the verification sweeps re-check it.
     """
     members = cgroup_members(leaf, proc)
-    belongs = {_item['pid']: _identity_check(_item['start'], proc) for _item in members}
+    belongs = {_item['pid']: _leaf_member_check(leaf, _item['start'], proc) for _item in members}
     named = [item for item in members if _send_kill(item['pid'], belongs[item['pid']])]
     return _strip_starts(named)
+
+
+def _leaf_member_check(leaf, start, proc):
+    """A kill-time recheck that the pinned pid is still the leaf's member (#411 review).
+
+    The pin freezes the pid against recycling, so the record read after
+    the pin names the pinned task: listed means the kernel still keeps
+    that exact task in the leaf, and not-listed means the scanned member
+    exited and a stranger (or nobody) holds the pid now. The scan's
+    starttime is checked first where it is readable — a recycled pid reads
+    a different one — and an unreadable stat leaves the decision to the
+    record, because the leaf membership is the containment's own proof.
+    """
+    root = proc if proc is not None else Path('/proc')
+
+    def belongs(pid):
+        if start is not None:
+            try:
+                current = (root / str(pid) / 'stat').read_text().rsplit(') ', 1)[-1].split()
+                if not current or int(current[19]) != start:
+                    return False  # A recycled pid reads a new starttime: not the scanned member.
+            except (OSError, IndexError, ValueError):
+                pass  # Unreadable stat: the record check below decides.
+        try:
+            listed = (leaf / 'cgroup.procs').read_text().split()
+        except OSError:
+            return False  # An unreadable record cannot authorize the signal.
+        return str(pid) in listed
+    return belongs
 
 
 def _claim_cgroup(pid, token_value, proc=None, mountinfo=None):
@@ -519,10 +555,16 @@ def _claim_cgroup(pid, token_value, proc=None, mountinfo=None):
     leaf = None
     try:
         base = _unified_cgroup_path(proc)
-        mount = _cgroup2_mount(mountinfo)
-        if base is None or mount is None:
+        mounted = _cgroup2_mount(mountinfo)
+        if base is None or mounted is None:
             return None
-        parent = mount if base == '/' else mount / base.strip('/')
+        mount, mount_root = mounted
+        relative = _relative_leaf_base(base, mount_root)
+        if relative is None:
+            # The process's cgroup is not under this mount's visible root:
+            # no leaf can be created here, so the fallback decides.
+            return None
+        parent = mount if not relative else mount / relative
         leaf = parent / (CGROUP_LEAF_PREFIX + token_value)
         leaf.mkdir(parents=False)
         (leaf / 'cgroup.procs').write_text(f'{pid}\n')
@@ -534,6 +576,25 @@ def _claim_cgroup(pid, token_value, proc=None, mountinfo=None):
             except OSError:
                 pass  # A failed teardown strands one empty leaf; the claim stays a fallback.
         return None
+
+
+def _relative_leaf_base(base, mount_root):
+    """The process's cgroup path made relative to the mount's visible root.
+
+    /proc/self/cgroup names the path from the namespace root, while the
+    mount's root field names where the visible tree starts: a delegated
+    subtree mount whose root is /user.slice/user-1000.slice shows that
+    slice at the mount point, so the leaf's parent is the remainder, not
+    the full path appended to the mount point (#411 review). None when
+    the process's cgroup is not under the mount's root at all.
+    """
+    if mount_root == '/':
+        return base.strip('/')
+    if base == mount_root:
+        return ''
+    if base.startswith(mount_root + '/'):
+        return base[len(mount_root):].strip('/')
+    return None
 
 
 def _unified_cgroup_path(proc=None):
@@ -553,12 +614,15 @@ def _unified_cgroup_path(proc=None):
 
 
 def _cgroup2_mount(mountinfo=None):
-    """The mounted cgroup2 hierarchy's root directory; None when it is absent.
+    """The mounted cgroup2 hierarchy's root directory and mount root; None when absent.
 
-    /proc/self/mountinfo rows place the mount point in the fifth field and
-    the filesystem type after the '-' separator. A mount point carrying an
-    escaped space (never true of a cgroup mount) is not decoded; the claim's
-    mkdir then fails and the safe fallback decides.
+    /proc/self/mountinfo rows place the mount point in the fifth field, the
+    mount's root in the third, and the filesystem type after the '-'
+    separator. The mount root is returned beside the mount point because a
+    delegated subtree mount shows its root at the mount point, and the
+    claim maps the process's cgroup path against it (#411 review). A mount
+    point carrying an escaped space (never true of a cgroup mount) is not
+    decoded; the claim's mkdir then fails and the safe fallback decides.
     """
     try:
         rows = (mountinfo or Path('/proc/self/mountinfo')).read_text().splitlines()
@@ -570,12 +634,13 @@ def _cgroup2_mount(mountinfo=None):
             separator = fields.index('-')
         except ValueError:
             continue  # A malformed row cannot name a mount point.
-        # The row's mount root (field 3) is ignored: a bind-mounted subset row
-        # would point the parent at a wrong root, and the claim's mkdir then
-        # fails into the safe fallback rather than a wrong-but-writable leaf.
+        # The row's mount root (field 3) maps the claim's path; a
+        # bind-mounted subset row would point the parent at a wrong root,
+        # and the claim's mkdir then fails into the safe fallback rather
+        # than a wrong-but-writable leaf.
         if separator < 5 or len(fields) <= separator + 1 or fields[separator + 1] != 'cgroup2':
             continue
-        return Path(fields[4])
+        return Path(fields[4]), fields[3]
     return None
 
 
@@ -585,25 +650,26 @@ def _release_cgroup(process):
     The kernel refuses to remove a leaf that still holds live tasks, so
     the release runs only from the sweeps' callers; a leaf that cannot be
     removed — a lingering dying task, live members whose kills failed and
-    escaped, or a re-mounted read-only hierarchy — stays behind named
-    after the run token and is never re-entered, because the next run
-    claims its own leaf; there is no janitor, so a host that keeps failing
-    releases accumulates one stranded leaf per failure. A racing cancel
-    whose sweeps straddle this release reads the numeric fallback the way
-    it would have on main, bounded by its sampled boundary: the one place
-    containment ends before every reader is done is the abandonment error
-    path, which never absorbs its handle (#411 review). Idempotent: a
-    process without a leaf, or one already released, is a no-op, which is
-    why a repeated finish stays safe.
+    escaped, or a re-mounted read-only hierarchy — keeps the process's
+    reference, so a repeated finish re-reads the leaf's membership and
+    re-raises instead of degrading to the numeric fallback, and the
+    stranded leaf stays behind named after the run token with no janitor:
+    one per failed release, never re-entered by another run (#411
+    review). A racing cancel whose sweeps straddle this release reads the
+    numeric fallback the way it would have on main, bounded by its
+    sampled boundary: the one place containment ends before every reader
+    is done is the abandonment error path, which never absorbs its
+    handle. Idempotent: a process without a leaf, or one already
+    released, is a no-op, which is why a repeated finish stays safe.
     """
     leaf = getattr(process, 'owned_cgroup', None)
-    process.owned_cgroup = None  # First release owns the removal: a repeated call is a no-op.
     if leaf is None:
         return
     try:
         leaf.rmdir()
     except OSError:
-        pass
+        return  # The reference stays: a repeated finish must re-verify membership.
+    process.owned_cgroup = None
 
 
 def merged_survivors(members, survivors):

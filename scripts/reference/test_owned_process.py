@@ -2985,6 +2985,24 @@ class CgroupContainmentTests(unittest.TestCase):
             self.assertEqual(leaf, mount / 'scope' / 'fortress-owned-tok',
                              'the leaf is one run-dedicated directory under the caller\'s own cgroup')
             self.assertEqual((leaf / 'cgroup.procs').read_text(), '4242\n', 'the child is placed in the leaf')
+            # A delegated subtree mount shows its root at the mount point, so
+            # the leaf maps to the path relative to that root, not the full
+            # path appended to the mount point (#411 review).
+            delegated = Path(folder) / 'delegated'
+            (delegated / 'app.scope').mkdir(parents=True)
+            mountinfo.write_text(
+                f'36 35 0:40 /user.slice/user-1000.slice {delegated} ro - cgroup2 cgroup rw\n')
+            (proc / 'self' / 'cgroup').write_text('0::/user.slice/user-1000.slice/app.scope\n')
+            leaf = owned_process._claim_cgroup(4242, 'tok2', proc=proc, mountinfo=mountinfo)
+            self.assertEqual(leaf, delegated / 'app.scope' / 'fortress-owned-tok2',
+                             'a delegated mount maps the leaf relative to the mount root')
+            (proc / 'self' / 'cgroup').write_text('0::/user.slice/user-1000.slice\n')
+            leaf = owned_process._claim_cgroup(4242, 'tok3', proc=proc, mountinfo=mountinfo)
+            self.assertEqual(leaf, delegated / 'fortress-owned-tok3',
+                             'a cgroup equal to the mount root places the leaf at the mount point')
+            (proc / 'self' / 'cgroup').write_text('0::/system.slice/other.scope\n')
+            self.assertIsNone(owned_process._claim_cgroup(4242, 'tok4', proc=proc, mountinfo=mountinfo),
+                              'a cgroup outside the mount root cannot claim a leaf there')
 
     def test_the_claim_falls_back_without_the_mechanism(self):
         """cgroup v1, a missing cgroup2 mount and an unwritable base all keep the numeric scans."""
@@ -3016,18 +3034,86 @@ class CgroupContainmentTests(unittest.TestCase):
             (proc / 'self').mkdir(parents=True)
             (proc / 'self' / 'cgroup').write_text('0::/scope\n')
             mountinfo = Path(folder) / 'mountinfo'
-            mountinfo.write_text('36 35 0:40 / /sys/fs/cgroup ro - cgroup2 cgroup rw\n')
+            mountinfo.write_text(f'36 35 0:40 / {mount} ro - cgroup2 cgroup rw\n')
             real_write = Path.write_text
+            placement_writes = []
 
             def refusing_write(path_self, data, **kwargs):
                 if path_self.name == 'cgroup.procs':
+                    placement_writes.append(str(path_self))
                     raise OSError(errno.EACCES, 'the leaf refused the placement')
                 return real_write(path_self, data, **kwargs)
 
             with mock.patch.object(Path, 'write_text', refusing_write):
                 self.assertIsNone(owned_process._claim_cgroup(4242, 'tok', proc=proc, mountinfo=mountinfo))
+            self.assertEqual(placement_writes, [str(mount / 'scope' / 'fortress-owned-tok' / 'cgroup.procs')],
+                             'the claim reached the real placement write before it failed')
             self.assertFalse((mount / 'scope' / 'fortress-owned-tok').exists(),
                              'a partially created leaf is removed before the fallback returns')
+
+    def test_the_kill_time_recheck_skips_a_pid_the_leaf_no_longer_lists(self):
+        """The record recheck: a recycled pid cannot receive the leaf's signal (#411 review)."""
+        with tempfile.TemporaryDirectory() as folder:
+            proc = self.fake_proc(folder, [(90, 'member', 'S', 5, False)])
+            leaf = self.fake_leaf(folder, [90])
+            belongs = owned_process._leaf_member_check(leaf, 5, proc)
+            self.assertTrue(belongs(90), 'the listed member with its own starttime is authorized')
+            self.assertFalse(belongs(91), 'a pid the record does not list is never authorized')
+            (leaf / 'cgroup.procs').write_text('')
+            self.assertFalse(belongs(90),
+                             'a pid the record no longer lists is a recycled stranger: skip the kill')
+            belongs = owned_process._leaf_member_check(leaf, 6, proc)
+            (leaf / 'cgroup.procs').write_text('90\n')
+            self.assertFalse(belongs(90),
+                             'a starttime different from the scan\'s reads as a recycled pid before the record')
+            belongs = owned_process._leaf_member_check(leaf, None, proc)
+            self.assertTrue(belongs(90),
+                             'an unreadable scan starttime leaves the decision to the record')
+
+    def test_terminate_cgroup_skips_a_target_the_leaf_no_longer_lists(self):
+        """End to end: the recycled pid is neither signaled nor named as terminated."""
+        with tempfile.TemporaryDirectory() as folder:
+            proc = self.fake_proc(folder, [(90, 'member', 'S', 5, False)])
+            leaf = self.fake_leaf(folder, [90])
+            real_read = Path.read_text
+            reads = {'count': 0}
+
+            def counting_read(path_self, *args, **kwargs):
+                text = real_read(path_self, *args, **kwargs)
+                if path_self.name == 'cgroup.procs':
+                    reads['count'] += 1
+                    if reads['count'] > 1:
+                        return ''  # the member exited and its pid was recycled before the pin
+                return text
+
+            sent = []
+            with mock.patch.object(Path, 'read_text', counting_read), \
+                    mock.patch.object(owned_process.os, 'pidfd_open', return_value=7), \
+                    mock.patch.object(owned_process.os, 'close', lambda fd: None), \
+                    mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                                      side_effect=lambda fd, sig, *args, **kwargs: sent.append(sig)):
+                named = owned_process.terminate_cgroup(leaf, proc)
+            self.assertEqual(sent, [], 'the recycled pid never receives the leaf signal')
+            self.assertEqual(named, [], 'a skipped target is not named as terminated either')
+
+    def test_a_failed_release_keeps_the_leaf_reference(self):
+        """A leaf the kernel refuses to remove stays referenced: a repeated finish re-verifies."""
+        class FlakyLeaf(FakeLeaf):
+            attempts = 0
+
+            def rmdir(self):
+                if FlakyLeaf.attempts == 0:
+                    FlakyLeaf.attempts = 1
+                    raise OSError(errno.EBUSY, 'the leaf still holds live tasks')
+                return super().rmdir()
+
+        holder = mock.Mock()
+        holder.owned_cgroup = FlakyLeaf()
+        owned_process._release_cgroup(holder)
+        self.assertIsNotNone(holder.owned_cgroup,
+                             'a failed removal keeps the reference so a repeated finish re-verifies membership')
+        owned_process._release_cgroup(holder)
+        self.assertIsNone(holder.owned_cgroup, 'a retry that removes the leaf clears the reference')
 
     def test_cgroup_sweep_kills_real_members_with_one_name_each(self):
         """Real processes listed in a leaf are stopped through the pinned identity-guarded kills."""
