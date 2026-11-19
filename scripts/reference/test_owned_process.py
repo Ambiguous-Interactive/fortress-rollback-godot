@@ -2955,22 +2955,50 @@ class CgroupContainmentTests(unittest.TestCase):
                 (80, 'live', 'S', 7, False),
                 (81, 'zombie', 'Z', 7, False),
                 (82, 'dead', 'X', 7, False),
-                (83, 'vanished', 'S', 7, False),
             ])
-            (proc / '83' / 'stat').unlink()  # its stat entry vanished before the read
-            leaf = self.fake_leaf(folder, [80, 81, 82, 83])
-            (leaf / 'cgroup.procs').write_text('80\n81\n82\n83\nnot-a-pid\n')
+            leaf = self.fake_leaf(folder, [80, 81, 82])
+            (leaf / 'cgroup.procs').write_text('80\n81\n82\nnot-a-pid\n80\n')
             self.assertEqual(owned_process.cgroup_members(leaf, proc),
                              [{'pid': 80, 'name': 'live', 'start': 7}],
-                             'zombies and dead tasks are gone, missing entries are skipped, junk rows are ignored')
+                             'zombies and dead tasks are gone, duplicate rows name once, junk rows are ignored')
             with self.assertRaises(OSError):
                 owned_process.cgroup_members(Path(folder) / 'missing-leaf', proc)
+            (proc / '84').mkdir()  # the entry exists but stat itself is unreadable
+            (proc / '84' / 'stat').mkdir()
+            (leaf / 'cgroup.procs').write_text('84\n')
+            with self.assertRaises(OSError):
+                # A live member this process cannot read fails the sweep; it never reads as empty.
+                owned_process.cgroup_members(leaf, proc)
             crowded = Path(folder) / 'crowded'
             crowded.mkdir()
             (crowded / 'cgroup.procs').write_text(
                 '\n'.join(str(pid) for pid in range(owned_process.MAX_PROCESSES + 2)))
             with self.assertRaises(ValueError):
                 owned_process.cgroup_members(crowded, proc)
+
+    def test_a_vanished_member_is_skipped_only_when_the_record_confirms_it(self):
+        """The stat ENOENT skip re-reads the record: listed-but-unreadable fails closed."""
+        with tempfile.TemporaryDirectory() as folder:
+            proc = self.fake_proc(folder, [(90, 'member', 'S', 5, False)])
+            (proc / '90' / 'stat').unlink()
+            leaf = self.fake_leaf(folder, [90])
+            real_read = Path.read_text
+            reads = {'count': 0}
+
+            def counting_read(path_self, *args, **kwargs):
+                text = real_read(path_self, *args, **kwargs)
+                if path_self.name == 'cgroup.procs':
+                    reads['count'] += 1
+                    if reads['count'] > 1:
+                        return ''  # the kernel stopped listing it between the reads
+                return text
+
+            with mock.patch.object(Path, 'read_text', counting_read):
+                self.assertEqual(owned_process.cgroup_members(leaf, proc), [],
+                                 'a member the record no longer lists is gone, not failed')
+            with self.assertRaises(ValueError):
+                # The re-read still lists it here: a failed observation fails the sweep.
+                owned_process.cgroup_members(leaf, proc)
 
     def test_the_claim_places_the_child_in_its_own_leaf(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -3215,6 +3243,26 @@ class CgroupContainmentTests(unittest.TestCase):
                 if carrier.poll() is None:
                     carrier.kill()
                     carrier.wait(timeout=10)
+
+    def test_a_repeated_finish_after_containment_never_scans_the_numeric_group(self):
+        """Completed containment is recorded: the second finish verifies through the token sweep alone."""
+        with mock.patch.object(owned_process, '_claim_cgroup', return_value=self.attached_leaf()):
+            process, token_value = owned_process.spawn(
+                [PYTHON, '-c', 'import time; time.sleep(60)'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            owned_process.finish(process, token_value)
+            self.assertIsNone(process.owned_cgroup, 'a successful release clears the leaf reference')
+            self.assertTrue(process.owned_cgroup_released, 'the release is recorded as completed containment')
+            with mock.patch.object(owned_process, 'terminate_group',
+                                   side_effect=AssertionError('a released containment must not scan numerically')), \
+                    mock.patch.object(owned_process, 'group_members',
+                                      side_effect=AssertionError('no numeric group scan after release')):
+                owned_process.finish(process, token_value)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
 
     # Value: protects=the leaf's lifetime on every run exit (#411);
     # fails_when=a run exits and strands its containment leaf;

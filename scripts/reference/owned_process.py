@@ -26,7 +26,8 @@ the window between Popen returning and the placement write inherits the
 caller's cgroup instead of the leaf — it carries the run token there, so
 the token sweep names it, but one that also scrubs its token inside that
 window is named by neither sweep, where the numeric fallback's boundary
-scan would still have named it; and a descendant with write access to
+scan would still have named it while it keeps its original process
+group; and a descendant with write access to
 another cgroup's cgroup.procs can migrate itself out of the leaf, where
 only its token can still name it. On a hierarchy that is absent,
 read-only or not writable the claim returns None and the numeric group
@@ -443,11 +444,13 @@ def cgroup_members(leaf, proc=None):
     replaced the boundary-gated numeric scans wherever a leaf was
     claimed. Zombies are skipped for the same reason group_members skips
     them: a zombie cannot write, hold a pipe or come back, and naming it
-    would record a dead process. An unreadable cgroup.procs raises
-    OSError — with containment claimed, a sweep that cannot read the
-    kernel's membership record must fail its sweep (the callers report
-    the anomaly and keep the may-survive direction) instead of silently
-    reading an empty set.
+    would record a dead process. A member whose stat entry is gone is
+    skipped only after a fresh record read confirms the kernel no longer
+    lists it, every other stat read error propagates, and the record
+    itself failing to read raises — with containment claimed, a sweep
+    that cannot account for a listed member must fail and report the
+    may-survive direction instead of silently reading an empty set.
+    Duplicate record rows name the member once (#381's class).
     """
     try:
         rows = (leaf / 'cgroup.procs').read_text().split()
@@ -457,16 +460,28 @@ def cgroup_members(leaf, proc=None):
         raise ValueError('owned process scan exceeded its process bound')
     root = proc if proc is not None else Path('/proc')
     found = []
+    seen = set()
     for row in rows:
         try:
             pid = int(row)
         except ValueError:
             continue  # The kernel writes one pid per line; a stray row is skipped.
+        if pid in seen:
+            continue  # The record can repeat a pid during a move or a recycle; the member is named once (#381's class).
+        seen.add(pid)
         entry = root / str(pid)
         try:
             fields = (entry / 'stat').read_text().rsplit(') ', 1)[-1].split()
-        except OSError:
-            continue  # Gone between the membership read and the stat read: not a live member.
+        except FileNotFoundError:
+            # Gone between the record read and the stat read: confirm against the
+            # kernel's record before skipping. A listed-but-unreadable member is
+            # a failed observation, never an empty answer (#411 review).
+            if str(pid) in (leaf / 'cgroup.procs').read_text().split():
+                raise ValueError(f'leaf member {pid} vanished from /proc while the record still lists it')
+            continue
+        # Every other stat read error propagates: a live member this process
+        # cannot read (restricted procfs, changed credentials) must fail the
+        # sweep and report the may-survive direction, not silently disappear.
         if not fields or fields[0] in ('Z', 'X'):
             continue
         try:
@@ -549,8 +564,9 @@ def _claim_cgroup(pid, token_value, proc=None, mountinfo=None):
     own startup first); a fork inside it still carries the run token and
     stays named by the token sweep, while one that also scrubs its token
     inside that window enters neither the leaf nor the token sweep — the
-    placement-window carve-out the module docstring states, which the
-    numeric fallback's boundary scan would have named.
+    placement-window carve-out the module docstring states; the numeric
+    fallback's boundary scan would have named it only while it keeps its
+    original process group.
     """
     leaf = None
     try:
@@ -670,6 +686,12 @@ def _release_cgroup(process):
     except OSError:
         return  # The reference stays: a repeated finish must re-verify membership.
     process.owned_cgroup = None
+    # Completed containment is recorded, never erased: a repeated finish must
+    # not scan the numeric group for a tree already verified gone, because a
+    # group id reissued since the first finish would pass the boundary filter
+    # and a stranger could receive the kill (#411 review). The token sweep
+    # still re-verifies real carriers.
+    process.owned_cgroup_released = True
 
 
 def merged_survivors(members, survivors):
@@ -2536,11 +2558,16 @@ def finish(process, token_value, grace=5.0):
         # raises, and the anomaly surfaces only after both sweeps ran
         # (#398 review). Under membership containment (#411) the group
         # sweep reads the claimed leaf's kernel record and the numeric id
-        # is never consulted.
+        # is never consulted; after a completed release the containment is
+        # recorded and a repeated finish re-verifies through the token
+        # sweep alone, because the numeric group there can only name a
+        # group the kernel reissued since the first finish.
         leaf = getattr(process, 'owned_cgroup', None)
+        released = getattr(process, 'owned_cgroup_released', False)
         survivors, sweep_anomaly = _contained_sweeps([
             lambda: terminate(token_value),
             (lambda: terminate_cgroup(leaf)) if leaf is not None
+            else (lambda: []) if released
             else lambda: terminate_group(process.pid, started_before=boundary, token_value=token_value),
         ])
         if process.poll() is None:
