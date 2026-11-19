@@ -456,7 +456,10 @@ def _tail_group_signal(process, pinned, group_alive):
     emptied group is an ESRCH no-op that leaves the exit clean; a failed
     or unsupported signal produces the failed-cleanup note and an error,
     so the tail never reports a clean teardown while a spared member may
-    survive (#404 review).
+    survive (#404 review). A pinless platform has no flag-4 capability at
+    all and keeps main's behavior — the spared member survives unnamed,
+    which is why `(None, None)` there is honest: the boundary-guard
+    residual this whole design narrows is #404's to close.
     """
     if not group_alive or pinned is None:
         return None, None
