@@ -2280,16 +2280,22 @@ class KernelClassProbeTests(unittest.TestCase):
             return 0 if self._exited else None
 
     def _measure(self, *, outcome='delivered', member_survives=True, process=None, members=None,
-                 spawn_error=None, finish_error=None, alive_reads=2):
+                 spawn_error=None, finish_error=None, alive_reads=2, alive_error_at=None,
+                 post_kill_survives=True, recycled_pin=False):
         """Run the real measurement against scripted seams; return (verdict, calls).
 
         The scripted member answers alive for ``alive_reads`` reads — the
         pre-send loop and its confirmation — and then follows
         ``member_survives`` for every later read, which is the scheduled
         death that separates the delivering kernel from the mid-band one.
-        One read answers alive only for the dead-before-the-send shape. The
-        probe's time bounds are shrunk so the unbounded shapes fail fast
-        instead of burning real seconds.
+        Once the cleanup pin SIGKILL fires, later reads follow
+        ``post_kill_survives`` instead, which scripts whether the kill lands
+        inside the cleanup wait or outlasts it. One read answers alive only
+        for the dead-before-the-send shape. ``alive_error_at`` makes the
+        read at that index raise EACCES instead, which is the observation
+        error that must read unknown, never death. The probe's time bounds
+        are shrunk so the unbounded shapes fail fast instead of burning
+        real seconds.
         """
         process = process if process is not None else self._FakeProcess()
         calls = {'spawn': 0, 'finish': [], 'sends': 0, 'closes': [], 'member_kills': [], 'alive': 0,
@@ -2299,6 +2305,10 @@ class KernelClassProbeTests(unittest.TestCase):
         def scripted_alive(pid, pin, start):
             alive_state['reads'] += 1
             calls['alive'] = alive_state['reads']
+            if alive_error_at is not None and alive_state['reads'] >= alive_error_at:
+                raise OSError(errno.EACCES, 'proc refused')
+            if calls['member_kills']:
+                return post_kill_survives
             if alive_state['reads'] <= alive_reads:
                 return True
             return member_survives is True
@@ -2332,6 +2342,18 @@ class KernelClassProbeTests(unittest.TestCase):
                 mock.patch.object(owned_process.os, 'close', side_effect=lambda fd: calls['closes'].append(fd)), \
                 mock.patch.object(owned_process.signal, 'pidfd_send_signal',
                                   side_effect=lambda fd, sig: calls['member_kills'].append((fd, sig))):
+            if recycled_pin:
+                # A /proc whose stat re-read reports a different starttime
+                # than the scan recorded: the pinned pid is a stranger.
+                tail = ' '.join(str(value) for value in range(1, 26))
+                stat_line = f'{process.pid + 1} (sleeper) S {tail}\n'
+                fake_path = mock.MagicMock()
+                stat_mock = fake_path.return_value.__truediv__.return_value.__truediv__.return_value
+                stat_mock.read_text.return_value = stat_line
+                with mock.patch.object(owned_process, 'Path', fake_path):
+                    verdict = owned_process._measure_group_signal_kernel()
+                calls['sends'] = send.call_count
+                return verdict, calls
             verdict = owned_process._measure_group_signal_kernel()
         calls['sends'] = send.call_count
         return verdict, calls
@@ -2364,15 +2386,25 @@ class KernelClassProbeTests(unittest.TestCase):
                                  'the tree always ends through the owned teardown')
                 self.assertIn(778, calls['closes'], 'the member pin is always released')
 
-    # Value: protects=the probe's owned cleanup of a surviving member (#408);
-    # fails_when=a member the kernel spared outlives the probe, or the probe
-    # lends its verdict after leaking its own tree;
-    # seam=_measure_group_signal_kernel with a recorded pin kill and a failing finish
+    # Value: protects=the probe's owned cleanup of a surviving member (#408, CodeRabbit round 1);
+    # fails_when=a member the kernel spared outlives the probe, a mid-death
+    # member is named as a survivor and replaces the measured verdict, or the
+    # probe lends its verdict after leaking its own tree;
+    # seam=_measure_group_signal_kernel with a recorded pin kill, a scripted
+    # post-kill death and a failing finish
     def test_the_probe_stops_the_spared_member_through_its_pin_and_downgrades_on_leak(self):
         verdict, calls = self._measure(outcome='empty', member_survives=True)
         self.assertEqual(verdict, (owned_process.KERNEL_CLASS_SPARES, None))
         self.assertIn((778, signal.SIGKILL), calls['member_kills'],
                       'a surviving member is stopped recycle-proof through its own pin')
+        with self.subTest(shape='the pin kill lands inside the cleanup wait'):
+            # The member dies one read after the pin SIGKILL: the wait exits
+            # before its deadline, so finish() sees an empty tree and the
+            # measured spares verdict is never replaced by a downgrade.
+            verdict, calls = self._measure(outcome='empty', member_survives=True, post_kill_survives=False)
+            self.assertEqual(verdict, (owned_process.KERNEL_CLASS_SPARES, None))
+            self.assertIn((778, signal.SIGKILL), calls['member_kills'])
+            self.assertEqual(len(calls['finish']), 1, 'the owned teardown still runs')
         with self.subTest(shape='a cleanup that cannot verify an empty tree'):
             verdict, calls = self._measure(outcome='delivered', member_survives=False,
                                            finish_error=owned_process.EscapedDescendants([]))
@@ -2380,6 +2412,53 @@ class KernelClassProbeTests(unittest.TestCase):
                              'a probe that leaked its tree never lends a measured verdict')
             self.assertIn('could not verify an empty tree', verdict[1])
             self.assertIn('EscapedDescendants', verdict[1])
+
+    # Value: protects=the observation-error direction of the liveness read (#408, CodeRabbit round 1);
+    # fails_when=a failed sig-0 check or /proc read fakes a member death, so a
+    # delivered send beside a live member classifies delivers and later empty
+    # verdicts read clean while members live;
+    # seam=_measure_group_signal_kernel and _probe_member_alive with EACCES
+    # observation errors on the measurement and cleanup paths
+    def test_the_observation_errors_never_fake_a_death(self):
+        with self.subTest(shape='a pre-send read error stops the probe before the send'):
+            verdict, calls = self._measure(outcome='delivered', member_survives=True, alive_error_at=2)
+            self.assertEqual(verdict[0], owned_process.KERNEL_CLASS_UNKNOWN,
+                             'a failed observation is unknown, never a delivered classification')
+            self.assertIn('PermissionError', verdict[1])
+            self.assertEqual(calls['sends'], 0, 'the probe never sends on an unreadable member')
+        with self.subTest(shape='a post-send read error cannot confirm a delivered stop'):
+            verdict, calls = self._measure(outcome='delivered', member_survives=True, alive_error_at=3)
+            self.assertEqual(verdict[0], owned_process.KERNEL_CLASS_UNKNOWN,
+                             'a delivered send beside an unreadable member proves nothing')
+            self.assertIn('PermissionError', verdict[1])
+            self.assertEqual(calls['sends'], 1, 'the send ran, but its effect is unobservable')
+        with self.subTest(shape='a cleanup-path read error keeps the measured verdict'):
+            verdict, calls = self._measure(outcome='delivered', member_survives=False,
+                                           alive_reads=2, alive_error_at=4)
+            self.assertEqual(verdict, (owned_process.KERNEL_CLASS_DELIVERS, None),
+                             'a cleanup read error is swallowed: the verdict and the sweeps stay honest')
+            self.assertEqual(len(calls['finish']), 1, 'the owned teardown still runs')
+            self.assertEqual(calls['member_kills'], [], 'no kill fires on an unreadable member')
+        with self.subTest(shape='a permission error propagates from the helper'):
+            with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                                   side_effect=OSError(errno.EPERM, 'sig-0 refused')):
+                with self.assertRaises(PermissionError):
+                    owned_process._probe_member_alive(100, 5, 3)
+
+            class _RefusingStatRoot:
+                """A /proc-shaped root whose stat read always refuses."""
+
+                def __truediv__(self, name):
+                    return self
+
+                def __getattr__(self, name):
+                    if name == 'read_text':
+                        raise PermissionError(13, 'stat refused')
+                    raise AssertionError(f'unexpected attribute {name}')
+
+            with mock.patch.object(owned_process.signal, 'pidfd_send_signal'):
+                with self.assertRaises(PermissionError):
+                    owned_process._probe_member_alive(100, 5, 3, proc=_RefusingStatRoot())
 
     # Value: protects=the probe's fail-closed shapes (#408);
     # fails_when=a shape the probe could not arrange reads as any measured
@@ -2396,6 +2475,8 @@ class KernelClassProbeTests(unittest.TestCase):
              'the probe member died before the send'),
             ('the leader could not be pinned', {'process': self._FakeProcess(pin=None)},
              'the probe leader could not be pinned'),
+            ('the scan pid was recycled before the pin', {'recycled_pin': True},
+             'the probe pid was recycled before it was pinned'),
             ('the spawn itself fails', {'spawn_error': OSError(errno.EIO, 'no fork')}, 'OSError'),
         ]:
             with self.subTest(shape=name):
@@ -2424,8 +2505,9 @@ class KernelClassProbeTests(unittest.TestCase):
             def stat_entry(pid, state, start):
                 entry = root / str(pid)
                 entry.mkdir()
-                # fields[0] is the state; the starttime sits at index 19
-                # after the ') ' split, which is tail's index 18.
+                # The helper cuts at ') ': fields[0] is then the state and
+                # fields[19] the starttime, which is tail[18] here because
+                # the state field precedes the numbered tail.
                 tail = [str(value) for value in range(1, 26)]
                 if start is not None:
                     tail[18] = str(start)
@@ -2545,9 +2627,20 @@ class KernelClassProbeTests(unittest.TestCase):
                                       side_effect=counting_measure):
                 first = owned_process._group_signal_kernel_class()
                 second = owned_process._group_signal_kernel_class()
-            self.assertIn(first, (owned_process.KERNEL_CLASS_DELIVERS, owned_process.KERNEL_CLASS_SPARES),
-                          'a healthy runner kernel must classify; an unknown class is a probe defect here')
-            self.assertIsNone(owned_process._kernel_probe_note)
+            # A healthy runner must classify; 'unknown' is acceptable only for
+            # an environment the kernel itself refuses (no pidfd support, or a
+            # flag the kernel rejects outright — the probe's designed
+            # fallback). Any other unknown is a probe defect here: a broken
+            # shape, a contradictory send, or a cleanup that leaked its tree.
+            environment_notes = ('no pidfd support; nothing to measure',
+                                 'the kernel rejected the flag-4 send')
+            if first == owned_process.KERNEL_CLASS_UNKNOWN:
+                self.assertIn(owned_process._kernel_probe_note, environment_notes,
+                              'an unclassified kernel needs an environment-shaped reason, not a probe defect')
+            else:
+                self.assertIn(first, (owned_process.KERNEL_CLASS_DELIVERS, owned_process.KERNEL_CLASS_SPARES))
+                self.assertIsNone(owned_process._kernel_probe_note,
+                                  'a measured class carries no note')
             self.assertEqual(second, first)
             self.assertEqual(len(measurements), 1, 'one real measurement per process')
             self.assertEqual(len(finishes), 1, 'the throwaway tree ends through the owned teardown')
