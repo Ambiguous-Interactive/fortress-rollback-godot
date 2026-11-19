@@ -496,6 +496,7 @@ class SplitStreamTests(unittest.TestCase):
             process.stdout.readline()
             began = time.monotonic()
             drained = owned_process._drain_after_kill(process)
+            took = time.monotonic() - began  # the drain only, not the cleanup below
         finally:
             watchdog.cancel()
             process.kill()
@@ -503,7 +504,7 @@ class SplitStreamTests(unittest.TestCase):
             for stream in (process.stdout, process.stderr):
                 stream.close()
         self.assertFalse(watchdog_fired, 'the drain hung past its total bound; the watchdog had to stop the writer')
-        self.assertLess(time.monotonic() - began, owned_process.DRAIN_TOTAL_SECONDS + 5,
+        self.assertLess(took, owned_process.DRAIN_TOTAL_SECONDS + 5,
                         'the drain must return while a live writer keeps producing')
         self.assertTrue(drained, 'the control only holds with flushed bytes captured')
 
