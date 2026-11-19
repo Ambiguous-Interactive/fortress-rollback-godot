@@ -2078,6 +2078,22 @@ time.sleep(60)
             note, error = owned_process._tail_group_signal(process, 9, True, verify=lambda boundary: [survivor])
             self.assertIn('may survive', note)
             self.assertIsNotNone(error)
+        # A member that exits between the grace expiry and the containment
+        # sweep does not turn an expired grace into a delivered signal: the
+        # first verification measured the group non-empty past the window,
+        # and that fact survives the later empty scan.
+        scans = []
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0, 0.0]):
+            def exits_early(boundary):
+                scans.append(boundary)
+                return [survivor] if len(scans) == 1 else []
+
+            note, error = owned_process._tail_group_signal(
+                process, 9, True, verify=exits_early, contain=lambda boundary: [])
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:',
+                             'an expired grace never reads as a delivered signal')
+            self.assertIsNotNone(error)
 
     # Value: protects=the tree stop's containment of an undelivered pinned signal (#404);
     # fails_when=a kernel that accepted the send without delivering leaves the

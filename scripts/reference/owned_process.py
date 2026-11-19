@@ -527,6 +527,7 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None):
     outcome = _signal_group(process, pinned)
     contained = None
     confirmed = False
+    grace_expired = False
     if outcome in ('delivered', 'empty') and verify is not None:
         # The grace: SIGKILL delivery waits for the member to be scheduled,
         # so the scan polls the whole window before anything else reacts.
@@ -540,6 +541,7 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None):
                 confirmed = True
                 break
             if time.monotonic() >= deadline:
+                grace_expired = True
                 break
             time.sleep(GROUP_SIGNAL_VERIFY_POLL)
         if not confirmed and contain is not None:
@@ -565,9 +567,11 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None):
             # The sweep's names travel with the verdict; confirmation only
             # decides whether the wording may claim a completed stop.
             return _undelivered_outcome(contained, confirmed)
-        if not confirmed:
-            # The grace expired with the group still non-empty: the send did
-            # not deliver, and no containment was available to stop them.
+        if not confirmed or grace_expired:
+            # An expired grace is a measured fact: the group stayed non-empty
+            # a full window past an accepted send, and a member that exits
+            # just before the sweep does not turn that into a delivered
+            # signal. Without containment, the members may still be running.
             return _undelivered_outcome(contained, confirmed)
     if outcome == 'delivered':
         return ('OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n',
