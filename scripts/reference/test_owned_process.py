@@ -472,6 +472,28 @@ class SplitStreamTests(unittest.TestCase):
                 time.sleep(0.1)
             self.assertFalse(alive(pid), 'the deadline must own the whole tree, stdin or not')
 
+    # Value: protects=the deadline path's post-kill drain bound (#398 review);
+    # fails_when=a survivor that writes continuously holds the drain past every
+    # grace and the deadline branch never reaches its verification sweeps, the
+    # reap or the TimeoutExpired raise; seam=owned_process._drain_after_kill
+    # against a live, continuously writing child.
+    def test_the_post_kill_drain_cannot_stall_past_its_total_bound(self):
+        process = subprocess.Popen([PYTHON, '-c',
+                                    'import time\nwhile True:\n'
+                                    '    print("x" * 4096, flush=True)\n    time.sleep(0.005)'],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        began = time.monotonic()
+        try:
+            drained = owned_process._drain_after_kill(process)
+        finally:
+            process.kill()
+            process.wait(timeout=10)
+            for stream in (process.stdout, process.stderr):
+                stream.close()
+        self.assertLess(time.monotonic() - began, owned_process.DRAIN_TOTAL_SECONDS + 5,
+                        'the drain must return while a live writer keeps producing')
+        self.assertTrue(drained, 'the control only holds with flushed bytes captured')
+
 
 class SpawnedProcessTests(unittest.TestCase):
     def test_finish_stops_a_running_host_and_verifies_its_tree(self):
@@ -507,13 +529,16 @@ class SpawnedProcessTests(unittest.TestCase):
             marker = Path(folder) / 'late-fork.pid'
             # The host ignores SIGTERM, forks a token-scrubbed grandchild in the
             # same process group once the teardown is already running, then exits.
-            # The grandchild records its own pid, so the test asserts the
-            # descendant's recorded pid is gone — not the host's (#400 review).
+            # The teardown disposition is armed before readiness is published, so
+            # a fast finish() can never win the window and kill the host before
+            # it can fork (#400 review). The grandchild records its own pid, so
+            # the test asserts the descendant's recorded pid is gone — not the
+            # host's.
             host, token = owned_process.spawn([PYTHON, '-c', f"""
 import os, signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
 open(sys.argv[1] + '.tmp', 'w').write(str(os.getpid()))
 os.rename(sys.argv[1] + '.tmp', sys.argv[1])
-signal.signal(signal.SIGTERM, signal.SIG_IGN)
 time.sleep(0.4)
 pid = os.fork()
 if pid == 0:
@@ -1478,20 +1503,27 @@ time.sleep(0.05)
                     time.sleep(0.01)
                 raise KeyboardInterrupt
 
+            # The real sweeps run (so the tree is actually killed) and a
+            # synthetic anomaly rides on their result, exactly the shape the
+            # tuple-unpacking seam must survive (#398 review).
+            real_terminate_tree = owned_process._terminate_tree
+
+            def anomaly_tree(tree_process, token_value, pinned=None, boundary=None):
+                named, anomaly = real_terminate_tree(tree_process, token_value, pinned, boundary)
+                return named, anomaly if anomaly is not None else ValueError('sweep exploded')
+
             with mock.patch.object(owned_process, '_collect', side_effect=interrupting_collect), \
-                 mock.patch.object(owned_process, '_terminate_tree',
-                                   return_value=([{'pid': 424242, 'name': 'swept'}], ValueError('sweep exploded'))):
+                 mock.patch.object(owned_process, '_terminate_tree', side_effect=anomaly_tree):
                 with self.assertRaises(KeyboardInterrupt):
                     owned_process.run(command, {}, log, 30)
             text = log.read_text()
             self.assertIn('OWNED_PROCESSES: terminated', text, 'the sweeps names survive the interrupt')
             self.assertIn('OWNED_PROCESS_SWEEP_ANOMALY', text, 'the sweep anomaly is recorded, never masking the interrupt')
             pid = int(marker.read_text())
-            try:
-                os.kill(pid, signal.SIGKILL)
-                os.waitpid(pid, 0)  # the seam's mocked sweep cannot kill the real child; this test owns it
-            except (ProcessLookupError, ChildProcessError):
-                pass
+            with self.assertRaises(ChildProcessError):
+                # The sweeps killed the tree and the handler reaped it: nothing
+                # of this run's child may be left to this test (#398 review).
+                os.waitpid(pid, os.WNOHANG)
 
     def test_the_pinned_group_signal_targets_the_process_group(self):
         process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)

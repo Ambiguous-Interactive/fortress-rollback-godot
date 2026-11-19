@@ -66,6 +66,15 @@ MAX_NAMED_SURVIVORS = 8
 # are withheld from the command's output, because only a descendant could
 # have written them.
 DRAIN_IDLE_SECONDS = 0.5
+# The idle grace alone cannot bound the deadline path's post-kill drain: a
+# surviving carrier the sweeps could not stop keeps writing continuously, so
+# every select call returns inside the idle grace and the loop never ends —
+# the deadline branch then never reaches its verification sweeps, the reap
+# or the TimeoutExpired raise, defeating the deadline it serves. A killed
+# command's own flush is kernel-buffered and completes in milliseconds, so
+# this total cap only ever engages for a live writer, whose bytes are
+# post-exit escapee evidence the design withholds anyway.
+DRAIN_TOTAL_SECONDS = 2.0
 POLL_SECONDS = 0.1
 DRAIN_CHUNK = 65536
 # /proc stat reports starttime in scheduler ticks since boot with one tick of
@@ -1494,10 +1503,16 @@ def _wait_readable(streams, timeout):
 
 
 def _drain_after_kill(process):
-    """Collect whatever a killed command flushed, bounded by the idle grace."""
+    """Collect whatever a killed command flushed, bounded by the idle and total graces.
+
+    The idle grace stops a drain waiting for an EOF a surviving carrier will
+    never send; the total grace stops a carrier that writes continuously, so
+    the deadline path always reaches its verification sweeps, the reap and
+    the TimeoutExpired raise (#398 review)."""
     streams = {process.stdout.fileno(): bytearray(), process.stderr.fileno(): bytearray()}
     buffers = {descriptor: bytearray() for descriptor in streams}
-    while streams and _wait_readable(streams, DRAIN_IDLE_SECONDS):
+    total_deadline = time.monotonic() + DRAIN_TOTAL_SECONDS
+    while streams and time.monotonic() < total_deadline and _wait_readable(streams, DRAIN_IDLE_SECONDS):
         _read_available(streams, buffers)
     stdout = buffers.pop(process.stdout.fileno()).decode('utf-8', errors='replace')
     return stdout + ''.join(data.decode('utf-8', errors='replace') for data in buffers.values())
