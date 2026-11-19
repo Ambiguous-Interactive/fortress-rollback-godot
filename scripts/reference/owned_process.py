@@ -189,7 +189,12 @@ def group_members(group, proc=None, started_before=None, token_value=None):
     descendant
     that forked after the boundary and scrubbed its environment before the
     scan — it is spared here, and fully containing that class needs the
-    cgroup-backed ownership work in #404. A starttime that cannot be parsed
+    cgroup-backed ownership work in #404. The boundary also cannot reject
+    a group id reissued inside the window between the last member
+    detaching and the boundary sample itself: such members started at or
+    before the boundary and read as ours, so a pre-boundary-window
+    reissue is the remaining scan-level residual the cgroup work owns.
+    A starttime that cannot be parsed
     counts as ours: naming biases toward killing what we own, never toward
     stranding it.
     """
@@ -1564,13 +1569,14 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
         if tail_anomaly is not None:
             _note_final(log, cancel, ''.join(parts.values()) + anomaly_note)
             raise tail_anomaly
-        if post_exit_bytes:
-            note = (f'POST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '
-                    'exited and were withheld\n')
+        if post_exit_bytes or group_note:
+            note = ''
+            if post_exit_bytes:
+                note += (f'POST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '
+                         'exited and were withheld\n')
+            if group_note:
+                note += group_note
             _note_final(log, cancel, note)
-            stderr += f'\n{note}'
-        elif group_note:
-            _note_final(log, cancel, group_note)
         return returncode, parts[stdout_descriptor], stderr
     finally:
         if cancel is not None:
