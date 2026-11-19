@@ -258,6 +258,41 @@ class NativeCliInstallTests(unittest.TestCase):
                     except (ProcessLookupError, ValueError):
                         pass
 
+    def test_pre_launch_deadline_expiry_prints_the_journal_tail(self):
+        # Value: the total deadline can expire between commands, and the
+        # pre-launch refusal is the only failure path a journaled evidence
+        # stream could still miss (#249 review): it must carry the same
+        # tail-plus-retention shape as every other failed install.
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(helper.tempfile, 'tempdir', directory):
+                evidence = helper.journal_path('@opencode/cli')
+                evidence.write_text('npm http fetch GET https://registry.example/x.tgz?t=TOK\n',
+                                    encoding='utf-8')
+                args = SimpleNamespace(timeout=1, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
+                stderr = io.StringIO()
+                with patch.object(helper.time, 'monotonic', side_effect=[100.0, 200.0]), \
+                        contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                    installer = helper.Installer(args)
+                    installer._journaled = True  # the previous install attempt opened this journal
+                    with self.assertRaisesRegex(ValueError, 'publication retry budget exhausted before global installation') as raised:
+                        installer.command(['npm', 'install', '-g', '@opencode/cli@2.0.30'],
+                                          phase='global installation', merged=True)
+                self.assertIn('retained install journal tail:', stderr.getvalue())
+                self.assertIn('partial output retained at', str(raised.exception))
+                self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue())
+                self.assertNotIn('TOK', stderr.getvalue(), 'the tail never prints query credentials')
+                # Without a merged phase the deadline expiry keeps its plain form.
+                stderr = io.StringIO()
+                with patch.object(helper.time, 'monotonic', side_effect=[100.0, 200.0]), \
+                        contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(ValueError, 'publication retry budget exhausted before wrapper metadata'):
+                        helper.Installer(args).command(['npm', 'view', '@opencode/cli@latest', '--json'],
+                                                       phase='wrapper metadata')
+                self.assertNotIn('retained install journal tail', stderr.getvalue())
+                self.assertNotIn('partial output retained', stderr.getvalue(),
+                                 'a metadata expiry names no journal it never opened')
+
     def test_timeout_prints_the_journal_tail_when_the_killed_pipes_yield_nothing(self):
         # Value: the recurring #249 shape is a deadline whose kill lands while the
         # post-kill collect returns nothing, so the job log showed only the

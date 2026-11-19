@@ -90,11 +90,11 @@ def _undelivered_outcome(contained, confirmed):
     verification exists to catch.
     """
     if contained and confirmed:
-        suffix = f'the send-boundary sweep stopped and named them: {contained}\n'
+        suffix = f'the boundary sweep stopped and named them: {contained}\n'
     else:
         suffix = 'a same-group member the bounded scans spared may survive\n'
         if contained:
-            suffix = f'the send-boundary sweep reached: {contained}; ' + suffix[0].lower() + suffix[1:]
+            suffix = f'the boundary sweep reached: {contained}; ' + suffix[0].lower() + suffix[1:]
     return (f'OWNED_PROCESS_GROUP_SIGNAL_FAILED: the kernel accepted the pinned group signal '
             f'without stopping the members it resolved; {suffix}',
             RuntimeError('the pinned group signal did not stop the surviving group members'))
@@ -473,7 +473,7 @@ def _signal_group(process, pinned):
     return 'empty'
 
 
-def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None):
+def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None, boundary=None):
     """One tail cleanup pass: stop what the bounded scans had to spare.
 
     The post-exit group scan spares a tokenless member that forked after
@@ -507,6 +507,19 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None):
     Only a descendant that both forked in that window and scrubbed its
     environment escapes the scan — the same scrubbing residual the cgroup
     work in #404 owns everywhere else.
+
+    That token-union rule leans on the send actually resolving the group.
+    When the outcome is ``'empty'`` — the kernel resolved nothing at the
+    send, which on the mid-band kernels happens beside live members, but
+    on a healthy kernel also happens when the group truly emptied — the
+    numeric id may already have been reissued to a foreign group whose
+    members started after the exit boundary, so the later send boundary
+    must not admit tokenless strangers: the scan then keeps the caller's
+    original exit boundary (``boundary``), staying with the members the
+    exit scans already owned plus the run token, and a spared tokenless
+    member it cannot see reads as the honest may-survive failure. Only a
+    delivered outcome proves the kernel resolved this group at the send,
+    which is what makes the later send boundary safe there.
     ``contain`` is a callable with the same boundary argument that stops and
     names the survivors the scan keeps finding — one send-boundary sweep with
     the same token union the caller's verify uses. The grace comes first:
@@ -525,6 +538,12 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None):
         return None, None
     send_boundary = _boot_ticks()
     outcome = _signal_group(process, pinned)
+    # The scan boundary the verification and containment use: the send-time
+    # boundary only after a delivered outcome proved the kernel resolved this
+    # group at the send; an emptied group keeps the caller's exit boundary,
+    # because a reissued foreign group can hold members started after the
+    # exit that the later send boundary would wrongly admit.
+    scan_boundary = send_boundary if outcome == 'delivered' else boundary
     contained = None
     confirmed = False
     grace_expired = False
@@ -534,7 +553,7 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None):
         deadline = time.monotonic() + GROUP_SIGNAL_VERIFY_SECONDS
         while True:
             try:
-                remaining = verify(send_boundary)
+                remaining = verify(scan_boundary)
             except OSError:
                 remaining = [object()]  # An unreadable scan is not evidence of a stop.
             if not remaining:
@@ -548,7 +567,7 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None):
             # The accepted signal did not stop these members: one send-boundary
             # sweep stops and names them, then the scan confirms the outcome.
             try:
-                contained = contain(send_boundary)
+                contained = contain(scan_boundary)
             except OSError:
                 contained = None  # The failure verdict continues without the sweep.
             deadline = time.monotonic() + GROUP_SIGNAL_VERIFY_SECONDS
@@ -632,15 +651,16 @@ def _terminate_tree(process, token_value, pinned=None, boundary=None):
     if pinned is not None and signal_outcome in ('delivered', 'empty'):
         # The kernel accepted the pinned signal, and kernels whose flag-4
         # semantics predate recycle-proof delivery can leave the class the
-        # bounded scans spared. One send-boundary sweep stops and names them:
-        # every member alive at the send started before it, a member forked
-        # between the boundary sample and the send carries the run token, and
-        # a group the kernel reissued after the send holds only tokenless
-        # members started after the boundary. The child is unreaped here, so
-        # the numeric id is still reserved.
+        # bounded scans spared. One boundary sweep stops and names them: a
+        # delivered outcome proves the kernel resolved this group at the
+        # send, so the send boundary admits the members alive at the send;
+        # an emptied group keeps the caller's exit boundary, because a
+        # reissued foreign group can hold members started after the exit
+        # that the later send boundary would wrongly admit. The child is
+        # unreaped here, so the numeric id is still reserved.
         try:
-            named = merged_survivors(named, terminate_group(process.pid, started_before=send_boundary,
-                                                            token_value=token_value))
+            named = merged_survivors(named, terminate_group(process.pid, token_value=token_value,
+                                                            started_before=send_boundary if signal_outcome == 'delivered' else boundary))
         except Exception as error:
             anomaly = anomaly or error
     if signal_outcome == 'failed' and anomaly is None:
@@ -1559,7 +1579,7 @@ def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
         own = cancel.claim(swept) if cancel is not None else swept
         candidates = merged_survivors(report, own)
         group_note, group_error = _tail_group_signal(
-            process, pinned, group_alive,
+            process, pinned, group_alive, boundary=exit_ticks,
             verify=lambda started_before: group_members(process.pid, started_before=started_before,
                                                         token_value=token_value),
             contain=lambda started_before: terminate_group(process.pid, started_before=started_before,
@@ -1691,7 +1711,7 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
         # its own marker.
         anomaly_note = f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n' if tail_anomaly is not None else ''
         group_note, group_error = _tail_group_signal(
-            process, pinned, group_alive,
+            process, pinned, group_alive, boundary=exit_ticks,
             verify=lambda started_before: group_members(process.pid, started_before=started_before,
                                                         token_value=token_value),
             contain=lambda started_before: terminate_group(process.pid, started_before=started_before,

@@ -2057,7 +2057,7 @@ time.sleep(60)
             note, error = owned_process._tail_group_signal(process, 9, True, verify=persisting_member, contain=contain)
         self.assertEqual(sweeps, [scans[0]], 'containment runs once, at the send boundary, after the grace')
         self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
-        self.assertIn('the send-boundary sweep stopped and named them', note)
+        self.assertIn('the boundary sweep stopped and named them', note)
         self.assertIn('4243', note, 'the contained member is named in the note')
         self.assertIsNotNone(error, 'the kernel breach stays visible even with the sweep contained it')
         # Containment's names are attempted stops, not proof: a member that
@@ -2070,7 +2070,7 @@ time.sleep(60)
                 verify=lambda boundary: scans.append(boundary) or [survivor],
                 contain=lambda boundary: [survivor])
             self.assertIn('may survive', note, 'an unconfirmed containment never claims a stop')
-            self.assertIn('the send-boundary sweep reached', note, 'the attempted sweep is still named')
+            self.assertIn('the boundary sweep reached', note, 'the attempted sweep is still named')
             self.assertIsNotNone(error)
         # The no-containment deadline keeps the original may-survive wording.
         with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
@@ -2094,6 +2094,23 @@ time.sleep(60)
             self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:',
                              'an expired grace never reads as a delivered signal')
             self.assertIsNotNone(error)
+        # The scan boundary follows the outcome: a delivered outcome proved
+        # the kernel resolved this group at the send, so the scans may use the
+        # send boundary; an emptied group keeps the caller's exit boundary,
+        # because a reissued foreign group can hold tokenless members started
+        # after the exit that the later send boundary would wrongly admit.
+        seen = []
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process, '_boot_ticks', return_value=777):
+            owned_process._tail_group_signal(process, 9, True, boundary=10,
+                                             verify=lambda started_before: seen.append(started_before) or [])
+            self.assertEqual(seen, [777], 'a delivered outcome scans at the send boundary')
+        seen = []
+        with mock.patch.object(owned_process, '_signal_group', return_value='empty'), \
+                mock.patch.object(owned_process, '_boot_ticks', return_value=777):
+            owned_process._tail_group_signal(process, 9, True, boundary=10,
+                                             verify=lambda started_before: seen.append(started_before) or [])
+            self.assertEqual(seen, [10], 'an emptied group scans at the caller\'s exit boundary')
 
     # Value: protects=the tree stop's containment of an undelivered pinned signal (#404);
     # fails_when=a kernel that accepted the send without delivering leaves the
@@ -2122,6 +2139,14 @@ time.sleep(60)
                          'between the sample and the send is still named')
         self.assertEqual(named, [survivor], 'the spared member is stopped and named, not lost')
         self.assertIsNone(anomaly, 'a contained member is named in the report, not raised as an anomaly')
+        with mock.patch.object(owned_process, '_signal_group', return_value='empty'), \
+                mock.patch.object(owned_process, 'terminate_group', side_effect=fake_terminate_group), \
+                mock.patch.object(owned_process, 'terminate', return_value=[]), \
+                mock.patch.object(owned_process, '_boot_ticks', return_value=777):
+            owned_process._terminate_tree(process, 'token', pinned=9, boundary=10)
+            self.assertEqual(boundaries[-1], 10,
+                             'an emptied group keeps the caller boundary: a reissued foreign '
+                             'group can hold tokenless members the send boundary would admit')
         with mock.patch.object(owned_process, '_signal_group', return_value='failed'), \
                 mock.patch.object(owned_process, 'terminate_group', side_effect=fake_terminate_group), \
                 mock.patch.object(owned_process, 'terminate', return_value=[]), \

@@ -281,7 +281,16 @@ class Installer:
     def command(self, command, publication=False, *, phase, merged=False):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
-            raise ValueError(f'publication retry budget exhausted before {phase} (elapsed time)')
+            if merged and self._journaled:
+                # The total deadline can expire between commands; the journal of
+                # the last failed install still holds its evidence, so this path
+                # reports the same tail-plus-retention shape as any other (issue
+                # #249 review).
+                self._print_journal_tail(True)
+                note = f'; partial output retained at {journal_path(self.args.package)}'
+            else:
+                note = ''
+            raise ValueError(f'publication retry budget exhausted before {phase} (elapsed time){note}')
         # The install phase merges the streams so the failure and timeout
         # diagnostics keep npm's original interleaving of lifecycle banners
         # (stdout) and registry logs (stderr). The JSON metadata lookups keep
