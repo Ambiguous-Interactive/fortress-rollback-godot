@@ -566,7 +566,14 @@ def _claim_cgroup(pid, token_value, proc=None, mountinfo=None):
     inside that window enters neither the leaf nor the token sweep — the
     placement-window carve-out the module docstring states; the numeric
     fallback's boundary scan would have named it only while it keeps its
-    original process group.
+    original process group. The leaf is created under the caller's own
+    cgroup, so on a delegated hierarchy another same-user process with
+    write access there can move itself into the leaf and be treated as a
+    member — the same account-level trust boundary the run-token
+    membership has always had (a same-user process that inherits or
+    copies the token is equally "ours"). The threat model is the owned
+    tree's accidental escape, not hostile same-uid infiltration (#411
+    review).
     """
     leaf = None
     try:
