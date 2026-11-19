@@ -15,12 +15,17 @@ final sweep: the pin makes the flag-4 group signal recycle-proof — the
 kernel resolves the process group through the pinned struct pid, which
 stays valid in every leader state — but it does not reserve the numeric
 group id (the kernel frees the id for reissue when the last task link
-detaches, measured across a full allocator cycle). So the numeric group
-scans keep the exit boundary and the token tiebreak as their guards, while
-the signal needs no gate. The known residual hole is stated plainly: a
-descendant that both setsid's away and scrubs the token leaves no kernel
-marker this module can see; containing that case needs cgroup-backed
-ownership and remains open work in issue #411.
+detaches, measured across a full allocator cycle). Since #411, a launch
+that can also claim a dedicated cgroup v2 leaf places its whole tree in
+kernel membership the sweeps read directly: a descendant that both
+setsid's away and scrubs the token is still listed in the leaf's
+cgroup.procs, and a group id the kernel reissued to an unrelated tree can
+never appear there, so the post-exit scans stop consulting the numeric
+group at all. On a hierarchy that is absent, read-only or not writable
+the claim returns None and the numeric group scans keep the exit
+boundary and the token tiebreak as their guards — the documented
+fallback, whose residual is exactly the scrubbed-descendant class the
+membership containment closes.
 
 A caller that runs several owned commands concurrently — the browser witness
 label waves, the native probe waves — can stop one running command from
@@ -60,6 +65,9 @@ TOKEN_VARIABLE = 'FORTRESS_OWNED_RUN'
 MAX_PROCESSES = 4096
 MAX_IDENTITY_LENGTH = 160
 MAX_NAMED_SURVIVORS = 8
+# One run's containment leaf name (#411): the token is unique per run, so a
+# leaf can never collide with another run's leaf or a foreign cgroup.
+CGROUP_LEAF_PREFIX = 'fortress-owned-'
 # After the direct child exits, an escaped descendant can hold the output
 # pipes open forever. Draining stops at this idle grace instead of waiting
 # for an EOF that would never come; bytes that arrive after the child's exit
@@ -252,12 +260,15 @@ def group_members(group, proc=None, started_before=None, token_value=None):
     pid always reads a new one. What remains unknowable from /proc is a
     descendant
     that forked after the boundary and scrubbed its environment before the
-    scan — it is spared here, and fully containing that class needs the
-    cgroup-backed ownership work in #411. The boundary also cannot reject
-    a group id reissued inside the window between the last member
-    detaching and the boundary sample itself: such members started at or
-    before the boundary and read as ours, so a pre-boundary-window
-    reissue is the remaining scan-level residual the cgroup work owns.
+    scan — it is spared here, and the boundary also cannot reject a group
+    id reissued inside the window between the last member detaching and
+    the boundary sample itself. Both residuals are numeric-scan residuals:
+    under the cgroup membership containment (#411) the post-exit sweeps
+    read the owned leaf's cgroup.procs instead of this scan, so a reissued
+    numeric group is never eligible for a cleanup signal at all, and the
+    scrubbed descendant is still listed in the leaf it inherited. This
+    scan stays the documented fallback for platforms without the
+    mechanism.
     A starttime that cannot be parsed
     counts as ours: naming biases toward killing what we own, never toward
     stranding it.
@@ -363,8 +374,11 @@ def _identity_check(start, proc=None):
     a recycle after the pin can never receive it; the residual sliver is
     the microseconds between the /proc read and the pin where a recycle
     could land in the same scheduler tick as the scanned process's own
-    start, which no /proc-scanning design can distinguish and the
-    cgroup-backed ownership work in #411 owns. An unreadable starttime at
+    start. Under membership containment (#411) the membership set itself
+    cannot hold a stranger — a reissued numeric group never enters the
+    leaf — so this recheck there guards only the dying-member recycle; on
+    the numeric fallback it guards the scan's whole attribution. An
+    unreadable starttime at
     either end biases toward the scan's attribution: naming and killing
     bias toward what the scan owned, never toward stranding a live carrier.
     """
@@ -412,6 +426,167 @@ def terminate_group(group, proc=None, started_before=None, token_value=None):
     return _strip_starts(named)
 
 
+def cgroup_members(leaf, proc=None):
+    """Name the live members of one owned cgroup leaf; zombies are already dead.
+
+    Membership is the kernel's own record: cgroup.procs lists exactly the
+    tasks the kernel keeps in the leaf, so a process group id reissued
+    after the owned tree died can never appear here — this scan has no
+    numeric window to bound, which is why the containment sweeps (#411)
+    replaced the boundary-gated numeric scans wherever a leaf was
+    claimed. Zombies are skipped for the same reason group_members skips
+    them: a zombie cannot write, hold a pipe or come back, and naming it
+    would record a dead process. An unreadable cgroup.procs raises
+    OSError — with containment claimed, a sweep that cannot read the
+    kernel's membership record must fail its sweep (the callers report
+    the anomaly and keep the may-survive direction) instead of silently
+    reading an empty set.
+    """
+    try:
+        rows = (leaf / 'cgroup.procs').read_text().split()
+    except OSError:
+        raise
+    if len(rows) > MAX_PROCESSES:
+        raise ValueError('owned process scan exceeded its process bound')
+    root = proc if proc is not None else Path('/proc')
+    found = []
+    for row in rows:
+        try:
+            pid = int(row)
+        except ValueError:
+            continue  # The kernel writes one pid per line; a stray row is skipped.
+        entry = root / str(pid)
+        try:
+            fields = (entry / 'stat').read_text().rsplit(') ', 1)[-1].split()
+        except OSError:
+            continue  # Gone between the membership read and the stat read: not a live member.
+        if not fields or fields[0] in ('Z', 'X'):
+            continue
+        try:
+            started = int(fields[19])
+        except (IndexError, ValueError):
+            started = None
+        found.append({'pid': pid, 'name': _name(entry), 'start': started})
+    return sorted(found, key=lambda item: item['pid'])
+
+
+def terminate_cgroup(leaf, proc=None):
+    """Kill every live member of one owned cgroup leaf and return their identities.
+
+    The sweep that replaced the post-exit numeric group scans under
+    containment (#411): the membership set itself can never name a
+    stranger, because a reissued numeric group never enters the leaf's
+    cgroup.procs, while the kills ride the same pinned identity check as
+    terminate_group — each member's scan-captured starttime is
+    re-verified after its pidfd is pinned, so a member that died and lost
+    its pid between the read and the signal cannot hand the kill to a
+    recycled pid (#404 review).
+    """
+    members = cgroup_members(leaf, proc)
+    belongs = {_item['pid']: _identity_check(_item['start'], proc) for _item in members}
+    named = [item for item in members if _send_kill(item['pid'], belongs[item['pid']])]
+    return _strip_starts(named)
+
+
+def _claim_cgroup(pid, token_value, proc=None, mountinfo=None):
+    """Place one started child in its own cgroup v2 leaf; None keeps today's scans.
+
+    The containment claim (#411): every descendant forks inside the leaf
+    it inherits, and the kernel lists exactly the leaf's live tasks in
+    cgroup.procs, so the post-exit sweeps can stop consulting the numeric
+    process group id at all — a group id the kernel reissued to an
+    unrelated tree can never appear in the leaf, whatever window it
+    reissued in. The claim is best-effort by contract: a hierarchy that
+    is absent (cgroup v1), not mounted, read-only or not writable returns
+    None and every sweep keeps the boundary-gated numeric scans, the
+    documented fallback. A partially created leaf is removed before
+    returning None, so a failed claim strands no empty directory. The
+    window between Popen returning and this write is narrower than the
+    owned commands' first descendant fork (engines and browsers pay their
+    own startup first); a fork inside it still carries the run token and
+    stays named by the token sweep.
+    """
+    leaf = None
+    try:
+        base = _unified_cgroup_path(proc)
+        mount = _cgroup2_mount(mountinfo)
+        if base is None or mount is None:
+            return None
+        parent = mount if base == '/' else mount / base.strip('/')
+        leaf = parent / (CGROUP_LEAF_PREFIX + token_value)
+        leaf.mkdir(parents=False)
+        (leaf / 'cgroup.procs').write_text(f'{pid}\n')
+        return leaf
+    except OSError:
+        if leaf is not None:
+            try:
+                leaf.rmdir()
+            except OSError:
+                pass  # A failed teardown strands one empty leaf; the claim stays a fallback.
+        return None
+
+
+def _unified_cgroup_path(proc=None):
+    """The caller's own cgroup path on the unified hierarchy ('0::/...').
+
+    None means the platform names no unified-hierarchy row — cgroup v1,
+    no /proc — and the claim has no leaf to create.
+    """
+    try:
+        rows = ((proc or Path('/proc')) / 'self' / 'cgroup').read_text().splitlines()
+    except OSError:
+        return None
+    for row in rows:
+        if row.startswith('0::'):
+            return row[3:]
+    return None
+
+
+def _cgroup2_mount(mountinfo=None):
+    """The mounted cgroup2 hierarchy's root directory; None when it is absent.
+
+    /proc/self/mountinfo rows place the mount point in the fifth field and
+    the filesystem type after the '-' separator. A mount point carrying an
+    escaped space (never true of a cgroup mount) is not decoded; the claim's
+    mkdir then fails and the safe fallback decides.
+    """
+    try:
+        rows = (mountinfo or Path('/proc/self/mountinfo')).read_text().splitlines()
+    except OSError:
+        return None
+    for row in rows:
+        fields = row.split()
+        try:
+            separator = fields.index('-')
+        except ValueError:
+            continue  # A malformed row cannot name a mount point.
+        if separator < 5 or fields[separator + 1] != 'cgroup2':
+            continue
+        return Path(fields[4])
+    return None
+
+
+def _release_cgroup(process):
+    """Remove one run's cgroup leaf after its tree is verified gone (#411).
+
+    The kernel refuses to remove a leaf that still holds live tasks, so
+    the release runs only from the sweeps' callers; a leaf that cannot be
+    removed (a lingering dying task, a re-mounted read-only hierarchy)
+    stays behind as one inert empty directory named after the run token —
+    bounded, never re-entered, because the next run claims its own leaf.
+    Idempotent: a process without a leaf, or one already released, is a
+    no-op, which is why a repeated finish stays safe.
+    """
+    leaf = getattr(process, 'owned_cgroup', None)
+    process.owned_cgroup = None  # First release owns the removal: a repeated call is a no-op.
+    if leaf is None:
+        return
+    try:
+        leaf.rmdir()
+    except OSError:
+        pass
+
+
 def merged_survivors(members, survivors):
     """Merge the group and token sweeps, naming each terminated pid once.
 
@@ -454,17 +629,44 @@ def _close_pin(pinned):
         pass  # An already-closed pin is the state every probe reads as released.
 
 
-def _post_exit_group_sweep(group, boundary, token_value):
-    """One post-exit group scan, bounded by the exit boundary (#404).
+def _post_exit_group_sweep(process, boundary, token_value, proc=None):
+    """One post-exit ownership sweep, bounded by the exit boundary (#404).
 
-    The pin does not reserve the numeric group id — it is reissuable once
-    the last group member detaches, with or without a held pin (measured
-    across a full allocator cycle) — so the scan stays bounded by the
-    child's exit boundary with the token tiebreak in every case. The
-    pin's contribution is the recycle-proof flag-4 group signal beside
-    this scan and the pinned per-pid kills.
+    Without containment the pin does not reserve the numeric group id — it
+    is reissuable once the last group member detaches, with or without a
+    held pin (measured across a full allocator cycle) — so the sweep stays
+    bounded by the child's exit boundary with the token tiebreak in every
+    case, and the pin's contribution beside it is the recycle-proof
+    flag-4 group signal and the pinned per-pid kills. With a claimed leaf
+    (#411) the sweep reads the kernel's own membership instead: the
+    numeric id is never consulted, so a reissued group is never eligible
+    for a cleanup signal in any window, and a token-scrubbed descendant
+    is still listed in the leaf it inherited.
     """
-    return terminate_group(group, started_before=boundary, token_value=token_value)
+    leaf = getattr(process, 'owned_cgroup', None)
+    if leaf is not None:
+        return terminate_cgroup(leaf, proc)
+    return terminate_group(process.pid, proc=proc, started_before=boundary, token_value=token_value)
+
+
+def _membership_pair(process, token_value, proc=None):
+    """The tail's verification and containment callables for one run.
+
+    Under membership containment (#411) both read the claimed leaf's
+    kernel membership, so no starttime window can admit a stranger and a
+    scrubbed descendant stays visible; the boundary argument the tail
+    passes is ignored there, because the kernel's record has no window to
+    bound. The fallback passes the boundary-gated numeric scans the tail
+    has always used.
+    """
+    leaf = getattr(process, 'owned_cgroup', None)
+    if leaf is not None:
+        return (lambda boundary: cgroup_members(leaf, proc),
+                lambda boundary: terminate_cgroup(leaf, proc))
+    return (lambda started_before: group_members(process.pid, started_before=started_before,
+                                                 token_value=token_value),
+            lambda started_before: terminate_group(process.pid, started_before=started_before,
+                                                   token_value=token_value))
 
 
 def _signal_group(process, pinned):
@@ -532,26 +734,33 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None, 
     so the tail never reports a clean teardown while a spared member may
     survive (#404 review). A pinless platform has no flag-4 capability at
     all and keeps main's behavior — the spared member survives unnamed,
-    which is why `(None, None)` there is honest: the boundary-guard
-    residual this whole design narrows is #411's to close.
+    which is why `(None, None)` there is honest: on the numeric fallback
+    the boundary-guard residual remains the documented trade, while the
+    membership containment (#411) has no spared-tokenless class to spare.
 
     ``verify`` is a callable receiving one starttime boundary (scheduler
     ticks since boot, sampled immediately before the send) and returning
-    the live members of the group the signal was meant to stop. Kernels
+    the live members of the group the signal was meant to stop; under
+    membership containment (#411) the caller passes membership-backed
+    callables and the boundary is ignored, because the leaf's kernel
+    record has no starttime window to bound and a reissued numeric group
+    can never appear in it. Kernels
     whose flag-4 semantics predate recycle-proof delivery accept the send
     through a reaped leader's pin without stopping anyone — a 2026-11-19
     Gate runner measured exactly that shape while kernel 6.12.76 delivered
     — so a claimed cleanup is measured, not trusted: the scan must empty
     within a bounded poll or the tail reports the failed-cleanup note and
-    error. The boundary names every member alive at the send (the spared
+    error. On the numeric fallback the boundary names every member alive
+    at the send (the spared
     class all started before it), and the caller's token union keeps the
     window honest in both directions: a member forked between the boundary
     sample and the send carries the run token and is named by the token
     branch, while a group the kernel reissued after the send holds only
     tokenless members started after the boundary, which stay excluded.
     Only a descendant that both forked in that window and scrubbed its
-    environment escapes the scan — the same scrubbing residual the cgroup
-    work in #411 owns everywhere else.
+    environment escapes the scan — the same scrubbing residual the
+    membership containment (#411) closes wherever a leaf was claimed, and
+    which stays the fallback's documented trade elsewhere.
 
     That token-union rule leans on the send actually resolving the group.
     When the outcome is ``'empty'`` — the kernel resolved nothing at the
@@ -957,19 +1166,30 @@ def _terminate_tree(process, token_value, pinned=None, boundary=None):
     numeric fallback stays gated on an unreaped child. Callers whose
     handler can run after a reap without a pin pass an entry-tick
     boundary that bounds the numeric scans (see the interrupt path).
-    The group scans here are otherwise unbounded, matching their callers:
+    Under membership containment (#411) every group pass reads the
+    claimed leaf's kernel membership instead of the numeric id, so a
+    group id the kernel reissued — in any window, including the
+    pre-boundary one the bounded fallback scans cannot reject — is never
+    eligible for a cleanup signal. The group scans on the fallback are
+    otherwise unbounded, matching their callers:
     they run while the child
     is unreaped (deadline, interrupt, refusal, abandonment — its id is
     still reserved by the zombie or by the live members), or through a
     cancel whose tree still has live members holding the group open. The
     same trade as main, stated plainly: a recycled group forming after the
     last member died and before a scan reads the numeric id could be
-    misnamed, and the pin cannot close that class — the cgroup-backed
-    ownership work in #411 owns it.
+    misnamed, and the pin cannot close that class — the membership
+    containment (#411) closes it wherever a leaf was claimed, and the
+    fallback platforms keep the documented trade.
     Merging the passes keeps every pid named exactly once (#381's class).
     """
+    leaf = getattr(process, 'owned_cgroup', None)
+    if leaf is not None:
+        group_sweep = lambda: terminate_cgroup(leaf)
+    else:
+        group_sweep = lambda: terminate_group(process.pid, started_before=boundary)
     named = []
-    for sweep in (lambda: terminate_group(process.pid, started_before=boundary), lambda: terminate(token_value)):
+    for sweep in (group_sweep, lambda: terminate(token_value)):
         try:
             named = merged_survivors(named, sweep())
         except Exception:
@@ -978,7 +1198,7 @@ def _terminate_tree(process, token_value, pinned=None, boundary=None):
     signal_outcome = _signal_group(process, pinned)
     anomaly = None
     try:
-        named = merged_survivors(named, terminate_group(process.pid, started_before=boundary))
+        named = merged_survivors(named, group_sweep())
     except Exception as error:
         anomaly = error  # The final token sweep still runs before the anomaly resurfaces.
     try:
@@ -988,16 +1208,20 @@ def _terminate_tree(process, token_value, pinned=None, boundary=None):
     if pinned is not None and signal_outcome in ('delivered', 'empty'):
         # The kernel accepted the pinned signal, and kernels whose flag-4
         # semantics predate recycle-proof delivery can leave the class the
-        # bounded scans spared. One boundary sweep stops and names them: a
+        # bounded scans spared. One containment sweep stops and names them: a
         # delivered outcome proves the kernel resolved this group at the
         # send, so the send boundary admits the members alive at the send;
         # an emptied group keeps the caller's exit boundary, because a
         # reissued foreign group can hold members started after the exit
         # that the later send boundary would wrongly admit. The child is
-        # unreaped here, so the numeric id is still reserved.
+        # unreaped here, so the numeric id is still reserved; under
+        # membership containment the boundary is irrelevant and the leaf
+        # record decides (#411).
         try:
-            named = merged_survivors(named, terminate_group(process.pid, token_value=token_value,
-                                                            started_before=send_boundary if signal_outcome == 'delivered' else boundary))
+            named = merged_survivors(named, group_sweep() if leaf is not None else
+                                     terminate_group(process.pid, token_value=token_value,
+                                                     started_before=send_boundary if signal_outcome == 'delivered'
+                                                     else boundary))
         except Exception as error:
             anomaly = anomaly or error
     if signal_outcome == 'failed' and anomaly is None:
@@ -1384,16 +1608,18 @@ class CancelHandle:
                 # reads no boundary — and at that point the child is alive or
                 # an unreaped zombie, whose id the zombie still reserves, so
                 # no recycled group can hold the numeric id yet. Sampling the
-                # entry tick unconditionally then bounds both scans for the
+                # entry tick unconditionally then bounds both fallback scans for the
                 # whole cleanup: a group id the owner's later reap frees and
                 # reissues names nothing, because its members started after
                 # the sampled tick (#404 review). The one corner that stays
-                # unbounded by construction: a cancel that stops the tree
-                # itself frees the group id during its own kill sequence, so
-                # no valid boundary exists for the scans that straddle it —
-                # that residual is `_terminate_tree`'s documented trade, and
-                # the cgroup-backed identity work in #411 owns the mechanism
-                # that closes it.
+                # unbounded by construction on the fallback: a cancel that
+                # stops the tree itself frees the group id during its own
+                # kill sequence, so no valid boundary exists for the numeric
+                # scans that straddle it — that residual is
+                # `_terminate_tree`'s documented fallback trade, and the
+                # membership containment (#411) closes it wherever a leaf
+                # was claimed: the sweeps read the leaf's kernel record,
+                # which a reissued numeric group can never enter.
                 if boundary is None and pinned is not None:
                     # A cancel flipping before the owning call observed an exit
                     # reads no boundary — and at that point the child is alive
@@ -1481,7 +1707,16 @@ def _collect(process, deadline, on_exit=None):
             if on_exit is not None:
                 on_exit(exit_ticks)
             exit_deadline = time.monotonic() + DRAIN_IDLE_SECONDS
-            group_alive = bool(group_members(process.pid))
+            leaf = getattr(process, 'owned_cgroup', None)
+            if leaf is not None:
+                try:
+                    group_alive = bool(cgroup_members(leaf))
+                except OSError:
+                    # An unreadable leaf is not evidence of an empty one: keep
+                    # the tail armed so its scans fail closed (#411).
+                    group_alive = True
+            else:
+                group_alive = bool(group_members(process.pid))
         if exit_observed:
             if not streams or time.monotonic() >= exit_deadline:
                 break
@@ -1528,13 +1763,22 @@ def _drain_after_kill(process):
 
 
 def _start(command, environment, cwd, input_text=False):
-    """Start one process in its own session carrying a unique ownership token."""
+    """Start one process in its own session carrying a unique ownership token.
+
+    When the platform offers a writable unified cgroup hierarchy, the child
+    is placed in its run-dedicated leaf and the leaf rides on the process
+    object as ``owned_cgroup`` (#411): the post-exit sweeps then read
+    kernel membership instead of the numeric group id. None (a cgroup v1
+    host, a read-only or undelegated hierarchy) keeps the boundary-gated
+    numeric scans, the documented fallback.
+    """
     owned = dict(environment or os.environ)
     token_value = uuid.uuid4().hex
     owned[TOKEN_VARIABLE] = token_value
     process = subprocess.Popen(command, cwd=cwd, env=owned, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                stdin=subprocess.PIPE if input_text else subprocess.DEVNULL,
                                text=True, start_new_session=True)
+    process.owned_cgroup = _claim_cgroup(process.pid, token_value)
     return process, token_value
 
 
@@ -1786,6 +2030,7 @@ def _refused_run(cancel, process, token_value, log, pinned=None):
             except OSError:
                 pass  # A failing log sink must not replace the refusal either.
     finally:
+        _release_cgroup(process)
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
@@ -1825,6 +2070,7 @@ def _abandon_started_run(cancel, process, token_value, log, registration, pinned
         except subprocess.TimeoutExpired:
             pass  # The sweeps already killed every group member and carrier.
     finally:
+        _release_cgroup(process)
         if cancel is not None:
             _append_log(log, cancel.settle_if_owned(registration))
             cancel.unregister()  # the pin and its descriptor belong to the abandoned run
@@ -1905,9 +2151,10 @@ def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
         # sides' kills and no pid is ever named twice, or named nowhere (#381's
         # class, #399's windows). The pin makes the flag-4 group signal
         # recycle-proof (#404); the numeric id stays reissuable once the
-        # last member detaches, so the post-exit group scan keeps the
-        # child's exit boundary and the token tiebreak as its guards in
-        # every case. The whole tail — output assembly included —
+        # last member detaches, so the fallback post-exit group scan keeps
+        # the child's exit boundary and the token tiebreak as its guards,
+        # while a claimed leaf's membership sweep has no numeric window to
+        # bound at all (#411). The whole tail — output assembly included —
         # releases the reservation on any exit: an interrupt landing here
         # must not lock the handle behind the report phase, and a report
         # published after a classified raise still reaches the run's own log
@@ -1922,20 +2169,20 @@ def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
         # Both sweeps are contained: a failing token scan must not skip the group
         # scan, so a token-scrubbed same-group descendant is named and killed even
         # when the scan raises, and the anomaly surfaces only after both ran
-        # (#398 review).
+        # (#398 review). Under membership containment the group pass reads the
+        # leaf's kernel record; the numeric scan keeps its boundary on the
+        # fallback (#411).
         swept, tail_anomaly = _contained_sweeps([
             lambda: terminate(token_value),
-            (lambda: _post_exit_group_sweep(process.pid, exit_ticks, token_value))
+            (lambda: _post_exit_group_sweep(process, exit_ticks, token_value))
             if group_alive else (lambda: []),
         ])
         own = cancel.claim(swept) if cancel is not None else swept
         candidates = merged_survivors(report, own)
+        verify, contain = _membership_pair(process, token_value)
         group_note, group_error = _tail_group_signal(
             process, pinned, group_alive, boundary=exit_ticks,
-            verify=lambda started_before: group_members(process.pid, started_before=started_before,
-                                                        token_value=token_value),
-            contain=lambda started_before: terminate_group(process.pid, started_before=started_before,
-                                                           token_value=token_value))
+            verify=verify, contain=contain)
         if group_note:
             output += group_note
         if group_error is not None and tail_anomaly is None:
@@ -1981,6 +2228,9 @@ def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
             _note_final(log, cancel, output)
         return returncode, output
     finally:
+        # The leaf releases only now — after every tail sweep and note —
+        # because the membership reads end here (#411).
+        _release_cgroup(process)
         if cancel is not None:
             # Idempotent on every path that already settled or closed through
             # emit(): a mid-tail interrupt drains and appends whatever a
@@ -2041,18 +2291,19 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
     try:
         returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(
             process, token_value, log, timeout, cancel, registration, pinned)
-        # The same report handoff and contained sweep pair the merged runner
-        # uses (#381's class, #399's windows, #398 review), with the same
-        # exit-bounded post-exit group scan and the recycle-proof pinned
-        # signal (#404). The whole tail — output assembly included — releases the reservation on
-        # any exit, exactly like the merged runner's (#403 review).
+        # The same contained sweep pair and membership containment the merged
+        # runner uses (#381's class, #399's windows, #398 review, #411), with
+        # the same exit-bounded post-exit fallback scan and the recycle-proof
+        # pinned signal (#404). The whole tail — output assembly included —
+        # releases the reservation on any exit, exactly like the merged
+        # runner's (#403 review).
         stderr = ''.join(data for descriptor, data in parts.items() if descriptor != stdout_descriptor)
         if feed_failures:
             stderr += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
         report = cancel.absorb() if cancel is not None else []
         swept, tail_anomaly = _contained_sweeps([
             lambda: terminate(token_value),
-            (lambda: _post_exit_group_sweep(process.pid, exit_ticks, token_value))
+            (lambda: _post_exit_group_sweep(process, exit_ticks, token_value))
             if group_alive else (lambda: []),
         ])
         own = cancel.claim(swept) if cancel is not None else swept
@@ -2062,12 +2313,10 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
         # escape that wins this tail must not hide the tooling failure behind
         # its own marker.
         anomaly_note = f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n' if tail_anomaly is not None else ''
+        verify, contain = _membership_pair(process, token_value)
         group_note, group_error = _tail_group_signal(
             process, pinned, group_alive, boundary=exit_ticks,
-            verify=lambda started_before: group_members(process.pid, started_before=started_before,
-                                                        token_value=token_value),
-            contain=lambda started_before: terminate_group(process.pid, started_before=started_before,
-                                                           token_value=token_value))
+            verify=verify, contain=contain)
         if group_note:
             anomaly_note += group_note
         if group_error is not None and tail_anomaly is None:
@@ -2111,6 +2360,9 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
             stderr += f'\n{note}'
         return returncode, parts[stdout_descriptor], stderr
     finally:
+        # The leaf releases only now — after every tail sweep and note —
+        # because the membership reads end here (#411).
+        _release_cgroup(process)
         if cancel is not None:
             # Idempotent on every path that already settled or closed through
             # emit(): a mid-tail interrupt drains and appends whatever a
@@ -2138,6 +2390,11 @@ def spawn(command, environment=None, stdout=None, stderr=None, cwd=None):
     owned[TOKEN_VARIABLE] = token_value
     process = subprocess.Popen(command, cwd=cwd, env=owned, stdout=stdout, stderr=stderr, start_new_session=True)
     process.owned_pin = _pin_leader(process)
+    # The containment claim (#411): the leaf rides beside the pin and
+    # finish() releases it after its final sweep. None keeps the numeric
+    # fallback scans, the documented trade on hierarchies the caller
+    # cannot write.
+    process.owned_cgroup = _claim_cgroup(process.pid, token_value)
     return process, token_value
 
 
@@ -2149,11 +2406,15 @@ def finish(process, token_value, grace=5.0):
     checks run, so any surviving descendant is killed and named instead of
     being adopted by init. The spawn-time leader pin (#404) makes the
     grace group kill recycle-proof through the flag-4 signal in every
-    leader state; it does not reserve the numeric group id, so the group
+    leader state; it does not reserve the numeric group id, so the
+    fallback group
     scan keeps the teardown boundary
     sampled after the child is dead and the token in hand, so descendants
     forked during the teardown grace are still named while a group id the
-    kernel reissued afterwards names nothing (#399). Returns once nothing
+    kernel reissued afterwards names nothing (#399). Under membership
+    containment (#411) the sweep reads the claimed leaf's kernel record
+    instead — no numeric window exists there — and the leaf is released
+    (removed) once the tree is verified gone. Returns once nothing
     owned is alive and releases the spawn's pin exactly once, even if a
     caller finishes the same process twice.
     """
@@ -2188,10 +2449,14 @@ def finish(process, token_value, grace=5.0):
         # token scan must never skip the group scan, so a token-scrubbed
         # same-group descendant is named and killed even when the scan
         # raises, and the anomaly surfaces only after both sweeps ran
-        # (#398 review).
+        # (#398 review). Under membership containment (#411) the group
+        # sweep reads the claimed leaf's kernel record and the numeric id
+        # is never consulted.
+        leaf = getattr(process, 'owned_cgroup', None)
         survivors, sweep_anomaly = _contained_sweeps([
             lambda: terminate(token_value),
-            lambda: terminate_group(process.pid, started_before=boundary, token_value=token_value),
+            (lambda: terminate_cgroup(leaf)) if leaf is not None
+            else lambda: terminate_group(process.pid, started_before=boundary, token_value=token_value),
         ])
         if process.poll() is None:
             try:
@@ -2208,6 +2473,7 @@ def finish(process, token_value, grace=5.0):
             # complete its scan is a tooling failure, never a clean teardown.
             raise sweep_anomaly
     finally:
+        _release_cgroup(process)
         _close_pin(pinned)
         for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:

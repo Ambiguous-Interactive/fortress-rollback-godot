@@ -192,6 +192,7 @@ engine wave and the serial browser pages spread across runners without
 removing a gate.
 Cancellation fences queued launches and retires owned engine groups before releasing capacity; per-case watchdog isolation remains available after contention with one worker.
 An emptied-group signal verdict is classified once per process against the runner's real kernel before it is trusted, and a kernel that cannot prove an emptied group reports the may-survive failure instead of a clean teardown (#408).
+Every owned launch claims a dedicated cgroup v2 leaf when the hierarchy is writable, and the post-exit ownership sweeps read that leaf's kernel membership instead of the numeric process group id, so a group id the kernel reissued is never eligible for a cleanup signal in any window; platforms without a writable hierarchy keep the boundary-gated numeric scans as the documented fallback (#411).
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
 The same policy applies to custom transports and the SignalFish adapter.
 The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
