@@ -3298,6 +3298,32 @@ class CgroupContainmentTests(unittest.TestCase):
                 process.kill()
                 process.wait(timeout=10)
 
+    def test_a_refused_run_releases_its_leaf_after_the_reap(self):
+        """The leaf release follows the child's reap: a dying child must not strand the leaf."""
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'refused.log'
+            process = subprocess.Popen([PYTHON, '-c', 'import os, time; os.kill(os.getpid(), 9)'],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                # A child that dies by its own signal and is never waited by the test:
+                # _refused_run's own wait() is what reaps it, and the release must
+                # observe the reap, not race it.
+                process.owned_cgroup = self.attached_leaf()
+                order = []
+                with mock.patch.object(owned_process, '_terminate_tree', return_value=([], None)), \
+                        mock.patch.object(owned_process, '_release_cgroup',
+                                          side_effect=lambda p: order.append(p.returncode is not None)):
+                    with self.assertRaises(ValueError):
+                        # The refusal ValueError is _refused_run's contract; the
+                        # release ordering is what this witness pins.
+                        owned_process._refused_run(None, process, 'tok', log)
+                self.assertEqual(order, [True],
+                                 'the release runs after the child is reaped, so the kernel can free the leaf')
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=10)
+
     # Value: protects=the leaf's lifetime on every run exit (#411);
     # fails_when=a run exits and strands its containment leaf;
     # seam=patched _claim_cgroup over a temp leaf, healthy and deadline exits

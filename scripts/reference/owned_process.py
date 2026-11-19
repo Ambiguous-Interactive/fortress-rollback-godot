@@ -2138,11 +2138,14 @@ def _refused_run(cancel, process, token_value, log, pinned=None):
             except OSError:
                 pass  # A failing log sink must not replace the refusal either.
     finally:
-        _release_cgroup(process)
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             pass  # The sweeps already killed every group member and carrier.
+        # The leaf releases after the reap: a killed child the kernel has not
+        # finished exiting can still hold the leaf, so an earlier rmdir would
+        # strand it (#411 review).
+        _release_cgroup(process)
         for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:
                 try:
