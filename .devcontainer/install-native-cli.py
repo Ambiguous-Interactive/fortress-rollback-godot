@@ -108,8 +108,15 @@ def journal_tail(package):
     tail = lines[-JOURNAL_TAIL_LINES:]
     if partial or len(lines) > JOURNAL_TAIL_LINES:
         tail.insert(0, f'...[journal head truncated; showing the last {len(tail)} lines]')
+    # The budget bounds exactly what is printed, so each line is redacted
+    # before its size counts: redaction can lengthen a line (a short query
+    # becomes the longer ?<redacted>), and measuring the raw line first could
+    # print past the budget.
+    encoded = []
+    for line in tail:
+        redacted = redact_query_strings(line)
+        encoded.append((redacted, len(redacted.encode('utf-8', errors='replace')) + 1))
     tail_marker = f'...[journal tail truncated at the {JOURNAL_TAIL_BYTES}-byte diagnostic budget]'
-    encoded = [(line, len(line.encode('utf-8', errors='replace')) + 1) for line in tail]
     kept = []
     remaining = JOURNAL_TAIL_BYTES
     for line, size in reversed(encoded):
@@ -126,7 +133,7 @@ def journal_tail(package):
             remaining += encoded[len(encoded) - len(kept)][1]
             kept.pop()
         kept.append(tail_marker)
-    return [redact_query_strings(line) for line in reversed(kept)]
+    return list(reversed(kept))
 
 
 class Installer:
@@ -349,8 +356,11 @@ class Installer:
             else:
                 note = ''
             raise ValueError(f'CLI installation command failed during {phase} (exit {result.returncode}){note}')
-        if self._journaled:
-            # A healthy install removes the evidence journal it created.
+        if merged and self._journaled:
+            # A healthy install removes the evidence journal it created. Only
+            # the merged install may remove it: a later successful metadata
+            # lookup must not delete the previous failed attempt's evidence
+            # while publication retries are still running (issue #249 review).
             journal_path(self.args.package).unlink(missing_ok=True)
         return result.stdout.strip()
 

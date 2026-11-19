@@ -1965,22 +1965,11 @@ time.sleep(60)
     def test_the_tail_group_signal_verifies_the_send_before_claiming_a_stop(self):
         process = type('Probe', (), {'pid': 424242, 'poll': lambda self: 0})()
         survivor = {'pid': 4243, 'name': 'member', 'start': 5}
-        # An accepted send whose members survive the whole verify window is a
-        # failed cleanup, never a delivered note (red on the pre-verification
-        # tail, which returned the delivered note for exactly this shape).
-        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
-                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0]) as ticks, \
-                mock.patch.object(owned_process.time, 'sleep') as sleeper:
-            note, error = owned_process._tail_group_signal(process, 9, True, verify=lambda boundary: [survivor])
-            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
-            self.assertIsNotNone(error, 'an undelivered signal must never read as a clean teardown')
-            self.assertEqual(ticks.call_count, 2, 'the deadline bounds one scan-and-decide pass')
-            self.assertEqual(sleeper.call_count, 0, 'an exhausted window reports without another poll')
-        # A member that dies within the window keeps the delivered verdict: the
-        # verification tolerates scheduling latency, it does not fail it.
+        # A member that dies within the verify grace keeps the delivered
+        # verdict: SIGKILL delivery waits for the member to be scheduled, and
+        # the grace is exactly that latency budget.
+        scans = []
         with mock.patch.object(owned_process, '_signal_group', return_value='delivered'):
-            scans = []
-
             def dying_member(boundary):
                 scans.append(boundary)
                 return [survivor] if len(scans) == 1 else []
@@ -1988,7 +1977,7 @@ time.sleep(60)
             note, error = owned_process._tail_group_signal(process, 9, True, verify=dying_member)
             self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL:')
             self.assertIsNone(error)
-            self.assertEqual(len(scans), 2, 'one empty scan ends the verification')
+            self.assertEqual(len(scans), 2, 'one empty scan ends the grace')
         # The ESRCH no-op is measured too: a kernel can answer ESRCH through a
         # reaped leader's pin while members still live.
         with mock.patch.object(owned_process, '_signal_group', return_value='empty'), \
@@ -2025,39 +2014,68 @@ time.sleep(60)
             self.assertEqual(len(seen), 1, 'the verify callable receives the send-time boundary')
 
     # Value: protects=the containment of survivors an accepted-but-undelivered signal left (#404 review);
-    # fails_when=the tail reports undelivery while the surviving member keeps running after cleanup;
+    # fails_when=the tail reports undelivery while the surviving member keeps running after cleanup,
+    # or a slow-to-die member reads as an undelivered signal before its grace expires;
     # seam=_tail_group_signal with a recorded contain sweep behind the verify scan
     def test_the_tail_group_signal_contains_the_survivors_it_reports(self):
         process = type('Probe', (), {'pid': 424242, 'poll': lambda self: 0})()
         survivor = {'pid': 4243, 'name': 'member', 'start': 5}
+        # A member that dies within the verify grace keeps the delivered
+        # verdict and never reaches containment: SIGKILL delivery waits for
+        # the member to be scheduled, so the grace comes first.
         scans = []
         sweeps = []
         with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
-                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 0.2, 0.4, 10.0]) as ticks, \
-                mock.patch.object(owned_process.time, 'sleep') as sleeper:
-            def verify(boundary):
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 0.2]) as ticks:
+            def dying_member(boundary):
                 scans.append(boundary)
-                # The member dies after the containment sweep ran once.
                 return [survivor] if len(scans) == 1 else []
+
+            note, error = owned_process._tail_group_signal(
+                process, 9, True, verify=dying_member,
+                contain=lambda boundary: sweeps.append(boundary) or [survivor])
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL:')
+            self.assertIsNone(error, 'a member that dies inside the grace is a delivered signal')
+            self.assertEqual(len(scans), 2, 'an emptied scan ends the grace without containment')
+            self.assertEqual(sweeps, [], 'containment never runs inside the grace')
+        # A member that survives the whole grace is contained once, and the
+        # scan must confirm the group empty before the wording claims a stop;
+        # the kernel breach itself stays a visible tooling error.
+        scans = []
+        sweeps = []
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process.time, 'monotonic',
+                                  side_effect=[0.0, 10.0, 0.0, 0.2, 10.0]):
+            def persisting_member(boundary):
+                scans.append(boundary)
+                return [survivor] if len(scans) <= 2 else []
 
             def contain(boundary):
                 sweeps.append(boundary)
                 return [survivor]
 
-            note, error = owned_process._tail_group_signal(process, 9, True, verify=verify, contain=contain)
-        self.assertEqual(len(scans), 2, 'an emptied scan ends the verification')
-        self.assertEqual(sweeps, scans[:1], 'the sweep runs between the scans, at the same send boundary')
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=persisting_member, contain=contain)
+        self.assertEqual(sweeps, [scans[0]], 'containment runs once, at the send boundary, after the grace')
         self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
         self.assertIn('the send-boundary sweep stopped and named them', note)
         self.assertIn('4243', note, 'the contained member is named in the note')
         self.assertIsNotNone(error, 'the kernel breach stays visible even with the sweep contained it')
-        # A containment sweep that cannot run leaves the may-survive wording:
-        # the failure verdict never claims a stop that did not happen.
+        # Containment's names are attempted stops, not proof: a member that
+        # survives the containment grace keeps the may-survive wording.
+        scans = []
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0, 0.0, 10.0]):
+            note, error = owned_process._tail_group_signal(
+                process, 9, True,
+                verify=lambda boundary: scans.append(boundary) or [survivor],
+                contain=lambda boundary: [survivor])
+            self.assertIn('may survive', note, 'an unconfirmed containment never claims a stop')
+            self.assertIn('the send-boundary sweep reached', note, 'the attempted sweep is still named')
+            self.assertIsNotNone(error)
+        # The no-containment deadline keeps the original may-survive wording.
         with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
                 mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0]):
-            note, error = owned_process._tail_group_signal(
-                process, 9, True, verify=lambda boundary: [survivor],
-                contain=lambda boundary: (_ for _ in ()).throw(OSError(errno.EPERM, 'sweep refused')))
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=lambda boundary: [survivor])
             self.assertIn('may survive', note)
             self.assertIsNotNone(error)
 

@@ -80,16 +80,21 @@ GROUP_SIGNAL_VERIFY_SECONDS = 1.0
 GROUP_SIGNAL_VERIFY_POLL = 0.1
 
 
-def _undelivered_outcome(contained):
+def _undelivered_outcome(contained, confirmed):
     """The failed-cleanup verdict for a pinned signal the kernel accepted without honoring.
 
-    With contained names the sweep stopped and named them, so the wording says
-    so; either way the breach itself stays a tooling error, because a pinned
-    kernel that accepted the send without delivering it is exactly the
-    regression the verification exists to catch.
+    The sweep's names are attempted stops, not proof: only a scan that
+    observed the group empty afterwards confirms the wording, and either way
+    the breach itself stays a tooling error, because a pinned kernel that
+    accepted the send without delivering it is exactly the regression the
+    verification exists to catch.
     """
-    suffix = (f'the send-boundary sweep stopped and named them: {contained}\n' if contained
-              else 'a same-group member the bounded scans spared may survive\n')
+    if contained and confirmed:
+        suffix = f'the send-boundary sweep stopped and named them: {contained}\n'
+    else:
+        suffix = 'a same-group member the bounded scans spared may survive\n'
+        if contained:
+            suffix = f'the send-boundary sweep reached: {contained}; ' + suffix[0].lower() + suffix[1:]
     return (f'OWNED_PROCESS_GROUP_SIGNAL_FAILED: the kernel accepted the pinned group signal '
             f'without stopping the members it resolved; {suffix}',
             RuntimeError('the pinned group signal did not stop the surviving group members'))
@@ -501,26 +506,30 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None):
     tokenless members started after the boundary, which stay excluded.
     Only a descendant that both forked in that window and scrubbed its
     environment escapes the scan — the same scrubbing residual the cgroup
-    work in #404 owns everywhere else. A scan that raises reads as unknown
-    and keeps polling to the deadline, then fails exactly like a measured
-    survivor.
-
+    work in #404 owns everywhere else.
     ``contain`` is a callable with the same boundary argument that stops and
     names the survivors the scan keeps finding — one send-boundary sweep with
-    the same token union the caller's verify uses. A kernel that accepted the
-    send without delivering must not leave the spared member running after
-    cleanup: the sweep stops it, the names travel in the note, and the breach
-    itself still reports as the failed-cleanup error, because the pinned
-    signal did not do what the pinned kernels deliver and a regression there
-    must stay visible even when the sweep contained it. With no contain
-    callable the deadline failure keeps the original may-survive wording.
+    the same token union the caller's verify uses. The grace comes first:
+    SIGKILL delivery is only visible after the member is scheduled, so a
+    member that dies within the verify window keeps the delivered verdict
+    and containment never runs. Only a member that survives the whole
+    window is contained, and the scan must then confirm the group empty —
+    the sweep's names are attempted stops, not proof, so unconfirmed
+    containment keeps the may-survive wording — while the breach itself
+    reports as the failed-cleanup error either way, because the pinned
+    signal did not do what the pinned kernels deliver and a regression
+    there must stay visible even when the sweep contained it. With no
+    contain callable the expiry keeps the original may-survive wording.
     """
     if not group_alive or pinned is None:
         return None, None
     send_boundary = _boot_ticks()
     outcome = _signal_group(process, pinned)
     contained = None
+    confirmed = False
     if outcome in ('delivered', 'empty') and verify is not None:
+        # The grace: SIGKILL delivery waits for the member to be scheduled,
+        # so the scan polls the whole window before anything else reacts.
         deadline = time.monotonic() + GROUP_SIGNAL_VERIFY_SECONDS
         while True:
             try:
@@ -528,19 +537,38 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None):
             except OSError:
                 remaining = [object()]  # An unreadable scan is not evidence of a stop.
             if not remaining:
+                confirmed = True
                 break
-            if contain is not None:
-                # The accepted signal did not stop these members, so the sweep
-                # stops and names them while the poll keeps measuring.
-                try:
-                    contained = merged_survivors(contained or [], contain(send_boundary))
-                except OSError:
-                    pass  # The poll and the failure verdict continue without the sweep.
             if time.monotonic() >= deadline:
-                return _undelivered_outcome(contained)
+                break
             time.sleep(GROUP_SIGNAL_VERIFY_POLL)
+        if not confirmed and contain is not None:
+            # The accepted signal did not stop these members: one send-boundary
+            # sweep stops and names them, then the scan confirms the outcome.
+            try:
+                contained = contain(send_boundary)
+            except OSError:
+                contained = None  # The failure verdict continues without the sweep.
+            deadline = time.monotonic() + GROUP_SIGNAL_VERIFY_SECONDS
+            while not confirmed:
+                try:
+                    remaining = verify(send_boundary)
+                except OSError:
+                    remaining = [object()]
+                if not remaining:
+                    confirmed = True
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(GROUP_SIGNAL_VERIFY_POLL)
         if contained:
-            return _undelivered_outcome(contained)
+            # The sweep's names travel with the verdict; confirmation only
+            # decides whether the wording may claim a completed stop.
+            return _undelivered_outcome(contained, confirmed)
+        if not confirmed:
+            # The grace expired with the group still non-empty: the send did
+            # not deliver, and no containment was available to stop them.
+            return _undelivered_outcome(contained, confirmed)
     if outcome == 'delivered':
         return ('OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n',
                 None)

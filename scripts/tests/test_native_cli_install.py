@@ -334,14 +334,31 @@ class NativeCliInstallTests(unittest.TestCase):
                                      'the newest multibyte line is kept whole beside the marker')
                 # The read itself is bounded: a file larger than the read window
                 # loads only its newest bytes, drops the partial cut line, and
-                # keeps the newest complete lines with the head marker.
-                evidence.write_text(''.join(f'stale {number}\n' for number in range(20000)) + 'fresh 1\nfresh 2\n',
-                                    encoding='utf-8')
+                # keeps the newest complete lines with the head marker. The
+                # fixture size is asserted first, so the window cut is real.
+                stale = ''.join(f'stale {number}\n' for number in range(24000))
+                evidence.write_text(stale + 'fresh 1\nfresh 2\n', encoding='utf-8')
+                self.assertGreater(evidence.stat().st_size, helper.JOURNAL_TAIL_READ_BYTES,
+                                   'the fixture must exceed the read window for the cut to be real')
                 tail = helper.journal_tail('@opencode/cli')
                 self.assertIn('journal head truncated', tail[0])
                 self.assertEqual(tail[-2:], ['fresh 1', 'fresh 2'])
-                self.assertFalse(any(line.startswith('stale 1\n') for line in tail))
                 self.assertNotIn('stale 1\nstale 2', '\n'.join(tail), 'the cut line never leaks its head')
+                # Redaction happens before the budget counts: a short query that
+                # redacts into the longer ?<redacted> cannot print past it. The
+                # 40-line fixture's raw bytes fit the budget while its redacted
+                # bytes do not, which is exactly the ordering bug's shape.
+                line_template = 'npm http fetch GET https://r.example/' + 'a' * 364 + '?t=x'
+                evidence.write_text(''.join(line_template + '\n' for _ in range(40)), encoding='utf-8')
+                raw_total = sum(len(line.encode('utf-8')) + 1 for line in evidence.read_text(encoding='utf-8').splitlines())
+                self.assertLessEqual(raw_total, helper.JOURNAL_TAIL_BYTES,
+                                     "the fixture's raw bytes must fit the budget")
+                printed = helper.journal_tail('@opencode/cli')
+                self.assertLessEqual(sum(len(line.encode('utf-8')) + 1 for line in printed),
+                                     helper.JOURNAL_TAIL_BYTES,
+                                     'the redacted diagnostic stays within the byte budget')
+                self.assertTrue(all('t=x' not in line for line in printed),
+                                'the printed lines are the redacted ones')
                 evidence.chmod(0o000)
                 try:
                     self.assertEqual(helper.journal_tail('@opencode/cli'), [])
