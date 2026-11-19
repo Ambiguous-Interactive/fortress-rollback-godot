@@ -72,8 +72,10 @@ DRAIN_IDLE_SECONDS = 0.5
 # the deadline branch then never reaches its verification sweeps, the reap
 # or the TimeoutExpired raise, defeating the deadline it serves. A killed
 # command's own flush is kernel-buffered and completes in milliseconds, so
-# this total cap only ever engages for a live writer, whose bytes are
-# post-exit escapee evidence the design withholds anyway.
+# this total cap only ever engages for a live writer. Its bytes are escapee
+# diagnostics: they reach the run's log text, but never the trusted output
+# snapshot, so truncating them loses evidence, never the command's real
+# result.
 DRAIN_TOTAL_SECONDS = 2.0
 POLL_SECONDS = 0.1
 DRAIN_CHUNK = 65536
@@ -531,7 +533,7 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None, 
     survive (#404 review). A pinless platform has no flag-4 capability at
     all and keeps main's behavior — the spared member survives unnamed,
     which is why `(None, None)` there is honest: the boundary-guard
-    residual this whole design narrows is #404's to close.
+    residual this whole design narrows is #411's to close.
 
     ``verify`` is a callable receiving one starttime boundary (scheduler
     ticks since boot, sampled immediately before the send) and returning

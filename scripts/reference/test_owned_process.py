@@ -489,8 +489,12 @@ class SplitStreamTests(unittest.TestCase):
         watchdog = threading.Timer(owned_process.DRAIN_TOTAL_SECONDS + 15,
                                    lambda: (watchdog_fired.append(True), process.kill()))
         watchdog.start()
-        began = time.monotonic()
         try:
+            # The writer's first flush proves the pipe is live before the
+            # timing starts, so a slow interpreter start cannot leave the
+            # drain's first select window empty and false-fail the control.
+            process.stdout.readline()
+            began = time.monotonic()
             drained = owned_process._drain_after_kill(process)
         finally:
             watchdog.cancel()
@@ -1529,10 +1533,17 @@ time.sleep(0.05)
             self.assertIn('OWNED_PROCESSES: terminated', text, 'the sweeps names survive the interrupt')
             self.assertIn('OWNED_PROCESS_SWEEP_ANOMALY', text, 'the sweep anomaly is recorded, never masking the interrupt')
             pid = int(marker.read_text())
-            with self.assertRaises(ChildProcessError):
-                # The sweeps killed the tree and the handler reaped it: nothing
-                # of this run's child may be left to this test (#398 review).
-                os.waitpid(pid, os.WNOHANG)
+            try:
+                with self.assertRaises(ChildProcessError):
+                    # The sweeps killed the tree and the handler reaped it: nothing
+                    # of this run's child may be left to this test (#398 review).
+                    os.waitpid(pid, os.WNOHANG)
+            finally:
+                if alive(pid):
+                    # Red-direction cleanup only: a failed assertion must not
+                    # leave the child running until its own sleep expires.
+                    os.kill(pid, signal.SIGKILL)
+                    os.waitpid(pid, 0)
 
     def test_the_pinned_group_signal_targets_the_process_group(self):
         process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
