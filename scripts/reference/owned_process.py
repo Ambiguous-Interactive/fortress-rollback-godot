@@ -80,6 +80,21 @@ GROUP_SIGNAL_VERIFY_SECONDS = 1.0
 GROUP_SIGNAL_VERIFY_POLL = 0.1
 
 
+def _undelivered_outcome(contained):
+    """The failed-cleanup verdict for a pinned signal the kernel accepted without honoring.
+
+    With contained names the sweep stopped and named them, so the wording says
+    so; either way the breach itself stays a tooling error, because a pinned
+    kernel that accepted the send without delivering it is exactly the
+    regression the verification exists to catch.
+    """
+    suffix = (f'the send-boundary sweep stopped and named them: {contained}\n' if contained
+              else 'a same-group member the bounded scans spared may survive\n')
+    return (f'OWNED_PROCESS_GROUP_SIGNAL_FAILED: the kernel accepted the pinned group signal '
+            f'without stopping the members it resolved; {suffix}',
+            RuntimeError('the pinned group signal did not stop the surviving group members'))
+
+
 class EscapedDescendants(ValueError):
     """A command ended while descendants carrying its ownership were still alive."""
 
@@ -453,7 +468,7 @@ def _signal_group(process, pinned):
     return 'empty'
 
 
-def _tail_group_signal(process, pinned, group_alive, verify=None):
+def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None):
     """One tail cleanup pass: stop what the bounded scans had to spare.
 
     The post-exit group scan spares a tokenless member that forked after
@@ -489,11 +504,22 @@ def _tail_group_signal(process, pinned, group_alive, verify=None):
     work in #404 owns everywhere else. A scan that raises reads as unknown
     and keeps polling to the deadline, then fails exactly like a measured
     survivor.
+
+    ``contain`` is a callable with the same boundary argument that stops and
+    names the survivors the scan keeps finding — one send-boundary sweep with
+    the same token union the caller's verify uses. A kernel that accepted the
+    send without delivering must not leave the spared member running after
+    cleanup: the sweep stops it, the names travel in the note, and the breach
+    itself still reports as the failed-cleanup error, because the pinned
+    signal did not do what the pinned kernels deliver and a regression there
+    must stay visible even when the sweep contained it. With no contain
+    callable the deadline failure keeps the original may-survive wording.
     """
     if not group_alive or pinned is None:
         return None, None
     send_boundary = _boot_ticks()
     outcome = _signal_group(process, pinned)
+    contained = None
     if outcome in ('delivered', 'empty') and verify is not None:
         deadline = time.monotonic() + GROUP_SIGNAL_VERIFY_SECONDS
         while True:
@@ -503,12 +529,18 @@ def _tail_group_signal(process, pinned, group_alive, verify=None):
                 remaining = [object()]  # An unreadable scan is not evidence of a stop.
             if not remaining:
                 break
+            if contain is not None:
+                # The accepted signal did not stop these members, so the sweep
+                # stops and names them while the poll keeps measuring.
+                try:
+                    contained = merged_survivors(contained or [], contain(send_boundary))
+                except OSError:
+                    pass  # The poll and the failure verdict continue without the sweep.
             if time.monotonic() >= deadline:
-                return ('OWNED_PROCESS_GROUP_SIGNAL_FAILED: the kernel accepted the pinned group signal '
-                        'without stopping the members it resolved; a same-group member the bounded '
-                        'scans spared may survive\n',
-                        RuntimeError('the pinned group signal did not stop the surviving group members'))
+                return _undelivered_outcome(contained)
             time.sleep(GROUP_SIGNAL_VERIFY_POLL)
+        if contained:
+            return _undelivered_outcome(contained)
     if outcome == 'delivered':
         return ('OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n',
                 None)
@@ -1497,7 +1529,9 @@ def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
         group_note, group_error = _tail_group_signal(
             process, pinned, group_alive,
             verify=lambda started_before: group_members(process.pid, started_before=started_before,
-                                                        token_value=token_value))
+                                                        token_value=token_value),
+            contain=lambda started_before: terminate_group(process.pid, started_before=started_before,
+                                                           token_value=token_value))
         if group_note:
             output += group_note
         if group_error is not None and tail_anomaly is None:
@@ -1627,7 +1661,9 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
         group_note, group_error = _tail_group_signal(
             process, pinned, group_alive,
             verify=lambda started_before: group_members(process.pid, started_before=started_before,
-                                                        token_value=token_value))
+                                                        token_value=token_value),
+            contain=lambda started_before: terminate_group(process.pid, started_before=started_before,
+                                                           token_value=token_value))
         if group_note:
             anomaly_note += group_note
         if group_error is not None and tail_anomaly is None:

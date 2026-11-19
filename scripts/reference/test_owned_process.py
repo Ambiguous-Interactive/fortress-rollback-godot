@@ -2024,6 +2024,43 @@ time.sleep(60)
             owned_process._tail_group_signal(process, 9, True, verify=lambda boundary: seen.append(boundary))
             self.assertEqual(len(seen), 1, 'the verify callable receives the send-time boundary')
 
+    # Value: protects=the containment of survivors an accepted-but-undelivered signal left (#404 review);
+    # fails_when=the tail reports undelivery while the surviving member keeps running after cleanup;
+    # seam=_tail_group_signal with a recorded contain sweep behind the verify scan
+    def test_the_tail_group_signal_contains_the_survivors_it_reports(self):
+        process = type('Probe', (), {'pid': 424242, 'poll': lambda self: 0})()
+        survivor = {'pid': 4243, 'name': 'member', 'start': 5}
+        scans = []
+        sweeps = []
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 0.2, 0.4, 10.0]) as ticks, \
+                mock.patch.object(owned_process.time, 'sleep') as sleeper:
+            def verify(boundary):
+                scans.append(boundary)
+                # The member dies after the containment sweep ran once.
+                return [survivor] if len(scans) == 1 else []
+
+            def contain(boundary):
+                sweeps.append(boundary)
+                return [survivor]
+
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=verify, contain=contain)
+        self.assertEqual(len(scans), 2, 'an emptied scan ends the verification')
+        self.assertEqual(sweeps, scans[:1], 'the sweep runs between the scans, at the same send boundary')
+        self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+        self.assertIn('the send-boundary sweep stopped and named them', note)
+        self.assertIn('4243', note, 'the contained member is named in the note')
+        self.assertIsNotNone(error, 'the kernel breach stays visible even with the sweep contained it')
+        # A containment sweep that cannot run leaves the may-survive wording:
+        # the failure verdict never claims a stop that did not happen.
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0]):
+            note, error = owned_process._tail_group_signal(
+                process, 9, True, verify=lambda boundary: [survivor],
+                contain=lambda boundary: (_ for _ in ()).throw(OSError(errno.EPERM, 'sweep refused')))
+            self.assertIn('may survive', note)
+            self.assertIsNotNone(error)
+
     # Value: protects=the tree stop's containment of an undelivered pinned signal (#404);
     # fails_when=a kernel that accepted the send without delivering leaves the
     # spared class unnamed after the tree stop;

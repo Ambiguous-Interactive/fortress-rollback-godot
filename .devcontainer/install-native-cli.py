@@ -108,19 +108,24 @@ def journal_tail(package):
     tail = lines[-JOURNAL_TAIL_LINES:]
     if partial or len(lines) > JOURNAL_TAIL_LINES:
         tail.insert(0, f'...[journal head truncated; showing the last {len(tail)} lines]')
+    tail_marker = f'...[journal tail truncated at the {JOURNAL_TAIL_BYTES}-byte diagnostic budget]'
+    encoded = [(line, len(line.encode('utf-8', errors='replace')) + 1) for line in tail]
     kept = []
     remaining = JOURNAL_TAIL_BYTES
-    for line in reversed(tail):
-        # The budget bounds the diagnostic's UTF-8 output, so the count is
-        # bytes, not characters: a multibyte line can exceed the budget while
-        # its character count fits.
-        budget = remaining - (len(line.encode('utf-8', errors='replace')) + 1)
-        if budget < 0:
+    for line, size in reversed(encoded):
+        if size > remaining:
             break
         kept.append(line)
-        remaining = budget
+        remaining -= size
     if len(kept) < len(tail):
-        kept.append(f'...[journal tail truncated at the {JOURNAL_TAIL_BYTES}-byte diagnostic budget]')
+        # The marker is part of the printed diagnostic, so its bytes come out
+        # of the same budget: lines are dropped from the oldest end until the
+        # marker fits, and the cut always names itself within the budget.
+        marker_size = len(tail_marker.encode('utf-8')) + 1
+        while kept and remaining < marker_size:
+            remaining += encoded[len(encoded) - len(kept)][1]
+            kept.pop()
+        kept.append(tail_marker)
     return [redact_query_strings(line) for line in reversed(kept)]
 
 

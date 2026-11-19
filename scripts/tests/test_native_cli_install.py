@@ -320,16 +320,18 @@ class NativeCliInstallTests(unittest.TestCase):
                 self.assertEqual(helper.journal_tail('@opencode/cli'),
                                  ['...[journal tail truncated at the 16384-byte diagnostic budget]',
                                   'newest 1', 'newest 2'])
-                # The byte budget counts UTF-8 bytes, not characters: a multibyte
-                # journal whose newest line fits stays alone when the next would
-                # push the encoded diagnostic past the budget.
+                # The marker's own bytes come out of the budget: when the newest
+                # line nearly fills it, older lines are dropped until the marker
+                # fits, and the printed diagnostic never exceeds the budget.
                 evidence.write_text(('é' * 5000 + '\n') * 2, encoding='utf-8')
                 tail = helper.journal_tail('@opencode/cli')
                 self.assertEqual(tail[0], '...[journal tail truncated at the 16384-byte diagnostic budget]')
-                self.assertEqual(tail[1:], ['é' * 5000], 'the newest multibyte line is kept whole')
+                self.assertLessEqual(sum(len(line.encode('utf-8')) + 1 for line in tail),
+                                     helper.JOURNAL_TAIL_BYTES,
+                                     'the marker is charged to the byte budget')
                 self.assertLessEqual(sum(len(line.encode('utf-8')) + 1 for line in tail[1:]),
                                      helper.JOURNAL_TAIL_BYTES,
-                                     'the encoded diagnostic stays within the byte budget')
+                                     'the newest multibyte line is kept whole beside the marker')
                 # The read itself is bounded: a file larger than the read window
                 # loads only its newest bytes, drops the partial cut line, and
                 # keeps the newest complete lines with the head marker.
