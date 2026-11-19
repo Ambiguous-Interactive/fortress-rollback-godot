@@ -9,10 +9,16 @@ process group must be gone, which catches a descendant that stayed in the
 session and scrubbed its environment, and the /proc token sweep names any
 surviving carrier so it can be killed and recorded. Kills are pinned through
 pidfds where the kernel supports them, so a recycled pid never receives a
-signal meant for an owned process. The known residual hole is stated plainly:
-a descendant that both setsid's away and scrubs the token leaves no kernel
-marker this module can see; containing that case needs cgroup-backed
-ownership and remains open work in issue #290.
+signal meant for an owned process. Since #404, every owned launch also pins
+its group leader with a pidfd from before the first wait until after the
+final sweep: the pin keeps the leader's struct pid — the numeric id of the
+whole process group — referenced for that whole span, so the group id cannot
+be reissued while any sweep runs. Post-exit group scans need no exit boundary
+under the pin; the boundary sample and the recycled-group token filter stay
+as the pinless fallback's defense in depth. The known residual hole is stated
+plainly: a descendant that both setsid's away and scrubs the token leaves no
+kernel marker this module can see; containing that case needs cgroup-backed
+ownership and remains open work in issue #404.
 
 A caller that runs several owned commands concurrently — the browser witness
 label waves, the native probe waves — can stop one running command from
@@ -27,9 +33,10 @@ waits out a cancel that has started and drains its names once — and after
 emit() writes the run's final log, a cancel that names fresh sightings
 appends them to the registered log itself under the same once-only registry,
 so a terminated pid can never vanish from the log between the run's last
-flag read and its write (#399). Post-reap ownership sweeps pass the child's
-exit boundary in clock ticks, so a scan against a group id the kernel
-already reissued to an unrelated new leader names nothing it does not own.
+flag read and its write (#399). Post-reap ownership sweeps no longer lean on
+the child's exit boundary in clock ticks: the leader pin held across the run
+keeps the group id from being reissued, so a scan can never name an unrelated
+group that reused it (#404).
 """
 import errno
 import os
@@ -137,17 +144,19 @@ def group_members(group, proc=None, started_before=None, token_value=None):
     survivor would record a dead process, and counting it would fail healthy
     runs whenever reap latency exceeds the drain grace.
 
-    A scan that runs after the owning call reaped its child reads a group id
-    the kernel may already have reissued to an unrelated new group leader.
-    That leader started after our child died, so started_before carries an
-    exit-or-teardown boundary in scheduler ticks since boot: members that
+    A scan that runs after the owning call reaped its child can only read a
+    group id the kernel reissued to an unrelated new group leader when no
+    leader pin is held (#404): the pin keeps the group's numeric id
+    referenced, so pinless callers bound the scan with started_before, the
+    exit-or-teardown boundary in scheduler ticks since boot. Members that
     started after it are named only when they carry the run token
     (token_value), because a tokened member is ours wherever it started,
     while a tokenless one that started after our tree's death can only be
     the recycled group. What remains unknowable from /proc is a descendant
     that forked after the boundary and scrubbed its environment before the
-    scan — it is spared here, and containing that class needs the
-    cgroup-backed ownership work in #290. A starttime that cannot be parsed
+    scan — the pinless fallback spares it here, while the held pin's
+    unbounded scan names it; fully containing the pinless class needs the
+    cgroup-backed ownership work in #404. A starttime that cannot be parsed
     counts as ours: naming biases toward killing what we own, never toward
     stranding it.
     """
@@ -198,44 +207,87 @@ def _boot_ticks():
         return None
 
 
-def _send_kill(pid):
-    """SIGKILL one pinned pid; the pidfd keeps the signal off a recycled pid."""
+def _send_kill(pid, belongs=None):
+    """SIGKILL one pinned pid; the pidfd keeps the signal off a recycled pid.
+
+    belongs re-checks the scan's attribution through /proc after the pidfd is
+    pinned: a scan that observed pid P can only lose that pid to a recycle
+    before the signal call, and a mismatched identity means the scan's
+    attribution is stale — the process is skipped instead of receiving a
+    signal meant for an owned tree (#404). Unreadable identity state keeps
+    the kill: naming and killing bias toward what the scan owned. None keeps
+    the unconditional kill for callers that bounded the scan themselves.
+    """
     try:
         descriptor = os.pidfd_open(pid)
     except (AttributeError, OSError):
+        # Without pidfd support the verification at least runs before the
+        # numeric kill, which stays racy on legacy kernels.
+        if belongs is not None and not belongs(pid):
+            return False
         try:
             os.kill(pid, signal.SIGKILL)
         except OSError:
             pass
-        return
+        return True
     try:
+        if belongs is not None and not belongs(pid):
+            return False  # Stale attribution: the pinned process is not the one the scan owned.
         signal.pidfd_send_signal(descriptor, signal.SIGKILL)
     except (AttributeError, OSError):
         pass
     finally:
         os.close(descriptor)
+    return True
+
+
+def _token_carrier_check(token_value):
+    """A kill-time recheck that the pid still carries the run token (#404)."""
+    marker = (TOKEN_VARIABLE + '=' + token_value).encode('utf-8') + b'\0'
+
+    def belongs(pid):
+        try:
+            return marker in (Path('/proc') / str(pid) / 'environ').read_bytes()
+        except OSError:
+            return True  # Unreadable environment: bias toward the scan's attribution.
+    return belongs
+
+
+def _group_member_check(group, proc=None):
+    """A kill-time recheck that the pid still sits in the scanned group (#404)."""
+    root = proc if proc is not None else Path('/proc')
+
+    def belongs(pid):
+        try:
+            fields = (root / str(pid) / 'stat').read_text().rsplit(') ', 1)[-1].split()
+            return bool(fields) and int(fields[2]) == group
+        except (OSError, IndexError, ValueError):
+            return True  # Unreadable stat: bias toward the scan's attribution.
+    return belongs
 
 
 def terminate(token_value):
     """Kill every live token carrier and return their terminal identities."""
     survivors = identities(token_value)
-    for item in survivors:
-        _send_kill(item['pid'])
-    return survivors
+    belongs = _token_carrier_check(token_value)
+    return [item for item in survivors if _send_kill(item['pid'], belongs)]
 
 
 def terminate_group(group, proc=None, started_before=None, token_value=None):
     """Kill every live member of one process group and return their identities.
 
-    started_before bounds the scan the way group_members does; a post-reap
-    caller passes the owned tree's exit-or-teardown boundary and its token,
-    so a recycled group id names nothing it does not own while a forked
-    descendant carrying the token is still named.
+    started_before bounds the scan on the pinless fallback, the way
+    group_members does: a post-reap caller without a leader pin passes the
+    owned tree's exit-or-teardown boundary and its token, so a recycled
+    group id names nothing it does not own. Under the held leader pin the
+    group id cannot be reissued (#404), so callers pass no boundary and
+    every same-group member is named. Kills re-verify each member's group
+    after pinning it, so a member that died and lost its pid between the
+    scan and the kill cannot hand the signal to a recycled pid.
     """
     members = group_members(group, proc=proc, started_before=started_before, token_value=token_value)
-    for item in members:
-        _send_kill(item['pid'])
-    return members
+    belongs = _group_member_check(group, proc)
+    return [item for item in members if _send_kill(item['pid'], belongs)]
 
 
 def merged_survivors(members, survivors):
@@ -253,36 +305,54 @@ def merged_survivors(members, survivors):
     return members + [item for item in survivors if item['pid'] not in named]
 
 
-def _leader_reaped(pinned, pid=None):
-    """Whether a pinned leader has been reaped; the pin never lies about a recycled id.
+def _pin_leader(process):
+    """Open the group leader's pidfd before anything can reap or fork it (#404).
 
-    A pidfd pinned while the leader lived keeps referring to that one
-    process: after the owning call reaps it, signals to the pin fail instead
-    of reaching whatever process later reused the numeric id. The probe also
-    fails for an exited-but-unreaped leader — a zombie has already released
-    its signal state — so the /proc state decides that case, requiring our
-    zombie ('Z') specifically: a reaped leader whose pid was recycled is
-    never in the zombie state, so a recycled id can never re-arm the group
-    kill (#398 review). Only a reaped leader therefore skips the group
-    phases; a zombie still gets its surviving descendants named and killed.
+    The pin keeps the leader's struct pid — the process group's numeric id —
+    referenced by the kernel until it closes, so no later process or group
+    can reuse that id while the sweep phases run. None means the platform
+    offers no pidfd support, and the boundary-gated scans stay the only
+    guard on the pinless fallback paths.
     """
     try:
-        signal.pidfd_send_signal(pinned, 0)
-        return False  # The pinned process is alive; the group phases stay armed.
+        return os.pidfd_open(process.pid)
+    except (AttributeError, OSError):
+        return None  # Without pidfd support the boundary-gated scans decide below.
+
+
+def _close_pin(pinned):
+    """Release a leader pin; a failing close is already the released state."""
+    if pinned is None:
+        return
+    try:
+        os.close(pinned)
     except OSError:
-        pass  # The pin names no live process: a zombie or a reaped leader.
-    if pid is not None:
-        try:
-            state = Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[-1].split()[0]
-            if state == 'Z':
-                return False  # Our zombie: unreaped, its id still pinned to it.
-        except (OSError, IndexError):
-            pass  # Gone from /proc, or an unreadable entry: treated as reaped.
-    return True
+        pass  # An already-closed pin is the state every probe reads as released.
+
+
+def _post_exit_group_sweep(group, pinned, boundary, token_value):
+    """One post-exit group scan, bounded by the pin instead of the clock (#404).
+
+    Under the held leader pin the group's numeric id cannot be reissued while
+    the pin is open — the kernel keeps the leader's struct pid referenced —
+    so the scan needs no boundary sample: every same-group member it names is
+    genuinely ours, including one forked after the leader died with a scrubbed
+    environment. Without a pin the exit boundary and the token tiebreak stay
+    the only guards, so the pinless fallback keeps the old bounded scan.
+    """
+    return terminate_group(group, started_before=None if pinned is not None else boundary,
+                           token_value=token_value)
 
 
 def _signal_group(process, pinned):
-    """SIGKILL one owned process group through its pinned leader when possible."""
+    """SIGKILL one owned process group through its pinned leader when possible.
+
+    The flag-4 group signal stays valid through a zombie and a reaped leader
+    on the pinned kernels: the kernel resolves the group through the pinned
+    struct pid, whose id cannot be recycled while the pin is open (#404
+    witness). A missing leader (ESRCH) refuses the numeric fallback, because
+    a killpg by number after a reap could reach a recycled group.
+    """
     if pinned is not None:
         try:
             # PIDFD_SIGNAL_PROCESS_GROUP (4): signal the whole process group
@@ -315,26 +385,23 @@ def _terminate_tree(process, token_value, pinned=None):
     runs, and a persistent sweep anomaly from the final passes comes back as
     the second element of the return after every sweep has run — a caller's
     reap, log and classification are never skipped by a sweep failure.
-    When a pinned leader is given, its liveness gates the group phases —
-    after the owning call reaped the leader the group is no longer ours to
-    name or kill, and the pidfd keeps the group signal off a recycled id.
+    Every group phase runs under the caller's held leader pin, whose pidfd
+    keeps the group's numeric id referenced for the whole phase, so the
+    phases cannot address a recycled id even after an owning call reaped its
+    leader (#404). Callers without a pin only call this while the child is
+    unreaped — its id cannot be recycled until a owner reaps it.
     Merging the passes keeps every pid named exactly once (#381's class).
     """
-    def group_phase(action):
-        if pinned is not None and _leader_reaped(pinned, process.pid):
-            return []  # The owning call reaped the leader; the token sweep below still runs.
-        return action()
-
     named = []
-    for sweep in (lambda: group_phase(lambda: terminate_group(process.pid)), lambda: terminate(token_value)):
+    for sweep in (lambda: terminate_group(process.pid), lambda: terminate(token_value)):
         try:
             named = merged_survivors(named, sweep())
         except Exception:
             continue  # The kill and the second sweep still run and name what remains.
-    group_phase(lambda: _signal_group(process, pinned))
+    _signal_group(process, pinned)
     anomaly = None
     try:
-        named = merged_survivors(named, group_phase(lambda: terminate_group(process.pid)))
+        named = merged_survivors(named, terminate_group(process.pid))
     except Exception as error:
         anomaly = error  # The final token sweep still runs before the anomaly resurfaces.
     try:
@@ -413,12 +480,12 @@ class CancelHandle:
     handoff — a cancel that names fresh sightings after that close appends
     them to the registered log itself, so a terminated pid reaches the log
     the caller reads no matter which side of the write the sweeps landed
-    on (#399). After the owning call reaped its child the cancel no longer
-    touches the process group — a kill then could reach a recycled pid —
-    but it still stops the run's own token carriers through the
-    pidfd-pinned sweep, so a surviving carrier belongs to whichever side
-    reached it, named exactly once. A second cancel is refused because two
-    reports could never both keep their once-only naming.
+    on (#399). The registration holds the leader's pidfd, so even a cancel
+    landing after the owning call reaped its child sweeps the whole group
+    safely: the open pin keeps the group's numeric id referenced until the
+    cancel releases it, so nothing can reissue it in between (#404). A
+    second cancel is refused because two reports could never both keep
+    their once-only naming.
     """
 
     def __init__(self):
@@ -697,21 +764,22 @@ class CancelHandle:
             if process is not None:
                 # The leader's pidfd was pinned at registration, before
                 # anything could reap it, so every group decision below is
-                # made against the process the handle actually owned: after
-                # the owning call reaps its child the group is no longer
-                # ours — a kill then could reach a recycled id — and only
-                # the pidfd-pinned token sweep runs, which can never
-                # misaddress. Without pidfd support the poll guard decides.
-                reaped = _leader_reaped(pinned, process.pid) if pinned is not None else process.poll() is not None
-                if reaped:
-                    candidates = terminate(token_value)
-                else:
+                # made against the process the handle actually owned: the
+                # open pin keeps the group's numeric id referenced for the
+                # whole sweep, so the tree phases cannot address a recycled
+                # group even after the owning call reaped its child (#404).
+                # Without pidfd support the poll guard decides: after a
+                # reaped child only the pidfd-pinned token sweep runs, which
+                # can never misaddress.
+                if pinned is not None or process.poll() is None:
                     candidates, stop_anomaly = _terminate_tree(process, token_value, pinned)
                     if stop_anomaly is not None:
                         # The report is published before the anomaly resurfaces,
                         # so the names the sweeps earned are never discarded.
                         fresh = self._publish(candidates)
                         raise stop_anomaly
+                else:
+                    candidates = terminate(token_value)
             fresh = self._publish(candidates)
         finally:
             if pinned is not None:
@@ -855,7 +923,7 @@ def _feed_stdin(process, input_text, failures):
     threading.Thread(target=feed, daemon=True).start()
 
 
-def _run_until_exit(process, token_value, log, timeout, cancel=None, registration=None):
+def _run_until_exit(process, token_value, log, timeout, cancel=None, registration=None, pinned=None):
     """Collect one owned child, owning the deadline and interruption paths.
 
     Both public runners share this tail: a deadline kills the group, keeps the
@@ -863,7 +931,9 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None, registratio
     strand the tree either. The handle's report is consumed through absorb(),
     the one point that waits out a started cancel and drains its sightings,
     so no survivor depends on a flag snapshot taken around the sweeps (#381's
-    class, #399's windows). Returns the trusted per-stream parts and the exit
+    class, #399's windows). Every tree termination runs under the caller's
+    held leader pin, whose pidfd keeps the group id referenced across the
+    sweeps (#404). Returns the trusted per-stream parts and the exit
     bookkeeping, or raises with the log already written.
     """
     try:
@@ -889,7 +959,7 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None, registratio
                     # never skips the token sweep or the reap, so a carrier the
                     # token sweep can still reach is named and stopped, and the
                     # child is reaped, whatever the group pass did.
-                    fresh, sweep_anomaly = _terminate_tree(process, token_value)
+                    fresh, sweep_anomaly = _terminate_tree(process, token_value, pinned)
                     fresh = cancel.claim(fresh)
                     try:
                         process.wait(timeout=10)
@@ -907,7 +977,7 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None, registratio
                     if fresh:
                         raise EscapedDescendants(fresh) from None
                     raise Cancelled(text) from None
-                survivors, sweep_anomaly = _terminate_tree(process, token_value)
+                survivors, sweep_anomaly = _terminate_tree(process, token_value, pinned)
                 # The report is consumed at one point after the sweeps: a cancel
                 # that was mid-sweep finishes here and its names join the report,
                 # and one starting after emit() wrote this log appends its own
@@ -938,7 +1008,7 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None, registratio
             # child is reaped, and no cleanup failure replaces the interrupt.
             try:
                 named = cancel.absorb() if cancel is not None else []
-                candidates, sweep_anomaly = _terminate_tree(process, token_value)
+                candidates, sweep_anomaly = _terminate_tree(process, token_value, pinned)
                 if cancel is not None:
                     candidates = merged_survivors(named, cancel.claim(candidates))
                 if candidates or sweep_anomaly is not None:
@@ -1028,7 +1098,7 @@ def _note_final(log, cancel, text):
     return text
 
 
-def _refused_run(cancel, process, token_value, log):
+def _refused_run(cancel, process, token_value, log, pinned=None):
     """Clean up a tree the handle could not pin, then refuse.
 
     The handle either already cancelled, already pins another concurrent
@@ -1037,14 +1107,15 @@ def _refused_run(cancel, process, token_value, log):
     by a state change during the sweeps. The tree stop mirrors the deadline
     path — sweeps and kill run even when one pass raises, everything
     terminated is named, and the child is reaped — so the unpinnable tree
-    strands nothing before the ValueError refuses the run. The diagnosis
+    strands nothing before the ValueError refuses the run. The sweeps run
+    under the run's own leader pin (#404). The diagnosis
     goes to this run's own log directly: the handle's registered log belongs
     to the run it is pinning, and closing that handoff here would corrupt
     the pinned run's report flow.
     """
     refusal = cancel.refusal_reason() if cancel is not None else 'refused without a handle'
     try:
-        candidates, refused_anomaly = _terminate_tree(process, token_value)
+        candidates, refused_anomaly = _terminate_tree(process, token_value, pinned)
         if refused_anomaly is not None and cancel is not None:
             candidates = cancel.claim(candidates)
         if candidates:
@@ -1067,18 +1138,18 @@ def _refused_run(cancel, process, token_value, log):
     raise ValueError(f'{refusal}; the started tree was cleaned up before refusing')
 
 
-def _abandon_started_run(cancel, process, token_value, log, registration):
+def _abandon_started_run(cancel, process, token_value, log, registration, pinned=None):
     """Stop a started tree whose registration can no longer be served, then release.
 
     A feeder failure or any escape before the runners' cleanup guards leaves
     the child running, the pin held and the report phase open: the tree is
-    swept and reaped exactly like a refusal, a note lands in the run's own
-    log, and the registration releases (pin included) through the
-    ownership-checked settle — the caller re-raises its original exception
-    either way.
+    swept and reaped exactly like a refusal — under the run's own leader pin
+    (#404) — a note lands in the run's own log, and the registration releases
+    (pin included) through the ownership-checked settle — the caller
+    re-raises its original exception either way.
     """
     try:
-        candidates, sweep_anomaly = _terminate_tree(process, token_value)
+        candidates, sweep_anomaly = _terminate_tree(process, token_value, pinned)
         note = f'OWNED_PROCESS_SETUP_FAILED: {sweep_anomaly}\n' if sweep_anomaly is not None else ''
         if candidates:
             note = f'OWNED_PROCESSES: terminated {candidates}\n' + note
@@ -1129,9 +1200,28 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
     if cancel is not None:
         cancel.refuse_cancelled()
     process, token_value = _start(command, environment, cwd, input_text is not None)
+    # The run's own leader pin: opened before anything can reap the child or
+    # fork inside its group, released only after the run's final sweep
+    # (#404). The handle's registration pin is separate — cancel() and the
+    # run tail each close the pin they own.
+    pinned = _pin_leader(process)
+    try:
+        return _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel)
+    finally:
+        _close_pin(pinned)
+
+
+def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
+    """The merged runner's whole episode under an already-pinned leader (#404).
+
+    run() delegates here after pinning the leader, so registration, feeding,
+    the collect loop and every sweep run against the one pin opened at
+    spawn: the group's numeric id cannot be reissued at any point in the
+    episode (#404). run_split() shares the shape with its own tail.
+    """
     registration = cancel.register(process, token_value, log) if cancel is not None else True
     if cancel is not None and not registration:
-        _refused_run(cancel, process, token_value, log)
+        _refused_run(cancel, process, token_value, log, pinned)
     feed_failures = []
     try:
         if input_text is not None:
@@ -1140,22 +1230,26 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
         # A feeder failure must not strand the started tree or the handle's
         # reservation: the tree is stopped and reaped, the phase releases,
         # and the original failure propagates (#403 review).
-        _abandon_started_run(cancel, process, token_value, log, registration)
+        _abandon_started_run(cancel, process, token_value, log, registration, pinned)
         raise
     try:
-        returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(process, token_value, log, timeout, cancel, registration)
+        returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(
+            process, token_value, log, timeout, cancel, registration, pinned)
         # Both ownership checks always run before any escape raises: a command
         # can leave a same-group descendant and a setsid token carrier at once,
         # and reporting only the first would strand the second. The handle's
         # report is consumed through absorb() — the one point that waits out a
         # started cancel — before the sweeps, so the written report covers both
         # sides' kills and no pid is ever named twice, or named nowhere (#381's
-        # class, #399's windows). The post-reap group scan carries the child's
-        # exit boundary, so a group id the kernel reissued names nothing. The
-        # whole tail — output assembly included — releases the reservation on
-        # any exit: an interrupt landing here must not lock the handle behind
-        # the report phase, and a report published after a classified raise
-        # still reaches the run's own log through the append door (#403 review).
+        # class, #399's windows). Under the run's held leader pin the group
+        # id cannot be reissued, so the post-exit scan needs no boundary and
+        # names every same-group member it finds (#404); the pinless
+        # fallback keeps the child's exit boundary and the token tiebreak as
+        # its only guards. The whole tail — output assembly included —
+        # releases the reservation on any exit: an interrupt landing here
+        # must not lock the handle behind the report phase, and a report
+        # published after a classified raise still reaches the run's own log
+        # through the append door (#403 review).
         output = ''.join(parts.values())
         if feed_failures:
             output += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
@@ -1166,12 +1260,10 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
         # Both sweeps are contained: a failing token scan must not skip the group
         # scan, so a token-scrubbed same-group descendant is named and killed even
         # when the scan raises, and the anomaly surfaces only after both ran
-        # (#398 review). The group scan carries the child's exit boundary and the
-        # token: post-exit forks carrying the token stay named, a recycled
-        # tokenless group does not (#399).
+        # (#398 review).
         swept, tail_anomaly = _contained_sweeps([
             lambda: terminate(token_value),
-            (lambda: terminate_group(process.pid, started_before=exit_ticks, token_value=token_value))
+            (lambda: _post_exit_group_sweep(process.pid, pinned, exit_ticks, token_value))
             if group_alive else (lambda: []),
         ])
         own = cancel.claim(swept) if cancel is not None else swept
@@ -1251,9 +1343,18 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
     if cancel is not None:
         cancel.refuse_cancelled()
     process, token_value = _start(command, environment, cwd, input_text is not None)
+    pinned = _pin_leader(process)  # Same run-owned pin the merged runner opens (#404).
+    try:
+        return _run_split_pinned(process, token_value, pinned, log, timeout, input_text, cancel)
+    finally:
+        _close_pin(pinned)
+
+
+def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
+    """The split runner's whole episode under an already-pinned leader (#404)."""
     registration = cancel.register(process, token_value, log) if cancel is not None else True
     if cancel is not None and not registration:
-        _refused_run(cancel, process, token_value, log)
+        _refused_run(cancel, process, token_value, log, pinned)
     stdout_descriptor = process.stdout.fileno()
     feed_failures = []
     try:
@@ -1263,13 +1364,15 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
         # A feeder failure must not strand the started tree or the handle's
         # reservation: the tree is stopped and reaped, the phase releases,
         # and the original failure propagates (#403 review).
-        _abandon_started_run(cancel, process, token_value, log, registration)
+        _abandon_started_run(cancel, process, token_value, log, registration, pinned)
         raise
     try:
-        returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(process, token_value, log, timeout, cancel, registration)
-        # The same report handoff, contained sweep pair and exit-bounded group
-        # scan the merged runner uses (#381's class, #399's windows, #398 review).
-        # The whole tail — output assembly included — releases the reservation on
+        returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(
+            process, token_value, log, timeout, cancel, registration, pinned)
+        # The same report handoff and contained sweep pair the merged runner
+        # uses (#381's class, #399's windows, #398 review), with the same
+        # pin-bounded post-exit group scan (#404). The whole tail — output
+        # assembly included — releases the reservation on
         # any exit, exactly like the merged runner's (#403 review).
         stderr = ''.join(data for descriptor, data in parts.items() if descriptor != stdout_descriptor)
         if feed_failures:
@@ -1277,7 +1380,7 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
         report = cancel.absorb() if cancel is not None else []
         swept, tail_anomaly = _contained_sweeps([
             lambda: terminate(token_value),
-            (lambda: terminate_group(process.pid, started_before=exit_ticks, token_value=token_value))
+            (lambda: _post_exit_group_sweep(process.pid, pinned, exit_ticks, token_value))
             if group_alive else (lambda: []),
         ])
         own = cancel.claim(swept) if cancel is not None else swept
@@ -1337,11 +1440,15 @@ def spawn(command, environment=None, stdout=None, stderr=None, cwd=None):
     their lifetime spans other owned commands. The caller receives the process
     and its token and must end the episode with finish(), which applies the
     same descendant-tree ownership checks run() applies to its own children.
+    spawn() pins the leader immediately: the pin rides on the process object
+    as ``owned_pin`` and stays open — keeping the group's numeric id
+    unrecyclable (#404) — until finish() releases it after its final sweep.
     """
     owned = dict(environment if environment is not None else os.environ)
     token_value = uuid.uuid4().hex
     owned[TOKEN_VARIABLE] = token_value
     process = subprocess.Popen(command, cwd=cwd, env=owned, stdout=stdout, stderr=stderr, start_new_session=True)
+    process.owned_pin = _pin_leader(process)
     return process, token_value
 
 
@@ -1351,24 +1458,32 @@ def finish(process, token_value, grace=5.0):
     The direct child is asked to terminate first and is killed at the grace
     deadline, mirroring the previous host teardown; then both ownership
     checks run, so any surviving descendant is killed and named instead of
-    being adopted by init. The group scan runs with the teardown boundary
-    sampled after the child is dead and the token in hand, so descendants
-    forked during the teardown grace are still named while a group id the
-    kernel reissued afterwards names nothing (#399). Returns once nothing
-    owned is alive.
+    being adopted by init. The spawn-time leader pin (#404) keeps the
+    group's numeric id referenced for the whole episode, so the group scan
+    needs no boundary sample: every same-group member it names is genuinely
+    ours, including a descendant forked after the child died with a scrubbed
+    environment. Without pidfd support the scan keeps the teardown boundary
+    sampled after the child is dead, so descendants forked during the
+    teardown grace are still named while a group id the kernel reissued
+    afterwards names nothing (#399). Returns once nothing owned is alive and
+    releases the spawn's pin.
     """
+    pinned = getattr(process, 'owned_pin', None)
     try:
         if process.poll() is None:
             process.terminate()
             try:
                 process.wait(timeout=grace)
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except OSError:
-                    process.kill()
+                if pinned is not None:
+                    _signal_group(process, pinned)
+                else:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except OSError:
+                        process.kill()
                 process.wait(timeout=grace)
-        boundary = _boot_ticks()
+        boundary = None if pinned is not None else _boot_ticks()
         # Both sweeps are contained, matching the runners' tails: a failing
         # token scan must never skip the group scan, so a token-scrubbed
         # same-group descendant is named and killed even when the scan
@@ -1393,6 +1508,7 @@ def finish(process, token_value, grace=5.0):
             # complete its scan is a tooling failure, never a clean teardown.
             raise sweep_anomaly
     finally:
+        _close_pin(pinned)
         for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:
                 try:
