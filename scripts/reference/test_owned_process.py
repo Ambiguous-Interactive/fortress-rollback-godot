@@ -2287,7 +2287,7 @@ class KernelClassProbeTests(unittest.TestCase):
 
     def _measure(self, *, outcome='delivered', deaths='none', process=None, members=None,
                  spawn_error=None, finish_error=None, alive_reads=2, alive_error_at=None,
-                 post_kill_survives=True, recycled_pin=False):
+                 post_kill_survives=True, recycled_pin=False, unverifiable_pin=False):
         """Run the real measurement against scripted seams; return (verdict, calls).
 
         Each scripted member answers alive for ``alive_reads`` reads — the
@@ -2332,6 +2332,10 @@ class KernelClassProbeTests(unittest.TestCase):
         if recycled_pin:
             # One record drifts from its scan value: the pinned pid is a stranger.
             records[self.FAKE_MEMBERS[0]] = stat_line(self.FAKE_MEMBERS[0], 99)
+        if unverifiable_pin:
+            # One record is malformed at pin time: the identity guard cannot
+            # verify the pin against the scan at all.
+            records[self.FAKE_MEMBERS[0]] = 'no stat here'
 
         class _FakeProcPath:
             """A /proc-shaped root serving the fixture's stat records by pid."""
@@ -2546,7 +2550,9 @@ class KernelClassProbeTests(unittest.TestCase):
             ('the leader could not be pinned', {'process': self._FakeProcess(pin=None)},
              'the probe leader could not be pinned'),
             ('the scan pid was recycled before the pin', {'recycled_pin': True},
-             'a probe pid was recycled before it was pinned'),
+             'a probe pin could not be verified against the scan'),
+            ('the pin stat could not be verified', {'unverifiable_pin': True},
+             'a probe pin could not be verified against the scan'),
             ('the scan could not read a member starttime',
              {'members': [{'pid': self.FAKE_LEADER, 'name': 'leader', 'start': 1},
                           {'pid': self.FAKE_MEMBERS[0], 'name': 'member-one', 'start': 2},

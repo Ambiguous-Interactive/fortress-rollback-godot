@@ -707,9 +707,10 @@ def _measure_group_signal_kernel():
     and reads ``KERNEL_CLASS_UNKNOWN``. A send the kernel rejects outright,
     a shape that cannot be arranged (a missing member, a leader that will
     not exit, a member dead before the send, a missing leader pin, a member
-    whose starttime the scan could not read or that changed before its pin —
-    the identity guard must be able to bind each pin before anything is
-    signaled) or any probe error reads ``KERNEL_CLASS_UNKNOWN`` with a
+    whose starttime the scan could not read, or a pin whose stat entry could
+    not be verified against that scan — the identity guard must bind every
+    pin before anything is signaled) or any probe error reads
+    ``KERNEL_CLASS_UNKNOWN`` with a
     named note: verdicts keep the pre-probe behavior there, and a rejecting
     kernel never reaches the ambiguous verdict with a pin anyway — its
     sends fail closed already.
@@ -774,11 +775,13 @@ def _measure_group_signal_kernel():
                 pinned_start = int(pinned_fields[19]) if len(pinned_fields) > 19 else None
             except (OSError, IndexError, ValueError):
                 pinned_start = None
-            if pinned_start is not None and pinned_start != member['start']:
-                # The scan's pid died and its number was reissued between the
-                # scan and the pin: the pinned process is a stranger, never
-                # signaled, and the shape says nothing about this kernel.
-                raise _ProbeShape('a probe pid was recycled before it was pinned')
+            if pinned_start != member['start']:
+                # The pinned task's identity could not be verified against
+                # the scan — its stat entry is missing, unreadable or
+                # malformed, or a recycled pid reads a different starttime.
+                # The pin is never accepted, and nothing is signaled from a
+                # pin the scan could not bind.
+                raise _ProbeShape('a probe pin could not be verified against the scan')
         deadline = time.monotonic() + KERNEL_PROBE_VERIFY_SECONDS
         while any(not _probe_member_alive(member['pid'], member['pin'], member['start'])
                   for member in members) and time.monotonic() < deadline:
