@@ -314,6 +314,26 @@ class BrowserCapabilityTests(unittest.TestCase):
         verify_at = script.index("verify.sh")
         self.assertLess(acquire_at, verify_at)
 
+    def test_post_create_stamps_every_step_with_utc_time(self):
+        # Value: the devcontainer CLI buffers lifecycle-script output, so a hung
+        # post-create step's log can hold only its already-printed lines (#249).
+        # Each step must stamp its UTC start, so the last surviving line
+        # localizes a silent hang to one step without per-step wrappers.
+        script = (ROOT / ".devcontainer/post-create.sh").read_text(encoding="utf-8")
+        self.assertIn("""step() {
+    echo "[post-create $(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"
+}""", script, "one stamping helper owns the step format")
+        lines = script.splitlines()
+        steps = [(index, line) for index, line in enumerate(lines) if line.startswith('step "')]
+        # Each stamped step is followed by the command it runs, in order, and no
+        # other echo exists, so the stamped prefix can only come from the helper.
+        commands = ["npm-global-perms.sh", "make -C", "uv tool install", "acquire-browsers.sh", "verify.sh"]
+        self.assertEqual(len(steps), len(commands), "every post-create step must be stamped")
+        for (index, line), command in zip(steps, commands):
+            with self.subTest(step=line):
+                self.assertIn(command, lines[index + 1])
+        self.assertEqual(script.count('echo "'), 1, "no step may echo without the stamping helper")
+
     def test_acquire_script_installs_the_pinned_package_exactly_like_ci(self):
         script = (ROOT / ".devcontainer/acquire-browsers.sh").read_text(encoding="utf-8")
         # The python module owns the npm install (single ownership point, with

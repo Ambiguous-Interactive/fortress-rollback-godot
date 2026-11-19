@@ -258,6 +258,66 @@ class NativeCliInstallTests(unittest.TestCase):
                     except (ProcessLookupError, ValueError):
                         pass
 
+    def test_timeout_prints_the_journal_tail_when_the_killed_pipes_yield_nothing(self):
+        # Value: the recurring #249 shape is a deadline whose kill lands while the
+        # post-kill collect returns nothing, so the job log showed only the
+        # retention path and the journaled evidence never reached it. The failure
+        # diagnostic must print the journal's redacted tail itself.
+        # fails_when=the tail stays on disk: the discarded container or Docker
+        # layer takes the journal with it and the stall stays unlocalized.
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(helper.tempfile, 'tempdir', directory):
+                script = ("printf 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\\n';"
+                          "printf 'npm sill log progress';"
+                          "sleep 60")
+                args = SimpleNamespace(timeout=2, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
+                stderr = io.StringIO()
+                collect = {}
+
+                def emptied_collect(self, **options):
+                    # The post-kill collect (the only timeout=5 call) returns
+                    # nothing, exactly like the observed occurrence's job log.
+                    if options.get('timeout') == 5:
+                        collect['used'] = True
+                        return '', ''
+                    return subprocess.Popen.communicate(self, **options)
+
+                with patch.object(helper.subprocess.Popen, 'communicate', emptied_collect), \
+                        contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(ValueError, 'timed out during global installation'):
+                        helper.Installer(args).command(['sh', '-c', script], phase='global installation', merged=True)
+                self.assertTrue(collect.get('used'), 'the post-kill collect must have been exercised')
+                self.assertIn('retained install journal tail:', stderr.getvalue())
+                self.assertIn('npm sill log progress', stderr.getvalue())
+                self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue(),
+                              'the tail keeps the host and path')
+                self.assertNotIn('TOK', stderr.getvalue(), 'the tail never prints query credentials')
+
+    def test_journal_tail_bounds_a_pathological_journal_and_survives_an_unreadable_file(self):
+        # Value: the tail is bounded evidence, never a new failure: a journal
+        # beyond the line budget keeps its newest lines behind an explicit
+        # truncation marker, and an unreadable file prints nothing.
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(helper.tempfile, 'tempdir', directory):
+                evidence = helper.journal_path('@opencode/cli')
+                evidence.write_text(''.join(f'line {number}\n' for number in range(1, 61)), encoding='utf-8')
+                tail = helper.journal_tail('@opencode/cli')
+                self.assertEqual(len(tail), 41)
+                self.assertIn('showing the last 40 of 60 lines', tail[0])
+                self.assertEqual(tail[1], 'line 21')
+                self.assertEqual(tail[-1], 'line 60')
+                evidence.write_text('npm http fetch GET https://registry.example/x.tgz?t=SECRET', encoding='utf-8')
+                self.assertEqual(helper.journal_tail('@opencode/cli'),
+                                 ['npm http fetch GET https://registry.example/x.tgz?<redacted>'],
+                                 'the tail re-redacts defensively')
+                evidence.chmod(0o000)
+                try:
+                    self.assertEqual(helper.journal_tail('@opencode/cli'), [])
+                finally:
+                    evidence.chmod(0o600)
+
     def test_hostile_journal_path_disables_journaling_without_failing_the_install(self):
         # Value: the journal is a diagnostic, never a new install failure: a
         # foreign-owned or planted file at the fixed path must neither stop the
@@ -293,6 +353,8 @@ class NativeCliInstallTests(unittest.TestCase):
                             self.assertIn('install evidence journal disabled', result.stderr)
                             self.assertNotIn('partial output retained', result.stderr,
                                              'a disabled journal must not be named as retention')
+                            self.assertNotIn('retained install journal tail', result.stderr,
+                                             'a disabled journal must not print a tail')
                         finally:
                             evidence.chmod(0o600)
 

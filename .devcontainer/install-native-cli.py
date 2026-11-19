@@ -27,6 +27,10 @@ JOURNAL_LIMIT_BYTES = 4 * 1024 * 1024
 # A pathological stream without newlines still fills the line buffer; past this
 # bound the partial line is flushed as complete evidence and counting resumes.
 PENDING_LIMIT_BYTES = 1024 * 1024
+# The failure diagnostic prints at most this many journal tail lines: a stalled
+# or killed CI context cannot read the fixed journal path after the process is
+# gone, so the tail itself must reach the job log (issue #249).
+JOURNAL_TAIL_LINES = 40
 
 
 def redact_query_strings(text):
@@ -65,6 +69,27 @@ def _open_journal(path):
     except OSError as failure:
         return None, failure
     return os.fdopen(descriptor, 'wb'), None
+
+
+def journal_tail(package):
+    """The retained journal's redacted tail for a failure diagnostic (issue #249).
+
+    The retention note alone names a path the failing CI context can never read
+    again: a killed container or discarded Docker layer takes the file with it,
+    which is exactly what the 2026-11-18 occurrence's job log shows. The tail
+    therefore travels into the diagnostic stream itself. The journal is already
+    redacted at write time; every line is redacted again so the diagnostic can
+    never depend on the writer, and the bounded tail keeps a pathological
+    journal from flooding the log.
+    """
+    try:
+        lines = journal_path(package).read_text(encoding='utf-8', errors='replace').splitlines()
+    except OSError:
+        return []
+    tail = lines[-JOURNAL_TAIL_LINES:]
+    if len(lines) > JOURNAL_TAIL_LINES:
+        tail.insert(0, f'...[journal head truncated; showing the last {JOURNAL_TAIL_LINES} of {len(lines)} lines]')
+    return [redact_query_strings(line) for line in tail]
 
 
 class Installer:
@@ -194,6 +219,21 @@ class Installer:
             raise subprocess.TimeoutExpired(process.args, budget, output=''.join(collected)) from None
         return ''.join(collected)
 
+    def _print_journal_tail(self, merged):
+        """Print the retained journal's tail where the retention note is printed.
+
+        A disabled journal's path can hold planted foreign content, so only a
+        journal this run actually opened may be named, and its tail is never a
+        new failure: an unreadable file simply prints nothing.
+        """
+        if not (merged and self._journaled):
+            return
+        tail = journal_tail(self.args.package)
+        if tail:
+            print('retained install journal tail:', file=sys.stderr, flush=True)
+            for line in tail:
+                print(line, file=sys.stderr, flush=True)
+
     def command(self, command, publication=False, *, phase, merged=False):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
@@ -248,7 +288,11 @@ class Installer:
                 print(redact_query_strings(text), end='', file=sys.stderr)
             # Only a journal this run actually opened may be named as retention;
             # a disabled journal's path can hold planted foreign content.
-            note = f'; partial output retained at {journal_path(self.args.package)}' if merged and self._journaled else ''
+            if merged and self._journaled:
+                self._print_journal_tail(merged)
+                note = f'; partial output retained at {journal_path(self.args.package)}'
+            else:
+                note = ''
             raise ValueError(f'CLI installation command timed out during {phase} within publication retry budget{note}') from failure
         result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         if result.returncode:
@@ -262,7 +306,11 @@ class Installer:
             missing = publication is True or (publication and any(spec in tokens for spec in publication))
             if missing and codes and codes <= {'ETARGET', 'E404'}:
                 raise PublicationPending(command[2] if publication is True else 'matching native dependency during install')
-            note = f'; partial output retained at {journal_path(self.args.package)}' if merged and self._journaled else ''
+            if merged and self._journaled:
+                self._print_journal_tail(merged)
+                note = f'; partial output retained at {journal_path(self.args.package)}'
+            else:
+                note = ''
             raise ValueError(f'CLI installation command failed during {phase} (exit {result.returncode}){note}')
         if self._journaled:
             # A healthy install removes the evidence journal it created.
