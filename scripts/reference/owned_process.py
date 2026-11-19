@@ -20,7 +20,7 @@ scans keep the exit boundary and the token tiebreak as their guards, while
 the signal needs no gate. The known residual hole is stated plainly: a
 descendant that both setsid's away and scrubs the token leaves no kernel
 marker this module can see; containing that case needs cgroup-backed
-ownership and remains open work in issue #404.
+ownership and remains open work in issue #411.
 
 A caller that runs several owned commands concurrently — the browser witness
 label waves, the native probe waves — can stop one running command from
@@ -66,6 +66,17 @@ MAX_NAMED_SURVIVORS = 8
 # are withheld from the command's output, because only a descendant could
 # have written them.
 DRAIN_IDLE_SECONDS = 0.5
+# The idle grace alone cannot bound the deadline path's post-kill drain: a
+# surviving carrier the sweeps could not stop keeps writing continuously, so
+# every select call returns inside the idle grace and the loop never ends —
+# the deadline branch then never reaches its verification sweeps, the reap
+# or the TimeoutExpired raise, defeating the deadline it serves. A killed
+# command's own flush is kernel-buffered and completes in milliseconds, so
+# this total cap only ever engages for a live writer. Its bytes are escapee
+# diagnostics: they reach the run's log text, but never the trusted output
+# snapshot, so truncating them loses evidence, never the command's real
+# result.
+DRAIN_TOTAL_SECONDS = 2.0
 POLL_SECONDS = 0.1
 DRAIN_CHUNK = 65536
 # /proc stat reports starttime in scheduler ticks since boot with one tick of
@@ -242,7 +253,7 @@ def group_members(group, proc=None, started_before=None, token_value=None):
     descendant
     that forked after the boundary and scrubbed its environment before the
     scan — it is spared here, and fully containing that class needs the
-    cgroup-backed ownership work in #404. The boundary also cannot reject
+    cgroup-backed ownership work in #411. The boundary also cannot reject
     a group id reissued inside the window between the last member
     detaching and the boundary sample itself: such members started at or
     before the boundary and read as ours, so a pre-boundary-window
@@ -353,7 +364,7 @@ def _identity_check(start, proc=None):
     the microseconds between the /proc read and the pin where a recycle
     could land in the same scheduler tick as the scanned process's own
     start, which no /proc-scanning design can distinguish and the
-    cgroup-backed ownership work in #404 owns. An unreadable starttime at
+    cgroup-backed ownership work in #411 owns. An unreadable starttime at
     either end biases toward the scan's attribution: naming and killing
     bias toward what the scan owned, never toward stranding a live carrier.
     """
@@ -522,7 +533,7 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None, 
     survive (#404 review). A pinless platform has no flag-4 capability at
     all and keeps main's behavior — the spared member survives unnamed,
     which is why `(None, None)` there is honest: the boundary-guard
-    residual this whole design narrows is #404's to close.
+    residual this whole design narrows is #411's to close.
 
     ``verify`` is a callable receiving one starttime boundary (scheduler
     ticks since boot, sampled immediately before the send) and returning
@@ -540,7 +551,7 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None, 
     tokenless members started after the boundary, which stay excluded.
     Only a descendant that both forked in that window and scrubbed its
     environment escapes the scan — the same scrubbing residual the cgroup
-    work in #404 owns everywhere else.
+    work in #411 owns everywhere else.
 
     That token-union rule leans on the send actually resolving the group.
     When the outcome is ``'empty'`` — the kernel resolved nothing at the
@@ -954,7 +965,7 @@ def _terminate_tree(process, token_value, pinned=None, boundary=None):
     same trade as main, stated plainly: a recycled group forming after the
     last member died and before a scan reads the numeric id could be
     misnamed, and the pin cannot close that class — the cgroup-backed
-    ownership work in #404 owns it.
+    ownership work in #411 owns it.
     Merging the passes keeps every pid named exactly once (#381's class).
     """
     named = []
@@ -1381,7 +1392,7 @@ class CancelHandle:
                 # itself frees the group id during its own kill sequence, so
                 # no valid boundary exists for the scans that straddle it —
                 # that residual is `_terminate_tree`'s documented trade, and
-                # the cgroup-backed identity work in #404 owns the mechanism
+                # the cgroup-backed identity work in #411 owns the mechanism
                 # that closes it.
                 if boundary is None and pinned is not None:
                     # A cancel flipping before the owning call observed an exit
@@ -1494,10 +1505,23 @@ def _wait_readable(streams, timeout):
 
 
 def _drain_after_kill(process):
-    """Collect whatever a killed command flushed, bounded by the idle grace."""
+    """Collect whatever a killed command flushed, bounded by the idle and total graces.
+
+    The idle grace stops a drain waiting for an EOF a surviving carrier will
+    never send; the total grace stops a carrier that writes continuously, so
+    the deadline path always reaches its verification sweeps, the reap and
+    the TimeoutExpired raise (#398 review). Each select wait is capped by the
+    remaining total budget, so a wait that starts just before the deadline
+    cannot overshoot the cap by one idle grace."""
     streams = {process.stdout.fileno(): bytearray(), process.stderr.fileno(): bytearray()}
     buffers = {descriptor: bytearray() for descriptor in streams}
-    while streams and _wait_readable(streams, DRAIN_IDLE_SECONDS):
+    total_deadline = time.monotonic() + DRAIN_TOTAL_SECONDS
+    while streams:
+        remaining = total_deadline - time.monotonic()
+        if remaining <= 0:
+            break  # The total cap: a live writer cannot hold the deadline path past this.
+        if not _wait_readable(streams, min(DRAIN_IDLE_SECONDS, remaining)):
+            break  # The idle grace: nothing more arrived from a killed command.
         _read_available(streams, buffers)
     stdout = buffers.pop(process.stdout.fileno()).decode('utf-8', errors='replace')
     return stdout + ''.join(data.decode('utf-8', errors='replace') for data in buffers.values())
