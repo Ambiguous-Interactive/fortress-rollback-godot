@@ -254,7 +254,11 @@ def _send_kill(pid, belongs=None):
     attribution is stale — the process is skipped instead of receiving a
     signal meant for an owned tree (#404). Unreadable identity state keeps
     the kill: naming and killing bias toward what the scan owned. None keeps
-    the unconditional kill for callers that bounded the scan themselves.
+    the unconditional kill for callers that bounded the scan themselves. A
+    pidfd_open that raises ESRCH means the scanned process is already gone,
+    so the numeric kill below is a harmless no-op that still names it; any
+    other open failure (EMFILE and friends) keeps the biased numeric kill,
+    which carries the same documented recycle race as the pinless path.
     """
     try:
         descriptor = os.pidfd_open(pid)
@@ -496,7 +500,7 @@ def _terminate_tree(process, token_value, pinned=None, boundary=None):
             named = merged_survivors(named, sweep())
         except Exception:
             continue  # The kill and the second sweep still run and name what remains.
-    _signal_group(process, pinned)
+    signal_outcome = _signal_group(process, pinned)
     anomaly = None
     try:
         named = merged_survivors(named, terminate_group(process.pid, started_before=boundary))
@@ -506,6 +510,11 @@ def _terminate_tree(process, token_value, pinned=None, boundary=None):
         named = merged_survivors(named, terminate(token_value))
     except Exception as error:
         anomaly = anomaly or error  # Every sweep ran; the first anomaly is the one reported.
+    if signal_outcome == 'failed' and anomaly is None:
+        # A failed pinned group signal during the tree stop is a tooling
+        # failure, never a clean teardown: a same-group member born after the
+        # final scan survives it unnamed (#404 review).
+        anomaly = RuntimeError('the pinned group signal failed during tree termination')
     return named, anomaly
 
 
@@ -881,16 +890,14 @@ class CancelHandle:
         try:
             candidates = []
             if process is not None:
-                # The leader's pidfd was pinned at registration, before
-                # anything could reap it, so the tree stop's group signal
-                # resolves the true group in every leader state — the pin
-                # makes the signal recycle-proof, not the numeric id (#404):
-                # the id is reissuable once the last member detaches, which
-                # is why the post-reap scans keep leaning on live members
-                # holding the group open (see _terminate_tree). Without
-                # pidfd support the poll guard decides: after a reaped
-                # child only the pidfd-pinned token sweep runs, which can
-                # never misaddress.
+                # A cancel flipping in the publish gap — the child exited but
+                # _collect had not published yet — reads no boundary while the
+                # owner's reap may already have freed the numeric id: sample
+                # an entry tick so the scans are bounded in that corner too
+                # (#404 review). An unreaped child keeps unbounded scans; its
+                # id cannot recycle until an owner reaps it.
+                if boundary is None and pinned is not None and process.poll() is not None:
+                    boundary = _boot_ticks()
                 if pinned is not None or process.poll() is None:
                     candidates, stop_anomaly = _terminate_tree(process, token_value, pinned, boundary)
                     if stop_anomaly is not None:
