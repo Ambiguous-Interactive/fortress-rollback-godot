@@ -27,10 +27,13 @@ JOURNAL_LIMIT_BYTES = 4 * 1024 * 1024
 # A pathological stream without newlines still fills the line buffer; past this
 # bound the partial line is flushed as complete evidence and counting resumes.
 PENDING_LIMIT_BYTES = 1024 * 1024
-# The failure diagnostic prints at most this many journal tail lines: a stalled
-# or killed CI context cannot read the fixed journal path after the process is
-# gone, so the tail itself must reach the job log (issue #249).
+# The failure diagnostic prints at most this many journal tail lines and at
+# most this many journal tail bytes: a stalled or killed CI context cannot read
+# the fixed journal path after the process is gone, so the tail itself must
+# reach the job log (issue #249) without one huge line or a pathological
+# journal flooding it.
 JOURNAL_TAIL_LINES = 40
+JOURNAL_TAIL_BYTES = 16384
 
 
 def redact_query_strings(text):
@@ -79,8 +82,9 @@ def journal_tail(package):
     which is exactly what the 2026-11-18 occurrence's job log shows. The tail
     therefore travels into the diagnostic stream itself. The journal is already
     redacted at write time; every line is redacted again so the diagnostic can
-    never depend on the writer, and the bounded tail keeps a pathological
-    journal from flooding the log.
+    never depend on the writer, and the bounded tail — last lines first, then
+    a byte cap on what remains — keeps a pathological journal from flooding
+    the log.
     """
     try:
         lines = journal_path(package).read_text(encoding='utf-8', errors='replace').splitlines()
@@ -89,7 +93,17 @@ def journal_tail(package):
     tail = lines[-JOURNAL_TAIL_LINES:]
     if len(lines) > JOURNAL_TAIL_LINES:
         tail.insert(0, f'...[journal head truncated; showing the last {JOURNAL_TAIL_LINES} of {len(lines)} lines]')
-    return [redact_query_strings(line) for line in tail]
+    kept = []
+    remaining = JOURNAL_TAIL_BYTES
+    for line in reversed(tail):
+        budget = remaining - (len(line) + 1)
+        if budget < 0:
+            break
+        kept.append(line)
+        remaining = budget
+    if len(kept) < len(tail):
+        kept.append(f'...[journal tail truncated at the {JOURNAL_TAIL_BYTES}-byte diagnostic budget]')
+    return [redact_query_strings(line) for line in reversed(kept)]
 
 
 class Installer:
@@ -374,7 +388,17 @@ class Installer:
                 break
             except PublicationPending as failure:
                 if attempt == self.args.attempts or time.monotonic() + self.args.interval >= self.deadline:
-                    raise ValueError(f'publication retry budget exhausted for {package}@{version} after {attempt} attempts') from failure
+                    if self._journaled:
+                        # The last attempt's evidence is on disk and every earlier
+                        # attempt printed its own stream; the terminal summary still
+                        # carries the tail and the retention path, so the reader of
+                        # an exhausted budget sees the same evidence shape as any
+                        # other failed install (issue #249).
+                        self._print_journal_tail(merged=True)
+                        note = f'; partial output retained at {journal_path(package)}'
+                    else:
+                        note = ''
+                    raise ValueError(f'publication retry budget exhausted for {package}@{version} after {attempt} attempts{note}') from failure
                 print(f'native release pending ({failure}); retry {attempt + 1}/{self.args.attempts} '
                       f'in {self.args.interval:g}s; keeping {package}@{version}', file=sys.stderr, flush=True)
                 time.sleep(self.args.interval)

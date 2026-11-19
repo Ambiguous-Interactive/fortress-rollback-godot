@@ -312,6 +312,14 @@ class NativeCliInstallTests(unittest.TestCase):
                 self.assertEqual(helper.journal_tail('@opencode/cli'),
                                  ['npm http fetch GET https://registry.example/x.tgz?<redacted>'],
                                  'the tail re-redacts defensively')
+                # The byte budget bounds a journal of huge lines: the newest small
+                # lines survive, the oversized head line does not, and the cut
+                # names itself instead of flooding the diagnostic.
+                huge = 'x' * (helper.JOURNAL_TAIL_BYTES + 1)
+                evidence.write_text(f'{huge}\nnewest 1\nnewest 2\n', encoding='utf-8')
+                self.assertEqual(helper.journal_tail('@opencode/cli'),
+                                 ['...[journal tail truncated at the 16384-byte diagnostic budget]',
+                                  'newest 1', 'newest 2'])
                 evidence.chmod(0o000)
                 try:
                     self.assertEqual(helper.journal_tail('@opencode/cli'), [])
@@ -492,6 +500,10 @@ class NativeCliInstallTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('publication retry budget exhausted', result.stderr)
         self.assertEqual(len([call for call in calls if call[0] == 'install']), 3)
+        # The terminal exhaustion summary carries the same evidence shape as any
+        # other failed install: the journaled tail and the retention path.
+        self.assertIn('retained install journal tail:', result.stderr)
+        self.assertIn('partial output retained at', result.stderr)
         result, _ = self.invoke(install_delay=True, missing_spec='@opencode/cli-linux-arm64@2.0.30')
         self.assertEqual(result.returncode, 0, result.stderr)
         for spec in ('@opencode/cli@2.0.30', '@unrelated/dependency@2.0.30', '@opencode/cli-linux-x64@2.0.29'):

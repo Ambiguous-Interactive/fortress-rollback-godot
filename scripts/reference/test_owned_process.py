@@ -1762,10 +1762,19 @@ class LeaderPinTests(unittest.TestCase):
     """
 
     # Value: protects=the kernel contract the pin semantics lean on (#404);
-    # fails_when=a kernel or Python change breaks flag-4 group signaling
-    # through a pin whose leader was already reaped;
-    # seam=real pidfd_send_signal against a reaped leader's surviving member
+    # fails_when=the production tail claims a delivered group signal the
+    # kernel did not perform, whatever this kernel's flag-4 semantics are;
+    # seam=real pidfd_send_signal against a reaped leader's surviving member,
+    # measured through the verified tail
     def test_pinned_group_signal_reaches_members_after_the_leader_is_reaped(self):
+        # The matrix so far: kernel 6.12.76 delivers flag-4 through a reaped
+        # leader's pin (2026-11-18, #404); a 2026-11-19 Gate runner accepted
+        # the same send without stopping the member, which is the kernel class
+        # the send-time verification exists for. The witness no longer pins
+        # one kernel's semantics — unpinned runner kernels change under the
+        # gate — it pins that the tail's verdict always matches what the
+        # kernel actually did: delivered exactly when the member died, the
+        # failed-cleanup note with an error exactly when it did not.
         with tempfile.TemporaryDirectory() as folder:
             member_marker = Path(folder) / 'member.pid'
             leader = subprocess.Popen([PYTHON, '-c', """
@@ -1784,13 +1793,24 @@ time.sleep(60)
                 member_pid = int(member_marker.read_text())
                 leader.kill()
                 leader.wait(timeout=10)  # reaped: only the pin still references its identity
-                signal.pidfd_send_signal(pinned, signal.SIGKILL, None, 4)
+                probe = type('ReapedLeader', (), {'pid': leader.pid, 'poll': lambda self: 0})()
+                with mock.patch.object(owned_process, 'GROUP_SIGNAL_VERIFY_SECONDS', 5.0):
+                    note, error = owned_process._tail_group_signal(
+                        probe, pinned, True,
+                        verify=lambda started_before: owned_process.group_members(
+                            leader.pid, started_before=started_before))
                 deadline = time.monotonic() + 10
                 while not terminated(member_pid) and time.monotonic() < deadline:
                     time.sleep(0.05)
-                self.assertTrue(terminated(member_pid),
-                                'the flag-4 group signal through the reaped leader\'s pin '
-                                'must reach the surviving member')
+                if terminated(member_pid):
+                    self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL:')
+                    self.assertIsNone(error,
+                                      'a delivered signal is a completed cleanup')
+                else:
+                    self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+                    self.assertIsNotNone(error,
+                                         'a kernel that accepted the send without stopping '
+                                         'the member must never read as a clean teardown')
             finally:
                 os.close(pinned)
                 for pid in (member_pid,):
@@ -1937,6 +1957,109 @@ time.sleep(60)
             self.assertIsNone(note)
             self.assertIsNone(error)
             self.assertEqual(signal_mock.call_count, 0, 'no members at exit: no signal')
+
+    # Value: protects=the send-time verification of the pinned group signal (#404);
+    # fails_when=a kernel that accepts the flag-4 send without stopping the group
+    # reads as a delivered cleanup, or a slow-to-die member reads as undelivered;
+    # seam=_tail_group_signal with recorded _signal_group outcomes and a scan stub
+    def test_the_tail_group_signal_verifies_the_send_before_claiming_a_stop(self):
+        process = type('Probe', (), {'pid': 424242, 'poll': lambda self: 0})()
+        survivor = {'pid': 4243, 'name': 'member', 'start': 5}
+        # An accepted send whose members survive the whole verify window is a
+        # failed cleanup, never a delivered note (red on the pre-verification
+        # tail, which returned the delivered note for exactly this shape).
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0]) as ticks, \
+                mock.patch.object(owned_process.time, 'sleep') as sleeper:
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=lambda boundary: [survivor])
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error, 'an undelivered signal must never read as a clean teardown')
+            self.assertEqual(ticks.call_count, 2, 'the deadline bounds one scan-and-decide pass')
+            self.assertEqual(sleeper.call_count, 0, 'an exhausted window reports without another poll')
+        # A member that dies within the window keeps the delivered verdict: the
+        # verification tolerates scheduling latency, it does not fail it.
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'):
+            scans = []
+
+            def dying_member(boundary):
+                scans.append(boundary)
+                return [survivor] if len(scans) == 1 else []
+
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=dying_member)
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL:')
+            self.assertIsNone(error)
+            self.assertEqual(len(scans), 2, 'one empty scan ends the verification')
+        # The ESRCH no-op is measured too: a kernel can answer ESRCH through a
+        # reaped leader's pin while members still live.
+        with mock.patch.object(owned_process, '_signal_group', return_value='empty'), \
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0]):
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=lambda boundary: [survivor])
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error)
+        with mock.patch.object(owned_process, '_signal_group', return_value='empty'):
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=lambda boundary: [])
+            self.assertIsNone(note, 'a measured-empty group stays the honest no-op')
+            self.assertIsNone(error)
+        # An unreadable scan is never evidence of a stop: it polls to the
+        # deadline and then fails exactly like a measured survivor.
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0]):
+            def unreadable(boundary):
+                raise OSError(errno.EACCES, 'proc walk refused')
+
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=unreadable)
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error)
+        # The failed send keeps its own note and skips the verification: there
+        # is nothing delivered to verify.
+        with mock.patch.object(owned_process, '_signal_group', return_value='failed') as signal_mock:
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=lambda boundary: [])
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error)
+            self.assertEqual(signal_mock.call_count, 1)
+        # The boundaries the scans receive are the caller's concern; the tail
+        # passes the send-time boundary through unchanged.
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'):
+            seen = []
+            owned_process._tail_group_signal(process, 9, True, verify=lambda boundary: seen.append(boundary))
+            self.assertEqual(len(seen), 1, 'the verify callable receives the send-time boundary')
+
+    # Value: protects=the tree stop's containment of an undelivered pinned signal (#404);
+    # fails_when=a kernel that accepted the send without delivering leaves the
+    # spared class unnamed after the tree stop;
+    # seam=_terminate_tree with a recorded terminate_group and pinned signal
+    def test_the_tree_stop_sweeps_what_an_undelivered_pinned_signal_spared(self):
+        process = type('Probe', (), {'pid': 424242, 'poll': lambda self: None})()
+        survivor = {'pid': 4243, 'name': 'member', 'start': 5}
+        boundaries = []
+
+        def fake_terminate_group(group, proc=None, started_before=None, token_value=None):
+            boundaries.append(started_before)
+            return [survivor] if started_before == 777 else []
+
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process, 'terminate_group', side_effect=fake_terminate_group), \
+                mock.patch.object(owned_process, 'terminate', return_value=[]), \
+                mock.patch.object(owned_process, '_boot_ticks', return_value=777):
+            named, anomaly = owned_process._terminate_tree(process, 'token', pinned=9, boundary=10)
+        self.assertEqual(boundaries, [10, 10, 777],
+                         'the send-boundary sweep runs after the kill and the boundary sweeps')
+        self.assertEqual(named, [survivor], 'the spared member is stopped and named, not lost')
+        self.assertIsNone(anomaly, 'a contained member is named in the report, not raised as an anomaly')
+        with mock.patch.object(owned_process, '_signal_group', return_value='failed'), \
+                mock.patch.object(owned_process, 'terminate_group', side_effect=fake_terminate_group), \
+                mock.patch.object(owned_process, 'terminate', return_value=[]), \
+                mock.patch.object(owned_process, '_boot_ticks', return_value=777):
+            named, anomaly = owned_process._terminate_tree(process, 'token', pinned=9, boundary=10)
+        self.assertIsNotNone(anomaly, 'a failed send keeps its tooling-failure anomaly')
+        with mock.patch.object(owned_process, '_signal_group', return_value='empty') as signal_mock, \
+                mock.patch.object(owned_process, 'terminate_group', side_effect=fake_terminate_group), \
+                mock.patch.object(owned_process, 'terminate', return_value=[]), \
+                mock.patch.object(owned_process, '_boot_ticks', return_value=777) as ticks:
+            named, anomaly = owned_process._terminate_tree(process, 'token', pinned=None, boundary=10)
+            self.assertEqual(signal_mock.call_count, 1, 'the pinless decision stays inside _signal_group')
+            self.assertEqual(boundaries[-1], 10, 'a pinless stop keeps its original sweep set')
+            self.assertEqual(ticks.call_count, 0, 'a pinless stop never samples a send boundary')
 
     # Value: protects=the tail's spared-member cleanup end to end (#404 review);
     # fails_when=a tokenless member forked after the boundary survives the run
