@@ -762,10 +762,10 @@ print('child exits', flush=True)
             command = [PYTHON, '-c', self.SLOW_TREE, str(marker)]
             real_group = owned_process.terminate_group
 
-            def flipping_group(group_pid):
+            def flipping_group(group_pid, started_before=None, token_value=None):
                 if not handle.cancelled:
                     handle.cancel()  # the real cancel fires inside the deadline handler's own sweep
-                return real_group(group_pid)
+                return real_group(group_pid, started_before=started_before, token_value=token_value)
 
             with mock.patch.object(owned_process, 'terminate_group', flipping_group):
                 with self.assertRaises(subprocess.TimeoutExpired):
@@ -1812,25 +1812,28 @@ time.sleep(60)
                                   side_effect=lambda pid, sig: killpg_calls.append(pid)):
             owned_process._signal_group(refused, pinned=9)
             self.assertEqual(killpg_calls, [], 'ESRCH through the pin must not degrade to a numeric killpg')
-            # The AttributeError shape (Python with pidfd_open but no
-            # pidfd_send_signal) and the pinless shape must refuse the
-            # post-reap killpg too (#404 review).
+            # A pinned group signal never falls back numerically: the owner can
+            # reap the child between any liveness check and the call, so the
+            # per-pid pinned sweeps beside this pass are the only stops.
+            unreaped = Process(reaped=False)
+            owned_process._signal_group(unreaped, pinned=9)
             with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
                                    side_effect=AttributeError('no pidfd_send_signal')):
                 owned_process._signal_group(refused, pinned=9)
-            owned_process._signal_group(refused, pinned=None)
+                owned_process._signal_group(unreaped, pinned=9)
             self.assertEqual(killpg_calls, [],
-                             'a reaped child never gets a numeric killpg, on any fallback path')
-        unreaped = Process(reaped=False)
+                             'a pinned group signal never degrades to a numeric killpg')
+        # Without pidfd support at all, the numeric kill stays gated on an
+        # unreaped child, whose id the zombie or the live members still hold.
+        pinless_alive = Process(reaped=False)
+        pinless_gone = Process(reaped=True)
         delivered = []
-        with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
-                               side_effect=OSError(errno.EINVAL, 'flag unsupported')), \
-                mock.patch.object(owned_process.os, 'killpg',
-                                  side_effect=lambda pid, sig: delivered.append(pid)) as killpg:
-            owned_process._signal_group(unreaped, pinned=9)
-            self.assertEqual(killpg.call_count, 1,
-                             'an unreaped child keeps the numeric fallback on a flag-less kernel')
-            self.assertEqual(delivered, [unreaped.pid])
+        with mock.patch.object(owned_process.os, 'killpg',
+                               side_effect=lambda pid, sig: delivered.append(pid)) as killpg:
+            owned_process._signal_group(pinless_alive, pinned=None)
+            owned_process._signal_group(pinless_gone, pinned=None)
+            self.assertEqual(delivered, [pinless_alive.pid],
+                             'the pinless numeric kill runs only while the child is unreaped')
 
     # Value: protects=the pin lifecycle of every owned run (#404);
     # fails_when=a run never pins its leader, or leaves the pin descriptor open;

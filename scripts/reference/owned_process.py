@@ -268,10 +268,15 @@ def _identity_check(start, proc=None):
 
     The scan captured each pid's starttime; a matching starttime after the
     pidfd is pinned proves the same process — it survives execs, process
-    group changes and environment scrubs — while a recycled pid always
-    reads a different one. An unreadable starttime at either end biases
-    toward the scan's attribution: naming and killing bias toward what the
-    scan owned, never toward stranding a live carrier.
+    group changes and environment scrubs — while a recycled pid reads a
+    different one. The signal goes through the pin opened at kill time, so
+    a recycle after the pin can never receive it; the residual sliver is
+    the microseconds between the /proc read and the pin where a recycle
+    could land in the same scheduler tick as the scanned process's own
+    start, which no /proc-scanning design can distinguish and the
+    cgroup-backed ownership work in #404 owns. An unreadable starttime at
+    either end biases toward the scan's attribution: naming and killing
+    bias toward what the scan owned, never toward stranding a live carrier.
     """
     root = proc if proc is not None else Path('/proc')
 
@@ -377,14 +382,15 @@ def _signal_group(process, pinned):
 
     The flag-4 group signal stays valid through a zombie and a reaped leader
     on the pinned kernels: the kernel resolves the group through the pinned
-    struct pid, whose object the pin keeps valid (#404). Every numeric
-    `killpg` fallback runs only while the child is unreaped — its id is
-    still reserved by the zombie or the live members — and is refused once
-    the child is reaped, for any pidfd error (ESRCH, EBADF, EINVAL) and
-    for Pythons without pidfd signal support alike, because a post-reap
-    killpg by number could reach a recycled group (#404 review).
+    struct pid, whose object the pin keeps valid (#404). With a pin, this is
+    the only group signal: a failed attempt never degrades to a numeric
+    killpg, because the child can exit and be reaped by its owner between
+    the liveness check and the call, and a post-reap killpg by number could
+    reach a recycled group (#404 review) — the per-pid sweeps beside it
+    already stop every member through recycle-proof scan pins. Without
+    pidfd support at all, the numeric kill stays gated on an unreaped
+    child, whose id is still reserved by the zombie or the live members.
     """
-    unreaped = process.poll() is None
     if pinned is not None:
         try:
             # PIDFD_SIGNAL_PROCESS_GROUP (4): signal the whole process group
@@ -392,13 +398,10 @@ def _signal_group(process, pinned):
             # leader's own thread group and leave same-group descendants to
             # the sweeps.
             signal.pidfd_send_signal(pinned, signal.SIGKILL, None, 4)
-            return
-        except AttributeError:
-            pass  # Python without pidfd signal support: the gated numeric kill below decides.
-        except OSError:
-            if not unreaped:
-                return
-    if unreaped:
+        except (AttributeError, OSError):
+            pass  # The pinned per-pid sweeps beside this pass stop the members.
+        return
+    if process.poll() is None:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except OSError:
