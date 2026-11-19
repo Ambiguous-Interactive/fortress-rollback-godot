@@ -1943,11 +1943,31 @@ time.sleep(60)
     # fails_when=a scan drops the exit boundary — the pin does not reserve the
     # numeric group id, so an unbounded scan could name a recycled group;
     # seam=owned_process._post_exit_group_sweep with a recorded terminate_group
-    def test_the_post_exit_group_sweep_keeps_the_boundary(self):
-        with mock.patch.object(owned_process, 'terminate_group', return_value=[]) as sweep:
-            owned_process._post_exit_group_sweep(77, boundary=10, token_value='tok')
-        self.assertEqual(sweep.call_args.kwargs, {'started_before': 10, 'token_value': 'tok'},
-                         'the pin does not reserve the id: the scan keeps the boundary')
+    # Value: protects=the numeric fallback gate of the post-exit sweep (#404, #411);
+    # fails_when=a contained run consults the reissuable numeric group id, or
+    # a fallback run loses its exit boundary;
+    # seam=owned_process._post_exit_group_sweep with recorded scans
+    def test_the_post_exit_group_sweep_keeps_the_boundary_on_the_fallback(self):
+        class Bare:
+            pid = 77
+            owned_cgroup = None
+        with mock.patch.object(owned_process, 'terminate_group', return_value=[]) as sweep, \
+                mock.patch.object(owned_process, 'terminate_cgroup',
+                                  side_effect=AssertionError('the fallback must not claim membership')):
+            owned_process._post_exit_group_sweep(Bare(), boundary=10, token_value='tok')
+        self.assertEqual(sweep.call_args.kwargs, {'proc': None, 'started_before': 10, 'token_value': 'tok'},
+                         'the pin does not reserve the id: the fallback scan keeps the boundary')
+
+    def test_the_post_exit_group_sweep_reads_membership_under_containment(self):
+        class Contained:
+            pid = 77
+            owned_cgroup = 'leaf'
+        with mock.patch.object(owned_process, 'terminate_cgroup', return_value=[]) as sweep, \
+                mock.patch.object(owned_process, 'terminate_group',
+                                  side_effect=AssertionError('the numeric scan must not run')):
+            owned_process._post_exit_group_sweep(Contained(), boundary=10, token_value='tok')
+        self.assertEqual(sweep.call_args.args, ('leaf', None),
+                         'containment sweeps the kernel membership record, never the numeric group')
 
     # Value: protects=the numeric fallback gate of the pinned group signal (#404 review);
     # fails_when=a pidfd error on a reaped child falls back to a numeric killpg
@@ -2066,6 +2086,27 @@ time.sleep(60)
                 raise OSError(errno.EACCES, 'proc walk refused')
 
             note, error = owned_process._tail_group_signal(process, 9, True, verify=unreadable)
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error)
+        # A failed-observation ValueError from the membership record (the
+        # vanished-but-listed and process-bound shapes) lands in the same
+        # failed-cleanup verdict instead of crashing the tail (#411 review).
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0]):
+            def unbounded(boundary):
+                raise ValueError('owned process scan exceeded its process bound')
+
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=unbounded)
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error)
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0, 20.0, 30.0]), \
+                mock.patch.object(owned_process.time, 'sleep', lambda _seconds: None):
+            def vanishing(boundary):
+                raise ValueError('leaf member 90 vanished from /proc while the record still lists it')
+
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=vanishing,
+                                                           contain=lambda boundary: [])
             self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
             self.assertIsNotNone(error)
         # The failed send keeps its own note and skips the verification: there
@@ -2793,6 +2834,540 @@ class KernelClassProbeTests(unittest.TestCase):
         finally:
             owned_process._kernel_class = saved_class
             owned_process._kernel_probe_note = saved_note
+
+
+class FakeProcsFile:
+    """One leaf's virtual cgroup.procs: newline pids for the membership reads."""
+
+    def __init__(self, members):
+        self.members = members
+
+    def read_text(self):
+        return ''.join(f'{pid}\n' for pid in self.members)
+
+
+class FakeLeaf:
+    """A duck-typed containment leaf: kernel membership in, releasable rmdir out."""
+
+    def __init__(self, members=()):
+        self.members = list(members)
+        self.released = False
+
+    def __truediv__(self, name):
+        assert name == 'cgroup.procs', 'the sweeps read exactly one leaf file'
+        return FakeProcsFile(self.members)
+
+    def rmdir(self):
+        self.released = True  # a real leaf's kernel files never block the removal
+
+
+class CgroupContainmentTests(unittest.TestCase):
+    """Value: post-exit cleanup stops only what kernel membership names (#411).
+
+    A claimed cgroup leaf replaces the post-exit numeric group scans: the
+    kernel lists exactly the leaf's live tasks in cgroup.procs, so a
+    process group id reissued after the owned tree died — in any window,
+    including the pre-boundary window the bounded numeric scans cannot
+    reject — is never eligible for a cleanup signal, and a token-scrubbed
+    descendant is still listed in the leaf it inherited. The devcontainer
+    and the Gate runners mount cgroup2 read-only, so the live claim falls
+    back to the numeric scans; these witnesses bind the containment seam
+    through injected membership records (a temp directory playing the
+    leaf, fake /proc trees playing the kernel's task list) and real
+    processes behind the membership entries, so the containment logic is
+    pinned on every host the suite runs on, fallback or not.
+    """
+
+    def fake_proc(self, folder, rows):
+        """A fake /proc tree: (pid, name, state, starttime, tokened) rows."""
+        proc = Path(folder) / 'proc'
+        proc.mkdir()
+        for pid, name, state, start, tokened in rows:
+            entry = proc / str(pid)
+            entry.mkdir()
+            # state(0) ppid pgrp session tty tpgid flags then twelve counters, then starttime(19).
+            (entry / 'stat').write_text(
+                f'{pid} ({name}) {state} 1 77 77 0 -1 4194304 ' + '0 ' * 12 + f'{start}')
+            (entry / 'cmdline').write_bytes(f'{name}\0'.encode())
+            if tokened:
+                (entry / 'environ').write_bytes(f'{owned_process.TOKEN_VARIABLE}=tok\0'.encode())
+        return proc
+
+    def fake_leaf(self, folder, members):
+        leaf = Path(folder) / 'cgroup'
+        leaf.mkdir()
+        (leaf / 'cgroup.procs').write_text(''.join(f'{pid}\n' for pid in members))
+        return leaf
+
+    def attached_leaf(self, members=()):
+        """A duck-typed containment leaf for release assertions.
+
+        A real leaf removes with rmdir alone — its cgroup.procs is a
+        kernel-virtual file that never blocks the removal. A temp-directory
+        fake cannot reproduce that with a real file inside, so the release
+        witnesses use this seam: membership reads like the kernel's record,
+        and rmdir records the release the way the kernel would accept it.
+        """
+        return FakeLeaf(members)
+
+    # Value: protects=the recycled-group residual the membership containment owns (#411);
+    # fails_when=a reissued tokenless same-pgid group is named or killed by a cleanup sweep;
+    # seam=fake proc tree plus an injected leaf whose membership excludes the stranger;
+    # the kill stub records targets, because pids 90/91 belong to the host, not this test
+    def test_a_recycled_tokenless_group_is_never_eligible_under_containment(self):
+        with tempfile.TemporaryDirectory() as folder:
+            proc = self.fake_proc(folder, [
+                # The dead owned tree's leader: numeric group 77, started before the boundary.
+                (90, 'leader', 'S', 5, False),
+                # The group id was reissued: a tokenless stranger in the same numeric
+                # group, started before the boundary — the exact shape the bounded
+                # numeric scans cannot reject.
+                (91, 'recycled-stranger', 'S', 5, False),
+            ])
+            self.fake_leaf(folder, [90])
+            leaf = Path(folder) / 'cgroup'
+            kills = []
+            with mock.patch.object(owned_process, '_send_kill',
+                                   side_effect=lambda pid, belongs=None: kills.append(pid) or True):
+                named = owned_process.terminate_cgroup(leaf, proc)
+            self.assertEqual(kills, [90],
+                             'membership decides the kill targets; the stranger is never a target')
+            self.assertEqual([item['pid'] for item in named], [90],
+                             'membership containment names only the leaf; the stranger is never eligible')
+            # The contrast on the same tree: the fallback numeric scan names the
+            # stranger (tokenless, started before the boundary) — the residual the
+            # fallback documents and the containment removes. Read-only: no kill.
+            numeric = owned_process.group_members(77, proc=proc, started_before=10)
+            self.assertEqual(sorted(item['pid'] for item in numeric), [90, 91],
+                             'the fallback boundary scan is what names the recycled group; containment must not')
+
+    def test_the_contained_post_exit_sweep_spares_the_recycled_group(self):
+        """The wired tail sweep consults membership only: the stranger is never named."""
+        with tempfile.TemporaryDirectory() as folder:
+            proc = self.fake_proc(folder, [(90, 'leader', 'S', 5, False),
+                                           (91, 'recycled-stranger', 'S', 5, False)])
+            self.fake_leaf(folder, [90])
+
+            class Contained:
+                pid = 77
+                owned_cgroup = Path(folder) / 'cgroup'
+
+            kills = []
+            with mock.patch.object(owned_process, '_send_kill',
+                                   side_effect=lambda pid, belongs=None: kills.append(pid) or True):
+                named = owned_process._post_exit_group_sweep(Contained(), boundary=10, token_value='tok', proc=proc)
+            self.assertEqual(kills, [90],
+                             'the wired sweep kills exactly the leaf members; the stranger is never a target')
+            self.assertEqual([item['pid'] for item in named], [90],
+                             'the contained post-exit sweep names exactly the leaf members')
+            verify, contain = owned_process._membership_pair(Contained(), 'tok', proc=proc)
+            self.assertEqual([item['pid'] for item in verify(10)], [90],
+                             "the tail's verification reads the leaf record")
+            contained_kills = []
+            with mock.patch.object(owned_process, '_send_kill',
+                                   side_effect=lambda pid, belongs=None: contained_kills.append(pid) or True):
+                self.assertEqual([item['pid'] for item in contain(10)], [90],
+                                 "the tail's containment kills through the leaf record")
+            self.assertEqual(contained_kills, [90], 'the containment callable targets only the leaf')
+
+    def test_cgroup_members_reads_the_kernel_record_and_skips_the_dead(self):
+        with tempfile.TemporaryDirectory() as folder:
+            proc = self.fake_proc(folder, [
+                (80, 'live', 'S', 7, False),
+                (81, 'zombie', 'Z', 7, False),
+                (82, 'dead', 'X', 7, False),
+            ])
+            leaf = self.fake_leaf(folder, [80, 81, 82])
+            (leaf / 'cgroup.procs').write_text('80\n81\n82\nnot-a-pid\n80\n')
+            self.assertEqual(owned_process.cgroup_members(leaf, proc),
+                             [{'pid': 80, 'name': 'live', 'start': 7}],
+                             'zombies and dead tasks are gone, duplicate rows name once, junk rows are ignored')
+            with self.assertRaises(OSError):
+                owned_process.cgroup_members(Path(folder) / 'missing-leaf', proc)
+            (proc / '84').mkdir()  # the entry exists but stat itself is unreadable
+            (proc / '84' / 'stat').mkdir()
+            (leaf / 'cgroup.procs').write_text('84\n')
+            with self.assertRaises(OSError):
+                # A live member this process cannot read fails the sweep; it never reads as empty.
+                owned_process.cgroup_members(leaf, proc)
+            crowded = Path(folder) / 'crowded'
+            crowded.mkdir()
+            (crowded / 'cgroup.procs').write_text(
+                '\n'.join(str(pid) for pid in range(owned_process.MAX_PROCESSES + 2)))
+            with self.assertRaises(ValueError):
+                owned_process.cgroup_members(crowded, proc)
+
+    def test_a_vanished_member_is_skipped_only_when_the_record_confirms_it(self):
+        """The stat ENOENT skip re-reads the record: listed-but-unreadable fails closed."""
+        with tempfile.TemporaryDirectory() as folder:
+            proc = self.fake_proc(folder, [(90, 'member', 'S', 5, False)])
+            (proc / '90' / 'stat').unlink()
+            leaf = self.fake_leaf(folder, [90])
+            real_read = Path.read_text
+            reads = {'count': 0}
+
+            def counting_read(path_self, *args, **kwargs):
+                text = real_read(path_self, *args, **kwargs)
+                if path_self.name == 'cgroup.procs':
+                    reads['count'] += 1
+                    if reads['count'] > 1:
+                        return ''  # the kernel stopped listing it between the reads
+                return text
+
+            with mock.patch.object(Path, 'read_text', counting_read):
+                self.assertEqual(owned_process.cgroup_members(leaf, proc), [],
+                                 'a member the record no longer lists is gone, not failed')
+            with self.assertRaises(ValueError):
+                # The re-read still lists it here: a failed observation fails the sweep.
+                owned_process.cgroup_members(leaf, proc)
+
+    def test_the_claim_places_the_child_in_its_own_leaf(self):
+        with tempfile.TemporaryDirectory() as folder:
+            mount = Path(folder) / 'cgroup'
+            (mount / 'scope').mkdir(parents=True)
+            proc = Path(folder) / 'proc'
+            (proc / 'self').mkdir(parents=True)
+            (proc / 'self' / 'cgroup').write_text('12:cpuset:/scope\n0::/scope\n')
+            mountinfo = Path(folder) / 'mountinfo'
+            mountinfo.write_text(f'36 35 0:40 / {mount} ro - cgroup2 cgroup rw\n')
+            leaf = owned_process._claim_cgroup(4242, 'tok', proc=proc, mountinfo=mountinfo)
+            self.assertEqual(leaf, mount / 'scope' / 'fortress-owned-tok',
+                             'the leaf is one run-dedicated directory under the caller\'s own cgroup')
+            self.assertEqual((leaf / 'cgroup.procs').read_text(), '4242\n', 'the child is placed in the leaf')
+            # A delegated subtree mount shows its root at the mount point, so
+            # the leaf maps to the path relative to that root, not the full
+            # path appended to the mount point (#411 review).
+            delegated = Path(folder) / 'delegated'
+            (delegated / 'app.scope').mkdir(parents=True)
+            mountinfo.write_text(
+                f'36 35 0:40 /user.slice/user-1000.slice {delegated} ro - cgroup2 cgroup rw\n')
+            (proc / 'self' / 'cgroup').write_text('0::/user.slice/user-1000.slice/app.scope\n')
+            leaf = owned_process._claim_cgroup(4242, 'tok2', proc=proc, mountinfo=mountinfo)
+            self.assertEqual(leaf, delegated / 'app.scope' / 'fortress-owned-tok2',
+                             'a delegated mount maps the leaf relative to the mount root')
+            (proc / 'self' / 'cgroup').write_text('0::/user.slice/user-1000.slice\n')
+            leaf = owned_process._claim_cgroup(4242, 'tok3', proc=proc, mountinfo=mountinfo)
+            self.assertEqual(leaf, delegated / 'fortress-owned-tok3',
+                             'a cgroup equal to the mount root places the leaf at the mount point')
+            (proc / 'self' / 'cgroup').write_text('0::/system.slice/other.scope\n')
+            self.assertIsNone(owned_process._claim_cgroup(4242, 'tok4', proc=proc, mountinfo=mountinfo),
+                              'a cgroup outside the mount root cannot claim a leaf there')
+
+    def test_the_claim_tries_every_cgroup2_mount(self):
+        """Layered mounts are each attempted: the first viable one wins, the rest fall through."""
+        with tempfile.TemporaryDirectory() as folder:
+            mount = Path(folder) / 'cgroup'
+            (mount / 'scope').mkdir(parents=True)
+            later = Path(folder) / 'later'
+            (later / 'scope').mkdir(parents=True)
+            proc = Path(folder) / 'proc'
+            (proc / 'self').mkdir(parents=True)
+            (proc / 'self' / 'cgroup').write_text('0::/scope\n')
+            mountinfo = Path(folder) / 'mountinfo'
+            # A prior mount that cannot hold the leaf (a file where the base must be)
+            # is skipped for the later viable one (#411 review).
+            blocked = Path(folder) / 'blocked'
+            blocked.write_text('not a directory')
+            mountinfo.write_text(
+                f'36 35 0:40 / {blocked} ro - cgroup2 cgroup rw\n'
+                f'37 35 0:41 / {later} rw - cgroup2 cgroup rw\n')
+            leaf = owned_process._claim_cgroup(4242, 'tok', proc=proc, mountinfo=mountinfo)
+            self.assertEqual(leaf, later / 'scope' / 'fortress-owned-tok',
+                             'the first viable mount claims the leaf; the failed one falls through')
+            self.assertFalse((Path(folder) / 'blocked' / 'fortress-owned-tok').exists())
+
+    def test_the_claim_falls_back_without_the_mechanism(self):
+        """cgroup v1, a missing cgroup2 mount and an unwritable base all keep the numeric scans."""
+        with tempfile.TemporaryDirectory() as folder:
+            proc = Path(folder) / 'proc'
+            (proc / 'self').mkdir(parents=True)
+            self_cgroup = proc / 'self' / 'cgroup'
+            mountinfo = Path(folder) / 'mountinfo'
+            # cgroup v1: no unified-hierarchy row, no leaf to claim.
+            self_cgroup.write_text('12:cpuset:/scope\n')
+            mountinfo.write_text('36 35 0:40 / /sys/fs/cgroup ro - cgroup2 cgroup rw\n')
+            self.assertIsNone(owned_process._claim_cgroup(1, 'tok', proc=proc, mountinfo=mountinfo))
+            # No cgroup2 mount at all.
+            self_cgroup.write_text('0::/scope\n')
+            mountinfo.write_text('36 35 0:40 / /sys/fs proc rw - proc proc rw\n')
+            self.assertIsNone(owned_process._claim_cgroup(1, 'tok', proc=proc, mountinfo=mountinfo))
+            # A claimed mount whose base cannot take the leaf (a file where the
+            # directory must be): the mkdir fails and the fallback decides.
+            blocked = Path(folder) / 'blocked'
+            blocked.write_text('not a directory')
+            mountinfo.write_text(f'36 35 0:40 / {blocked} ro - cgroup2 cgroup rw\n')
+            self.assertIsNone(owned_process._claim_cgroup(1, 'tok', proc=proc, mountinfo=mountinfo))
+
+    def test_a_failed_claim_removes_its_partial_leaf(self):
+        with tempfile.TemporaryDirectory() as folder:
+            mount = Path(folder) / 'cgroup'
+            (mount / 'scope').mkdir(parents=True)
+            proc = Path(folder) / 'proc'
+            (proc / 'self').mkdir(parents=True)
+            (proc / 'self' / 'cgroup').write_text('0::/scope\n')
+            mountinfo = Path(folder) / 'mountinfo'
+            mountinfo.write_text(f'36 35 0:40 / {mount} ro - cgroup2 cgroup rw\n')
+            real_write = Path.write_text
+            placement_writes = []
+
+            def refusing_write(path_self, data, **kwargs):
+                if path_self.name == 'cgroup.procs':
+                    placement_writes.append(str(path_self))
+                    raise OSError(errno.EACCES, 'the leaf refused the placement')
+                return real_write(path_self, data, **kwargs)
+
+            with mock.patch.object(Path, 'write_text', refusing_write):
+                self.assertIsNone(owned_process._claim_cgroup(4242, 'tok', proc=proc, mountinfo=mountinfo))
+            self.assertEqual(placement_writes, [str(mount / 'scope' / 'fortress-owned-tok' / 'cgroup.procs')],
+                             'the claim reached the real placement write before it failed')
+            self.assertFalse((mount / 'scope' / 'fortress-owned-tok').exists(),
+                             'a partially created leaf is removed before the fallback returns')
+
+    def test_the_kill_time_recheck_skips_a_pid_the_leaf_no_longer_lists(self):
+        """The record recheck: a recycled pid cannot receive the leaf's signal (#411 review)."""
+        with tempfile.TemporaryDirectory() as folder:
+            proc = self.fake_proc(folder, [(90, 'member', 'S', 5, False)])
+            leaf = self.fake_leaf(folder, [90])
+            belongs = owned_process._leaf_member_check(leaf, 5, proc)
+            self.assertTrue(belongs(90), 'the listed member with its own starttime is authorized')
+            self.assertFalse(belongs(91), 'a pid the record does not list is never authorized')
+            (leaf / 'cgroup.procs').write_text('')
+            self.assertFalse(belongs(90),
+                             'a pid the record no longer lists is a recycled stranger: skip the kill')
+            belongs = owned_process._leaf_member_check(leaf, 6, proc)
+            (leaf / 'cgroup.procs').write_text('90\n')
+            self.assertFalse(belongs(90),
+                             'a starttime different from the scan\'s reads as a recycled pid before the record')
+            belongs = owned_process._leaf_member_check(leaf, None, proc)
+            self.assertTrue(belongs(90),
+                             'an unreadable scan starttime leaves the decision to the record')
+
+    def test_terminate_cgroup_skips_a_target_the_leaf_no_longer_lists(self):
+        """End to end: the recycled pid is neither signaled nor named as terminated."""
+        with tempfile.TemporaryDirectory() as folder:
+            proc = self.fake_proc(folder, [(90, 'member', 'S', 5, False)])
+            leaf = self.fake_leaf(folder, [90])
+            real_read = Path.read_text
+            reads = {'count': 0}
+
+            def counting_read(path_self, *args, **kwargs):
+                text = real_read(path_self, *args, **kwargs)
+                if path_self.name == 'cgroup.procs':
+                    reads['count'] += 1
+                    if reads['count'] > 1:
+                        return ''  # the member exited and its pid was recycled before the pin
+                return text
+
+            sent = []
+            with mock.patch.object(Path, 'read_text', counting_read), \
+                    mock.patch.object(owned_process.os, 'pidfd_open', return_value=7), \
+                    mock.patch.object(owned_process.os, 'close', lambda fd: None), \
+                    mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                                      side_effect=lambda fd, sig, *args, **kwargs: sent.append(sig)):
+                named = owned_process.terminate_cgroup(leaf, proc)
+            self.assertEqual(sent, [], 'the recycled pid never receives the leaf signal')
+            self.assertEqual(named, [], 'a skipped target is not named as terminated either')
+
+    def test_a_failed_release_keeps_the_leaf_reference(self):
+        """A leaf the kernel refuses to remove stays referenced: a repeated finish re-verifies."""
+        class FlakyLeaf(FakeLeaf):
+            attempts = 0
+
+            def rmdir(self):
+                if FlakyLeaf.attempts == 0:
+                    FlakyLeaf.attempts = 1
+                    raise OSError(errno.EBUSY, 'the leaf still holds live tasks')
+                return super().rmdir()
+
+        holder = mock.Mock()
+        holder.owned_cgroup = FlakyLeaf()
+        owned_process._release_cgroup(holder)
+        self.assertIsNotNone(holder.owned_cgroup,
+                             'a failed removal keeps the reference so a repeated finish re-verifies membership')
+        owned_process._release_cgroup(holder)
+        self.assertIsNone(holder.owned_cgroup, 'a retry that removes the leaf clears the reference')
+
+    def test_cgroup_sweep_kills_real_members_with_one_name_each(self):
+        """Real processes listed in a leaf are stopped through the pinned identity-guarded kills."""
+        first = start_token_process('cgroup-real-first')
+        second = start_token_process('cgroup-real-second')
+        try:
+            deadline = time.monotonic() + 5
+            while (first.poll() is not None or second.poll() is not None) and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertIsNone(first.poll(), 'the control only holds with a live member')
+            self.assertIsNone(second.poll(), 'the control only holds with a live member')
+            with tempfile.TemporaryDirectory() as folder:
+                leaf = self.fake_leaf(folder, [first.pid, second.pid])
+                named = owned_process.terminate_cgroup(leaf)
+                self.assertEqual([item['pid'] for item in named],
+                                 sorted([first.pid, second.pid]),
+                                 'every live leaf member is named exactly once')
+            deadline = time.monotonic() + 5
+            while not (terminated(first.pid) and terminated(second.pid)) and time.monotonic() < deadline:
+                time.sleep(0.02)  # SIGKILL delivery waits for the member's scheduling
+            self.assertTrue(terminated(first.pid))
+            self.assertTrue(terminated(second.pid))
+        finally:
+            for process in (first, second):
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=10)
+
+    def test_a_contained_clean_run_never_consults_the_numeric_group(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'run.log'
+            leaf = self.fake_leaf(folder, [])
+            with mock.patch.object(owned_process, '_claim_cgroup', return_value=leaf), \
+                    mock.patch.object(owned_process, 'group_members',
+                                      side_effect=AssertionError('a contained run never scans the numeric group')):
+                returncode, output = owned_process.run([PYTHON, '-c', 'print("clean")'], os.environ, log, 30)
+            self.assertEqual(returncode, 0)
+            self.assertIn('clean', output)
+
+    def test_a_failing_membership_record_keeps_the_run_fail_closed(self):
+        """A record ValueError (bound or vanished-listed) fails the run as an anomaly, never a clean result."""
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'run.log'
+            leaf = self.fake_leaf(folder, [])
+            with mock.patch.object(owned_process, '_claim_cgroup', return_value=leaf), \
+                    mock.patch.object(owned_process, 'cgroup_members',
+                                      side_effect=ValueError('owned process scan exceeded its process bound')):
+                with self.assertRaises(ValueError):
+                    owned_process.run([PYTHON, '-c', 'print("ok")'], os.environ, log, 30)
+            self.assertIn('OWNED_PROCESS_SWEEP_ANOMALY', log.read_text(),
+                          'the failed observation reaches the run log as the sweep anomaly')
+
+    def test_a_contained_run_sweeps_membership_and_names_its_leaf_carrier(self):
+        """The end-to-end containment proof: the tail kills exactly the leaf, strangers aside."""
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'run.log'
+            carrier = start_token_process('cgroup-tail-carrier')
+            # The 'empty' group-signal outcome this run produces classifies once per
+            # process: reset the cache so the probe measures this kernel cleanly
+            # here instead of inheriting a seed, and restore whatever an earlier
+            # test seeded instead of leaving the probe's answer behind (#408).
+            saved_class = owned_process._kernel_class
+            saved_note = owned_process._kernel_probe_note
+            owned_process._kernel_class = None
+            owned_process._kernel_probe_note = None
+            try:
+                deadline = time.monotonic() + 5
+                while carrier.poll() is not None and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertIsNone(carrier.poll(), 'the control only holds with a live member')
+                leaf = self.fake_leaf(folder, [carrier.pid])
+                with mock.patch.object(owned_process, '_claim_cgroup', return_value=leaf), \
+                        mock.patch.object(owned_process, 'group_members',
+                                          side_effect=AssertionError('the numeric group scan must not run')):
+                    with self.assertRaises(owned_process.EscapedDescendants) as caught:
+                        owned_process.run([PYTHON, '-c', 'print("ok")'], os.environ, log, 30)
+                self.assertIn(str(carrier.pid), str(caught.exception),
+                              'the membership sweep names the leaf carrier')
+                self.assertTrue(terminated(carrier.pid))
+            finally:
+                owned_process._kernel_class = saved_class
+                owned_process._kernel_probe_note = saved_note
+                if carrier.poll() is None:
+                    carrier.kill()
+                    carrier.wait(timeout=10)
+
+    def test_spawn_finish_under_containment_names_and_releases_the_leaf(self):
+        with tempfile.TemporaryDirectory() as folder:
+            carrier = start_token_process('cgroup-finish-carrier')
+            try:
+                deadline = time.monotonic() + 5
+                while carrier.poll() is not None and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertIsNone(carrier.poll(), 'the control only holds with a live member')
+                leaf = self.attached_leaf([carrier.pid])
+                with mock.patch.object(owned_process, '_claim_cgroup', return_value=leaf):
+                    process, token_value = owned_process.spawn(
+                        [PYTHON, '-c', 'import time; time.sleep(60)'],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                try:
+                    self.assertEqual(process.owned_cgroup, leaf, 'spawn attaches the claimed leaf')
+                    with self.assertRaises(owned_process.EscapedDescendants) as caught:
+                        owned_process.finish(process, token_value)
+                    self.assertIn(str(carrier.pid), str(caught.exception),
+                                  'finish sweeps membership and names the leaf carrier')
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=10)
+                self.assertTrue(leaf.released, 'finish releases the leaf once the tree is verified gone')
+            finally:
+                if carrier.poll() is None:
+                    carrier.kill()
+                    carrier.wait(timeout=10)
+
+    def test_a_repeated_finish_after_containment_never_scans_the_numeric_group(self):
+        """Completed containment is recorded: the second finish verifies through the token sweep alone."""
+        with mock.patch.object(owned_process, '_claim_cgroup', return_value=self.attached_leaf()):
+            process, token_value = owned_process.spawn(
+                [PYTHON, '-c', 'import time; time.sleep(60)'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            owned_process.finish(process, token_value)
+            self.assertIsNone(process.owned_cgroup, 'a successful release clears the leaf reference')
+            self.assertTrue(process.owned_cgroup_released, 'the release is recorded as completed containment')
+            with mock.patch.object(owned_process, 'terminate_group',
+                                   side_effect=AssertionError('a released containment must not scan numerically')), \
+                    mock.patch.object(owned_process, 'group_members',
+                                      side_effect=AssertionError('no numeric group scan after release')):
+                owned_process.finish(process, token_value)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+
+    def test_a_refused_run_releases_its_leaf_after_the_reap(self):
+        """The leaf release follows the child's reap: a dying child must not strand the leaf."""
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'refused.log'
+            process = subprocess.Popen([PYTHON, '-c', 'import os, time; os.kill(os.getpid(), 9)'],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                # A child that dies by its own signal and is never waited by the test:
+                # _refused_run's own wait() is what reaps it, and the release must
+                # observe the reap, not race it.
+                process.owned_cgroup = self.attached_leaf()
+                order = []
+                with mock.patch.object(owned_process, '_terminate_tree', return_value=([], None)), \
+                        mock.patch.object(owned_process, '_release_cgroup',
+                                          side_effect=lambda p: order.append(p.returncode is not None)):
+                    with self.assertRaises(ValueError):
+                        # The refusal ValueError is _refused_run's contract; the
+                        # release ordering is what this witness pins.
+                        owned_process._refused_run(None, process, 'tok', log)
+                self.assertEqual(order, [True],
+                                 'the release runs after the child is reaped, so the kernel can free the leaf')
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=10)
+
+    # Value: protects=the leaf's lifetime on every run exit (#411);
+    # fails_when=a run exits and strands its containment leaf;
+    # seam=patched _claim_cgroup over a temp leaf, healthy and deadline exits
+    def test_the_leaf_is_released_on_every_run_exit(self):
+        cases = (
+            ('healthy', [PYTHON, '-c', 'print("done")'], None, None),
+            ('deadline', [PYTHON, '-c', 'import time; time.sleep(60)'], 1.5, subprocess.TimeoutExpired),
+        )
+        for label, command, timeout, expected in cases:
+            with self.subTest(case=label):
+                with tempfile.TemporaryDirectory() as folder:
+                    log = Path(folder) / 'run.log'
+                    leaf = self.attached_leaf()
+                    with mock.patch.object(owned_process, '_claim_cgroup', return_value=leaf):
+                        if expected is None:
+                            returncode, _ = owned_process.run(command, os.environ, log, 30)
+                            self.assertEqual(returncode, 0)
+                        else:
+                            with self.assertRaises(expected):
+                                owned_process.run(command, os.environ, log, timeout)
+                    self.assertTrue(leaf.released, f'the {label} exit still releases the leaf')
 
 
 if __name__ == '__main__':
