@@ -2686,7 +2686,13 @@ class KernelClassProbeTests(unittest.TestCase):
                                   'a measured class carries no note')
             self.assertEqual(second, first)
             self.assertEqual(len(measurements), 1, 'one real measurement per process')
-            self.assertEqual(len(finishes), 1, 'the throwaway tree ends through the owned teardown')
+            # A no-pidfd platform refuses the shape before spawn: no tree is
+            # ever started, so no owned teardown can run there.
+            tree_started = not (first == owned_process.KERNEL_CLASS_UNKNOWN
+                                and owned_process._kernel_probe_note == 'no pidfd support; nothing to measure')
+            self.assertEqual(len(finishes), 1 if tree_started else 0,
+                             'a started throwaway tree ends through the owned teardown; '
+                             'a refused shape never starts one')
         finally:
             owned_process._kernel_class = saved_class
             owned_process._kernel_probe_note = saved_note
