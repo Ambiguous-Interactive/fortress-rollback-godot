@@ -2279,39 +2279,53 @@ class KernelClassProbeTests(unittest.TestCase):
         def poll(self):
             return 0 if self._exited else None
 
-    def _measure(self, *, outcome='delivered', member_survives=True, process=None, members=None,
+    # The scripted tree: the leader (4242) and two same-group members
+    # (4243, 4244), pinned at 778 and 779.
+    FAKE_LEADER = 4242
+    FAKE_MEMBERS = (4243, 4244)
+    FAKE_PINS = {4243: 778, 4244: 779}
+
+    def _measure(self, *, outcome='delivered', deaths='none', process=None, members=None,
                  spawn_error=None, finish_error=None, alive_reads=2, alive_error_at=None,
                  post_kill_survives=True, recycled_pin=False):
         """Run the real measurement against scripted seams; return (verdict, calls).
 
-        The scripted member answers alive for ``alive_reads`` reads — the
-        pre-send loop and its confirmation — and then follows
-        ``member_survives`` for every later read, which is the scheduled
-        death that separates the delivering kernel from the mid-band one.
-        Once the cleanup pin SIGKILL fires, later reads follow
-        ``post_kill_survives`` instead, which scripts whether the kill lands
-        inside the cleanup wait or outlasts it. One read answers alive only
-        for the dead-before-the-send shape. ``alive_error_at`` makes the
-        read at that index raise EACCES instead, which is the observation
-        error that must read unknown, never death. The probe's time bounds
-        are shrunk so the unbounded shapes fail fast instead of burning
-        real seconds.
+        Each scripted member answers alive for ``alive_reads`` reads — the
+        fork wait and the pre-send confirmation — and then follows
+        ``deaths`` for every later read: 'both' members die at that point
+        (the healthy delivered shape), 'one' leaves member 4244 alive beside
+        a dead sibling (the external-kill shape that must never read
+        delivers), 'none' keeps both alive (the mid-band shapes). After a
+        cleanup pin SIGKILL, the killed member's reads follow
+        ``post_kill_survives``, which scripts whether the kill lands inside
+        the cleanup wait or outlasts it. ``alive_error_at`` makes the read
+        at that per-member index raise EACCES instead, which is the
+        observation error that must read unknown, never death. The probe's
+        time bounds are shrunk so the unbounded shapes fail fast instead of
+        burning real seconds.
         """
         process = process if process is not None else self._FakeProcess()
         calls = {'spawn': 0, 'finish': [], 'sends': 0, 'closes': [], 'member_kills': [], 'alive': 0,
                  'process': process}
-        alive_state = {'reads': 0}
+        alive_reads_state = {pid: 0 for pid in self.FAKE_MEMBERS}
 
         def scripted_alive(pid, pin, start):
-            alive_state['reads'] += 1
-            calls['alive'] = alive_state['reads']
-            if alive_error_at is not None and alive_state['reads'] >= alive_error_at:
+            alive_reads_state[pid] += 1
+            calls['alive'] = alive_reads_state[pid]
+            if alive_error_at is not None and alive_reads_state[pid] >= alive_error_at:
                 raise OSError(errno.EACCES, 'proc refused')
-            if calls['member_kills']:
+            killed_pins = {killed_pin for killed_pin, _ in calls['member_kills']}
+            if pin in killed_pins:
                 return post_kill_survives
-            if alive_state['reads'] <= alive_reads:
+            if deaths == 'pre-send':
+                return pid != self.FAKE_MEMBERS[0]  # member-one is dead from its first read
+            if alive_reads_state[pid] <= alive_reads:
                 return True
-            return member_survives is True
+            if deaths == 'both':
+                return False
+            if deaths == 'one':
+                return pid != self.FAKE_MEMBERS[0]
+            return True
 
         def fake_spawn(command, environment=None, stdout=None, stderr=None, cwd=None):
             calls['spawn'] += 1
@@ -2328,7 +2342,11 @@ class KernelClassProbeTests(unittest.TestCase):
             if members is not None:
                 return members
             return [{'pid': process.pid, 'name': 'leader', 'start': 1},
-                    {'pid': process.pid + 1, 'name': 'member', 'start': 2}]
+                    {'pid': self.FAKE_MEMBERS[0], 'name': 'member-one', 'start': 2},
+                    {'pid': self.FAKE_MEMBERS[1], 'name': 'member-two', 'start': 3}]
+
+        def fake_pidfd_open(pid):
+            return self.FAKE_PINS[pid]
 
         with mock.patch.object(owned_process, 'KERNEL_PROBE_START_SECONDS', 0.2), \
                 mock.patch.object(owned_process, 'KERNEL_PROBE_VERIFY_SECONDS', 0.1), \
@@ -2338,7 +2356,7 @@ class KernelClassProbeTests(unittest.TestCase):
                 mock.patch.object(owned_process, '_signal_group',
                                   side_effect=lambda proc_arg, pin_arg: outcome) as send, \
                 mock.patch.object(owned_process, '_probe_member_alive', side_effect=scripted_alive), \
-                mock.patch.object(owned_process.os, 'pidfd_open', return_value=778), \
+                mock.patch.object(owned_process.os, 'pidfd_open', side_effect=fake_pidfd_open), \
                 mock.patch.object(owned_process.os, 'close', side_effect=lambda fd: calls['closes'].append(fd)), \
                 mock.patch.object(owned_process.signal, 'pidfd_send_signal',
                                   side_effect=lambda fd, sig: calls['member_kills'].append((fd, sig))):
@@ -2346,7 +2364,7 @@ class KernelClassProbeTests(unittest.TestCase):
                 # A /proc whose stat re-read reports a different starttime
                 # than the scan recorded: the pinned pid is a stranger.
                 tail = ' '.join(str(value) for value in range(1, 26))
-                stat_line = f'{process.pid + 1} (sleeper) S {tail}\n'
+                stat_line = f'{self.FAKE_MEMBERS[0]} (sleeper) S {tail}\n'
                 fake_path = mock.MagicMock()
                 stat_mock = fake_path.return_value.__truediv__.return_value.__truediv__.return_value
                 stat_mock.read_text.return_value = stat_line
@@ -2361,79 +2379,89 @@ class KernelClassProbeTests(unittest.TestCase):
     # Value: protects=the classification table the verdict machine leans on (#408);
     # fails_when=a delivered send that stops the member reads as spares, an
     # ESRCH beside a live member reads as delivers, or a contradictory or
-    # rejected send reads as any measured class;
-    # seam=_measure_group_signal_kernel with a scripted send and scheduled death
+    # Value: protects=the classification table the verdict machine leans on (#408);
+    # fails_when=a delivered send that stops both members reads as spares, a
+    # single dead member beside a delivered send — the external-kill shape —
+    # reads as delivers, an ESRCH beside live members reads as delivers, or
+    # a contradictory or rejected send reads as any measured class;
+    # seam=_measure_group_signal_kernel with a scripted send and scheduled deaths
     def test_the_probe_classifies_the_send_shapes(self):
         shapes = [
-            ('a delivered send that stops the member', 'delivered', False,
+            ('a delivered send that stops both members', 'delivered', 'both',
              owned_process.KERNEL_CLASS_DELIVERS, None),
-            ('a delivered send the member survives', 'delivered', True,
+            ('one dead member beside a delivered send', 'delivered', 'one',
              owned_process.KERNEL_CLASS_SPARES, None),
-            ('ESRCH beside the live member', 'empty', True,
+            ('a delivered send both members survive', 'delivered', 'none',
              owned_process.KERNEL_CLASS_SPARES, None),
-            ('ESRCH beside a dying member', 'empty', False,
-             owned_process.KERNEL_CLASS_UNKNOWN, 'the send answered ESRCH and the member died anyway'),
-            ('a rejected flag-4 send', 'failed', True,
+            ('ESRCH beside the live members', 'empty', 'none',
+             owned_process.KERNEL_CLASS_SPARES, None),
+            ('ESRCH beside one dead member', 'empty', 'one',
+             owned_process.KERNEL_CLASS_SPARES, None),
+            ('ESRCH beside dead members', 'empty', 'both',
+             owned_process.KERNEL_CLASS_UNKNOWN, 'the send answered ESRCH and the members died anyway'),
+            ('a rejected flag-4 send', 'failed', 'none',
              owned_process.KERNEL_CLASS_UNKNOWN, 'the kernel rejected the flag-4 send'),
         ]
-        for name, outcome, member_survives, expected_class, expected_note in shapes:
+        for name, outcome, deaths, expected_class, expected_note in shapes:
             with self.subTest(shape=name):
-                verdict, calls = self._measure(outcome=outcome, member_survives=member_survives)
+                verdict, calls = self._measure(outcome=outcome, deaths=deaths)
                 self.assertEqual(verdict, (expected_class, expected_note))
                 self.assertEqual(calls['sends'], 1, 'exactly one measured send per probe')
                 self.assertEqual(calls['spawn'], 1, 'one throwaway tree per probe')
                 self.assertEqual(calls['finish'], [(calls['process'], 'probe-token')],
                                  'the tree always ends through the owned teardown')
-                self.assertIn(778, calls['closes'], 'the member pin is always released')
+                for pin in self.FAKE_PINS.values():
+                    self.assertIn(pin, calls['closes'], 'every member pin is always released')
 
-    # Value: protects=the probe's owned cleanup of a surviving member (#408, CodeRabbit round 1);
+    # Value: protects=the probe's owned cleanup of surviving members (#408);
     # fails_when=a member the kernel spared outlives the probe, a mid-death
     # member is named as a survivor and replaces the measured verdict, or the
     # probe lends its verdict after leaking its own tree;
-    # seam=_measure_group_signal_kernel with a recorded pin kill, a scripted
+    # seam=_measure_group_signal_kernel with recorded pin kills, a scripted
     # post-kill death and a failing finish
-    def test_the_probe_stops_the_spared_member_through_its_pin_and_downgrades_on_leak(self):
-        verdict, calls = self._measure(outcome='empty', member_survives=True)
+    def test_the_probe_stops_the_spared_members_through_their_pins_and_downgrades_on_leak(self):
+        verdict, calls = self._measure(outcome='empty', deaths='none')
         self.assertEqual(verdict, (owned_process.KERNEL_CLASS_SPARES, None))
-        self.assertIn((778, signal.SIGKILL), calls['member_kills'],
-                      'a surviving member is stopped recycle-proof through its own pin')
-        with self.subTest(shape='the pin kill lands inside the cleanup wait'):
-            # The member dies one read after the pin SIGKILL: the wait exits
-            # before its deadline, so finish() sees an empty tree and the
-            # measured spares verdict is never replaced by a downgrade.
-            verdict, calls = self._measure(outcome='empty', member_survives=True, post_kill_survives=False)
+        for pin in self.FAKE_PINS.values():
+            self.assertIn((pin, signal.SIGKILL), calls['member_kills'],
+                          'a surviving member is stopped recycle-proof through its own pin')
+        with self.subTest(shape='the pin kills land inside the cleanup wait'):
+            # The members die one read after their pin SIGKILLs: the waits
+            # exit before their deadline, so finish() sees an empty tree and
+            # the measured spares verdict is never replaced by a downgrade.
+            verdict, calls = self._measure(outcome='empty', deaths='none', post_kill_survives=False)
             self.assertEqual(verdict, (owned_process.KERNEL_CLASS_SPARES, None))
-            self.assertIn((778, signal.SIGKILL), calls['member_kills'])
+            self.assertEqual(len(calls['member_kills']), 2, 'both spared members are stopped')
             self.assertEqual(len(calls['finish']), 1, 'the owned teardown still runs')
         with self.subTest(shape='a cleanup that cannot verify an empty tree'):
-            verdict, calls = self._measure(outcome='delivered', member_survives=False,
+            verdict, calls = self._measure(outcome='delivered', deaths='both',
                                            finish_error=owned_process.EscapedDescendants([]))
             self.assertEqual(verdict[0], owned_process.KERNEL_CLASS_UNKNOWN,
                              'a probe that leaked its tree never lends a measured verdict')
             self.assertIn('could not verify an empty tree', verdict[1])
             self.assertIn('EscapedDescendants', verdict[1])
 
-    # Value: protects=the observation-error direction of the liveness read (#408, CodeRabbit round 1);
+    # Value: protects=the observation-error direction of the liveness read (#408);
     # fails_when=a failed sig-0 check or /proc read fakes a member death, so a
-    # delivered send beside a live member classifies delivers and later empty
+    # delivered send beside live members classifies delivers and later empty
     # verdicts read clean while members live;
     # seam=_measure_group_signal_kernel and _probe_member_alive with EACCES
     # observation errors on the measurement and cleanup paths
     def test_the_observation_errors_never_fake_a_death(self):
         with self.subTest(shape='a pre-send read error stops the probe before the send'):
-            verdict, calls = self._measure(outcome='delivered', member_survives=True, alive_error_at=2)
+            verdict, calls = self._measure(outcome='delivered', alive_error_at=2)
             self.assertEqual(verdict[0], owned_process.KERNEL_CLASS_UNKNOWN,
                              'a failed observation is unknown, never a delivered classification')
             self.assertIn('PermissionError', verdict[1])
             self.assertEqual(calls['sends'], 0, 'the probe never sends on an unreadable member')
         with self.subTest(shape='a post-send read error cannot confirm a delivered stop'):
-            verdict, calls = self._measure(outcome='delivered', member_survives=True, alive_error_at=3)
+            verdict, calls = self._measure(outcome='delivered', deaths='none', alive_error_at=3)
             self.assertEqual(verdict[0], owned_process.KERNEL_CLASS_UNKNOWN,
                              'a delivered send beside an unreadable member proves nothing')
             self.assertIn('PermissionError', verdict[1])
             self.assertEqual(calls['sends'], 1, 'the send ran, but its effect is unobservable')
         with self.subTest(shape='a cleanup-path read error keeps the measured verdict'):
-            verdict, calls = self._measure(outcome='delivered', member_survives=False,
+            verdict, calls = self._measure(outcome='delivered', deaths='both',
                                            alive_reads=2, alive_error_at=4)
             self.assertEqual(verdict, (owned_process.KERNEL_CLASS_DELIVERS, None),
                              'a cleanup read error is swallowed: the verdict and the sweeps stay honest')
@@ -2464,23 +2492,28 @@ class KernelClassProbeTests(unittest.TestCase):
     # fails_when=a shape the probe could not arrange reads as any measured
     # class, or a probe error escapes to the caller;
     # seam=_measure_group_signal_kernel with missing members, a stubborn
-    # leader, no pin, a failed spawn and no pidfd support
+    # leader, no pin, an unmeasurable starttime, a recycled pid, a failed
+    # spawn and no pidfd support
     def test_the_probe_reports_the_broken_shapes_as_unknown(self):
         for name, kwargs, note in [
-            ('the member never forks', {'members': [{'pid': 4242, 'name': 'leader', 'start': 1}]},
-             'the probe member never forked'),
+            ('the members never fork', {'members': [{'pid': self.FAKE_LEADER, 'name': 'leader', 'start': 1}]},
+             'only 0 of the two probe members forked'),
+            ('only one member forks', {'members': [{'pid': self.FAKE_LEADER, 'name': 'leader', 'start': 1},
+                                                   {'pid': self.FAKE_MEMBERS[0], 'name': 'member-one', 'start': 2}]},
+             'only 1 of the two probe members forked'),
             ('the leader will not exit', {'process': self._FakeProcess(exited=False)},
              'the probe leader would not exit'),
-            ('the member is dead before the send', {'member_survives': False, 'alive_reads': 1},
-             'the probe member died before the send'),
+            ('a member is dead before the send', {'deaths': 'pre-send'},
+             'a probe member died before the send'),
             ('the leader could not be pinned', {'process': self._FakeProcess(pin=None)},
              'the probe leader could not be pinned'),
             ('the scan pid was recycled before the pin', {'recycled_pin': True},
-             'the probe pid was recycled before it was pinned'),
-            ('the scan could not read the member starttime',
-             {'members': [{'pid': 4242, 'name': 'leader', 'start': 1},
-                          {'pid': 4243, 'name': 'member', 'start': None}]},
-             'the scan could not read the member starttime'),
+             'a probe pid was recycled before it was pinned'),
+            ('the scan could not read a member starttime',
+             {'members': [{'pid': self.FAKE_LEADER, 'name': 'leader', 'start': 1},
+                          {'pid': self.FAKE_MEMBERS[0], 'name': 'member-one', 'start': 2},
+                          {'pid': self.FAKE_MEMBERS[1], 'name': 'member-two', 'start': None}]},
+             'the scan could not read a member starttime'),
             ('the spawn itself fails', {'spawn_error': OSError(errno.EIO, 'no fork')}, 'OSError'),
         ]:
             with self.subTest(shape=name):
@@ -2488,22 +2521,21 @@ class KernelClassProbeTests(unittest.TestCase):
                 self.assertEqual(verdict[0], owned_process.KERNEL_CLASS_UNKNOWN)
                 self.assertIn(note, verdict[1])
                 self.assertEqual(calls['sends'], 0, 'a broken shape is never measured')
-        with self.subTest(shape='an unmeasurable starttime never earns a pin kill'):
-            verdict, calls = self._measure(members=[{'pid': 4242, 'name': 'leader', 'start': 1},
-                                                    {'pid': 4243, 'name': 'member', 'start': None}])
-            self.assertEqual(calls['member_kills'], [],
-                             'a pin without a verified identity must never signal anyone')
-            self.assertEqual(calls['closes'], [],
-                             'the shape is refused before any member pin exists')
         with self.subTest(shape='no pidfd support'):
             with mock.patch.object(owned_process, 'os', mock.MagicMock(spec=[])):
                 verdict = owned_process._measure_group_signal_kernel()
             self.assertEqual(verdict, (owned_process.KERNEL_CLASS_UNKNOWN,
                                        'no pidfd support; nothing to measure'))
+        with self.subTest(shape='an unmeasurable starttime never earns a pin kill'):
+            verdict, calls = self._measure(members=[{'pid': self.FAKE_LEADER, 'name': 'leader', 'start': 1},
+                                                    {'pid': self.FAKE_MEMBERS[0], 'name': 'member-one', 'start': 2},
+                                                    {'pid': self.FAKE_MEMBERS[1], 'name': 'member-two', 'start': None}])
+            self.assertEqual(calls['member_kills'], [],
+                             'a pin without a verified identity must never signal anyone')
+            self.assertEqual(calls['closes'], [],
+                             'the shape is refused before any member pin exists')
 
-    # Value: protects=the scheduled-death distinction inside the pre-send shape (#408);
-    # fails_when=the member-alive seam cannot tell a live member from a
-    # zombie, a recycled pid or a fully terminated one;
+# zombie, a recycled pid or a fully terminated one;
     # seam=_probe_member_alive against fake /proc entries and a scripted send
     def test_the_member_liveness_check_reads_the_pinned_identity(self):
         with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
