@@ -118,7 +118,14 @@ def _name(entry):
 
 
 def identities(token_value):
-    """Name every live process carrying the run token, bounded and redacted."""
+    """Name every live process carrying the run token, bounded and redacted.
+
+    Each entry carries the carrier's starttime in scheduler ticks ('start'),
+    the stable identity the kill-time recheck compares: a starttime survives
+    execs and environment scrubs, while a recycled pid always reads a new
+    one (#404 review). None means the stat line had no parsable starttime,
+    and the recheck then biases toward the scan's attribution.
+    """
     marker = (TOKEN_VARIABLE + '=' + token_value).encode('utf-8') + b'\0'
     found = []
     for entry in Path('/proc').iterdir():
@@ -132,8 +139,17 @@ def identities(token_value):
             continue
         if marker not in environment:
             continue
-        found.append({'pid': int(entry.name), 'name': _name(entry)})
+        found.append({'pid': int(entry.name), 'name': _name(entry), 'start': _start_ticks(entry)})
     return sorted(found, key=lambda item: item['pid'])
+
+
+def _start_ticks(entry):
+    """One /proc entry's starttime in scheduler ticks; None when unreadable."""
+    try:
+        fields = (entry / 'stat').read_text().rsplit(') ', 1)[-1].split()
+        return int(fields[19])
+    except (OSError, IndexError, ValueError):
+        return None  # A stat line without a parsable starttime is treated as ours at kill time.
 
 
 def group_members(group, proc=None, started_before=None, token_value=None):
@@ -155,7 +171,11 @@ def group_members(group, proc=None, started_before=None, token_value=None):
     started after it are named only when they carry the run token
     (token_value), because a tokened member is ours wherever it started,
     while a tokenless one that started after our tree's death can only be
-    the recycled group. What remains unknowable from /proc is a descendant
+    the recycled group. Each named member carries its starttime ('start'),
+    the stable identity the kill-time recheck compares: a starttime
+    survives execs, group changes and environment scrubs, while a recycled
+    pid always reads a new one. What remains unknowable from /proc is a
+    descendant
     that forked after the boundary and scrubbed its environment before the
     scan — it is spared here, and fully containing that class needs the
     cgroup-backed ownership work in #404. A starttime that cannot be parsed
@@ -173,15 +193,15 @@ def group_members(group, proc=None, started_before=None, token_value=None):
             continue
         if not fields or fields[0] in ('Z', 'X') or int(fields[2]) != group:
             continue
+        try:
+            started = int(fields[19])
+        except (IndexError, ValueError):
+            started = None  # A stat line without a parsable starttime is treated as ours below.
         if started_before is not None:
-            try:
-                started = int(fields[19])
-            except (IndexError, ValueError):
-                started = None  # A stat line without a parsable starttime is treated as ours below.
             if started is not None and started > started_before + START_TICK_SLACK:
                 if marker is None or not _carries_token(entry, marker):
                     continue  # Started after the boundary without our token: a reissued group.
-        found.append({'pid': int(entry.name), 'name': _name(entry)})
+        found.append({'pid': int(entry.name), 'name': _name(entry), 'start': started})
     return sorted(found, key=lambda item: item['pid'])
 
 
@@ -243,63 +263,58 @@ def _send_kill(pid, belongs=None):
     return True
 
 
-def _token_carrier_check(token_value, proc=None):
-    """A kill-time recheck that the pid still carries the run token (#404).
+def _identity_check(start, proc=None):
+    """A kill-time recheck that the pid is still the process the scan owned (#404 review).
 
-    An unreadable or empty environment keeps the kill: a carrier can sit
-    mid-execve — or already be a self-terminated zombie — inside the
-    scan-to-kill window, and both read as empty, while the module's bias
-    is toward what the scan owned, never toward stranding a live carrier.
-    A recycled pid's environment is nonempty without the token, so the
-    mismatch case still skips.
+    The scan captured each pid's starttime; a matching starttime after the
+    pidfd is pinned proves the same process — it survives execs, process
+    group changes and environment scrubs — while a recycled pid always
+    reads a different one. An unreadable starttime at either end biases
+    toward the scan's attribution: naming and killing bias toward what the
+    scan owned, never toward stranding a live carrier.
     """
-    marker = (TOKEN_VARIABLE + '=' + token_value).encode('utf-8') + b'\0'
     root = proc if proc is not None else Path('/proc')
 
     def belongs(pid):
+        if start is None:
+            return True  # The scan could not read a starttime; keep the kill.
         try:
-            environment = (root / str(pid) / 'environ').read_bytes()
-        except OSError:
-            return True  # Unreadable environment: bias toward the scan's attribution.
-        return not environment or marker in environment
-    return belongs
-
-
-def _group_member_check(group, proc=None):
-    """A kill-time recheck that the pid still sits in the scanned group (#404)."""
-    root = proc if proc is not None else Path('/proc')
-
-    def belongs(pid):
-        try:
-            fields = (root / str(pid) / 'stat').read_text().rsplit(') ', 1)[-1].split()
-            return bool(fields) and int(fields[2]) == group
+            current = (root / str(pid) / 'stat').read_text().rsplit(') ', 1)[-1].split()
+            return bool(current) and int(current[19]) == start
         except (OSError, IndexError, ValueError):
             return True  # Unreadable stat: bias toward the scan's attribution.
     return belongs
 
 
+def _strip_starts(members):
+    """Project scanned entries back to the pid+name shape callers store."""
+    return [{'pid': item['pid'], 'name': item['name']} for item in members]
+
+
 def terminate(token_value):
     """Kill every live token carrier and return their terminal identities."""
     survivors = identities(token_value)
-    belongs = _token_carrier_check(token_value)
-    return [item for item in survivors if _send_kill(item['pid'], belongs)]
+    belongs = {_item['pid']: _identity_check(_item['start']) for _item in survivors}
+    named = [item for item in survivors if _send_kill(item['pid'], belongs[item['pid']])]
+    return _strip_starts(named)
 
 
 def terminate_group(group, proc=None, started_before=None, token_value=None):
     """Kill every live member of one process group and return their identities.
 
-    started_before bounds the scan on the pinless fallback, the way
-    group_members does: a post-reap caller without a leader pin passes the
-    owned tree's exit-or-teardown boundary and its token, so a recycled
-    group id names nothing it does not own. Under the held leader pin the
-    group id cannot be reissued (#404), so callers pass no boundary and
-    every same-group member is named. Kills re-verify each member's group
-    after pinning it, so a member that died and lost its pid between the
-    scan and the kill cannot hand the signal to a recycled pid.
+    started_before bounds the scan on every post-exit caller, the way
+    group_members does: a post-reap caller passes the owned tree's
+    exit-or-teardown boundary and its token, so a recycled group id names
+    nothing it does not own. Kills re-verify each member's scan-captured
+    starttime after pinning it, so a member that died and lost its pid
+    between the scan and the kill cannot hand the signal to a recycled
+    pid — a starttime survives execs, group changes and environment
+    scrubs; a recycled pid always reads a new one (#404 review).
     """
     members = group_members(group, proc=proc, started_before=started_before, token_value=token_value)
-    belongs = _group_member_check(group, proc)
-    return [item for item in members if _send_kill(item['pid'], belongs)]
+    belongs = {_item['pid']: _identity_check(_item['start'], proc) for _item in members}
+    named = [item for item in members if _send_kill(item['pid'], belongs[item['pid']])]
+    return _strip_starts(named)
 
 
 def merged_survivors(members, survivors):
@@ -362,13 +377,14 @@ def _signal_group(process, pinned):
 
     The flag-4 group signal stays valid through a zombie and a reaped leader
     on the pinned kernels: the kernel resolves the group through the pinned
-    struct pid, whose object the pin keeps valid (#404). Any pidfd error —
-    a leader gone (ESRCH), a stale descriptor (EBADF), a kernel without the
-    flag (EINVAL) — refuses the numeric fallback while the child is reaped,
-    because a killpg by number then could reach a recycled group; an
-    unreaped child's id is still reserved, so its numeric kill stays safe
-    and preserves the pre-pin fallback behavior.
+    struct pid, whose object the pin keeps valid (#404). Every numeric
+    `killpg` fallback runs only while the child is unreaped — its id is
+    still reserved by the zombie or the live members — and is refused once
+    the child is reaped, for any pidfd error (ESRCH, EBADF, EINVAL) and
+    for Pythons without pidfd signal support alike, because a post-reap
+    killpg by number could reach a recycled group (#404 review).
     """
+    unreaped = process.poll() is None
     if pinned is not None:
         try:
             # PIDFD_SIGNAL_PROCESS_GROUP (4): signal the whole process group
@@ -378,16 +394,15 @@ def _signal_group(process, pinned):
             signal.pidfd_send_signal(pinned, signal.SIGKILL, None, 4)
             return
         except AttributeError:
-            pass  # Python without pidfd signal support falls through below.
+            pass  # Python without pidfd signal support: the gated numeric kill below decides.
         except OSError:
-            if process.poll() is None:
-                pass  # An unreaped child's id cannot be recycled: the numeric kill below is safe.
-            else:
+            if not unreaped:
                 return
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except OSError:
-        pass  # Everything the sweeps named is already dying or dead.
+    if unreaped:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass  # Everything the sweeps named is already dying or dead.
 
 
 def _terminate_tree(process, token_value, pinned=None, boundary=None):

@@ -261,7 +261,8 @@ print('done', flush=True)
                 (entry / 'stat').write_text(f'{pid} ({name}) {state} 1 77')
                 if state == 'S':
                     (entry / 'cmdline').write_bytes(b'live\0')
-            self.assertEqual(owned_process.group_members(77, proc=proc), [{'pid': 72, 'name': 'live'}])
+            self.assertEqual(owned_process.group_members(77, proc=proc),
+                             [{'pid': 72, 'name': 'live', 'start': None}])
 
     # Value: protects=the post-reap recycled-group boundary (#399);
     # fails_when=a member started after the owned exit is named or killed;
@@ -283,20 +284,21 @@ print('done', flush=True)
                 if tokened:
                     (entry / 'environ').write_bytes(f'{owned_process.TOKEN_VARIABLE}=tok\0'.encode())
             self.assertEqual(owned_process.group_members(77, proc=proc, started_before=10),
-                             [{'pid': 80, 'name': 'descendant'}],
+                             [{'pid': 80, 'name': 'descendant', 'start': 5}],
                              'without a token the post-reap boundary spares every post-exit member')
             self.assertEqual(owned_process.group_members(77, proc=proc, started_before=10, token_value='tok'),
-                             [{'pid': 80, 'name': 'descendant'}, {'pid': 82, 'name': 'late-carrier'}],
+                             [{'pid': 80, 'name': 'descendant', 'start': 5},
+                              {'pid': 82, 'name': 'late-carrier', 'start': 999}],
                              'the token tiebreak names the tokened post-boundary member and spares the tokenless one')
             self.assertEqual(owned_process.group_members(77, proc=proc, started_before=None),
-                             [{'pid': 80, 'name': 'descendant'}, {'pid': 81, 'name': 'recycled'},
-                              {'pid': 82, 'name': 'late-carrier'}],
+                             [{'pid': 80, 'name': 'descendant', 'start': 5}, {'pid': 81, 'name': 'recycled', 'start': 999},
+                              {'pid': 82, 'name': 'late-carrier', 'start': 999}],
                              'the pre-reap sweeps stay unbounded')
             unparseable = proc / '83'
             unparseable.mkdir()
             (unparseable / 'stat').write_text('83 (short) S 1 77')
             (unparseable / 'cmdline').write_bytes(b'short\0')
-            self.assertIn({'pid': 83, 'name': 'short'},
+            self.assertIn({'pid': 83, 'name': 'short', 'start': None},
                           owned_process.group_members(77, proc=proc, started_before=10, token_value='tok'),
                           'a stat line without a parsable starttime is treated as ours, never spared')
 
@@ -1756,23 +1758,28 @@ time.sleep(60)
                             'a matching attribution still kills')
             self.assertEqual(delivered, [(4242, signal.SIGKILL)])
 
-    # Value: protects=the token recheck's strand bias (#404);
-    # fails_when=a live carrier inside the scan-to-kill window is skipped
-    # because its environment reads empty mid-execve;
-    # seam=owned_process._token_carrier_check against a fake /proc root
-    def test_the_token_recheck_keeps_carriers_whose_environment_reads_empty(self):
+    # Value: protects=the kill-time identity recheck (#404 review);
+    # fails_when=a recycled pid receives a signal meant for an owned tree, or a
+    # scrubbed/execing carrier is skipped and stranded;
+    # seam=owned_process._identity_check against a fake /proc root
+    def test_the_identity_recheck_keeps_carriers_and_skips_recycled_pids(self):
         with tempfile.TemporaryDirectory() as folder:
             proc = Path(folder)
-            for pid, environment in (('610', b''), ('611', b'OTHER=1\0'),
-                                     ('612', f'{owned_process.TOKEN_VARIABLE}=tok\0'.encode())):
+            for pid, start in (('610', '5'), ('611', '999')):
                 entry = proc / pid
                 entry.mkdir()
-                (entry / 'environ').write_bytes(environment)
-            belongs = owned_process._token_carrier_check('tok', proc=proc)
-            self.assertTrue(belongs(610), 'an empty environment keeps the kill: a mid-execve or dead carrier')
-            self.assertFalse(belongs(611), 'a nonempty environment without the token is a recycled pid')
-            self.assertTrue(belongs(612), 'the token still attributes our carrier')
-            self.assertTrue(belongs(613), 'an unreadable entry keeps the kill')
+                # state pgrp session ... starttime(19): a full stat shape per pid.
+                (entry / 'stat').write_text(f'{pid} (x) S 1 77 77 0 -1 4194304 ' + '0 ' * 12 + f'{start}')
+            unreadable = proc / '612'
+            unreadable.mkdir()  # no stat file: the kill-time read fails
+            belongs = owned_process._identity_check(5, proc=proc)
+            self.assertTrue(belongs(610), 'a matching starttime is the scanned process: execs and scrubs keep it')
+            self.assertFalse(belongs(611), 'a different starttime is a recycled pid: skip the kill')
+            self.assertTrue(belongs(612), 'an unreadable entry keeps the kill (bias toward the scan)')
+            self.assertTrue(owned_process._identity_check(None, proc=proc)(610),
+                            'a scan without a starttime keeps the kill')
+            self.assertTrue(owned_process._identity_check(5, proc=proc)(613),
+                            'a vanished pid cannot be re-checked; the scan owned it')
 
     # Value: protects=the exit-bounded post-exit group scan seam (#404 review);
     # fails_when=a scan drops the exit boundary — the pin does not reserve the
@@ -1798,14 +1805,22 @@ time.sleep(60)
                 return 0 if self._reaped else None
 
         refused = Process(reaped=True)
+        killpg_calls = []
         with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
                                side_effect=OSError(errno.ESRCH, 'no process')), \
                 mock.patch.object(owned_process.os, 'killpg',
-                                  side_effect=lambda pid, sig: (_ for _ in ()).throw(
-                                      AssertionError('a reaped child must not get a numeric killpg'))) as killpg:
+                                  side_effect=lambda pid, sig: killpg_calls.append(pid)):
             owned_process._signal_group(refused, pinned=9)
-            self.assertEqual(killpg.call_count, 0,
-                             'ESRCH through the pin must not degrade to a numeric killpg')
+            self.assertEqual(killpg_calls, [], 'ESRCH through the pin must not degrade to a numeric killpg')
+            # The AttributeError shape (Python with pidfd_open but no
+            # pidfd_send_signal) and the pinless shape must refuse the
+            # post-reap killpg too (#404 review).
+            with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                                   side_effect=AttributeError('no pidfd_send_signal')):
+                owned_process._signal_group(refused, pinned=9)
+            owned_process._signal_group(refused, pinned=None)
+            self.assertEqual(killpg_calls, [],
+                             'a reaped child never gets a numeric killpg, on any fallback path')
         unreaped = Process(reaped=False)
         delivered = []
         with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
@@ -1815,6 +1830,7 @@ time.sleep(60)
             owned_process._signal_group(unreaped, pinned=9)
             self.assertEqual(killpg.call_count, 1,
                              'an unreaped child keeps the numeric fallback on a flag-less kernel')
+            self.assertEqual(delivered, [unreaped.pid])
 
     # Value: protects=the pin lifecycle of every owned run (#404);
     # fails_when=a run never pins its leader, or leaves the pin descriptor open;
