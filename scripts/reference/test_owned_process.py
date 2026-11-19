@@ -562,6 +562,34 @@ time.sleep(0.2)
             owned_process.finish(process, token, grace=5)
             self.assertEqual(process.returncode, 0, 'a clean host keeps its own exit code')
 
+    # Value: protects=finish()'s cleanup from a failed pinned group signal (#404 review);
+    # fails_when=an unsupported flag-4 on a SIGTERM-ignoring host skips the sweeps
+    # and raises TimeoutExpired out of finish, stranding the host;
+    # seam=owned_process.finish with the flag-4 call forced to fail
+    def test_finish_stops_a_sigterm_ignoring_host_when_the_group_signal_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder) / 'stubborn.pid'
+            host, token = owned_process.spawn([PYTHON, '-c', """
+import os, signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+open(sys.argv[1], 'w').write(str(os.getpid()))
+time.sleep(60)
+""", str(marker)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                deadline = time.monotonic() + 5
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                                       side_effect=OSError(errno.EINVAL, 'flag unsupported')):
+                    owned_process.finish(host, token, grace=2)
+                self.assertIsNotNone(host.poll(), 'the stubborn host is stopped and reaped')
+                self.assertTrue(terminated(host.pid),
+                                'finish must stop the host itself, not raise past its sweeps')
+            finally:
+                if host.poll() is None:
+                    host.kill()
+                host.wait(timeout=10)
+
     def test_finish_survives_a_failing_token_scan_and_still_scans_the_group(self):
         """finish() must contain its sweeps like the runners' tails (#398 review)."""
         process, token_value = owned_process.spawn([PYTHON, '-c', 'import sys; sys.exit(0)'],

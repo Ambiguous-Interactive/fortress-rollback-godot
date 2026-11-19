@@ -1062,11 +1062,12 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None, registratio
                 named = cancel.absorb() if cancel is not None else []
                 # Without a pin this handler can run after _collect already
                 # reaped the child (an interrupt landing between the reap and
-                # the return): the numeric group id is then reissuable, so
-                # the pinless tree stop bounds its scans at the handler's
-                # entry tick (#404 review). Pinned callers keep the
-                # recycle-proof signal and the unreaped-child scans unbounded.
-                interrupt_boundary = _boot_ticks() if pinned is None and process.poll() is not None else None
+                # the return): the numeric group id is then reissuable, so the
+                # handler bounds its scans at its own entry tick whenever the
+                # child is already reaped (#404 review). Unreaped children
+                # keep unbounded scans — their id cannot be recycled until a
+                # owner reaps it.
+                interrupt_boundary = _boot_ticks() if process.poll() is not None else None
                 candidates, sweep_anomaly = _terminate_tree(process, token_value, pinned, interrupt_boundary)
                 if cancel is not None:
                     candidates = merged_survivors(named, cancel.claim(candidates))
@@ -1545,7 +1546,17 @@ def finish(process, token_value, grace=5.0):
                         os.killpg(process.pid, signal.SIGKILL)
                     except OSError:
                         process.kill()
-                process.wait(timeout=grace)
+                if process.poll() is None:
+                    # The pinned group signal failed or is unsupported on
+                    # this kernel, so nothing above stopped the host: the
+                    # direct child is still unreaped — its id is reserved by
+                    # the zombie — and a direct SIGKILL through the Popen
+                    # handle is safe (#404 review).
+                    process.kill()
+                try:
+                    process.wait(timeout=grace)
+                except subprocess.TimeoutExpired:
+                    pass  # The ownership sweeps below name what remains.
         boundary = _boot_ticks()
         # Both sweeps are contained, matching the runners' tails: a failing
         # token scan must never skip the group scan, so a token-scrubbed
