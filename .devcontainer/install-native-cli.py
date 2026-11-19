@@ -111,7 +111,10 @@ def journal_tail(package):
     kept = []
     remaining = JOURNAL_TAIL_BYTES
     for line in reversed(tail):
-        budget = remaining - (len(line) + 1)
+        # The budget bounds the diagnostic's UTF-8 output, so the count is
+        # bytes, not characters: a multibyte line can exceed the budget while
+        # its character count fits.
+        budget = remaining - (len(line.encode('utf-8', errors='replace')) + 1)
         if budget < 0:
             break
         kept.append(line)
