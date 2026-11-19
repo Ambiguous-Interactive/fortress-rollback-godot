@@ -124,7 +124,11 @@ def identities(token_value):
     the stable identity the kill-time recheck compares: a starttime survives
     execs and environment scrubs, while a recycled pid always reads a new
     one (#404 review). None means the stat line had no parsable starttime,
-    and the recheck then biases toward the scan's attribution.
+    and the recheck then biases toward the scan's attribution. The starttime
+    is read before the environment and confirmed after it: a pid that exits
+    and is recycled between the reads would otherwise carry a recycled
+    process's starttime and pass the kill-time check it was never scanned
+    under (#404 review), so such a candidate is discarded.
     """
     marker = (TOKEN_VARIABLE + '=' + token_value).encode('utf-8') + b'\0'
     found = []
@@ -133,13 +137,16 @@ def identities(token_value):
             continue
         if len(found) > MAX_PROCESSES:
             raise ValueError('owned process scan exceeded its process bound')
+        start = _start_ticks(entry)
         try:
             environment = (entry / 'environ').read_bytes()
         except OSError:
             continue
         if marker not in environment:
             continue
-        found.append({'pid': int(entry.name), 'name': _name(entry), 'start': _start_ticks(entry)})
+        if _start_ticks(entry) != start:
+            continue  # The pid changed identity between the reads: not the carrier we observed.
+        found.append({'pid': int(entry.name), 'name': _name(entry), 'start': start})
     return sorted(found, key=lambda item: item['pid'])
 
 
@@ -548,6 +555,7 @@ class CancelHandle:
         self._cancelled = False
         self._reporting = False
         self._registration = None
+        self._exit_boundary = None
         self._done = threading.Event()
 
     def refuse_cancelled(self):
@@ -595,7 +603,23 @@ class CancelHandle:
             self._closed = False
             self._reporting = True
             self._registration = _Registration()
+            self._exit_boundary = None  # A later run publishes its own exit boundary.
             return self._registration
+
+    def publish_exit_boundary(self, ticks):
+        """Publish the owning call's exit-observation boundary for a later cancel.
+
+        A cancel that lands after the owning call reaped its child cannot
+        sample an exit boundary itself — /proc no longer holds the leader —
+        and its numeric group scans then lean on live members holding the
+        group open. The owning call publishes the tick it observed the exit
+        at, and the cancel bounds those scans with it, so a group id the
+        kernel reissued names nothing (#404 review). Unpublished paths (a
+        deadline or interrupt with no observed exit) keep the documented
+        unbounded trade.
+        """
+        with self._lock:
+            self._exit_boundary = ticks
 
     def refusal_reason(self):
         """Why the last register refusal happened, read under the lock."""
@@ -795,6 +819,10 @@ class CancelHandle:
                 raise ValueError('this run was already cancelled')
             self._cancelled = True
             process, token_value, pinned = self._process, self._token, self._pinned
+            # The owning call's exit boundary rides with the flip: the cancel
+            # bounds its post-reap numeric scans with the tick the owning call
+            # observed the exit at (#404 review).
+            boundary = self._exit_boundary
             # Captured with the flip: every sighting this cancel publishes
             # after the owning call closed the handoff belongs to the run it
             # stopped, never to whatever registered later (#398/#400 review).
@@ -818,7 +846,7 @@ class CancelHandle:
                 # child only the pidfd-pinned token sweep runs, which can
                 # never misaddress.
                 if pinned is not None or process.poll() is None:
-                    candidates, stop_anomaly = _terminate_tree(process, token_value, pinned)
+                    candidates, stop_anomaly = _terminate_tree(process, token_value, pinned, boundary)
                     if stop_anomaly is not None:
                         # The report is published before the anomaly resurfaces,
                         # so the names the sweeps earned are never discarded.
@@ -1110,6 +1138,11 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None, registratio
                     _append_log(log, cancel.settle_if_owned(registration))
             process.poll()
             raise
+        if cancel is not None:
+            # The exit was observed and the child reaped: publish the
+            # boundary a later cancel bounds its post-reap scans with, as
+            # early as the reap allows (#404 review).
+            cancel.publish_exit_boundary(exit_ticks)
         return returncode, parts, post_exit_bytes, group_alive, exit_ticks
     finally:
         if cancel is not None:
@@ -1328,6 +1361,15 @@ def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
         ])
         own = cancel.claim(swept) if cancel is not None else swept
         candidates = merged_survivors(report, own)
+        if candidates and group_alive and pinned is not None:
+            # The bounded scans spare a tokenless member forked after the
+            # boundary; the still-open leader pin's group signal stops what
+            # they had to spare — recycle-proof through the pinned struct
+            # pid, with no pids to name — before the run returns (#404
+            # review). A clean group is an ESRCH no-op, so healthy exits
+            # never run it.
+            _signal_group(process, pinned)
+            output += 'OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n'
         stopped = cancel is not None and cancel.cancelled and cancel.stopped_run
         if tail_anomaly is not None:
             # The anomaly line lands before any classified raise: a cancellation
@@ -1450,6 +1492,15 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
         # escape that wins this tail must not hide the tooling failure behind
         # its own marker.
         anomaly_note = f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n' if tail_anomaly is not None else ''
+        if candidates and group_alive and pinned is not None:
+            # Same group-signal cleanup as the merged runner's tail: the
+            # bounded scans spare a tokenless member forked after the
+            # boundary, and the still-open pin's group signal stops it —
+            # recycle-proof, with no pids to name — before the run returns
+            # (#404 review).
+            _signal_group(process, pinned)
+            anomaly_note += ('OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped '
+                             'members the bounded scans had to spare\n')
         if candidates:
             # The child's own trusted output stays in the log beside the note,
             # so an escaped or cancelled run keeps its diagnosis where the caller

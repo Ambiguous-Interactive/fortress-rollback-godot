@@ -1714,6 +1714,33 @@ time.sleep(0.2)
                         pass
                 handle.unregister()
 
+    # Value: protects=the exit boundary a cancel inherits from the owning call (#404 review);
+    # fails_when=a post-reap cancel scans the numeric group id unbounded after
+    # the owning call already observed and published the exit tick;
+    # seam=CancelHandle.publish_exit_boundary through a recorded _terminate_tree
+    def test_a_cancel_scans_with_the_published_exit_boundary(self):
+        process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
+        handle = owned_process.CancelHandle()
+        try:
+            self.assertTrue(handle.register(process, token_value, None))
+            handle.publish_exit_boundary(123456)
+            observed = {}
+
+            def recording_tree(process_arg, token_arg, pinned_arg, boundary=None):
+                observed['boundary'] = boundary
+                return [], None
+
+            with mock.patch.object(owned_process, '_terminate_tree', recording_tree):
+                handle.cancel()
+            self.assertEqual(observed['boundary'], 123456,
+                             'the cancel bounds its post-reap scans with the published exit tick')
+            self.assertTrue(handle.stopped_run, 'the control only binds when the cancel stopped the run')
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+            handle.unregister()
+
 
 class LeaderPinTests(unittest.TestCase):
     """Value: the leader pidfd is the recycle-proof signal identity (#404).
@@ -1862,6 +1889,43 @@ time.sleep(60)
             owned_process._signal_group(pinless_gone, pinned=None)
             self.assertEqual(delivered, [pinless_alive.pid],
                              'the pinless numeric kill runs only while the child is unreaped')
+
+    # Value: protects=the tail's spared-member cleanup (#404 review);
+    # fails_when=a tokenless member forked after the boundary survives the run
+    # unnamed, or a healthy exit runs the group signal needlessly;
+    # seam=the runners' tails with a recorded _signal_group
+    def test_the_tail_runs_the_pinned_group_signal_only_for_escaped_members(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'tail-signal.log'
+            log.write_text('')
+            marker = Path(folder) / 'same-group.pid'
+            command = [PYTHON, '-c', """
+import os, subprocess, sys
+scrubbed = {k: v for k, v in os.environ.items() if k != 'FORTRESS_OWNED_RUN'}
+member = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], env=scrubbed)
+open(sys.argv[1], 'w').write(str(member.pid))
+""", str(marker)]
+            handle = owned_process.CancelHandle()
+            deliveries = []
+            with mock.patch.object(owned_process, '_signal_group',
+                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg)):
+                with self.assertRaises(owned_process.EscapedDescendants):
+                    owned_process.run(command, {}, log, 20, cancel=handle)
+            self.assertEqual(len(deliveries), 1,
+                             'the tail stops what the bounded scans had to spare through the pinned signal')
+            member_pid = int(marker.read_text())
+            deadline = time.monotonic() + 10
+            while not terminated(member_pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(terminated(member_pid),
+                            'the spared member must not outlive the run')
+            healthy_log = Path(folder) / 'tail-clean.log'
+            healthy_log.write_text('')
+            with mock.patch.object(owned_process, '_signal_group',
+                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg)):
+                owned_process.run([PYTHON, '-c', 'import sys; sys.exit(0)'], {}, healthy_log, 10, cancel=handle)
+            self.assertEqual(len(deliveries), 1,
+                             'a healthy exit with no survivors never runs the group signal')
 
     # Value: protects=the pin lifecycle of every owned run (#404);
     # fails_when=a run never pins its leader, or leaves the pin descriptor open;
