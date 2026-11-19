@@ -397,6 +397,9 @@ def _signal_group(process, pinned):
     already stop every member through recycle-proof scan pins. Without
     pidfd support at all, the numeric kill stays gated on an unreaped
     child, whose id is still reserved by the zombie or the live members.
+    Returns whether a signal was actually delivered: flag-4 on an emptied
+    group is ESRCH (measured), so callers can tell a real stop from a
+    no-op and never claim a termination that did not happen.
     """
     if pinned is not None:
         try:
@@ -405,14 +408,35 @@ def _signal_group(process, pinned):
             # leader's own thread group and leave same-group descendants to
             # the sweeps.
             signal.pidfd_send_signal(pinned, signal.SIGKILL, None, 4)
+            return True
         except (AttributeError, OSError):
-            pass  # The pinned per-pid sweeps beside this pass stop the members.
-        return
+            return False  # The pinned per-pid sweeps beside this pass stop the members.
     if process.poll() is None:
         try:
             os.killpg(process.pid, signal.SIGKILL)
+            return True
         except OSError:
-            pass  # Everything the sweeps named is already dying or dead.
+            return False  # Everything the sweeps named is already dying or dead.
+    return False
+
+
+def _tail_group_signal(process, pinned, group_alive, candidates):
+    """One tail cleanup pass: stop what the bounded scans had to spare.
+
+    The post-exit group scan spares a tokenless member that forked after
+    the boundary; while the run's leader pin is still open, the flag-4
+    group signal stops that class recycle-proof. Runs whenever members
+    existed at the child's exit — with named escapees or without, because
+    the spared member is exactly the one the scans cannot name — and
+    returns the honest log note only when a signal actually landed; an
+    emptied group is an ESRCH no-op and a clean exit stays clean (#404
+    review).
+    """
+    if not group_alive or pinned is None:
+        return None
+    if not _signal_group(process, pinned):
+        return None
+    return 'OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n'
 
 
 def _terminate_tree(process, token_value, pinned=None, boundary=None):
@@ -883,7 +907,7 @@ def _read_available(streams, buffers):
     return added
 
 
-def _collect(process, deadline):
+def _collect(process, deadline, on_exit=None):
     """Wait for the direct child while concurrently draining both pipes.
 
     Draining runs alongside the wait, so a command that writes more than the
@@ -893,7 +917,10 @@ def _collect(process, deadline):
     escaped descendant and are withheld from the returned output. Draining
     after exit stops at EOF or the idle grace, whichever comes first. The
     returned parts keep stdout and stderr separate so a caller that parses
-    the streams differently can join them in its own order.
+    the streams differently can join them in its own order. on_exit runs at
+    the exit observation with the sampled boundary tick — before the reap —
+    so a cancel inherits the exit boundary the moment it exists (#404
+    review).
     """
     stdout = process.stdout.fileno()
     streams = {stdout: bytearray(), process.stderr.fileno(): bytearray()}
@@ -921,6 +948,8 @@ def _collect(process, deadline):
                     break
             trusted = {descriptor: len(buffers[descriptor]) for descriptor in buffers}
             exit_ticks = _boot_ticks()
+            if on_exit is not None:
+                on_exit(exit_ticks)
             exit_deadline = time.monotonic() + DRAIN_IDLE_SECONDS
             group_alive = bool(group_members(process.pid))
         if exit_observed:
@@ -1012,7 +1041,9 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None, registratio
     """
     try:
         try:
-            returncode, parts, post_exit_bytes, group_alive, exit_ticks = _collect(process, time.monotonic() + timeout)
+            on_exit = cancel.publish_exit_boundary if cancel is not None else None
+            returncode, parts, post_exit_bytes, group_alive, exit_ticks = _collect(process, time.monotonic() + timeout,
+                                                                                   on_exit)
         except _Deadline as expired:
             # The whole deadline body releases the reservation on any exit: an
             # interrupt landing inside it must not lock the handle forever, and
@@ -1138,11 +1169,6 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None, registratio
                     _append_log(log, cancel.settle_if_owned(registration))
             process.poll()
             raise
-        if cancel is not None:
-            # The exit was observed and the child reaped: publish the
-            # boundary a later cancel bounds its post-reap scans with, as
-            # early as the reap allows (#404 review).
-            cancel.publish_exit_boundary(exit_ticks)
         return returncode, parts, post_exit_bytes, group_alive, exit_ticks
     finally:
         if cancel is not None:
@@ -1361,15 +1387,9 @@ def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
         ])
         own = cancel.claim(swept) if cancel is not None else swept
         candidates = merged_survivors(report, own)
-        if candidates and group_alive and pinned is not None:
-            # The bounded scans spare a tokenless member forked after the
-            # boundary; the still-open leader pin's group signal stops what
-            # they had to spare — recycle-proof through the pinned struct
-            # pid, with no pids to name — before the run returns (#404
-            # review). A clean group is an ESRCH no-op, so healthy exits
-            # never run it.
-            _signal_group(process, pinned)
-            output += 'OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n'
+        group_note = _tail_group_signal(process, pinned, group_alive, candidates)
+        if group_note:
+            output += group_note
         stopped = cancel is not None and cancel.cancelled and cancel.stopped_run
         if tail_anomaly is not None:
             # The anomaly line lands before any classified raise: a cancellation
@@ -1407,7 +1427,7 @@ def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
             # evidence written.
             _note_final(log, cancel, output)
             raise tail_anomaly
-        if post_exit_bytes or feed_failures:
+        if post_exit_bytes or feed_failures or group_note:
             _note_final(log, cancel, output)
         return returncode, output
     finally:
@@ -1492,15 +1512,9 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
         # escape that wins this tail must not hide the tooling failure behind
         # its own marker.
         anomaly_note = f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n' if tail_anomaly is not None else ''
-        if candidates and group_alive and pinned is not None:
-            # Same group-signal cleanup as the merged runner's tail: the
-            # bounded scans spare a tokenless member forked after the
-            # boundary, and the still-open pin's group signal stops it —
-            # recycle-proof, with no pids to name — before the run returns
-            # (#404 review).
-            _signal_group(process, pinned)
-            anomaly_note += ('OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped '
-                             'members the bounded scans had to spare\n')
+        group_note = _tail_group_signal(process, pinned, group_alive, candidates)
+        if group_note:
+            anomaly_note += group_note
         if candidates:
             # The child's own trusted output stays in the log beside the note,
             # so an escaped or cancelled run keeps its diagnosis where the caller
@@ -1534,6 +1548,8 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
                     'exited and were withheld\n')
             _note_final(log, cancel, note)
             stderr += f'\n{note}'
+        elif group_note:
+            _note_final(log, cancel, group_note)
         return returncode, parts[stdout_descriptor], stderr
     finally:
         if cancel is not None:

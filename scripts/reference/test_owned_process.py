@@ -368,7 +368,7 @@ open(sys.argv[1], 'w').write(str(os.getpid()))
 print('ready', flush=True)
 time.sleep(60)
 """, str(marker)]
-            def interrupting_collect(process, deadline):
+            def interrupting_collect(process, deadline, on_exit=None):
                 deadline_marker = time.monotonic() + 5
                 while not marker.exists() and time.monotonic() < deadline_marker:
                     time.sleep(0.01)
@@ -1206,8 +1206,8 @@ time.sleep(0.05)
             real_terminate = owned_process.terminate
             flip_done = threading.Event()
 
-            def flipping_collect(process, deadline):
-                result = real_collect(process, deadline)  # the child exits and is reaped here
+            def flipping_collect(process, deadline, on_exit=None):
+                result = real_collect(process, deadline, on_exit)  # the child exits and is reaped here
                 handle.cancel()  # still pinned: the run reads as stopped, nothing named
                 flip_done.set()
                 return result
@@ -1258,11 +1258,13 @@ time.sleep(0.05)
                 handle_self._publish(published)
                 return report
 
-            def collected_without_leak(process, deadline):
+            def collected_without_leak(process, deadline, on_exit=None):
                 deadline_wait = time.monotonic() + 5
                 while process.poll() is None and time.monotonic() < deadline_wait:
                     time.sleep(0.02)  # poll reaps the exited child: no zombie leak
                 process.poll()
+                if on_exit is not None:
+                    on_exit(0)
                 return (0, {process.stdout.fileno(): 'out\n'}, 7, False, 0)
 
             try:
@@ -1470,7 +1472,7 @@ time.sleep(0.05)
             marker = Path(folder) / 'ia.pid'
             command = [PYTHON, '-c', self.SLOW_TREE, str(marker)]
 
-            def interrupting_collect(process, deadline):
+            def interrupting_collect(process, deadline, on_exit=None):
                 deadline_marker = time.monotonic() + 5
                 while not marker.exists() and time.monotonic() < deadline_marker:
                     time.sleep(0.01)
