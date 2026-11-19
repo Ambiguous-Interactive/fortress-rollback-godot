@@ -1894,11 +1894,42 @@ time.sleep(60)
             self.assertEqual(delivered, [pinless_alive.pid],
                              'the pinless numeric kill runs only while the child is unreaped')
 
-    # Value: protects=the tail's spared-member cleanup (#404 review);
+    # Value: protects=the tail's spared-member cleanup and its honest outcome (#404 review);
     # fails_when=a tokenless member forked after the boundary survives the run
     # unnamed, a healthy exit runs the group signal needlessly, or a failed
     # signal lets the run report clean while a spared member survives;
-    # seam=_tail_group_signal with a recorded and a failing _signal_group
+    # seam=_tail_group_signal with recorded and failing _signal_group shapes
+    def test_the_tail_group_signal_reports_its_outcome(self):
+        process = type('Probe', (), {'pid': 424242, 'poll': lambda self: 0})()
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered') as signal_mock:
+            note, error = owned_process._tail_group_signal(process, 9, True)
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL:')
+            self.assertIsNone(error, 'a delivered signal is a completed cleanup')
+            self.assertEqual(signal_mock.call_count, 1)
+        with mock.patch.object(owned_process, '_signal_group', return_value='empty') as signal_mock:
+            note, error = owned_process._tail_group_signal(process, 9, True)
+            self.assertIsNone(note, 'an emptied group is an ESRCH no-op, not a stop')
+            self.assertIsNone(error)
+            self.assertEqual(signal_mock.call_count, 1)
+        with mock.patch.object(owned_process, '_signal_group', return_value='failed'):
+            note, error = owned_process._tail_group_signal(process, 9, True)
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error, 'a failed signal must never read as a clean teardown')
+        with mock.patch.object(owned_process, '_signal_group',
+                               side_effect=AssertionError('must not run without members or a pin')) as signal_mock:
+            note, error = owned_process._tail_group_signal(process, None, True)
+            self.assertIsNone(note)
+            self.assertIsNone(error)
+            self.assertEqual(signal_mock.call_count, 0, 'no pin: the numeric tail signal stays off')
+            note, error = owned_process._tail_group_signal(process, 9, False)
+            self.assertIsNone(note)
+            self.assertIsNone(error)
+            self.assertEqual(signal_mock.call_count, 0, 'no members at exit: no signal')
+
+    # Value: protects=the tail's spared-member cleanup end to end (#404 review);
+    # fails_when=a tokenless member forked after the boundary survives the run
+    # unnamed, or a healthy exit runs the group signal needlessly;
+    # seam=the runners' tails with a recorded _signal_group
     def test_the_tail_runs_the_pinned_group_signal_only_for_escaped_members(self):
         with tempfile.TemporaryDirectory() as folder:
             log = Path(folder) / 'tail-signal.log'
@@ -1914,7 +1945,7 @@ os.rename(sys.argv[1] + '.tmp', sys.argv[1])
             handle = owned_process.CancelHandle()
             deliveries = []
             with mock.patch.object(owned_process, '_signal_group',
-                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg) or True):
+                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg) or 'delivered'):
                 with self.assertRaises(owned_process.EscapedDescendants):
                     owned_process.run(command, {}, log, 20, cancel=handle)
             self.assertEqual(len(deliveries), 1,
@@ -1930,14 +1961,14 @@ os.rename(sys.argv[1] + '.tmp', sys.argv[1])
             healthy_log = Path(folder) / 'tail-clean.log'
             healthy_log.write_text('')
             with mock.patch.object(owned_process, '_signal_group',
-                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg) or True):
+                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg) or 'delivered'):
                 owned_process.run([PYTHON, '-c', 'import sys; sys.exit(0)'], {}, healthy_log, 10, cancel=handle)
             self.assertEqual(len(deliveries), 1,
                              'a healthy exit with no survivors never runs the group signal')
             self.assertNotIn('OWNED_PROCESS_GROUP_SIGNAL', healthy_log.read_text())
             failed_log = Path(folder) / 'tail-failed.log'
             failed_log.write_text('')
-            with mock.patch.object(owned_process, '_signal_group', return_value=False):
+            with mock.patch.object(owned_process, '_signal_group', return_value='failed'):
                 with self.assertRaises(owned_process.EscapedDescendants):
                     owned_process.run(command, {}, failed_log, 20, cancel=handle)
             self.assertIn('OWNED_PROCESS_GROUP_SIGNAL_FAILED:', failed_log.read_text(),

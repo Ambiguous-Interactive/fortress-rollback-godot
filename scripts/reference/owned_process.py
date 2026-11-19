@@ -40,6 +40,7 @@ boundary for the numeric group scans — the pin makes the group signal
 recycle-proof, not the number (#404) — and the tree stop stays armed in
 every leader state instead of degrading after a reap.
 """
+import errno
 import os
 import select
 import signal
@@ -125,10 +126,12 @@ def identities(token_value):
     execs and environment scrubs, while a recycled pid always reads a new
     one (#404 review). None means the stat line had no parsable starttime,
     and the recheck then biases toward the scan's attribution. The starttime
-    is read before the environment and confirmed after it: a pid that exits
-    and is recycled between the reads would otherwise carry a recycled
-    process's starttime and pass the kill-time check it was never scanned
-    under (#404 review), so such a candidate is discarded.
+    is read before the environment and confirmed after it: a candidate is
+    discarded only when both reads are available and differ — a pid that
+    changed identity between the reads would otherwise pass the kill-time
+    check under a starttime it was never scanned under (#404 review) —
+    while a one-sided unreadable read keeps the candidate, matching the
+    bias toward what the scan owned.
     """
     marker = (TOKEN_VARIABLE + '=' + token_value).encode('utf-8') + b'\0'
     found = []
@@ -144,7 +147,8 @@ def identities(token_value):
             continue
         if marker not in environment:
             continue
-        if _start_ticks(entry) != start:
+        confirmed = _start_ticks(entry)
+        if start is not None and confirmed is not None and confirmed != start:
             continue  # The pid changed identity between the reads: not the carrier we observed.
         found.append({'pid': int(entry.name), 'name': _name(entry), 'start': start})
     return sorted(found, key=lambda item: item['pid'])
@@ -397,9 +401,10 @@ def _signal_group(process, pinned):
     already stop every member through recycle-proof scan pins. Without
     pidfd support at all, the numeric kill stays gated on an unreaped
     child, whose id is still reserved by the zombie or the live members.
-    Returns whether a signal was actually delivered: flag-4 on an emptied
-    group is ESRCH (measured), so callers can tell a real stop from a
-    no-op and never claim a termination that did not happen.
+    Returns the outcome: 'delivered' (a signal landed on the group),
+    'empty' (an emptied group is ESRCH, measured — a no-op, not a stop),
+    or 'failed' (unsupported here or the call failed — the caller must
+    never claim a termination that did not happen).
     """
     if pinned is not None:
         try:
@@ -408,38 +413,47 @@ def _signal_group(process, pinned):
             # leader's own thread group and leave same-group descendants to
             # the sweeps.
             signal.pidfd_send_signal(pinned, signal.SIGKILL, None, 4)
-            return True
-        except (AttributeError, OSError):
-            return False  # The pinned per-pid sweeps beside this pass stop the members.
+            return 'delivered'
+        except OSError as error:
+            if error.errno == errno.ESRCH:
+                return 'empty'
+            return 'failed'
+        except AttributeError:
+            return 'failed'
     if process.poll() is None:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-            return True
-        except OSError:
-            return False  # Everything the sweeps named is already dying or dead.
-    return False
+            return 'delivered'
+        except OSError as error:
+            return 'empty' if error.errno == errno.ESRCH else 'failed'
+    return 'empty'
 
 
-def _tail_group_signal(process, pinned, group_alive, candidates):
+def _tail_group_signal(process, pinned, group_alive):
     """One tail cleanup pass: stop what the bounded scans had to spare.
 
     The post-exit group scan spares a tokenless member that forked after
     the boundary; while the run's leader pin is still open, the flag-4
     group signal stops that class recycle-proof. Runs whenever members
     existed at the child's exit — with named escapees or without, because
-    the spared member is exactly the one the scans cannot name — and
-    returns the honest log note: delivered members produce the
-    group-signal note, a failed or unsupported signal produces a
-    group-signal-failed diagnostic so a run never reports clean while a
-    spared member may survive (#404 review), and an emptied group is an
-    ESRCH no-op that leaves the exit clean.
+    the spared member is exactly the one the scans cannot name. Returns
+    (note, error): a delivered signal produces the group-signal note; an
+    emptied group is an ESRCH no-op that leaves the exit clean; a failed
+    or unsupported signal produces the failed-cleanup note and an error,
+    so the tail never reports a clean teardown while a spared member may
+    survive (#404 review).
     """
     if not group_alive or pinned is None:
-        return None
-    if _signal_group(process, pinned):
-        return 'OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n'
+        return None, None
+    outcome = _signal_group(process, pinned)
+    if outcome == 'delivered':
+        return ('OWNED_PROCESS_GROUP_SIGNAL: the pinned group signal stopped members the bounded scans had to spare\n',
+                None)
+    if outcome == 'empty':
+        return None, None
     return ('OWNED_PROCESS_GROUP_SIGNAL_FAILED: the pinned group signal could not run; '
-            'a same-group member the bounded scans spared may survive\n')
+            'a same-group member the bounded scans spared may survive\n',
+            RuntimeError('the pinned group signal failed; a spared same-group member may survive'))
 
 
 def _terminate_tree(process, token_value, pinned=None, boundary=None):
@@ -1390,9 +1404,11 @@ def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
         ])
         own = cancel.claim(swept) if cancel is not None else swept
         candidates = merged_survivors(report, own)
-        group_note = _tail_group_signal(process, pinned, group_alive, candidates)
+        group_note, group_error = _tail_group_signal(process, pinned, group_alive)
         if group_note:
             output += group_note
+        if group_error is not None and tail_anomaly is None:
+            tail_anomaly = group_error  # A failed cleanup signal is a tooling failure, never a clean exit.
         stopped = cancel is not None and cancel.cancelled and cancel.stopped_run
         if tail_anomaly is not None:
             # The anomaly line lands before any classified raise: a cancellation
@@ -1515,9 +1531,11 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
         # escape that wins this tail must not hide the tooling failure behind
         # its own marker.
         anomaly_note = f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n' if tail_anomaly is not None else ''
-        group_note = _tail_group_signal(process, pinned, group_alive, candidates)
+        group_note, group_error = _tail_group_signal(process, pinned, group_alive)
         if group_note:
             anomaly_note += group_note
+        if group_error is not None and tail_anomaly is None:
+            tail_anomaly = group_error  # A failed cleanup signal is a tooling failure, never a clean exit.
         if candidates:
             # The child's own trusted output stays in the log beside the note,
             # so an escaped or cancelled run keeps its diagnosis where the caller
