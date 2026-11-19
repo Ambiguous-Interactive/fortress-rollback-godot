@@ -255,16 +255,22 @@ def _send_kill(pid, belongs=None):
     signal meant for an owned tree (#404). Unreadable identity state keeps
     the kill: naming and killing bias toward what the scan owned. None keeps
     the unconditional kill for callers that bounded the scan themselves. A
-    pidfd_open that raises ESRCH means the scanned process is already gone,
-    so the numeric kill below is a harmless no-op that still names it; any
-    other open failure (EMFILE and friends) keeps the biased numeric kill,
-    which carries the same documented recycle race as the pinless path.
+    pidfd_open that raises ESRCH means the scanned process is verifiably
+    gone between the scan and the open — nothing is killed (a numeric kill
+    there could reach a pid recycled inside that window, #404 review) and
+    the carrier stays named as self-terminated. Any other open failure, or
+    no pidfd support at all, keeps the biased numeric kill, which carries
+    the same documented recycle race as the pinless path.
     """
     try:
         descriptor = os.pidfd_open(pid)
-    except (AttributeError, OSError):
-        # Without pidfd support the verification at least runs before the
-        # numeric kill, which stays racy on legacy kernels.
+    except AttributeError:
+        descriptor = None  # No pidfd support at all: the gated numeric kill below decides.
+    except OSError as error:
+        if error.errno == errno.ESRCH:
+            return True  # Verifiably gone between the scan and the open: nothing to kill; keep it named.
+        descriptor = None  # A transient open failure keeps the biased numeric kill, with the documented race.
+    if descriptor is None:
         if belongs is not None and not belongs(pid):
             return False
         try:

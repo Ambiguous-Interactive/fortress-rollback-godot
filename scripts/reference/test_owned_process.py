@@ -1809,13 +1809,25 @@ time.sleep(60)
     def test_send_kill_skips_an_identity_that_stopped_matching(self):
         delivered = []
         with mock.patch.object(owned_process.os, 'kill', side_effect=lambda pid, sig: delivered.append((pid, sig))), \
-                mock.patch.object(owned_process.os, 'pidfd_open', side_effect=OSError(3, 'no pidfd support')):
+                mock.patch.object(owned_process.os, 'pidfd_open', side_effect=OSError(errno.EMFILE, 'no descriptors')):
             self.assertFalse(owned_process._send_kill(4242, belongs=lambda pid: False),
                              'a stale attribution must skip the kill')
             self.assertEqual(delivered, [], 'the skipped kill must not signal anyone')
             self.assertTrue(owned_process._send_kill(4242, belongs=lambda pid: True),
                             'a matching attribution still kills')
             self.assertEqual(delivered, [(4242, signal.SIGKILL)])
+
+    # Value: protects=the ESRCH short-circuit of the kill path (#404 review);
+    # fails_when=a numeric kill fires after pidfd_open proved the process gone,
+    # where a pid recycled inside that window could receive it;
+    # seam=owned_process._send_kill with an ESRCH pidfd_open
+    def test_send_kill_names_a_verifiably_gone_process_without_a_numeric_kill(self):
+        delivered = []
+        with mock.patch.object(owned_process.os, 'kill', side_effect=lambda pid, sig: delivered.append((pid, sig))), \
+                mock.patch.object(owned_process.os, 'pidfd_open', side_effect=OSError(errno.ESRCH, 'no process')):
+            self.assertTrue(owned_process._send_kill(4242, belongs=None),
+                            'a verifiably gone carrier stays named as self-terminated')
+            self.assertEqual(delivered, [], 'no numeric kill may follow a proven-gone open')
 
     # Value: protects=the kill-time identity recheck (#404 review);
     # fails_when=a recycled pid receives a signal meant for an owned tree, or a
