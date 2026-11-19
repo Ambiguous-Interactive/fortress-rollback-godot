@@ -20,7 +20,7 @@ scans keep the exit boundary and the token tiebreak as their guards, while
 the signal needs no gate. The known residual hole is stated plainly: a
 descendant that both setsid's away and scrubs the token leaves no kernel
 marker this module can see; containing that case needs cgroup-backed
-ownership and remains open work in issue #404.
+ownership and remains open work in issue #411.
 
 A caller that runs several owned commands concurrently — the browser witness
 label waves, the native probe waves — can stop one running command from
@@ -251,7 +251,7 @@ def group_members(group, proc=None, started_before=None, token_value=None):
     descendant
     that forked after the boundary and scrubbed its environment before the
     scan — it is spared here, and fully containing that class needs the
-    cgroup-backed ownership work in #404. The boundary also cannot reject
+    cgroup-backed ownership work in #411. The boundary also cannot reject
     a group id reissued inside the window between the last member
     detaching and the boundary sample itself: such members started at or
     before the boundary and read as ours, so a pre-boundary-window
@@ -362,7 +362,7 @@ def _identity_check(start, proc=None):
     the microseconds between the /proc read and the pin where a recycle
     could land in the same scheduler tick as the scanned process's own
     start, which no /proc-scanning design can distinguish and the
-    cgroup-backed ownership work in #404 owns. An unreadable starttime at
+    cgroup-backed ownership work in #411 owns. An unreadable starttime at
     either end biases toward the scan's attribution: naming and killing
     bias toward what the scan owned, never toward stranding a live carrier.
     """
@@ -549,7 +549,7 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None, 
     tokenless members started after the boundary, which stay excluded.
     Only a descendant that both forked in that window and scrubbed its
     environment escapes the scan — the same scrubbing residual the cgroup
-    work in #404 owns everywhere else.
+    work in #411 owns everywhere else.
 
     That token-union rule leans on the send actually resolving the group.
     When the outcome is ``'empty'`` — the kernel resolved nothing at the
@@ -963,7 +963,7 @@ def _terminate_tree(process, token_value, pinned=None, boundary=None):
     same trade as main, stated plainly: a recycled group forming after the
     last member died and before a scan reads the numeric id could be
     misnamed, and the pin cannot close that class — the cgroup-backed
-    ownership work in #404 owns it.
+    ownership work in #411 owns it.
     Merging the passes keeps every pid named exactly once (#381's class).
     """
     named = []
@@ -1390,7 +1390,7 @@ class CancelHandle:
                 # itself frees the group id during its own kill sequence, so
                 # no valid boundary exists for the scans that straddle it —
                 # that residual is `_terminate_tree`'s documented trade, and
-                # the cgroup-backed identity work in #404 owns the mechanism
+                # the cgroup-backed identity work in #411 owns the mechanism
                 # that closes it.
                 if boundary is None and pinned is not None:
                     # A cancel flipping before the owning call observed an exit
