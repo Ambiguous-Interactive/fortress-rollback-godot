@@ -1,4 +1,5 @@
 """Value: a deadline or exit owns the whole descendant tree, not only the direct child."""
+import errno
 import os
 import signal
 import subprocess
@@ -768,7 +769,7 @@ print('child exits', flush=True)
                 with self.assertRaises(subprocess.TimeoutExpired):
                     owned_process.run(command, {}, log, 5, cancel=handle)
             pid = int(marker.read_text())
-            self.assertFalse(alive(pid))
+            self.assert_tree_gone(pid)
             stat = Path(f'/proc/{pid}/stat')
             if stat.exists():
                 self.assertNotEqual(stat.read_text().rsplit(') ', 1)[-1].split()[0], 'Z')
@@ -1396,7 +1397,7 @@ time.sleep(0.05)
         process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
         group_results = iter([[{'pid': process.pid, 'name': 'leader'}], ValueError('group pass exploded')])
         try:
-            def flaky_group(group_pid):
+            def flaky_group(group_pid, started_before=None):
                 result = next(group_results)
                 if isinstance(result, Exception):
                     raise result
@@ -1674,20 +1675,30 @@ time.sleep(0.2)
                 if process.poll() is None:
                     process.kill()
                     process.wait(timeout=10)
+                if not terminated(member_pid):
+                    # The escape assertion may have failed before the sweep
+                    # stopped the member: no stray 30s sleeper on a red run.
+                    try:
+                        os.kill(member_pid, signal.SIGKILL)
+                    except OSError:
+                        pass
                 handle.unregister()
 
 
 class LeaderPinTests(unittest.TestCase):
-    """Value: the leader pidfd is the recycle-proof identity every sweep leans on (#404).
+    """Value: the leader pidfd is the recycle-proof signal identity (#404).
 
-    The pin is opened before anything can reap the leader and held past the
-    final sweep. While it is open the kernel keeps the leader's struct pid —
-    the process group's numeric id — referenced, so no group can reissue it
-    and the flag-4 group signal resolves only the true group. These
-    witnesses bind the kernel contract the sweep design stands on; the
-    2026-11-18 matrix on kernel 6.12.76 measured flag-4 group signaling
-    valid through alive, zombie and reaped leaders with a surviving member
-    killed in every state.
+    The pin is opened before anything can reap the leader and held past
+    the final sweep. It makes the flag-4 group signal recycle-proof: the
+    kernel resolves the process group through the pinned struct pid,
+    which stays valid in every leader state. It does not reserve the
+    numeric group id — the kernel frees the id for reissue when the last
+    task link detaches, measured across a full allocator cycle
+    (pid_max=99999) during the #404 review — so the numeric scans keep
+    their exit boundary, and these witnesses bind only the signal
+    contract. The 2026-11-18 matrix on kernel 6.12.76 measured flag-4
+    group signaling valid through alive, zombie and reaped leaders with
+    a surviving member killed in every state.
     """
 
     # Value: protects=the kernel contract the pin semantics lean on (#404);
@@ -1704,6 +1715,7 @@ open(sys.argv[1], 'w').write(str(member.pid))
 time.sleep(60)
 """, str(member_marker)], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             pinned = os.pidfd_open(leader.pid)
+            member_pid = None
             try:
                 deadline = time.monotonic() + 5
                 while not member_marker.exists() and time.monotonic() < deadline:
@@ -1720,35 +1732,15 @@ time.sleep(60)
                                 'must reach the surviving member')
             finally:
                 os.close(pinned)
+                for pid in (member_pid,):
+                    if pid is not None and not terminated(pid):
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                        except OSError:
+                            pass
                 if leader.poll() is None:
                     leader.kill()
                 leader.wait(timeout=10)
-
-    # Value: protects=the pin's numeric-id guarantee (#404);
-    # fails_when=a pinned leader id is reissued to a new process while the pin is open;
-    # seam=real pidfd_open across a bounded allocation churn
-    def test_a_pinned_group_id_is_not_reissued_while_the_pin_is_open(self):
-        leader = subprocess.Popen([PYTHON, '-c', 'import time; time.sleep(60)'], start_new_session=True,
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        pinned = os.pidfd_open(leader.pid)
-        try:
-            leader.kill()
-            leader.wait(timeout=10)  # reaped: the id would be recyclable without the pin
-            seen = set()
-            for _ in range(120):
-                probe = subprocess.Popen([PYTHON, '-c', 'pass'], stdout=subprocess.DEVNULL,
-                                         stderr=subprocess.DEVNULL)
-                seen.add(probe.pid)
-                probe.wait(timeout=10)
-            self.assertNotIn(leader.pid, seen,
-                             'the pinned id must stay referenced until the pin closes')
-            self.assertGreater(len(seen), 60,
-                               'the churn must actually allocate new pids for the assertion to bind')
-        finally:
-            os.close(pinned)
-            if leader.poll() is None:
-                leader.kill()
-            leader.wait(timeout=10)
 
     # Value: protects=the kill-time attribution recheck (#404);
     # fails_when=a recycled pid receives a signal the scan meant for an owned tree;
@@ -1782,18 +1774,47 @@ time.sleep(60)
             self.assertTrue(belongs(612), 'the token still attributes our carrier')
             self.assertTrue(belongs(613), 'an unreadable entry keeps the kill')
 
-    # Value: protects=the pin-bounded post-exit group scan (#404);
-    # fails_when=a pinned scan keeps the boundary and spares a post-exit
-    # scrubbed member, or the pinless fallback drops its only guard;
+    # Value: protects=the exit-bounded post-exit group scan seam (#404 review);
+    # fails_when=a scan drops the exit boundary — the pin does not reserve the
+    # numeric group id, so an unbounded scan could name a recycled group;
     # seam=owned_process._post_exit_group_sweep with a recorded terminate_group
-    def test_the_post_exit_group_sweep_drops_the_boundary_under_a_pin(self):
+    def test_the_post_exit_group_sweep_keeps_the_boundary(self):
         with mock.patch.object(owned_process, 'terminate_group', return_value=[]) as sweep:
-            owned_process._post_exit_group_sweep(77, pinned=9, boundary=10, token_value='tok')
-            self.assertEqual(sweep.call_args.kwargs, {'started_before': None, 'token_value': 'tok'},
-                             'the held pin replaces the boundary sample')
-            owned_process._post_exit_group_sweep(77, pinned=None, boundary=10, token_value='tok')
-            self.assertEqual(sweep.call_args.kwargs, {'started_before': 10, 'token_value': 'tok'},
-                             'the pinless fallback keeps the boundary as its only guard')
+            owned_process._post_exit_group_sweep(77, boundary=10, token_value='tok')
+        self.assertEqual(sweep.call_args.kwargs, {'started_before': 10, 'token_value': 'tok'},
+                         'the pin does not reserve the id: the scan keeps the boundary')
+
+    # Value: protects=the numeric fallback gate of the pinned group signal (#404 review);
+    # fails_when=a pidfd error on a reaped child falls back to a numeric killpg
+    # that a recycled group could receive, or an unreaped child loses its fallback;
+    # seam=owned_process._signal_group with a recorded os.killpg
+    def test_the_group_signal_refuses_the_numeric_fallback_on_a_reaped_child(self):
+        class Process:
+            def __init__(self, reaped, pid=424242):
+                self._reaped = reaped
+                self.pid = pid
+
+            def poll(self):
+                return 0 if self._reaped else None
+
+        refused = Process(reaped=True)
+        with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                               side_effect=OSError(errno.ESRCH, 'no process')), \
+                mock.patch.object(owned_process.os, 'killpg',
+                                  side_effect=lambda pid, sig: (_ for _ in ()).throw(
+                                      AssertionError('a reaped child must not get a numeric killpg'))) as killpg:
+            owned_process._signal_group(refused, pinned=9)
+            self.assertEqual(killpg.call_count, 0,
+                             'ESRCH through the pin must not degrade to a numeric killpg')
+        unreaped = Process(reaped=False)
+        delivered = []
+        with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                               side_effect=OSError(errno.EINVAL, 'flag unsupported')), \
+                mock.patch.object(owned_process.os, 'killpg',
+                                  side_effect=lambda pid, sig: delivered.append(pid)) as killpg:
+            owned_process._signal_group(unreaped, pinned=9)
+            self.assertEqual(killpg.call_count, 1,
+                             'an unreaped child keeps the numeric fallback on a flag-less kernel')
 
     # Value: protects=the pin lifecycle of every owned run (#404);
     # fails_when=a run never pins its leader, or leaves the pin descriptor open;
