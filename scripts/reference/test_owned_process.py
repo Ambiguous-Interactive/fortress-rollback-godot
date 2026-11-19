@@ -2032,9 +2032,11 @@ time.sleep(60)
         process = type('Probe', (), {'pid': 424242, 'poll': lambda self: None})()
         survivor = {'pid': 4243, 'name': 'member', 'start': 5}
         boundaries = []
+        tokens = []
 
         def fake_terminate_group(group, proc=None, started_before=None, token_value=None):
             boundaries.append(started_before)
+            tokens.append(token_value)
             return [survivor] if started_before == 777 else []
 
         with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
@@ -2044,6 +2046,9 @@ time.sleep(60)
             named, anomaly = owned_process._terminate_tree(process, 'token', pinned=9, boundary=10)
         self.assertEqual(boundaries, [10, 10, 777],
                          'the send-boundary sweep runs after the kill and the boundary sweeps')
+        self.assertEqual(tokens[2], 'token',
+                         'the send-boundary sweep keeps the token union, so a member forked '
+                         'between the sample and the send is still named')
         self.assertEqual(named, [survivor], 'the spared member is stopped and named, not lost')
         self.assertIsNone(anomaly, 'a contained member is named in the report, not raised as an anomaly')
         with mock.patch.object(owned_process, '_signal_group', return_value='failed'), \

@@ -31,9 +31,11 @@ PENDING_LIMIT_BYTES = 1024 * 1024
 # most this many journal tail bytes: a stalled or killed CI context cannot read
 # the fixed journal path after the process is gone, so the tail itself must
 # reach the job log (issue #249) without one huge line or a pathological
-# journal flooding it.
+# journal flooding it. The backward read never loads more than this much of
+# the file, so a planted oversized file cannot exhaust memory either.
 JOURNAL_TAIL_LINES = 40
 JOURNAL_TAIL_BYTES = 16384
+JOURNAL_TAIL_READ_BYTES = 262144
 
 
 def redact_query_strings(text):
@@ -80,19 +82,32 @@ def journal_tail(package):
     The retention note alone names a path the failing CI context can never read
     again: a killed container or discarded Docker layer takes the file with it,
     which is exactly what the 2026-11-18 occurrence's job log shows. The tail
-    therefore travels into the diagnostic stream itself. The journal is already
-    redacted at write time; every line is redacted again so the diagnostic can
-    never depend on the writer, and the bounded tail — last lines first, then
-    a byte cap on what remains — keeps a pathological journal from flooding
-    the log.
+    therefore travels into the diagnostic stream itself. The read is bounded
+    twice — only the file's last ``JOURNAL_TAIL_READ_BYTES`` are loaded, so a
+    planted oversized file cannot exhaust memory, and the resulting lines are
+    capped by the line and byte budgets — and every line is re-redacted so the
+    diagnostic never depends on the writer. The first line of a truncated read
+    is dropped as partial unless the read begins at the file's start.
     """
+    path = journal_path(package)
     try:
-        lines = journal_path(package).read_text(encoding='utf-8', errors='replace').splitlines()
+        with path.open('rb') as source:
+            start = source.seek(0, os.SEEK_END) - JOURNAL_TAIL_READ_BYTES
+            partial = start > 0
+            source.seek(max(0, start))
+            data = source.read(JOURNAL_TAIL_READ_BYTES)
     except OSError:
         return []
+    lines = data.decode('utf-8', errors='replace').splitlines()
+    if partial and lines:
+        # The cut can land inside a line; its consumed head is outside the read
+        # and the remainder is not evidence on its own.
+        lines = lines[1:]
+    if not lines:
+        return []
     tail = lines[-JOURNAL_TAIL_LINES:]
-    if len(lines) > JOURNAL_TAIL_LINES:
-        tail.insert(0, f'...[journal head truncated; showing the last {JOURNAL_TAIL_LINES} of {len(lines)} lines]')
+    if partial or len(lines) > JOURNAL_TAIL_LINES:
+        tail.insert(0, f'...[journal head truncated; showing the last {len(tail)} lines]')
     kept = []
     remaining = JOURNAL_TAIL_BYTES
     for line in reversed(tail):

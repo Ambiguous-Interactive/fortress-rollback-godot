@@ -472,17 +472,23 @@ def _tail_group_signal(process, pinned, group_alive, verify=None):
 
     ``verify`` is a callable receiving one starttime boundary (scheduler
     ticks since boot, sampled immediately before the send) and returning
-    the live members of the group that started at or before it. Kernels
+    the live members of the group the signal was meant to stop. Kernels
     whose flag-4 semantics predate recycle-proof delivery accept the send
     through a reaped leader's pin without stopping anyone — a 2026-11-19
     Gate runner measured exactly that shape while kernel 6.12.76 delivered
     — so a claimed cleanup is measured, not trusted: the scan must empty
     within a bounded poll or the tail reports the failed-cleanup note and
-    error. The send-time boundary names every member alive at the send
-    (the spared class all started before it) while a group the kernel
-    reissued after the send can only hold members that started after it.
-    A scan that raises reads as unknown and keeps polling to the deadline,
-    then fails exactly like a measured survivor.
+    error. The boundary names every member alive at the send (the spared
+    class all started before it), and the caller's token union keeps the
+    window honest in both directions: a member forked between the boundary
+    sample and the send carries the run token and is named by the token
+    branch, while a group the kernel reissued after the send holds only
+    tokenless members started after the boundary, which stay excluded.
+    Only a descendant that both forked in that window and scrubbed its
+    environment escapes the scan — the same scrubbing residual the cgroup
+    work in #404 owns everywhere else. A scan that raises reads as unknown
+    and keeps polling to the deadline, then fails exactly like a measured
+    survivor.
     """
     if not group_alive or pinned is None:
         return None, None
@@ -563,11 +569,14 @@ def _terminate_tree(process, token_value, pinned=None, boundary=None):
         # The kernel accepted the pinned signal, and kernels whose flag-4
         # semantics predate recycle-proof delivery can leave the class the
         # bounded scans spared. One send-boundary sweep stops and names them:
-        # every member alive at the send started before it, while a group the
-        # kernel reissued after the send can only hold members started after
-        # it. The child is unreaped here, so the numeric id is still reserved.
+        # every member alive at the send started before it, a member forked
+        # between the boundary sample and the send carries the run token, and
+        # a group the kernel reissued after the send holds only tokenless
+        # members started after the boundary. The child is unreaped here, so
+        # the numeric id is still reserved.
         try:
-            named = merged_survivors(named, terminate_group(process.pid, started_before=send_boundary))
+            named = merged_survivors(named, terminate_group(process.pid, started_before=send_boundary,
+                                                            token_value=token_value))
         except Exception as error:
             anomaly = anomaly or error
     if signal_outcome == 'failed' and anomaly is None:
@@ -1487,7 +1496,8 @@ def _run_pinned(process, token_value, pinned, log, timeout, input_text, cancel):
         candidates = merged_survivors(report, own)
         group_note, group_error = _tail_group_signal(
             process, pinned, group_alive,
-            verify=lambda started_before: group_members(process.pid, started_before=started_before))
+            verify=lambda started_before: group_members(process.pid, started_before=started_before,
+                                                        token_value=token_value))
         if group_note:
             output += group_note
         if group_error is not None and tail_anomaly is None:
@@ -1616,7 +1626,8 @@ def _run_split_pinned(process, token_value, pinned, log, timeout, input_text, ca
         anomaly_note = f'OWNED_PROCESS_SWEEP_ANOMALY: {tail_anomaly}\n' if tail_anomaly is not None else ''
         group_note, group_error = _tail_group_signal(
             process, pinned, group_alive,
-            verify=lambda started_before: group_members(process.pid, started_before=started_before))
+            verify=lambda started_before: group_members(process.pid, started_before=started_before,
+                                                        token_value=token_value))
         if group_note:
             anomaly_note += group_note
         if group_error is not None and tail_anomaly is None:

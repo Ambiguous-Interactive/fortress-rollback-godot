@@ -305,7 +305,7 @@ class NativeCliInstallTests(unittest.TestCase):
                 evidence.write_text(''.join(f'line {number}\n' for number in range(1, 61)), encoding='utf-8')
                 tail = helper.journal_tail('@opencode/cli')
                 self.assertEqual(len(tail), 41)
-                self.assertIn('showing the last 40 of 60 lines', tail[0])
+                self.assertIn('showing the last 40 lines', tail[0])
                 self.assertEqual(tail[1], 'line 21')
                 self.assertEqual(tail[-1], 'line 60')
                 evidence.write_text('npm http fetch GET https://registry.example/x.tgz?t=SECRET', encoding='utf-8')
@@ -320,6 +320,16 @@ class NativeCliInstallTests(unittest.TestCase):
                 self.assertEqual(helper.journal_tail('@opencode/cli'),
                                  ['...[journal tail truncated at the 16384-byte diagnostic budget]',
                                   'newest 1', 'newest 2'])
+                # The read itself is bounded: a file larger than the read window
+                # loads only its newest bytes, drops the partial cut line, and
+                # keeps the newest complete lines with the head marker.
+                evidence.write_text(''.join(f'stale {number}\n' for number in range(20000)) + 'fresh 1\nfresh 2\n',
+                                    encoding='utf-8')
+                tail = helper.journal_tail('@opencode/cli')
+                self.assertIn('journal head truncated', tail[0])
+                self.assertEqual(tail[-2:], ['fresh 1', 'fresh 2'])
+                self.assertFalse(any(line.startswith('stale 1\n') for line in tail))
+                self.assertNotIn('stale 1\nstale 2', '\n'.join(tail), 'the cut line never leaks its head')
                 evidence.chmod(0o000)
                 try:
                     self.assertEqual(helper.journal_tail('@opencode/cli'), [])
