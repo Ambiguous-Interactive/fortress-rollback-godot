@@ -21,11 +21,18 @@ kernel membership the sweeps read directly: a descendant that both
 setsid's away and scrubs the token is still listed in the leaf's
 cgroup.procs, and a group id the kernel reissued to an unrelated tree can
 never appear there, so the post-exit scans stop consulting the numeric
-group at all. On a hierarchy that is absent, read-only or not writable
-the claim returns None and the numeric group scans keep the exit
-boundary and the token tiebreak as their guards — the documented
-fallback, whose residual is exactly the scrubbed-descendant class the
-membership containment closes.
+group at all. Two carve-outs stay stated plainly: a descendant forked in
+the window between Popen returning and the placement write inherits the
+caller's cgroup instead of the leaf — it carries the run token there, so
+the token sweep names it, but one that also scrubs its token inside that
+window is named by neither sweep, where the numeric fallback's boundary
+scan would still have named it; and a descendant with write access to
+another cgroup's cgroup.procs can migrate itself out of the leaf, where
+only its token can still name it. On a hierarchy that is absent,
+read-only or not writable the claim returns None and the numeric group
+scans keep the exit boundary and the token tiebreak as their guards —
+the documented fallback, whose residual is exactly the
+scrubbed-descendant class the membership containment closes.
 
 A caller that runs several owned commands concurrently — the browser witness
 label waves, the native probe waves — can stop one running command from
@@ -504,7 +511,10 @@ def _claim_cgroup(pid, token_value, proc=None, mountinfo=None):
     window between Popen returning and this write is narrower than the
     owned commands' first descendant fork (engines and browsers pay their
     own startup first); a fork inside it still carries the run token and
-    stays named by the token sweep.
+    stays named by the token sweep, while one that also scrubs its token
+    inside that window enters neither the leaf nor the token sweep — the
+    placement-window carve-out the module docstring states, which the
+    numeric fallback's boundary scan would have named.
     """
     leaf = None
     try:
@@ -560,7 +570,10 @@ def _cgroup2_mount(mountinfo=None):
             separator = fields.index('-')
         except ValueError:
             continue  # A malformed row cannot name a mount point.
-        if separator < 5 or fields[separator + 1] != 'cgroup2':
+        # The row's mount root (field 3) is ignored: a bind-mounted subset row
+        # would point the parent at a wrong root, and the claim's mkdir then
+        # fails into the safe fallback rather than a wrong-but-writable leaf.
+        if separator < 5 or len(fields) <= separator + 1 or fields[separator + 1] != 'cgroup2':
             continue
         return Path(fields[4])
     return None
@@ -571,11 +584,17 @@ def _release_cgroup(process):
 
     The kernel refuses to remove a leaf that still holds live tasks, so
     the release runs only from the sweeps' callers; a leaf that cannot be
-    removed (a lingering dying task, a re-mounted read-only hierarchy)
-    stays behind as one inert empty directory named after the run token —
-    bounded, never re-entered, because the next run claims its own leaf.
-    Idempotent: a process without a leaf, or one already released, is a
-    no-op, which is why a repeated finish stays safe.
+    removed — a lingering dying task, live members whose kills failed and
+    escaped, or a re-mounted read-only hierarchy — stays behind named
+    after the run token and is never re-entered, because the next run
+    claims its own leaf; there is no janitor, so a host that keeps failing
+    releases accumulates one stranded leaf per failure. A racing cancel
+    whose sweeps straddle this release reads the numeric fallback the way
+    it would have on main, bounded by its sampled boundary: the one place
+    containment ends before every reader is done is the abandonment error
+    path, which never absorbs its handle (#411 review). Idempotent: a
+    process without a leaf, or one already released, is a no-op, which is
+    why a repeated finish stays safe.
     """
     leaf = getattr(process, 'owned_cgroup', None)
     process.owned_cgroup = None  # First release owns the removal: a repeated call is a no-op.

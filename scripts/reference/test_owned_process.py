@@ -2891,7 +2891,8 @@ class CgroupContainmentTests(unittest.TestCase):
 
     # Value: protects=the recycled-group residual the membership containment owns (#411);
     # fails_when=a reissued tokenless same-pgid group is named or killed by a cleanup sweep;
-    # seam=fake proc tree plus an injected leaf whose membership excludes the stranger
+    # seam=fake proc tree plus an injected leaf whose membership excludes the stranger;
+    # the kill stub records targets, because pids 90/91 belong to the host, not this test
     def test_a_recycled_tokenless_group_is_never_eligible_under_containment(self):
         with tempfile.TemporaryDirectory() as folder:
             proc = self.fake_proc(folder, [
@@ -2904,12 +2905,17 @@ class CgroupContainmentTests(unittest.TestCase):
             ])
             self.fake_leaf(folder, [90])
             leaf = Path(folder) / 'cgroup'
-            named = owned_process.terminate_cgroup(leaf, proc)
+            kills = []
+            with mock.patch.object(owned_process, '_send_kill',
+                                   side_effect=lambda pid, belongs=None: kills.append(pid) or True):
+                named = owned_process.terminate_cgroup(leaf, proc)
+            self.assertEqual(kills, [90],
+                             'membership decides the kill targets; the stranger is never a target')
             self.assertEqual([item['pid'] for item in named], [90],
                              'membership containment names only the leaf; the stranger is never eligible')
             # The contrast on the same tree: the fallback numeric scan names the
             # stranger (tokenless, started before the boundary) — the residual the
-            # fallback documents and the containment removes.
+            # fallback documents and the containment removes. Read-only: no kill.
             numeric = owned_process.group_members(77, proc=proc, started_before=10)
             self.assertEqual(sorted(item['pid'] for item in numeric), [90, 91],
                              'the fallback boundary scan is what names the recycled group; containment must not')
@@ -2925,14 +2931,23 @@ class CgroupContainmentTests(unittest.TestCase):
                 pid = 77
                 owned_cgroup = Path(folder) / 'cgroup'
 
-            named = owned_process._post_exit_group_sweep(Contained(), boundary=10, token_value='tok', proc=proc)
+            kills = []
+            with mock.patch.object(owned_process, '_send_kill',
+                                   side_effect=lambda pid, belongs=None: kills.append(pid) or True):
+                named = owned_process._post_exit_group_sweep(Contained(), boundary=10, token_value='tok', proc=proc)
+            self.assertEqual(kills, [90],
+                             'the wired sweep kills exactly the leaf members; the stranger is never a target')
             self.assertEqual([item['pid'] for item in named], [90],
                              'the contained post-exit sweep names exactly the leaf members')
             verify, contain = owned_process._membership_pair(Contained(), 'tok', proc=proc)
             self.assertEqual([item['pid'] for item in verify(10)], [90],
                              "the tail's verification reads the leaf record")
-            self.assertEqual([item['pid'] for item in contain(10)], [90],
-                             "the tail's containment kills through the leaf record")
+            contained_kills = []
+            with mock.patch.object(owned_process, '_send_kill',
+                                   side_effect=lambda pid, belongs=None: contained_kills.append(pid) or True):
+                self.assertEqual([item['pid'] for item in contain(10)], [90],
+                                 "the tail's containment kills through the leaf record")
+            self.assertEqual(contained_kills, [90], 'the containment callable targets only the leaf')
 
     def test_cgroup_members_reads_the_kernel_record_and_skips_the_dead(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -3022,7 +3037,8 @@ class CgroupContainmentTests(unittest.TestCase):
             deadline = time.monotonic() + 5
             while (first.poll() is not None or second.poll() is not None) and time.monotonic() < deadline:
                 time.sleep(0.02)
-            self.assertIsNone(first.poll()) and self.assertIsNone(second.poll())
+            self.assertIsNone(first.poll(), 'the control only holds with a live member')
+            self.assertIsNone(second.poll(), 'the control only holds with a live member')
             with tempfile.TemporaryDirectory() as folder:
                 leaf = self.fake_leaf(folder, [first.pid, second.pid])
                 named = owned_process.terminate_cgroup(leaf)
@@ -3056,6 +3072,14 @@ class CgroupContainmentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             log = Path(folder) / 'run.log'
             carrier = start_token_process('cgroup-tail-carrier')
+            # The 'empty' group-signal outcome this run produces classifies once per
+            # process: reset the cache so the probe measures this kernel cleanly
+            # here instead of inheriting a seed, and restore whatever an earlier
+            # test seeded instead of leaving the probe's answer behind (#408).
+            saved_class = owned_process._kernel_class
+            saved_note = owned_process._kernel_probe_note
+            owned_process._kernel_class = None
+            owned_process._kernel_probe_note = None
             try:
                 deadline = time.monotonic() + 5
                 while carrier.poll() is not None and time.monotonic() < deadline:
@@ -3071,6 +3095,8 @@ class CgroupContainmentTests(unittest.TestCase):
                               'the membership sweep names the leaf carrier')
                 self.assertTrue(terminated(carrier.pid))
             finally:
+                owned_process._kernel_class = saved_class
+                owned_process._kernel_probe_note = saved_note
                 if carrier.poll() is None:
                     carrier.kill()
                     carrier.wait(timeout=10)
