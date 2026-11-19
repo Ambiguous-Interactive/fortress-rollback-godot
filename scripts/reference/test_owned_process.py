@@ -1,4 +1,5 @@
 """Value: a deadline or exit owns the whole descendant tree, not only the direct child."""
+import errno
 import os
 import signal
 import subprocess
@@ -260,7 +261,8 @@ print('done', flush=True)
                 (entry / 'stat').write_text(f'{pid} ({name}) {state} 1 77')
                 if state == 'S':
                     (entry / 'cmdline').write_bytes(b'live\0')
-            self.assertEqual(owned_process.group_members(77, proc=proc), [{'pid': 72, 'name': 'live'}])
+            self.assertEqual(owned_process.group_members(77, proc=proc),
+                             [{'pid': 72, 'name': 'live', 'start': None}])
 
     # Value: protects=the post-reap recycled-group boundary (#399);
     # fails_when=a member started after the owned exit is named or killed;
@@ -282,20 +284,21 @@ print('done', flush=True)
                 if tokened:
                     (entry / 'environ').write_bytes(f'{owned_process.TOKEN_VARIABLE}=tok\0'.encode())
             self.assertEqual(owned_process.group_members(77, proc=proc, started_before=10),
-                             [{'pid': 80, 'name': 'descendant'}],
+                             [{'pid': 80, 'name': 'descendant', 'start': 5}],
                              'without a token the post-reap boundary spares every post-exit member')
             self.assertEqual(owned_process.group_members(77, proc=proc, started_before=10, token_value='tok'),
-                             [{'pid': 80, 'name': 'descendant'}, {'pid': 82, 'name': 'late-carrier'}],
+                             [{'pid': 80, 'name': 'descendant', 'start': 5},
+                              {'pid': 82, 'name': 'late-carrier', 'start': 999}],
                              'the token tiebreak names the tokened post-boundary member and spares the tokenless one')
             self.assertEqual(owned_process.group_members(77, proc=proc, started_before=None),
-                             [{'pid': 80, 'name': 'descendant'}, {'pid': 81, 'name': 'recycled'},
-                              {'pid': 82, 'name': 'late-carrier'}],
+                             [{'pid': 80, 'name': 'descendant', 'start': 5}, {'pid': 81, 'name': 'recycled', 'start': 999},
+                              {'pid': 82, 'name': 'late-carrier', 'start': 999}],
                              'the pre-reap sweeps stay unbounded')
             unparseable = proc / '83'
             unparseable.mkdir()
             (unparseable / 'stat').write_text('83 (short) S 1 77')
             (unparseable / 'cmdline').write_bytes(b'short\0')
-            self.assertIn({'pid': 83, 'name': 'short'},
+            self.assertIn({'pid': 83, 'name': 'short', 'start': None},
                           owned_process.group_members(77, proc=proc, started_before=10, token_value='tok'),
                           'a stat line without a parsable starttime is treated as ours, never spared')
 
@@ -365,7 +368,7 @@ open(sys.argv[1], 'w').write(str(os.getpid()))
 print('ready', flush=True)
 time.sleep(60)
 """, str(marker)]
-            def interrupting_collect(process, deadline):
+            def interrupting_collect(process, deadline, on_exit=None):
                 deadline_marker = time.monotonic() + 5
                 while not marker.exists() and time.monotonic() < deadline_marker:
                     time.sleep(0.01)
@@ -558,6 +561,34 @@ time.sleep(0.2)
             process.wait(timeout=10)
             owned_process.finish(process, token, grace=5)
             self.assertEqual(process.returncode, 0, 'a clean host keeps its own exit code')
+
+    # Value: protects=finish()'s cleanup from a failed pinned group signal (#404 review);
+    # fails_when=an unsupported flag-4 on a SIGTERM-ignoring host skips the sweeps
+    # and raises TimeoutExpired out of finish, stranding the host;
+    # seam=owned_process.finish with the flag-4 call forced to fail
+    def test_finish_stops_a_sigterm_ignoring_host_when_the_group_signal_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder) / 'stubborn.pid'
+            host, token = owned_process.spawn([PYTHON, '-c', """
+import os, signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+open(sys.argv[1], 'w').write(str(os.getpid()))
+time.sleep(60)
+""", str(marker)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                deadline = time.monotonic() + 5
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                                       side_effect=OSError(errno.EINVAL, 'flag unsupported')):
+                    owned_process.finish(host, token, grace=2)
+                self.assertIsNotNone(host.poll(), 'the stubborn host is stopped and reaped')
+                self.assertTrue(terminated(host.pid),
+                                'finish must stop the host itself, not raise past its sweeps')
+            finally:
+                if host.poll() is None:
+                    host.kill()
+                host.wait(timeout=10)
 
     def test_finish_survives_a_failing_token_scan_and_still_scans_the_group(self):
         """finish() must contain its sweeps like the runners' tails (#398 review)."""
@@ -759,16 +790,16 @@ print('child exits', flush=True)
             command = [PYTHON, '-c', self.SLOW_TREE, str(marker)]
             real_group = owned_process.terminate_group
 
-            def flipping_group(group_pid):
+            def flipping_group(group_pid, started_before=None, token_value=None):
                 if not handle.cancelled:
                     handle.cancel()  # the real cancel fires inside the deadline handler's own sweep
-                return real_group(group_pid)
+                return real_group(group_pid, started_before=started_before, token_value=token_value)
 
             with mock.patch.object(owned_process, 'terminate_group', flipping_group):
                 with self.assertRaises(subprocess.TimeoutExpired):
                     owned_process.run(command, {}, log, 5, cancel=handle)
             pid = int(marker.read_text())
-            self.assertFalse(alive(pid))
+            self.assert_tree_gone(pid)
             stat = Path(f'/proc/{pid}/stat')
             if stat.exists():
                 self.assertNotEqual(stat.read_text().rsplit(') ', 1)[-1].split()[0], 'Z')
@@ -1175,8 +1206,8 @@ time.sleep(0.05)
             real_terminate = owned_process.terminate
             flip_done = threading.Event()
 
-            def flipping_collect(process, deadline):
-                result = real_collect(process, deadline)  # the child exits and is reaped here
+            def flipping_collect(process, deadline, on_exit=None):
+                result = real_collect(process, deadline, on_exit)  # the child exits and is reaped here
                 handle.cancel()  # still pinned: the run reads as stopped, nothing named
                 flip_done.set()
                 return result
@@ -1227,11 +1258,13 @@ time.sleep(0.05)
                 handle_self._publish(published)
                 return report
 
-            def collected_without_leak(process, deadline):
+            def collected_without_leak(process, deadline, on_exit=None):
                 deadline_wait = time.monotonic() + 5
                 while process.poll() is None and time.monotonic() < deadline_wait:
                     time.sleep(0.02)  # poll reaps the exited child: no zombie leak
                 process.poll()
+                if on_exit is not None:
+                    on_exit(0)
                 return (0, {process.stdout.fileno(): 'out\n'}, 7, False, 0)
 
             try:
@@ -1270,35 +1303,6 @@ time.sleep(0.05)
                                   'the pinned run must still cancel normally — a silently overwritten pin '
                                   'would leave it running to its own deadline instead')
             self.assert_tree_gone(pid)
-
-    def test_the_pinned_leader_probe_never_lies_about_a_reaped_pid(self):
-        process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
-        pinned = os.pidfd_open(process.pid)
-        try:
-            self.assertFalse(owned_process._leader_reaped(pinned, process.pid),
-                             'a live pinned leader reads unreaped')
-            process.kill()
-            # Exited but unreaped: the pidfd probe already fails on the
-            # zombie — its signal state is gone — so /proc decides, and a
-            # zombie's id cannot be recycled until its owner reaps it. The
-            # probe must not call Popen.poll()/wait() before the check:
-            # either would reap the child and erase the state under test.
-            deadline = time.monotonic() + 5
-            def zombie_state():
-                try:
-                    return Path(f'/proc/{process.pid}/stat').read_text().rsplit(') ', 1)[-1].split()[0]
-                except OSError:
-                    return None
-            while zombie_state() != 'Z' and time.monotonic() < deadline:
-                time.sleep(0.02)
-            self.assertEqual(zombie_state(), 'Z', 'the fixture only binds with an exited-but-unreaped leader')
-            self.assertFalse(owned_process._leader_reaped(pinned, process.pid),
-                             'an exited-but-unreaped leader must not read as reaped')
-            os.waitpid(process.pid, 0)
-            self.assertTrue(owned_process._leader_reaped(pinned, process.pid),
-                            'once the owner reaps, the pin must read reaped — a recycled id can never fool it')
-        finally:
-            os.close(pinned)
 
     def test_the_group_kill_survives_a_broken_killpg(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -1425,7 +1429,7 @@ time.sleep(0.05)
         process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
         group_results = iter([[{'pid': process.pid, 'name': 'leader'}], ValueError('group pass exploded')])
         try:
-            def flaky_group(group_pid):
+            def flaky_group(group_pid, started_before=None):
                 result = next(group_results)
                 if isinstance(result, Exception):
                     raise result
@@ -1468,7 +1472,7 @@ time.sleep(0.05)
             marker = Path(folder) / 'ia.pid'
             command = [PYTHON, '-c', self.SLOW_TREE, str(marker)]
 
-            def interrupting_collect(process, deadline):
+            def interrupting_collect(process, deadline, on_exit=None):
                 deadline_marker = time.monotonic() + 5
                 while not marker.exists() and time.monotonic() < deadline_marker:
                     time.sleep(0.01)
@@ -1667,6 +1671,344 @@ time.sleep(60)
                 if process.poll() is None:
                     process.kill()
                     process.wait(timeout=10)
+
+    # Value: protects=the post-reap group sweep armed by the registration pin (#404);
+    # fails_when=a cancel landing after the owner reaped strands a token-scrubbed
+    # same-group member, or names/kills a recycled group instead;
+    # seam=owned_process.CancelHandle.cancel against a reaped leader
+    def test_a_cancel_after_the_owner_reaped_still_sweeps_the_group_under_the_pin(self):
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder) / 'member.pid'
+            log = Path(folder) / 'reaped-cancel.log'
+            log.write_text('')
+            process, token_value = owned_process._start([PYTHON, '-c', f"""
+import os, subprocess, sys, time
+scrubbed = {{k: v for k, v in os.environ.items() if k != {owned_process.TOKEN_VARIABLE!r}}}
+member = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], env=scrubbed)
+open(sys.argv[1] + '.tmp', 'w').write(str(member.pid))
+os.rename(sys.argv[1] + '.tmp', sys.argv[1])
+time.sleep(0.2)
+""", str(marker)], {}, None, False)
+            handle = owned_process.CancelHandle()
+            self.assertTrue(handle.register(process, token_value, log))
+            try:
+                deadline = time.monotonic() + 5
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                member_pid = int(marker.read_text())
+                process.wait(timeout=10)  # the owning call reaps before the cancel lands
+                fresh = handle.cancel()
+                self.assertIn(member_pid, [item['pid'] for item in fresh],
+                              'the post-reap group sweep must name the token-scrubbed member')
+                deadline = time.monotonic() + 10
+                while not terminated(member_pid) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(terminated(member_pid), 'the named member must be terminated')
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=10)
+                if not terminated(member_pid):
+                    # The escape assertion may have failed before the sweep
+                    # stopped the member: no stray 30s sleeper on a red run.
+                    try:
+                        os.kill(member_pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                handle.unregister()
+
+    # Value: protects=the exit boundary a cancel inherits from the owning call (#404 review);
+    # fails_when=a post-reap cancel scans the numeric group id unbounded after
+    # the owning call already observed and published the exit tick;
+    # seam=CancelHandle.publish_exit_boundary through a recorded _terminate_tree
+    def test_a_cancel_scans_with_the_published_exit_boundary(self):
+        process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
+        handle = owned_process.CancelHandle()
+        try:
+            self.assertTrue(handle.register(process, token_value, None))
+            handle.publish_exit_boundary(123456)
+            observed = {}
+
+            def recording_tree(process_arg, token_arg, pinned_arg, boundary=None):
+                observed['boundary'] = boundary
+                return [], None
+
+            with mock.patch.object(owned_process, '_terminate_tree', recording_tree):
+                handle.cancel()
+            self.assertEqual(observed['boundary'], 123456,
+                             'the cancel bounds its post-reap scans with the published exit tick')
+            self.assertTrue(handle.stopped_run, 'the control only binds when the cancel stopped the run')
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+            handle.unregister()
+
+
+class LeaderPinTests(unittest.TestCase):
+    """Value: the leader pidfd is the recycle-proof signal identity (#404).
+
+    The pin is opened before anything can reap the leader and held past
+    the final sweep. It makes the flag-4 group signal recycle-proof: the
+    kernel resolves the process group through the pinned struct pid,
+    which stays valid in every leader state. It does not reserve the
+    numeric group id — the kernel frees the id for reissue when the last
+    task link detaches, measured across a full allocator cycle
+    (pid_max=99999) during the #404 review — so the numeric scans keep
+    their exit boundary, and these witnesses bind only the signal
+    contract. The 2026-11-18 matrix on kernel 6.12.76 measured flag-4
+    group signaling valid through alive, zombie and reaped leaders with
+    a surviving member killed in every state.
+    """
+
+    # Value: protects=the kernel contract the pin semantics lean on (#404);
+    # fails_when=a kernel or Python change breaks flag-4 group signaling
+    # through a pin whose leader was already reaped;
+    # seam=real pidfd_send_signal against a reaped leader's surviving member
+    def test_pinned_group_signal_reaches_members_after_the_leader_is_reaped(self):
+        with tempfile.TemporaryDirectory() as folder:
+            member_marker = Path(folder) / 'member.pid'
+            leader = subprocess.Popen([PYTHON, '-c', """
+import os, subprocess, sys, time
+member = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+open(sys.argv[1] + '.tmp', 'w').write(str(member.pid))
+os.rename(sys.argv[1] + '.tmp', sys.argv[1])
+time.sleep(60)
+""", str(member_marker)], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            pinned = os.pidfd_open(leader.pid)
+            member_pid = None
+            try:
+                deadline = time.monotonic() + 5
+                while not member_marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                member_pid = int(member_marker.read_text())
+                leader.kill()
+                leader.wait(timeout=10)  # reaped: only the pin still references its identity
+                signal.pidfd_send_signal(pinned, signal.SIGKILL, None, 4)
+                deadline = time.monotonic() + 10
+                while not terminated(member_pid) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(terminated(member_pid),
+                                'the flag-4 group signal through the reaped leader\'s pin '
+                                'must reach the surviving member')
+            finally:
+                os.close(pinned)
+                for pid in (member_pid,):
+                    if pid is not None and not terminated(pid):
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                        except OSError:
+                            pass
+                if leader.poll() is None:
+                    leader.kill()
+                leader.wait(timeout=10)
+
+    # Value: protects=the kill-time attribution recheck (#404);
+    # fails_when=a recycled pid receives a signal the scan meant for an owned tree;
+    # seam=owned_process._send_kill with a belongs recheck
+    def test_send_kill_skips_an_identity_that_stopped_matching(self):
+        delivered = []
+        with mock.patch.object(owned_process.os, 'kill', side_effect=lambda pid, sig: delivered.append((pid, sig))), \
+                mock.patch.object(owned_process.os, 'pidfd_open', side_effect=OSError(errno.EMFILE, 'no descriptors')):
+            self.assertFalse(owned_process._send_kill(4242, belongs=lambda pid: False),
+                             'a stale attribution must skip the kill')
+            self.assertEqual(delivered, [], 'the skipped kill must not signal anyone')
+            self.assertTrue(owned_process._send_kill(4242, belongs=lambda pid: True),
+                            'a matching attribution still kills')
+            self.assertEqual(delivered, [(4242, signal.SIGKILL)])
+
+    # Value: protects=the ESRCH short-circuit of the kill path (#404 review);
+    # fails_when=a numeric kill fires after pidfd_open proved the process gone,
+    # where a pid recycled inside that window could receive it;
+    # seam=owned_process._send_kill with an ESRCH pidfd_open
+    def test_send_kill_names_a_verifiably_gone_process_without_a_numeric_kill(self):
+        delivered = []
+        with mock.patch.object(owned_process.os, 'kill', side_effect=lambda pid, sig: delivered.append((pid, sig))), \
+                mock.patch.object(owned_process.os, 'pidfd_open', side_effect=OSError(errno.ESRCH, 'no process')):
+            self.assertTrue(owned_process._send_kill(4242, belongs=None),
+                            'a verifiably gone carrier stays named as self-terminated')
+            self.assertEqual(delivered, [], 'no numeric kill may follow a proven-gone open')
+
+    # Value: protects=the kill-time identity recheck (#404 review);
+    # fails_when=a recycled pid receives a signal meant for an owned tree, or a
+    # scrubbed/execing carrier is skipped and stranded;
+    # seam=owned_process._identity_check against a fake /proc root
+    def test_the_identity_recheck_keeps_carriers_and_skips_recycled_pids(self):
+        with tempfile.TemporaryDirectory() as folder:
+            proc = Path(folder)
+            for pid, start in (('610', '5'), ('611', '999')):
+                entry = proc / pid
+                entry.mkdir()
+                # state pgrp session ... starttime(19): a full stat shape per pid.
+                (entry / 'stat').write_text(f'{pid} (x) S 1 77 77 0 -1 4194304 ' + '0 ' * 12 + f'{start}')
+            unreadable = proc / '612'
+            unreadable.mkdir()  # no stat file: the kill-time read fails
+            belongs = owned_process._identity_check(5, proc=proc)
+            self.assertTrue(belongs(610), 'a matching starttime is the scanned process: execs and scrubs keep it')
+            self.assertFalse(belongs(611), 'a different starttime is a recycled pid: skip the kill')
+            self.assertTrue(belongs(612), 'an unreadable entry keeps the kill (bias toward the scan)')
+            self.assertTrue(owned_process._identity_check(None, proc=proc)(610),
+                            'a scan without a starttime keeps the kill')
+            self.assertTrue(owned_process._identity_check(5, proc=proc)(613),
+                            'a vanished pid cannot be re-checked; the scan owned it')
+
+    # Value: protects=the exit-bounded post-exit group scan seam (#404 review);
+    # fails_when=a scan drops the exit boundary — the pin does not reserve the
+    # numeric group id, so an unbounded scan could name a recycled group;
+    # seam=owned_process._post_exit_group_sweep with a recorded terminate_group
+    def test_the_post_exit_group_sweep_keeps_the_boundary(self):
+        with mock.patch.object(owned_process, 'terminate_group', return_value=[]) as sweep:
+            owned_process._post_exit_group_sweep(77, boundary=10, token_value='tok')
+        self.assertEqual(sweep.call_args.kwargs, {'started_before': 10, 'token_value': 'tok'},
+                         'the pin does not reserve the id: the scan keeps the boundary')
+
+    # Value: protects=the numeric fallback gate of the pinned group signal (#404 review);
+    # fails_when=a pidfd error on a reaped child falls back to a numeric killpg
+    # that a recycled group could receive, or an unreaped child loses its fallback;
+    # seam=owned_process._signal_group with a recorded os.killpg
+    def test_the_group_signal_refuses_the_numeric_fallback_on_a_reaped_child(self):
+        class Process:
+            def __init__(self, reaped, pid=424242):
+                self._reaped = reaped
+                self.pid = pid
+
+            def poll(self):
+                return 0 if self._reaped else None
+
+        refused = Process(reaped=True)
+        killpg_calls = []
+        with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                               side_effect=OSError(errno.ESRCH, 'no process')), \
+                mock.patch.object(owned_process.os, 'killpg',
+                                  side_effect=lambda pid, sig: killpg_calls.append(pid)):
+            owned_process._signal_group(refused, pinned=9)
+            self.assertEqual(killpg_calls, [], 'ESRCH through the pin must not degrade to a numeric killpg')
+            # A pinned group signal never falls back numerically: the owner can
+            # reap the child between any liveness check and the call, so the
+            # per-pid pinned sweeps beside this pass are the only stops.
+            unreaped = Process(reaped=False)
+            owned_process._signal_group(unreaped, pinned=9)
+            with mock.patch.object(owned_process.signal, 'pidfd_send_signal',
+                                   side_effect=AttributeError('no pidfd_send_signal')):
+                owned_process._signal_group(refused, pinned=9)
+                owned_process._signal_group(unreaped, pinned=9)
+            self.assertEqual(killpg_calls, [],
+                             'a pinned group signal never degrades to a numeric killpg')
+        # Without pidfd support at all, the numeric kill stays gated on an
+        # unreaped child, whose id the zombie or the live members still hold.
+        pinless_alive = Process(reaped=False)
+        pinless_gone = Process(reaped=True)
+        delivered = []
+        with mock.patch.object(owned_process.os, 'killpg',
+                               side_effect=lambda pid, sig: delivered.append(pid)) as killpg:
+            owned_process._signal_group(pinless_alive, pinned=None)
+            owned_process._signal_group(pinless_gone, pinned=None)
+            self.assertEqual(delivered, [pinless_alive.pid],
+                             'the pinless numeric kill runs only while the child is unreaped')
+
+    # Value: protects=the tail's spared-member cleanup and its honest outcome (#404 review);
+    # fails_when=a tokenless member forked after the boundary survives the run
+    # unnamed, a healthy exit runs the group signal needlessly, or a failed
+    # signal lets the run report clean while a spared member survives;
+    # seam=_tail_group_signal with recorded and failing _signal_group shapes
+    def test_the_tail_group_signal_reports_its_outcome(self):
+        process = type('Probe', (), {'pid': 424242, 'poll': lambda self: 0})()
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered') as signal_mock:
+            note, error = owned_process._tail_group_signal(process, 9, True)
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL:')
+            self.assertIsNone(error, 'a delivered signal is a completed cleanup')
+            self.assertEqual(signal_mock.call_count, 1)
+        with mock.patch.object(owned_process, '_signal_group', return_value='empty') as signal_mock:
+            note, error = owned_process._tail_group_signal(process, 9, True)
+            self.assertIsNone(note, 'an emptied group is an ESRCH no-op, not a stop')
+            self.assertIsNone(error)
+            self.assertEqual(signal_mock.call_count, 1)
+        with mock.patch.object(owned_process, '_signal_group', return_value='failed'):
+            note, error = owned_process._tail_group_signal(process, 9, True)
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error, 'a failed signal must never read as a clean teardown')
+        with mock.patch.object(owned_process, '_signal_group',
+                               side_effect=AssertionError('must not run without members or a pin')) as signal_mock:
+            note, error = owned_process._tail_group_signal(process, None, True)
+            self.assertIsNone(note)
+            self.assertIsNone(error)
+            self.assertEqual(signal_mock.call_count, 0, 'no pin: the numeric tail signal stays off')
+            note, error = owned_process._tail_group_signal(process, 9, False)
+            self.assertIsNone(note)
+            self.assertIsNone(error)
+            self.assertEqual(signal_mock.call_count, 0, 'no members at exit: no signal')
+
+    # Value: protects=the tail's spared-member cleanup end to end (#404 review);
+    # fails_when=a tokenless member forked after the boundary survives the run
+    # unnamed, or a healthy exit runs the group signal needlessly;
+    # seam=the runners' tails with a recorded _signal_group
+    def test_the_tail_runs_the_pinned_group_signal_only_for_escaped_members(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'tail-signal.log'
+            log.write_text('')
+            marker = Path(folder) / 'same-group.pid'
+            command = [PYTHON, '-c', """
+import os, subprocess, sys
+scrubbed = {k: v for k, v in os.environ.items() if k != 'FORTRESS_OWNED_RUN'}
+member = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], env=scrubbed)
+open(sys.argv[1] + '.tmp', 'w').write(str(member.pid))
+os.rename(sys.argv[1] + '.tmp', sys.argv[1])
+""", str(marker)]
+            handle = owned_process.CancelHandle()
+            deliveries = []
+            with mock.patch.object(owned_process, '_signal_group',
+                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg) or 'delivered'):
+                with self.assertRaises(owned_process.EscapedDescendants):
+                    owned_process.run(command, {}, log, 20, cancel=handle)
+            self.assertEqual(len(deliveries), 1,
+                             'the tail stops what the bounded scans had to spare through the pinned signal')
+            self.assertIn('OWNED_PROCESS_GROUP_SIGNAL:', log.read_text(),
+                          'the delivered group signal reaches the run log')
+            member_pid = int(marker.read_text())
+            deadline = time.monotonic() + 10
+            while not terminated(member_pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(terminated(member_pid),
+                            'the spared member must not outlive the run')
+            healthy_log = Path(folder) / 'tail-clean.log'
+            healthy_log.write_text('')
+            with mock.patch.object(owned_process, '_signal_group',
+                                   side_effect=lambda process_arg, pinned_arg: deliveries.append(pinned_arg) or 'delivered'):
+                owned_process.run([PYTHON, '-c', 'import sys; sys.exit(0)'], {}, healthy_log, 10, cancel=handle)
+            self.assertEqual(len(deliveries), 1,
+                             'a healthy exit with no survivors never runs the group signal')
+            self.assertNotIn('OWNED_PROCESS_GROUP_SIGNAL', healthy_log.read_text())
+            failed_log = Path(folder) / 'tail-failed.log'
+            failed_log.write_text('')
+            with mock.patch.object(owned_process, '_signal_group', return_value='failed'):
+                with self.assertRaises(owned_process.EscapedDescendants):
+                    owned_process.run(command, {}, failed_log, 20, cancel=handle)
+            self.assertIn('OWNED_PROCESS_GROUP_SIGNAL_FAILED:', failed_log.read_text(),
+                          'a failed group signal is surfaced as an incomplete-cleanup diagnostic')
+
+    # Value: protects=the pin lifecycle of every owned run (#404);
+    # fails_when=a run never pins its leader, or leaves the pin descriptor open;
+    # seam=owned_process.run with a recording pidfd_open
+    def test_the_run_pin_spans_spawn_to_the_final_sweep(self):
+        real_open = os.pidfd_open
+        opened = []
+
+        def recording_open(pid, *args):
+            descriptor = real_open(pid, *args)
+            opened.append((pid, descriptor))
+            return descriptor
+
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'pin.log'
+            log.write_text('')
+            with mock.patch('os.pidfd_open', recording_open):
+                returncode, output = owned_process.run([PYTHON, '-c', 'import sys; sys.exit(0)'], {}, log, 10)
+        self.assertEqual(returncode, 0, 'the control only binds on a healthy run')
+        child_pins = [pid for pid, _ in opened]
+        self.assertEqual(len(child_pins), 1, 'the run pins its leader exactly once')
+        for _, descriptor in opened:
+            self.assertFalse(Path(f'/proc/self/fd/{descriptor}').exists(),
+                             'the pin is released once the final sweep is done')
 
 
 if __name__ == '__main__':
