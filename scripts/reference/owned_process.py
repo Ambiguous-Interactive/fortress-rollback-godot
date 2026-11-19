@@ -915,8 +915,8 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None, 
         while True:
             try:
                 remaining = verify(scan_boundary)
-            except OSError:
-                remaining = [object()]  # An unreadable scan is not evidence of a stop.
+            except (OSError, ValueError):
+                remaining = [object()]  # A failed scan is not evidence of a stop.
             if not remaining:
                 confirmed = True
                 break
@@ -929,13 +929,13 @@ def _tail_group_signal(process, pinned, group_alive, verify=None, contain=None, 
             # sweep stops and names them, then the scan confirms the outcome.
             try:
                 contained = contain(scan_boundary)
-            except OSError:
+            except (OSError, ValueError):
                 contained = None  # The failure verdict continues without the sweep.
             deadline = time.monotonic() + GROUP_SIGNAL_VERIFY_SECONDS
             while not confirmed:
                 try:
                     remaining = verify(send_boundary)
-                except OSError:
+                except (OSError, ValueError):
                     remaining = [object()]
                 if not remaining:
                     confirmed = True
@@ -1818,9 +1818,10 @@ def _collect(process, deadline, on_exit=None):
             if leaf is not None:
                 try:
                     group_alive = bool(cgroup_members(leaf))
-                except OSError:
-                    # An unreadable leaf is not evidence of an empty one: keep
-                    # the tail armed so its scans fail closed (#411).
+                except (OSError, ValueError):
+                    # An unreadable or unbounded record is a failed observation,
+                    # not evidence of an empty one: keep the tail armed so its
+                    # scans fail closed (#411 review).
                     group_alive = True
             else:
                 group_alive = bool(group_members(process.pid))

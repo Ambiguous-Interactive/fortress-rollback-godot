@@ -2088,6 +2088,27 @@ time.sleep(60)
             note, error = owned_process._tail_group_signal(process, 9, True, verify=unreadable)
             self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
             self.assertIsNotNone(error)
+        # A failed-observation ValueError from the membership record (the
+        # vanished-but-listed and process-bound shapes) lands in the same
+        # failed-cleanup verdict instead of crashing the tail (#411 review).
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0]):
+            def unbounded(boundary):
+                raise ValueError('owned process scan exceeded its process bound')
+
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=unbounded)
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error)
+        with mock.patch.object(owned_process, '_signal_group', return_value='delivered'), \
+                mock.patch.object(owned_process.time, 'monotonic', side_effect=[0.0, 10.0, 20.0, 30.0]), \
+                mock.patch.object(owned_process.time, 'sleep', lambda _seconds: None):
+            def vanishing(boundary):
+                raise ValueError('leaf member 90 vanished from /proc while the record still lists it')
+
+            note, error = owned_process._tail_group_signal(process, 9, True, verify=vanishing,
+                                                           contain=lambda boundary: [])
+            self.assertRegex(note or '', r'OWNED_PROCESS_GROUP_SIGNAL_FAILED:')
+            self.assertIsNotNone(error)
         # The failed send keeps its own note and skips the verification: there
         # is nothing delivered to verify.
         with mock.patch.object(owned_process, '_signal_group', return_value='failed') as signal_mock:
@@ -3180,6 +3201,19 @@ class CgroupContainmentTests(unittest.TestCase):
                 returncode, output = owned_process.run([PYTHON, '-c', 'print("clean")'], os.environ, log, 30)
             self.assertEqual(returncode, 0)
             self.assertIn('clean', output)
+
+    def test_a_failing_membership_record_keeps_the_run_fail_closed(self):
+        """A record ValueError (bound or vanished-listed) fails the run as an anomaly, never a clean result."""
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'run.log'
+            leaf = self.fake_leaf(folder, [])
+            with mock.patch.object(owned_process, '_claim_cgroup', return_value=leaf), \
+                    mock.patch.object(owned_process, 'cgroup_members',
+                                      side_effect=ValueError('owned process scan exceeded its process bound')):
+                with self.assertRaises(ValueError):
+                    owned_process.run([PYTHON, '-c', 'print("ok")'], os.environ, log, 30)
+            self.assertIn('OWNED_PROCESS_SWEEP_ANOMALY', log.read_text(),
+                          'the failed observation reaches the run log as the sweep anomaly')
 
     def test_a_contained_run_sweeps_membership_and_names_its_leaf_carrier(self):
         """The end-to-end containment proof: the tail kills exactly the leaf, strangers aside."""
