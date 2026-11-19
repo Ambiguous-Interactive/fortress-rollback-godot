@@ -3053,6 +3053,29 @@ class CgroupContainmentTests(unittest.TestCase):
             self.assertIsNone(owned_process._claim_cgroup(4242, 'tok4', proc=proc, mountinfo=mountinfo),
                               'a cgroup outside the mount root cannot claim a leaf there')
 
+    def test_the_claim_tries_every_cgroup2_mount(self):
+        """Layered mounts are each attempted: the first viable one wins, the rest fall through."""
+        with tempfile.TemporaryDirectory() as folder:
+            mount = Path(folder) / 'cgroup'
+            (mount / 'scope').mkdir(parents=True)
+            later = Path(folder) / 'later'
+            (later / 'scope').mkdir(parents=True)
+            proc = Path(folder) / 'proc'
+            (proc / 'self').mkdir(parents=True)
+            (proc / 'self' / 'cgroup').write_text('0::/scope\n')
+            mountinfo = Path(folder) / 'mountinfo'
+            # A prior mount that cannot hold the leaf (a file where the base must be)
+            # is skipped for the later viable one (#411 review).
+            blocked = Path(folder) / 'blocked'
+            blocked.write_text('not a directory')
+            mountinfo.write_text(
+                f'36 35 0:40 / {blocked} ro - cgroup2 cgroup rw\n'
+                f'37 35 0:41 / {later} rw - cgroup2 cgroup rw\n')
+            leaf = owned_process._claim_cgroup(4242, 'tok', proc=proc, mountinfo=mountinfo)
+            self.assertEqual(leaf, later / 'scope' / 'fortress-owned-tok',
+                             'the first viable mount claims the leaf; the failed one falls through')
+            self.assertFalse((Path(folder) / 'blocked' / 'fortress-owned-tok').exists())
+
     def test_the_claim_falls_back_without_the_mechanism(self):
         """cgroup v1, a missing cgroup2 mount and an unwritable base all keep the numeric scans."""
         with tempfile.TemporaryDirectory() as folder:

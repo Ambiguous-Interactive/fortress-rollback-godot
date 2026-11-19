@@ -578,20 +578,32 @@ def _claim_cgroup(pid, token_value, proc=None, mountinfo=None):
     leaf = None
     try:
         base = _unified_cgroup_path(proc)
-        mounted = _cgroup2_mount(mountinfo)
-        if base is None or mounted is None:
+        mounts = _cgroup2_mounts(mountinfo)
+        if base is None or not mounts:
             return None
-        mount, mount_root = mounted
-        relative = _relative_leaf_base(base, mount_root)
-        if relative is None:
-            # The process's cgroup is not under this mount's visible root:
-            # no leaf can be created here, so the fallback decides.
-            return None
-        parent = mount if not relative else mount / relative
-        leaf = parent / (CGROUP_LEAF_PREFIX + token_value)
-        leaf.mkdir(parents=False)
-        (leaf / 'cgroup.procs').write_text(f'{pid}\n')
-        return leaf
+        failure = None
+        for mount, mount_root in mounts:
+            # Each cgroup2 mount gets one claim attempt: a mount whose root
+            # cannot show the caller's cgroup is skipped for the next, and a
+            # mount that refuses the leaf falls through to a later one before
+            # the documented fallback decides (#411 review).
+            relative = _relative_leaf_base(base, mount_root)
+            if relative is None:
+                continue
+            parent = mount if not relative else mount / relative
+            leaf = parent / (CGROUP_LEAF_PREFIX + token_value)
+            try:
+                leaf.mkdir(parents=False)
+                (leaf / 'cgroup.procs').write_text(f'{pid}\n')
+                return leaf
+            except OSError as error:
+                failure = failure or error
+                try:
+                    leaf.rmdir()
+                except OSError:
+                    pass  # A failed teardown strands one empty leaf; the claim tries on.
+                leaf = None
+        return None
     except OSError:
         if leaf is not None:
             try:
@@ -636,21 +648,24 @@ def _unified_cgroup_path(proc=None):
     return None
 
 
-def _cgroup2_mount(mountinfo=None):
-    """The mounted cgroup2 hierarchy's root directory and mount root; None when absent.
+def _cgroup2_mounts(mountinfo=None):
+    """Every mounted cgroup2 hierarchy as (mount point, mount root) pairs.
 
     /proc/self/mountinfo rows place the mount point in the fifth field, the
     mount's root in the third, and the filesystem type after the '-'
     separator. The mount root is returned beside the mount point because a
     delegated subtree mount shows its root at the mount point, and the
-    claim maps the process's cgroup path against it (#411 review). A mount
-    point carrying an escaped space (never true of a cgroup mount) is not
-    decoded; the claim's mkdir then fails and the safe fallback decides.
+    claim maps the process's cgroup path against it (#411 review). Every
+    pair is returned, not the first: layered cgroup2 mounts are legal, and
+    the claim tries each in turn (#411 review). A mount point carrying an
+    escaped space (never true of a cgroup mount) is not decoded; the
+    claim's mkdir then fails and the safe fallback decides.
     """
     try:
         rows = (mountinfo or Path('/proc/self/mountinfo')).read_text().splitlines()
     except OSError:
-        return None
+        return []
+    pairs = []
     for row in rows:
         fields = row.split()
         try:
@@ -663,8 +678,8 @@ def _cgroup2_mount(mountinfo=None):
         # than a wrong-but-writable leaf.
         if separator < 5 or len(fields) <= separator + 1 or fields[separator + 1] != 'cgroup2':
             continue
-        return Path(fields[4]), fields[3]
-    return None
+        pairs.append((Path(fields[4]), fields[3]))
+    return pairs
 
 
 def _release_cgroup(process):
