@@ -639,7 +639,7 @@ python3 scripts/oracle/drop_history_launch.py --godot godot
 
 Both pinned engines run this gate in the existing oracle CI leg. The launcher
 executes one-row and four-row single-target cases plus four-row two-target cases,
-each with clean and lost-first-backfill delivery, twice in fresh processes. Four additional grouped four-row cases use unequal exposed confirmation,
+each with clean and lost-first-backfill delivery, twice in fresh processes. Five additional grouped four-row cases use unequal exposed confirmation,
 including first-COMMIT loss alone and combined with first-backfill loss, and a case that loses the coordinator's first prepare. Two further unequal grouped cases lose the first follower ACK, alone and after both earlier losses. It records the pinned
 archive, complete upstream source inventory, local sources and project settings,
 resolved pinned cargo/rustc identities, engine/oracle identities and comparison bytes. Sources and executables must remain unchanged
