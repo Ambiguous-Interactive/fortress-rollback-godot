@@ -49,43 +49,37 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.finish()
 
 
-## The reviewer's asymmetric-acknowledgement shape: every survivor committed,
-## but one follower missed another follower's COMMITTED report. The unconfirmed
-## follower must be able to end the confirmed survivor when the second
-## participant departs, or the two survivors keep different outcomes for the
-## same operation.
+## A single lost follower-to-follower confirmation is repeated by its sender,
+## so the follower becomes confirmed and a later serial departure keeps the
+## one-member freeze instead of ending the match.
 func _asymmetric_ack(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 4, [], 250000, 64, 48)
 	_play(context, mesh, 6, true)
 	_leave(context, mesh, TARGET)
 	var committed: int = _drive_all_commit(context, mesh)
 	var key: String = _id(TARGET).hex_encode()
-	var proposer: Variant = mesh.peers[PROPOSER]._drops.barrier(key)
-	var pending: Variant = mesh.peers[PENDING]._drops.barrier(key)
-	var third: Variant = mesh.peers[SECOND]._drops.barrier(key)
 	for survivor: int in PARTICIPANTS:
 		context.equal(mesh.peers[survivor]._drops.barrier(key).state, Drop.COMMITTED, "every participant committed before the departure")
-	context.equal(mesh.peers[PROPOSER]._drops._commit_confirmed(mesh.peers[PROPOSER], proposer), true, "the proposer received every acknowledgement")
-	context.equal(mesh.peers[PENDING]._drops._commit_confirmed(mesh.peers[PENDING], pending), false, "the follower missed the other follower's acknowledgement")
-	context.equal(mesh.peers[SECOND]._drops._commit_confirmed(mesh.peers[SECOND], third), true, "the other follower received its acknowledgement")
+		context.equal(_confirmed(mesh, survivor), true, "the repeated confirmation reaches every participant")
+	context.equal(int(mesh.get("lost_confirmations", 0)), 1, "the first follower-to-follower confirmation was physically lost")
 	context.equal(mesh.peers[SECOND].close(mesh.now, 7), I.Code.OK, "the acknowledged participant says goodbye")
 	_deliver(context, mesh, _drain(mesh), true)
-	_settle(context, mesh, 800000)
+	var serial_cut: int = _serial_drop(context, mesh, 800000)
+	context.equal(serial_cut >= 0, true, "the serial second departure completes after the lost confirmation")
 	for survivor: int in SURVIVORS:
-		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.TERMINATED, "the asymmetric acknowledgement departure ends every survivor")
-		context.equal(mesh.peers[survivor].status().reason, Types.Code.PROTOCOL_FAILED, "the asymmetric departure names a protocol failure")
-		context.equal(mesh.peers[survivor]._core.frozen_frame(TARGET), committed, "the committed survivors keep their certified freeze")
-		for slot: int in [PENDING, SECOND]:
-			context.equal(mesh.peers[survivor]._core.frozen_frame(slot), -1, "no survivor freezes the later departure")
-	context.equal(mesh.reasons.count("participant_lost"), 2, "the unconfirmed survivor and the accepted abort each name the lost participant")
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the serial departure keeps every survivor running")
+		context.equal(mesh.peers[survivor]._core.frozen_frame(TARGET), committed, "the committed survivors keep their first certified freeze")
+		context.equal(mesh.peers[survivor]._core.frozen_frame(SECOND), serial_cut, "the committed survivors freeze the serial departure")
+	context.equal(mesh.reasons.count("participant_lost"), 0, "one lost confirmation does not end the match")
 
 
-## Drive the drop until all three survivors commit, while the second
-## follower's COMMITTED report never reaches the first follower.
+## Drive the drop until all three survivors commit and confirm, while the first
+## second-follower COMMITTED report to the first follower is lost.
 func _drive_all_commit(context: RefCounted, mesh: Dictionary) -> int:
 	var waited: int = 0
+	mesh["lost_confirmations"] = 0
 	while waited < 800000:
-		if _committed_count(mesh) == PARTICIPANTS.size() and _confirmed(mesh, PROPOSER) and _confirmed(mesh, SECOND):
+		if _committed_count(mesh) == PARTICIPANTS.size() and _all_confirmed(mesh):
 			var barrier: Variant = mesh.peers[PROPOSER]._drops.barrier(_id(TARGET).hex_encode())
 			return int(barrier.cut)
 		mesh.now += 1000
@@ -97,10 +91,40 @@ func _drive_all_commit(context: RefCounted, mesh: Dictionary) -> int:
 			if packet.from == TARGET or packet.to == TARGET:
 				continue
 			if packet.from == SECOND and packet.to == PENDING and _is_committed_report(packet):
-				continue
+				if int(mesh["lost_confirmations"]) == 0:
+					mesh["lost_confirmations"] = 1
+					continue
 			packets.append(packet)
 		_deliver(context, mesh, packets, true)
-	context.equal(false, true, "every participant commits before the asymmetric departure")
+	context.equal(false, true, "every participant commits and confirms before the serial departure")
+	return -1
+
+
+## Keep the remaining survivors playing until they freeze the serial departure.
+func _serial_drop(context: RefCounted, mesh: Dictionary, elapsed: int) -> int:
+	var waited: int = 0
+	while waited < elapsed:
+		var shared: int = -1
+		var done: bool = true
+		for survivor: int in SURVIVORS:
+			var frozen: int = mesh.peers[survivor]._core.frozen_frame(SECOND)
+			if frozen < 0:
+				done = false
+			elif shared < 0:
+				shared = frozen
+			elif shared != frozen:
+				done = false
+		if done:
+			return shared
+		mesh.now += 1000
+		waited += 1000
+		for survivor: int in SURVIVORS:
+			context.equal(mesh.peers[survivor].poll(mesh.now), I.Code.OK, "poll a survivor after the serial departure")
+		var packets: Array[Dictionary] = []
+		for packet: Dictionary in _drain(mesh):
+			if SURVIVORS.has(packet.from) and SURVIVORS.has(packet.to):
+				packets.append(packet)
+		_deliver(context, mesh, packets, true)
 	return -1
 
 
@@ -116,6 +140,14 @@ func _confirmed(mesh: Dictionary, survivor: int) -> bool:
 	var barrier: Variant = mesh.peers[survivor]._drops.barrier(_id(TARGET).hex_encode())
 	return barrier != null and barrier.state == Drop.COMMITTED \
 		and mesh.peers[survivor]._drops._commit_confirmed(mesh.peers[survivor], barrier)
+
+
+## True when every participant confirms the target's committed operation.
+func _all_confirmed(mesh: Dictionary) -> bool:
+	for survivor: int in PARTICIPANTS:
+		if not _confirmed(mesh, survivor):
+			return false
+	return true
 
 
 ## The participants that already committed the target's barrier.

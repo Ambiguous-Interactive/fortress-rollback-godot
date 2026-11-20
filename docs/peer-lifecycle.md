@@ -220,14 +220,20 @@ committed (`active.phase != CoordinatedDropPhase::Committed`,
 there could keep running while a pending one failed closed. This tier uses its
 commit acknowledgements to extend the check to a committed operation that is
 not closed everywhere. That is a deliberate stricter behavior for the fixed
-participant set, not a claim of complete pinned parity. A survivor that has not
-observed every confirmation ends the match when a participant departs, and it
-broadcasts a `participant_lost` abort. A committed survivor accepts that abort
-even when its own local acknowledgements look complete, so the unconfirmed
-survivor can end the whole operation instead of leaving one participant
-running. A lost abort never makes two survivors continue on divergent
-histories: only the survivor that received every confirmation can keep
-running.
+participant set, not a claim of complete pinned parity. A committed follower
+repeats its own confirmation for a bounded window, so one lost
+follower-to-follower report does not turn a later serial departure into a
+terminal case. If a participant departs before its own confirmation reached a
+committed survivor, that survivor ends the match and broadcasts a
+`participant_lost` abort. The coordinator needs no separate confirmation: its
+own COMMIT is the acknowledgement every survivor received, so its departure is
+a serial drop. A committed survivor accepts that abort even when its
+own local acknowledgements look complete, so the unconfirmed survivor can end
+the whole operation instead of leaving one participant running. The sender
+holds the match and repeats the abort for a bounded window; the accepting
+survivor acknowledges it before ending, so a matching abort stops the retries.
+A lost abort never makes two survivors continue on divergent histories: only
+the survivor that received every confirmation can keep running.
 
 A certificate that names another value ends the match with
 `peer_drop_unconfirmed` and the reason `conflicting_history`, because the

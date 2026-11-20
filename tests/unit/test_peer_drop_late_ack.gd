@@ -109,8 +109,11 @@ func _participant_loss(context: RefCounted) -> void:
 	context.equal(proposer.state, Drop.COMMITTED, "departure never revokes the original irreversible decision")
 	context.equal(proposer.acknowledged.has(_id(1).hex_encode()), false, "the departed participant never acknowledged the commit")
 	mesh.now = proposer.started_us + 250000
-	for turn: int in range(3):
-		context.equal(mesh.peers[0].poll(mesh.now), I.Code.TERMINATED, "the committed survivor ends the match with the lost participant")
+	var terminated: bool = false
+	for turn: int in range(6):
+		var polled: int = mesh.peers[0].poll(mesh.now)
+		context.equal(polled in [I.Code.OK, I.Code.TERMINATED], true, "the committed survivor holds the match while its abort retries")
+		terminated = terminated or polled == I.Code.TERMINATED
 		for packet: Peer.Packet in mesh.peers[0].drain_outbox():
 			var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
 			context.equal(decoded.code, T.Code.OK, "remaining bounded output retains valid framing")
@@ -118,6 +121,7 @@ func _participant_loss(context: RefCounted) -> void:
 				var original_commit: bool = decoded.message.phase == Drop.Phase.COMMIT and decoded.message.data == original.data
 				context.equal(original_commit, false, "no COMMIT retry addresses the departed participant")
 		mesh.now += Drop.RETRY_US
+	context.equal(terminated, true, "the committed survivor ends the match with the lost participant")
 	context.equal(mesh.reasons.count("participant_lost"), 1, "the committed survivor names the lost participant once")
 	context.equal(mesh.peers[0].status().lifecycle, Types.Lifecycle.TERMINATED, "the committed operation closes with the match")
 	context.equal(mesh.peers[0].status().reason, Types.Code.PROTOCOL_FAILED, "the terminal cause is the protocol failure")

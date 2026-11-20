@@ -10,6 +10,7 @@ func cases() -> PackedStringArray:
 		"early_committed_ack", "wrong_sender_commit", "commit_deadline",
 		"duplicate_ready_control", "contradictory_ready_cut", "contradictory_ready_digest",
 		"drained_commit_pins_the_frontier", "refused_checksum_pins_the_frontier",
+		"held_commit_early_confirmation",
 	])
 
 
@@ -31,6 +32,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_drained_commit_pins_the_frontier(context)
 		"refused_checksum_pins_the_frontier":
 			_refused_checksum_pins_the_frontier(context)
+		"held_commit_early_confirmation":
+			_held_commit_early_confirmation(context)
 		_:
 			_commit_ack(context, bool(SCENARIOS[name]))
 	context.finish()
@@ -395,6 +398,33 @@ func _committed_mutations(message: T.Message) -> Array[Dictionary]:
 	targets[1] += 1
 	mutations.append({"data": targets})
 	return mutations
+
+
+# Value: protects=a follower keeps a confirmation that arrives before its COMMIT; fails_when=the later commit loses it; why_new=COMMIT delivery order; seam=none
+func _held_commit_early_confirmation(context: RefCounted) -> void:
+	var mesh: Dictionary = _held_fixture(context, Drop.Phase.COMMIT, Drop.Stage.NONE, 1, 4)
+	if mesh.held.is_empty():
+		return
+	var commit: Dictionary = mesh.held[0]
+	var follower: Drop.Barrier = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
+	context.equal(follower.state, Drop.PENDING, "the held COMMIT keeps the follower pending")
+	context.equal(bool(follower.certified), true, "the pending follower certified the value")
+	for tick: int in range(20):
+		_service_commit(context, mesh)
+		if follower.commit_acks.has(_id(3).hex_encode()):
+			break
+	context.equal(follower.commit_acks.has(_id(3).hex_encode()), true, "the follower retained the earlier confirmation")
+	context.equal(follower.state, Drop.PENDING, "the retained confirmation does not apply the held COMMIT")
+	mesh.hold_phase = -1
+	_release_original(context, mesh, commit)
+	for round_trip: int in range(6):
+		_deliver(context, mesh, _drain(mesh))
+	context.equal(follower.state, Drop.COMMITTED, "the released COMMIT applies after the early confirmation")
+	context.equal(mesh.peers[1]._drops._commit_confirmed(mesh.peers[1], follower), true, "the retained confirmation closes the follower")
+	var cuts: Array[int] = _cuts(mesh, [0, 1, 3])
+	context.equal(cuts[0] >= 0, true, "the operation commits")
+	for index: int in range(cuts.size()):
+		context.equal(cuts[index], cuts[0], "every survivor agrees the commit")
 
 
 # Value: protects=committed handshake rejects foreign identity/value; fails_when=bad ACK completes or duplicate COMMIT re-ACKs; why_new=post-drop validation; seam=none

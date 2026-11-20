@@ -110,7 +110,7 @@ EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {
 EXPECTED['res://tests/unit/test_peer_drop_commit.gd'] = {
     'clean_ack_quiescence', 'lost_first_ack_recommits', 'malformed_committed_ack', 'malformed_duplicate_commit',
     'early_committed_ack', 'wrong_sender_commit', 'commit_deadline', 'duplicate_ready_control', 'contradictory_ready_cut', 'contradictory_ready_digest',
-    'drained_commit_pins_the_frontier', 'refused_checksum_pins_the_frontier'}
+    'drained_commit_pins_the_frontier', 'refused_checksum_pins_the_frontier', 'held_commit_early_confirmation'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'paused_final_tail', 'readable_layout'})
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'single_frame', 'single_frame_end', 'single_frame_control', 'host_loss', 'host_loss_control'})
 EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'callbacks', 'timeout', 'idle_confirmation'}
