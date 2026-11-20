@@ -226,7 +226,7 @@ def main():
             godot = parse_godot(stdout, stderr)
             evidence[name] = compare(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup, prepare_loss)
             controls.extend(name + ':' + control for control in negative_controls(
-                source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup))
+                source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup, prepare_loss))
             scenarios[name] = {'source': source, 'godot': godot}
         controls.extend(wrapped_evidence_controls(scenarios['unequal-clean'], scenarios['wrapped-clean']))
         controls.extend(loss_evidence_controls(scenarios['clean'], scenarios['lost-history']))

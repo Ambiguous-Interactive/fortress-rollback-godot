@@ -426,7 +426,8 @@ def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=F
             'lost_first_inventory_recovered': inventory_loss, 'lost_first_prepare_recovered': prepare_loss, 'source_donor_emission_and_receipt': True, 'Godot_donor_receipt': True}
 
 
-def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=False, commit_loss=False, ack_loss=False, inventory_loss=False, warmup=0):
+def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=False, commit_loss=False, ack_loss=False,
+                      inventory_loss=False, warmup=0, prepare_loss=False):
     def shared_wrong_history(source, godot):
         for trace in (source, godot):
             trace['survivors'][0]['rows'][8]['inputs'][2] = '00000000'
@@ -528,7 +529,7 @@ def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1,
     mutations['Godot_history_roster_digest'] = ('Godot barrier roster digest', godot_byte_mutation(
         ('history_emissions', 'lost_history', 'history_receipts'), -1))
     mutations['Godot_prepare_roster_digest'] = ('Godot barrier roster digest',
-        godot_byte_mutation(('prepare_emissions', 'prepare_receipts'), -1))
+        godot_byte_mutation(('prepare_emissions', 'prepare_receipts', 'lost_prepare'), -1))
     mutations['Godot_inventory_roster_digest'] = ('Godot barrier roster digest', godot_byte_mutation(
         ('inventory_emissions', 'inventory_receipts', 'lost_inventory'), -1))
     mutations['Godot_commit_roster_digest'] = ('Godot barrier roster digest', godot_byte_mutation(
@@ -540,7 +541,7 @@ def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1,
     mutations['Godot_history_donor_byte'] = ('Godot history packet original bytes',
         godot_byte_mutation(('history_emissions', 'lost_history', 'history_receipts'), 98 + 3 * target_slots))
     mutations['Godot_prepare_phase_byte'] = ('Godot exact original prepare',
-        godot_byte_mutation(('prepare_emissions', 'prepare_receipts'), 44))
+        godot_byte_mutation(('prepare_emissions', 'prepare_receipts', 'lost_prepare'), 44))
     mutations['Godot_inventory_receipt_byte'] = ('Godot exact original inventory',
         godot_byte_mutation(('inventory_emissions', 'inventory_receipts', 'lost_inventory'), -9))
 
@@ -599,6 +600,33 @@ def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1,
     mutations['malformed_Godot_acknowledgement_emissions'] = ('Godot acknowledgement emissions', lambda s, g: g.update(ack_emissions=None))
     mutations['corrupt_Godot_acknowledgement'] = ('Godot exact certified acknowledgement', lambda s, g: g['ack_emissions'][0].update(
         packet=g['ack_emissions'][0]['packet'][:128] + '00' + g['ack_emissions'][0]['packet'][130:]))
+    if prepare_loss:
+        def remove_source_prepare_retries(source, godot):
+            first = source['lost_prepare'][0]
+            retained = [packet for packet in source['controls']
+                        if packet['emission'] == first['emission'] or not same(payload(packet), payload(first))]
+            indices = {packet['emission']: index for index, packet in enumerate(retained)}
+            for bank in ('controls', 'received_controls', 'lost_prepare', 'lost_history', 'lost_commit', 'lost_ack', 'lost_inventory'):
+                source[bank] = [{**packet, 'emission': indices[packet['emission']]}
+                                for packet in source[bank] if packet['emission'] in indices]
+
+        def remove_godot_prepare_retries(source, godot):
+            first = godot['lost_prepare'][0]
+            retained = [packet for packet in godot['prepare_emissions']
+                        if packet['emission'] == first['emission'] or not same(payload(packet), payload(first))]
+            indices = {packet['emission']: index for index, packet in enumerate(retained)}
+            for bank in ('prepare_emissions', 'prepare_receipts', 'lost_prepare'):
+                godot[bank] = [{**packet, 'emission': indices[packet['emission']]}
+                               for packet in godot[bank] if packet['emission'] in indices]
+
+        mutations['missing_source_prepare_loss'] = ('source prepare loss count', lambda s, g: s.update(lost_prepare=[]))
+        mutations['missing_Godot_prepare_loss'] = ('Godot prepare loss count', lambda s, g: g.update(lost_prepare=[]))
+        mutations['delivered_lost_Godot_prepare'] = ('Godot prepare emission/loss/receipt accounting', lambda s, g:
+            g['prepare_receipts'].insert(0, copy.deepcopy(g['lost_prepare'][0])))
+        mutations['delivered_lost_source_prepare'] = ('source emission/loss/receipt accounting', lambda s, g:
+            s['received_controls'].insert(0, copy.deepcopy(s['lost_prepare'][0])))
+        mutations['missing_source_prepare_retry'] = ('source exact prepare retry receipt', remove_source_prepare_retries)
+        mutations['missing_Godot_prepare_retry'] = ('Godot exact prepare retry receipt', remove_godot_prepare_retries)
     if ack_loss:
         mutations['missing_source_acknowledgement_loss'] = ('source acknowledgement loss count', lambda s, g: s.update(lost_ack=[]))
         mutations['missing_Godot_acknowledgement_loss'] = ('Godot acknowledgement loss count', lambda s, g: g.update(lost_ack=[]))
@@ -610,7 +638,7 @@ def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1,
         candidate_source, candidate_godot = copy.deepcopy(source), copy.deepcopy(godot)
         mutate(candidate_source, candidate_godot)
         try:
-            compare(candidate_source, candidate_godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup)
+            compare(candidate_source, candidate_godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup, prepare_loss)
         except ValueError as error:
             require(str(error) == 'drop history: ' + diagnostic, name + ' unrelated failure: ' + str(error))
         else:
