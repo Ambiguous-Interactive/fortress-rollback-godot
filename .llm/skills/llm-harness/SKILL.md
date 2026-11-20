@@ -16,7 +16,8 @@ to the [Agent Skills](https://agentskills.io) `SKILL.md` standard.
 ## Invariants (all enforced by tooling)
 
 1. **Length caps**: 300 lines hard limit for scoped markdown (soft warning at
-   270; "at limit" = critical); 50 lines for pointer files. Enforced by
+   270; "at limit" = critical); 180 lines for root `PLAN.md` (soft warning at
+   150); 50 lines for pointer files. Enforced by
    `scripts/llm/check_llm_file_lengths.py`.
 2. **Generated files are never hand-edited**: `.llm/skills/index.md`,
    `.claude/skills/*/SKILL.md`, `.agents/skills/*/SKILL.md`. CI regenerates
@@ -47,6 +48,22 @@ Commit regenerated index + stubs together with the new skill.
 - Rules stay one line each and link the owning skill — never duplicate skill
   content here (the skill is the depth; the context is the map).
 - After edits: `make llm-index && make lint-llm`.
+
+## Editing `PLAN.md`
+
+The root plan is a map, not a status log. It gets its own 180-line cap
+(over = error, at = critical, >150 warns with `--verbose`) enforced by the
+same length checker in hooks and CI.
+
+- Keep: purpose, durable product decisions, architecture boundaries, epic
+  gates, open-work pointers, the "where truth lives" table and the session loop.
+- Move: task status/dependencies to GitHub issues, contracts and evidence to
+  `docs/`, past work to git history/CHANGELOG/retrospectives, session narrative
+  to machine-local `progress/`, and reusable procedure to skills.
+- Delete completed or obsolete entries every session. Do not paste session
+  results into an existing section.
+- After editing: `make lint-llm`. Rationale and evidence:
+  [plan hygiene](../../knowledge/plan-hygiene.md).
 
 ## Tooling Map
 

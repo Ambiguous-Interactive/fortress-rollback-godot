@@ -79,3 +79,23 @@ on activation (recommended < 5000 tokens, file < 500 lines); `scripts/`,
   `POINTER_FILES` entries.
 - Consider `skills-ref validate` (agentskills reference validator) in CI as
   a second opinion once skills grow beyond ~20.
+
+## Plan Documents Stay Small (2026-11-20)
+
+Always-loaded navigation competes for a finite attention budget. Anthropic's
+[context-engineering guidance](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
+describes context rot: recall degrades as the window fills, so the goal is the
+smallest set of high-signal tokens. It also recommends progressive disclosure,
+where lightweight identifiers (paths, links, queries) load detail just in time.
+The [AGENTS.md](https://agents.md) standard calls instruction files living
+documentation, not an archive.
+
+Applied here: root `PLAN.md` is a navigation map with a 180-line cap. Task
+status and dependencies stay in GitHub issues, contracts and evidence in
+`docs/`, session narrative in machine-local `progress/`, and durable lessons
+in `.llm/`. The repository measured the failure mode before fixing it: the
+plan reached 954 lines / 82,843 bytes because sessions appended status prose
+without pruning; the audited map is 146 lines / 13,218 bytes. Enforcement is
+red-green tested in `scripts/tests/test_llm_length_linter.py` and
+`scripts/tests/test_llm_repo_state.py`; see
+[plan hygiene](../knowledge/plan-hygiene.md).

@@ -73,6 +73,11 @@ until a skill is activated, so keep bodies focused and link to
    what became stale, and record the outcome — skip only with an
    explicit waiver (see
    [retrospective](./skills/retrospective/SKILL.md)).
+8. **Keep `PLAN.md` a map, not a log.** It holds scope, decisions,
+   architecture, milestone gates and open-work pointers only; issues,
+   docs, retrospectives and `progress/` own status and evidence. It is
+   capped at 180 lines (see
+   [plan hygiene](./knowledge/plan-hygiene.md)).
 
 ## Session delivery and copy
 

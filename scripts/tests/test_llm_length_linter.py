@@ -81,6 +81,22 @@ class CheckFileTest(unittest.TestCase):
         self.assertFalse(any(f.path == index for f in scope))
         self.assertEqual(scope, [])
 
+    def test_plan_over_limit_is_error(self):
+        path = write_lines(self.root / "PLAN.md", llm_paths.PLAN_MAX_LINES + 1)
+        findings = checker.check_plan(path)
+        self.assertEqual([f.level for f in findings], ["error"])
+
+    def test_plan_at_limit_is_critical(self):
+        path = write_lines(self.root / "PLAN.md", llm_paths.PLAN_MAX_LINES)
+        findings = checker.check_plan(path)
+        self.assertEqual([f.level for f in findings], ["critical"])
+
+    def test_plan_missing_is_error(self):
+        findings = checker.check_plan(self.root / "PLAN.md")
+        self.assertEqual([f.level for f in findings], ["error"])
+
+
+
 
 class StagedModeTest(unittest.TestCase):
     def setUp(self):
