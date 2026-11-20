@@ -132,6 +132,8 @@ static func body_size(message: T.Message, bounds: T.Limits) -> int:
 				return -1
 			if message.target_set_digest < 0 or message.cut_digest < 0:
 				return -1
+			if message.participants_digest < 0:
+				return -1
 			if not frame(message.cut) or not frame(message.bound) or not frame(message.available_through):
 				return -1
 			if message.chunk_index < 0 or message.chunk_index > 65535:
@@ -144,7 +146,7 @@ static func body_size(message: T.Message, bounds: T.Limits) -> int:
 				return -1
 			if not _targets(message.data, bounds.player_count):
 				return -1
-			return 54 + message.data.size() + message.bytes.size()
+			return T.BARRIER_BODY_BYTES + message.data.size() + message.bytes.size()
 	return -1
 
 

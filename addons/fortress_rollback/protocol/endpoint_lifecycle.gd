@@ -92,6 +92,7 @@ static func receive_control(plan: Dictionary, message: T.Message, packet: Callab
 				"coordinator": message.coordinator,
 				"coordinator_generation": message.coordinator_generation,
 				"target_set_digest": message.target_set_digest,
+				"participants_digest": message.participants_digest,
 				"cut": message.cut,
 				"bound": message.bound,
 				"available_through": message.available_through,

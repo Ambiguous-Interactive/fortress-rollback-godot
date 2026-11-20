@@ -43,6 +43,9 @@ var _manual_operation: int = 0
 var _config: Config = null
 var _peers: Dictionary = {}
 var _ids: Array[PackedByteArray] = []
+## The full fixed roster in slot order, so the coordinated drop can derive the
+## same survivor set on every member; the remote view alone omits this member.
+var _roster: Array[PackedByteArray] = []
 var _slots_by_peer: Array[PackedInt32Array] = []
 # Endpoint indexes that already seeded their slots' expected first frames.
 var _bound_starts: Dictionary = {}
@@ -116,7 +119,7 @@ func _configure(config: Variant, local: Variant, game: Variant, handshake_option
 	var agreed_local: T.Message = local
 	if controls.enabled and controls.disconnect_behavior == L.Disconnect.CONTINUE:
 		# Every target needs an era, a retained interval and its bounded control header.
-		var control_bytes: int = Codec.HEADER_BYTES + 54 + 2 + profile.player_count * 12
+		var control_bytes: int = Codec.HEADER_BYTES + T.BARRIER_BODY_BYTES + 2 + profile.player_count * 12
 		if handshake_options.max_packet_bytes < control_bytes or local.features != 0:
 			return I.Code.INVALID_ARGUMENT
 		var limits: T.Limits = T.Limits.new()
@@ -165,6 +168,8 @@ func _configure(config: Variant, local: Variant, game: Variant, handshake_option
 	_drops.reset()
 	for key: String in keys:
 		_ids.append(remotes[key].duplicate())
+	for slot: int in range(profile.player_count):
+		_roster.append(profile.roster[slot].duplicate())
 	_lifecycle = L.copy_options(controls)
 	_local_connection = local.connection_id.duplicate()
 	_checksums = Checksums.new()

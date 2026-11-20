@@ -3,6 +3,10 @@ extends RefCounted
 
 const FEATURE_RETAINED_DROP: int = 1
 const FEATURE_HISTORY_DROP: int = 3
+## The fixed DROP_BARRIER body bytes before the target list and the payload:
+## the phase, stage, reason and reserved byte, the operation identity, the
+## roster digest, the frame window, the chunk fields and the two length words.
+const BARRIER_BODY_BYTES: int = 62
 
 enum Kind { SYNC_REQUEST = 1, SYNC_REPLY, INPUT, INPUT_ACK, QUALITY_REPORT, QUALITY_REPLY, CHECKSUM_REPORT, KEEP_ALIVE, GOODBYE, FLOOR_REQUEST, FLOOR_REPLY, DROP_BARRIER }
 enum Code { OK, INVALID_TYPE, INVALID_LIMITS, INVALID_MESSAGE, INVALID_PACKET, UNSUPPORTED_VERSION, UNSUPPORTED_KIND, LIMIT_EXCEEDED, IDENTITY_MISMATCH }
@@ -76,6 +80,9 @@ class Message:
 	var coordinator: int = 0
 	var coordinator_generation: int = 0
 	var target_set_digest: int = 0
+	## The coordinated drop barrier carries the survivor roster's digest, so a
+	## receiver can refuse a proposal whose survivor set it cannot reproduce.
+	var participants_digest: int = 0
 	var cut_digest: int = 0
 	var available_through: int = -1
 	var chunk_index: int = 0

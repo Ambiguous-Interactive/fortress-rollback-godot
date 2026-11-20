@@ -69,7 +69,10 @@ Layout-version agreement is separate from the synchronization payload's
 minimum semantic compatibility version. The codec preserves all u8 semantic
 versions so the endpoint can diagnose incompatibility. Layout version 2 adds
 `queue_capacity` to the configuration and `max_packet_bytes` to synchronization
-messages, so version 1 peers are rejected. No
+messages, so version 1 peers are rejected. Layout version 3 adds the
+coordinated drop barrier's survivor roster digest as a trailing bounded u64 of
+every barrier payload, so version 2 peers are rejected and a mixed-layout
+mesh can never negotiate. No
 fallback negotiation is implemented.
 
 ## Message payloads
@@ -91,7 +94,7 @@ values are invalid. A checksum frame and an input start frame are never null.
 | 9 | `GOODBYE` | reason:u8 |
 | 10 | `FLOOR_REQUEST` | round_seq:u32 |
 | 11 | `FLOOR_REPLY` | round_seq:u32, count:u8, floors[count]:i32, nullable |
-| 12 | `DROP_BARRIER` | phase:u8, stage:u8, reason:u8, reserved:u8, coordinator:u16, coordinator_generation:u16, operation:u32, target_set_digest:u64, cut:i32, nullable, bound:i32, nullable, available_through:i32, nullable, cut_digest:u64, chunk_index:u16, chunk_count:u16, witnessed:u8, reserved:u8, target_bytes:u32, target_bytes[target_bytes], value_bytes:u32, value_bytes[value_bytes] |
+| 12 | `DROP_BARRIER` | phase:u8, stage:u8, reason:u8, reserved:u8, coordinator:u16, coordinator_generation:u16, operation:u32, target_set_digest:u64, cut:i32, nullable, bound:i32, nullable, available_through:i32, nullable, cut_digest:u64, chunk_index:u16, chunk_count:u16, witnessed:u8, reserved:u8, target_bytes:u32, target_bytes[target_bytes], value_bytes:u32, value_bytes[value_bytes], participants_digest:u64 |
 
 The codec preserves all u32 feature masks for endpoint agreement checks.
 Input flights carry the same semantics the pinned upstream gives them: the

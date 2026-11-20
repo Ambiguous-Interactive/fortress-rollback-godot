@@ -199,9 +199,9 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
       if (dropAnswer && channel.id === 3) {
         const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
           : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
-        // FRGP v2 DROP_BARRIER, REPORT phase, INVENTORY stage.
+        // FRGP v3 DROP_BARRIER, REPORT phase, INVENTORY stage.
         if (view && view.length >= 100 && view.length <= 1024 && view[0] === 70 && view[1] === 82
-          && view[2] === 71 && view[3] === 80 && view[4] === 2 && view[5] === 0 && view[6] === 12
+          && view[2] === 71 && view[3] === 80 && view[4] === 3 && view[5] === 0 && view[6] === 12
           && view[44] === 2 && view[45] === 1) {
           const hex = Array.from(view, byte => byte.toString(16).padStart(2, '0')).join('');
           if (evidence.answerLoss.dropped === 0) {
