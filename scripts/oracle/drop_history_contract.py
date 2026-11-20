@@ -6,6 +6,20 @@ import struct
 REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
 
 
+def roster_digest(identities):
+    """The Godot barrier payload's roster digest: the shipped FNV over the ASCII
+    lowercase hex of each live roster identity, in roster order. The oracle
+    fixture's three-player mesh keeps one slot per peer, so the survivors are
+    the fixture identities one and two (`[1, 0, ...]` and `[2, 0, ...]`)."""
+    value = 0x14650fb0739d0383
+    for byte in ''.join(identities).encode('ascii'):
+        value = ((value ^ byte) * 1099511628211) & 0x3fffffffffffffff
+    return value or 1
+
+
+FIXTURE_ROSTER_DIGEST = roster_digest(['0100000000000000', '0200000000000000'])
+
+
 def require(condition, label):
     if not condition:
         raise ValueError('drop history: ' + label)
@@ -160,12 +174,12 @@ def check_source_controls(controls, label, missing_rows, target_slots, unequal=F
 def check_godot_packet(raw, missing_rows, target_slots, warmup=0):
     cut = warmup + 7 + missing_rows
     donor_bytes = history_bytes(missing_rows, target_slots, warmup)
-    require(type(raw) is str and len(raw) == 196 + target_slots * 6 + missing_rows * target_slots * 8
+    require(type(raw) is str and len(raw) == 212 + target_slots * 6 + missing_rows * target_slots * 8
             and all(character in '0123456789abcdef' for character in raw), 'Godot packet bytes')
     packet = bytes.fromhex(raw)
-    require(packet[:8] == b'FRGP\x02\x00\x0c\x00' and packet[8:24] == bytes([91]) + bytes(15)
+    require(packet[:8] == b'FRGP\x03\x00\x0c\x00' and packet[8:24] == bytes([91]) + bytes(15)
             and packet[24:32] == bytes([2]) + bytes(7) and packet[32:40] == bytes([22]) + bytes(7), 'Godot packet identity')
-    require(struct.unpack_from('<I', packet, 40)[0] == 54 + target_slots * 3 + missing_rows * target_slots * 4
+    require(struct.unpack_from('<I', packet, 40)[0] == 62 + target_slots * 3 + missing_rows * target_slots * 4
             and packet[44:48] == bytes([3, 5, 0, 0]), 'Godot history packet kind')
     # Fixture connection IDs start with 21/23 then zero; Godot eras read those bytes as big-endian hex.
     target_era = 23 << 8
@@ -179,7 +193,8 @@ def check_godot_packet(raw, missing_rows, target_slots, warmup=0):
             and struct.unpack_from('<i', packet, 68)[0] == warmup + 8 and struct.unpack_from('<i', packet, 72)[0] == target_slots,
             'Godot history packet range')
     require(struct.unpack_from('<3H', packet, 84) == (0, 1, 0) and struct.unpack_from('<I', packet, 90)[0] == len(targets)
-            and struct.unpack_from('<I', packet, 94 + len(targets))[0] == len(donor_bytes) and packet[98 + len(targets):] == donor_bytes,
+            and struct.unpack_from('<I', packet, 94 + len(targets))[0] == len(donor_bytes)
+            and packet[98 + len(targets):] == donor_bytes + struct.pack('<Q', FIXTURE_ROSTER_DIGEST),
             'Godot history packet original bytes')
 
 
@@ -188,7 +203,7 @@ def check_godot_commit(packet, missing_rows, target_slots, acknowledgement=False
     integer(packet['order'], 1, 8192, 'Godot commit order')
     require(same(packet['from'], int(acknowledgement)) and same(packet['to'], int(not acknowledgement)), 'Godot commit sender')
     raw = packet['packet']
-    require(type(raw) is str and len(raw) == 196 + target_slots * 6
+    require(type(raw) is str and len(raw) == 212 + target_slots * 6
             and all(character in '0123456789abcdef' for character in raw), 'Godot commit bytes')
     cut = warmup + 7 + missing_rows
     target_era = 23 << 8
@@ -202,11 +217,11 @@ def check_godot_commit(packet, missing_rows, target_slots, acknowledgement=False
     # The report's trailer carries the sender's departure attestation on the
     # two consumed report stages: the certified acknowledgement is not one of
     # them, so it sends witnessed=0 like the commit.
-    expected = (b'FRGP\x02\x00\x0c\x00' + bytes([91]) + bytes(15) + bytes([2 if acknowledgement else 1]) + bytes(7) + bytes([22 if acknowledgement else 21]) + bytes(7)
-                + struct.pack('<I4BHHIQiiiQHH2BI', 54 + len(targets), 2 if acknowledgement else 4, 3 if acknowledgement else 0, 0, 0, 0, 21 << 8,
+    expected = (b'FRGP\x03\x00\x0c\x00' + bytes([91]) + bytes(15) + bytes([2 if acknowledgement else 1]) + bytes(7) + bytes([22 if acknowledgement else 21]) + bytes(7)
+                + struct.pack('<I4BHHIQiiiQHH2BI', 62 + len(targets), 2 if acknowledgement else 4, 3 if acknowledgement else 0, 0, 0, 0, 21 << 8,
                               target_era + 1, digest(targets), cut, max(0, warmup - 2 + int(unequal and not acknowledgement)),
                               cut if acknowledgement else warmup + 7, digest(value), 0, 0, 0, 0, len(targets))
-                + targets + struct.pack('<I', 0))
+                + targets + struct.pack('<I', 0) + struct.pack('<Q', FIXTURE_ROSTER_DIGEST))
     require(bytes.fromhex(raw) == expected, 'Godot exact certified acknowledgement' if acknowledgement else 'Godot exact certified commit')
 
 

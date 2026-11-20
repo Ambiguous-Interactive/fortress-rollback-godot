@@ -119,7 +119,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 raise ValueError('peer-drop lost answer did not retry on the follower')
             data = bytes.fromhex(packet)
             sender = hashlib.sha256(row['uuid'].encode('ascii')).digest()[:8]
-            if (data[:8] != b'FRGP\x02\x00\x0c\x00' or data[24:32] != sender
+            if (data[:8] != b'FRGP\x03\x00\x0c\x00' or data[24:32] != sender
                     or int.from_bytes(data[40:44], 'little') != len(data) - 44 or data[44:46] != b'\x02\x01'):
                 raise ValueError('peer-drop lost answer packet is not the follower inventory')
             lost.append(loss)
@@ -184,7 +184,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                         raise ValueError('peer-drop relay barrier packet malformed')
                     data = bytes.fromhex(packet)
                     targets = int.from_bytes(data[90:94], 'little')
-                    if (data[:8] != b'FRGP\x02\x00\x0c\x00' or data[24:32] != sender
+                    if (data[:8] != b'FRGP\x03\x00\x0c\x00' or data[24:32] != sender
                             or data[8:24].hex() != row.get('session_id')
                             or int.from_bytes(data[40:44], 'little') != len(data) - 44
                             or targets != 3 or data[94] != row['departing_slot']

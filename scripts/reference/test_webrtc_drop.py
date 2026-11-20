@@ -166,7 +166,7 @@ class RelayDropEvidence(unittest.TestCase):
                             'maximum_relay_pending': 0, 'maximum_relay_received': 1, 'route_budget': 8,
                             'send_budget': 32, 'receive_budget': 32, 'accepted_binary': 5}
             packet = bytearray(101)
-            packet[:8] = b'FRGP\x02\x00\x0c\x00'
+            packet[:8] = b'FRGP\x03\x00\x0c\x00'
             packet[8:24] = bytes([1] * 16)
             other = original['records'][0]['peers'][1 - index]['result']['records'][0]
             packet[24:32] = hashlib.sha256(other['uuid'].encode('ascii')).digest()[:8]
@@ -210,7 +210,7 @@ class LostAnswerEvidence(unittest.TestCase):
         original = evidence()
         original['dropAnswer'] = True
         packet = bytearray(104)
-        packet[:8] = b'FRGP\x02\x00\x0c\x00'
+        packet[:8] = b'FRGP\x03\x00\x0c\x00'
         packet[24:32] = hashlib.sha256(original['records'][0]['peers'][1]['result']['records'][0]['uuid'].encode('ascii')).digest()[:8]
         packet[40] = 60
         packet[44:46] = b'\x02\x01'

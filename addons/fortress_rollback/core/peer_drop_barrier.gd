@@ -284,6 +284,12 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 		var coordinator_only: bool = phase in [Phase.PREPARE, Phase.COMMIT] or (phase == Phase.BACKFILL and int(event.get("stage", 0)) != Stage.HISTORY)
 		if coordinator_only and not host._slots_by_peer[index].has(barrier.coordinator):
 			return
+		if (phase == Phase.BACKFILL or (phase == Phase.COMMIT and barrier.state != COMMITTED)) \
+			and int(event.get("participants_digest", 0)) != barrier.roster_digest:
+			# A value or a first commit whose carried roster the receiver cannot
+			# reproduce is refused; a committed survivor's replayed acknowledgement
+			# stays answerable.
+			return
 	if is_dropped(key):
 		# Only the committed handshake remains live after freezing the slot.
 		if barrier == null or barrier.state != COMMITTED:

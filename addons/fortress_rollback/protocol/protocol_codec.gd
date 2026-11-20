@@ -5,7 +5,7 @@ const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const V = preload("res://addons/fortress_rollback/protocol/protocol_validation.gd")
 const Projector = preload("res://addons/fortress_rollback/protocol/protocol_projection.gd")
 const Reader = preload("res://addons/fortress_rollback/protocol/protocol_reader.gd")
-const VERSION: int = 2
+const VERSION: int = 3
 const HEADER_BYTES: int = 44
 const MAGIC: Array[int] = [70, 82, 71, 80]
 
