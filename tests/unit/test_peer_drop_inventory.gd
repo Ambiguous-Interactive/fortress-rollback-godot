@@ -194,12 +194,15 @@ func _packet_budget(context: RefCounted) -> void:
 	var controls: L.Options = L.Options.new()
 	controls.enabled = true
 	controls.disconnect_behavior = L.Disconnect.CONTINUE
-	for limit: int in [195, 196]:
+	# The control header the lifecycle requires: a full barrier packet plus the
+	# era and retained interval of every roster member.
+	var required: int = Codec.HEADER_BYTES + T.BARRIER_BODY_BYTES + 2 + 8 * 12
+	for limit: int in [required - 1, required]:
 		options.max_packet_bytes = limit
 		var peer: Peer = Peer.new()
 		context.equal(
 			peer.configure(config, local, Game.new(8), options, I.Options.new(), controls),
-			I.Code.OK if limit == 196 else I.Code.INVALID_ARGUMENT,
+			I.Code.OK if limit == required else I.Code.INVALID_ARGUMENT,
 			"full-roster inventory budget accepts exact bound and refuses one byte less"
 		)
 	context.equal(local.features, 0, "automatic negotiation never mutates the caller's profile")

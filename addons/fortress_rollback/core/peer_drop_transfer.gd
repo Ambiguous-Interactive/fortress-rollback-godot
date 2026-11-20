@@ -4,6 +4,7 @@ extends RefCounted
 const History = preload("res://addons/fortress_rollback/core/peer_drop_history.gd")
 const Inventory = preload("res://addons/fortress_rollback/core/peer_drop_inventory.gd")
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
+const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 
@@ -14,7 +15,7 @@ static func budget(host: Variant, slots: int) -> int:
 	for index: int in host._ids.size():
 		var endpoint: RefCounted = host._endpoint(index)
 		var packet: int = mini(endpoint._limits.max_packet_bytes, endpoint._handshake.remote_packet_bytes())
-		bytes = mini(bytes, packet - Codec.HEADER_BYTES - 54 - slots * 3)
+		bytes = mini(bytes, packet - Codec.HEADER_BYTES - T.BARRIER_BODY_BYTES - slots * 3)
 	return (bytes / 16) * 16
 
 

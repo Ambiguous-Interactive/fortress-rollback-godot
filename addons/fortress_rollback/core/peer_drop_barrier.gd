@@ -14,9 +14,12 @@ extends RefCounted
 ## certifies only complete retained history; missing rows are transferred from one complete-history donor before certification.
 ##
 ## Every field that decides the agreement is derived locally. The wire carries
-## the operation identity and the frozen value, but the target set, the eras and
-## the coordinator are re-derived, so a peer cannot move the agreed frame or
-## the certified value with a message of its own.
+## the operation identity, the survivor roster's digest and the frozen value,
+## but the target set, the eras, the roster and the coordinator are re-derived,
+## so a peer cannot move the agreed frame or the certified value with a message
+## of its own, and a proposal whose roster the receiver cannot reproduce never
+## joins the agreement. Finished operations are journaled, so a replayed or
+## stale proposal is refused outright.
 
 enum Phase { PREPARE = 1, REPORT = 2, BACKFILL = 3, COMMIT = 4, ABORT = 5 }
 enum Stage { NONE = 0, INVENTORY = 1, READY = 2, COMMITTED = 3, NEEDS_VALUE = 4, HISTORY = 5 }
@@ -26,6 +29,9 @@ const PENDING: String = "pending"
 const COMMITTED: String = "committed"
 const FAILED: String = "failed"
 const RETRY_US: int = 50000
+## The closed-operation journal's hard cap: one entry per supported member,
+## evicting the oldest beyond it, like the pinned source's bounded deque.
+const CLOSED_JOURNAL_CAP: int = 8
 ## The frozen value travels in bounded chunks.
 const CHUNK_BYTES: int = 1024
 const MAX_CHUNKS: int = 64
@@ -50,6 +56,11 @@ class Barrier:
 	var coordinator: int = 0
 	var coordinator_generation: int = 0
 	var target_set_digest: int = 0
+	## The survivor roster's digest, derived once when the barrier opened: the
+	## full fixed roster without its departed members, in slot order. Every
+	## survivor derives the same set, so a proposal whose carried roster the
+	## receiver cannot reproduce never joins the agreement.
+	var roster_digest: int = 0
 	var role: int = Role.FOLLOWER
 	var cut: int = -1
 	var upper: int = -1
@@ -67,6 +78,10 @@ class Barrier:
 	var chunk_count: int = 0
 	var certified: bool = false
 	var adopted: bool = false
+	## The per-operation retransmission journal: one accepted-send record per
+	## live destination. The hard cap is the fixed membership, so no message is
+	## journaled twice; the overflow policy is eviction of departed members,
+	## whose entries can never authorize another retry.
 	var sent_to: Dictionary = {}
 	var started_us: int = 0
 	var chunk_budget: int = 0
@@ -83,6 +98,10 @@ var _departed: Dictionary = {}
 var _dropped: Dictionary = {}
 var _barriers: Dictionary = {}
 var _prepares: Dictionary = {}
+## The closed-operation journal: the full identity of every finished operation.
+## A replayed proposal or value of a closed operation is refused instead of
+## re-opening it, while commits and acknowledgements stay answerable.
+var _closed: Array[String] = []
 
 
 ## Forget every departure and barrier; a fresh session starts empty.
@@ -91,6 +110,7 @@ func reset() -> void:
 	_dropped.clear()
 	_barriers.clear()
 	_prepares.clear()
+	_closed.clear()
 
 
 ## A dropped peer left the match and its slot is frozen at an agreed frame.
@@ -191,6 +211,7 @@ func observed(host: Variant, index: int, reason: Variant = 0) -> bool:
 	barrier.coordinator = _lowest_slot(host, index)
 	barrier.coordinator_generation = _era_of_slot(host, barrier.coordinator)
 	barrier.target_set_digest = _target_digest(barrier.slots, barrier.generations)
+	barrier.roster_digest = live_roster_digest(host)
 	barrier.receipts = receipts
 	barrier.chunk_budget = Transfer.budget(host, barrier.slots.size())
 	barrier.available_through = _available_through(host, barrier)
@@ -243,6 +264,11 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 	var key: String = host._ids[peer_index].hex_encode()
 	var barrier: Barrier = _barriers.get(key, null)
 	var phase: int = int(event.get("phase", 0))
+	if (phase == Phase.PREPARE or phase == Phase.BACKFILL) and _closed.has(_closed_key(event)):
+		# A replayed proposal or value of an operation that already closed never
+		# re-opens it; the pinned closed-operation journal refuses it outright,
+		# before any local barrier state is consulted.
+		return
 	if barrier != null:
 		if not _matches_identity(barrier, event):
 			return
@@ -343,6 +369,7 @@ func _drive_proposer(host: Variant, barrier: Barrier, now_us: int) -> void:
 		_abort(host, barrier, Abort.MISSING_HISTORY)
 		return
 	barrier.state = COMMITTED
+	_close_operation(barrier)
 	_send(host, barrier, Phase.COMMIT)
 	_freeze(host, barrier.index, barrier.cut, barrier.value, true)
 
@@ -400,6 +427,13 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 		return
 	if not _matches_identity(barrier, event):
 		return
+	if int(event.get("participants_digest", 0)) != live_roster_digest(host):
+		# A proposal whose survivor roster this session cannot reproduce never
+		# joins the agreement: the carried roster is validated against the local
+		# derivation, never trusted as the anchor. The buffered-prepare path is
+		# validated here too, because its roster is read after this survivor
+		# observed the departure itself.
+		return
 	if int(event.get("stage", 0)) == Stage.HISTORY:
 		if not Transfer.adopt(host, barrier, event):
 			_abort(host, barrier, Abort.CONFLICTING_HISTORY)
@@ -427,6 +461,11 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 		# A stale operation never joins the agreement.
 		return
 	var identity: String = host._ids[index].hex_encode()
+	if not barrier.participants.has(identity) \
+		or int(event.get("participants_digest", 0)) != barrier.roster_digest:
+		# Only a certified participant of the frozen roster may report, and its
+		# carried roster must be the one this proposer reproduced.
+		return
 	var stage: int = int(event.get("stage", Stage.NONE))
 	if stage == Stage.INVENTORY:
 		var reported_cut: int = int(event.get("cut", -1))
@@ -540,6 +579,7 @@ func _receive_commit(host: Variant, index: int, key: String, barrier: Barrier, e
 		_abort(host, barrier, Abort.MISSING_HISTORY)
 		return
 	barrier.state = COMMITTED
+	_close_operation(barrier)
 	_freeze(host, index, cut, barrier.value, true)
 	_send(host, barrier, Phase.REPORT, Stage.COMMITTED)
 
@@ -564,13 +604,38 @@ func _matches_identity(barrier: Barrier, event: Dictionary) -> bool:
 	)
 
 
-## This fixed-roster tier derives a shared sequence from target eras. The pinned
-## coordinator-local monotonic sequence remains a separate parity requirement.
+## This tier derives one operation locally from the target's frozen eras. The
+## pinned source derives the same generation-local sequence (the highest target
+## era plus one), so the derivations compose; its field documentation names a
+## coordinator-local monotonic counter while its reviewed derivation is this
+## one, and the closed-operation journal below carries the pinned refusal of
+## replayed or stale operations.
 func _sequence(generations: PackedInt32Array) -> int:
 	var highest: int = 0
 	for era: int in generations:
 		highest = maxi(highest, era)
 	return highest + 1
+
+
+## The journal identity of one barrier message.
+func _closed_key(event: Dictionary) -> String:
+	return "%d:%d:%d:%d" % [
+		int(event.get("coordinator", -1)),
+		int(event.get("coordinator_generation", -1)),
+		int(event.get("operation", -1)),
+		int(event.get("target_set_digest", -1)),
+	]
+
+
+## Remember the full identity of a finished operation. The journal's hard cap
+## is the supported roster bound; the overflow policy is evict-oldest, like the
+## pinned source's bounded closed-operation deque.
+func _close_operation(barrier: Barrier) -> void:
+	var key: String = "%d:%d:%d:%d" % [barrier.coordinator, barrier.coordinator_generation, barrier.operation, barrier.target_set_digest]
+	if not _closed.has(key):
+		_closed.append(key)
+	while _closed.size() > CLOSED_JOURNAL_CAP:
+		_closed.pop_front()
 
 
 ## A pending certificate keeps its original remote participants until commit.
@@ -646,6 +711,7 @@ func _can_freeze(host: Variant, index: int, cut: int) -> bool:
 ## An incomplete agreement cannot authorize a freeze, even after a candidate was published.
 func _fail(host: Variant, barrier: Barrier, reason: String, notify: bool = true) -> void:
 	barrier.state = FAILED
+	_close_operation(barrier)
 	host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[barrier.index].duplicate(), "reason": reason})
 	if notify:
 		# The other survivors stop waiting instead of timing out on their own.
@@ -659,6 +725,7 @@ func _abort(host: Variant, barrier: Barrier, reason: int) -> void:
 	if barrier.state != PENDING:
 		return
 	barrier.state = FAILED
+	_close_operation(barrier)
 	_send(host, barrier, Phase.ABORT, Stage.NONE, reason)
 	host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[barrier.index].duplicate(), "reason": _abort_reason(reason)})
 	host._core.terminate(Types.Code.PROTOCOL_FAILED)
@@ -703,6 +770,7 @@ func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE,
 		# Every report re-derives its attestation from this survivor's own
 		# endpoint for the target, so a stored flag cannot outlive the state.
 		barrier.witnessed = _witnessed(host, barrier.index)
+	_sweep_journal(host, barrier)
 	var payload: Dictionary = _payload(barrier, phase, stage, reason)
 	var sent: bool = true
 	for index: int in range(host._ids.size()):
@@ -727,6 +795,16 @@ func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE,
 				# An accepted certificate yields to donor data despite another refused link.
 				barrier.history.plan_turn = false
 	return sent
+
+
+## The retransmission journal keeps at most one entry per live member. The
+## hard cap is the fixed membership; the overflow policy is eviction of a
+## departed member's entry, because a departed destination can never be
+## retried again and its record must not outlive it.
+func _sweep_journal(host: Variant, barrier: Barrier) -> void:
+	for index: int in barrier.sent_to.keys():
+		if is_gone(host._ids[index].hex_encode()):
+			barrier.sent_to.erase(index)
 
 
 ## The wire payload of one barrier phase.
@@ -754,6 +832,7 @@ func _payload(barrier: Barrier, phase: int, stage: int, reason: int) -> Dictiona
 		"coordinator_generation": barrier.coordinator_generation,
 		"operation": barrier.operation,
 		"target_set_digest": barrier.target_set_digest,
+		"participants_digest": barrier.roster_digest,
 		"cut": cut,
 		"bound": bound,
 		"available_through": barrier.available_through,
@@ -824,6 +903,32 @@ func _target_digest(slots: PackedInt32Array, generations: PackedInt32Array) -> i
 		bytes.append(generations[index] & 255)
 		bytes.append((generations[index] >> 8) & 255)
 	return _digest(bytes)
+
+
+## The digest of one survivor roster, in roster order. Every survivor derives
+## the same fixed-membership roster, so equal rosters digest equal bytes; the
+## digest is a consistency check, not an integrity primitive.
+func _roster_digest(participants: PackedStringArray) -> int:
+	var bytes: PackedByteArray = PackedByteArray()
+	for identity: String in participants:
+		bytes.append_array(identity.to_ascii_buffer())
+	return _digest(bytes)
+
+
+## The roster this session can currently reproduce: every member that has not
+## left the match, in roster order. A proposal whose carried roster digest
+## differs from this derivation never joins the agreement.
+func live_roster_digest(host: Variant) -> int:
+	return _roster_digest(live_roster(host))
+
+
+## The live roster itself, for diagnostics and validation.
+func live_roster(host: Variant) -> PackedStringArray:
+	var participants: PackedStringArray = PackedStringArray()
+	for identity: PackedByteArray in host._roster:
+		if not is_gone(identity.hex_encode()):
+			participants.append(identity.hex_encode())
+	return participants
 
 
 ## The deterministic digest of the frozen value. It is a consistency check, not

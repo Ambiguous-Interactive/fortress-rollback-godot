@@ -34,7 +34,10 @@ func cases() -> PackedStringArray:
 			"codec_round_trip",
 			"conflicting_certificate",
 			"stale_messages",
-			"early_prepare"
+			"early_prepare",
+			"skewed_roster_proposal_is_refused",
+			"replayed_operation_is_refused",
+			"journal_evicts_departed_members"
 		]
 	)
 
@@ -79,6 +82,12 @@ func run_case(name: String, context: RefCounted) -> void:
 			_stale_messages(context)
 		"early_prepare":
 			_early_prepare(context)
+		"skewed_roster_proposal_is_refused":
+			_skewed_roster_proposal_is_refused(context)
+		"replayed_operation_is_refused":
+			_replayed_operation_is_refused(context)
+		"journal_evicts_departed_members":
+			_journal_evicts_departed_members(context)
 	context.finish()
 
 
@@ -309,22 +318,26 @@ func _alter(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], a
 	return result
 
 
-## Deliver one synthetic barrier message to a survivor.
+## Deliver one synthetic barrier message to a survivor. The carried roster
+## digest defaults to the receiver's own derivation, so a forged-field message
+## is refused by the rule it targets, not by an unreproducible roster.
 func _inject(context: RefCounted, mesh: Dictionary, injection: Dictionary) -> void:
 	var fields: Variant = injection["fields"]
 	if fields is Callable:
 		fields = fields.call()
+	var receiver: int = int(injection["to"])
 	var message: T.Message = T.Message.new()
 	message.kind = T.Kind.DROP_BARRIER
 	message.session_id = _id(90, 16)
 	message.sender_id = _id(int(injection["from"]))
 	message.connection_id = _id(int(injection["from"]) + 20)
 	message.data = PackedByteArray([2, 3, 0])
+	message.participants_digest = mesh.peers[receiver]._drops.live_roster_digest(mesh.peers[receiver])
 	for field: String in fields:
 		message.set(field, fields[field])
 	var encoded: T.Result = Codec.encode(message, _limits(mesh.count))
 	context.equal(encoded.code, T.Code.OK, "encode the injected barrier")
-	context.equal(mesh.peers[int(injection["to"])].receive(encoded.bytes, _id(int(injection["from"])), mesh.now), I.Code.OK, "deliver the injected barrier")
+	context.equal(mesh.peers[receiver].receive(encoded.bytes, _id(int(injection["from"])), mesh.now), I.Code.OK, "deliver the injected barrier")
 
 
 ## The answer of a survivor carries the answer phase of the coordinated drop.
@@ -813,6 +826,7 @@ func _codec_round_trip(context: RefCounted) -> void:
 	message.coordinator_generation = 2
 	message.operation = 7
 	message.target_set_digest = 11
+	message.participants_digest = 12
 	message.cut = 42
 	message.bound = 11
 	message.available_through = 40
@@ -834,6 +848,7 @@ func _codec_round_trip(context: RefCounted) -> void:
 	context.equal(decoded.message.coordinator_generation, 2, "the barrier keeps the coordinator era")
 	context.equal(decoded.message.operation, 7, "the barrier keeps its operation")
 	context.equal(decoded.message.target_set_digest, 11, "the barrier keeps its target digest")
+	context.equal(decoded.message.participants_digest, 12, "the barrier keeps its roster digest")
 	context.equal(decoded.message.cut, 42, "the barrier keeps its cut")
 	context.equal(decoded.message.bound, 11, "the barrier keeps its bound")
 	context.equal(decoded.message.available_through, 40, "the barrier keeps its retained range")
@@ -888,6 +903,16 @@ func _codec_round_trip(context: RefCounted) -> void:
 	forged.data = PackedByteArray([2, 0, 0])
 	var encoded_forged: T.Result = Codec.encode(forged, limits)
 	context.equal(encoded_forged.code, T.Code.INVALID_MESSAGE, "an unknown witness value is refused")
+	# A roster digest is a 64-bit consistency check: a negative one is refused.
+	var negative_roster: T.Message = T.Message.new()
+	negative_roster.kind = T.Kind.DROP_BARRIER
+	negative_roster.phase = 1
+	negative_roster.operation = 1
+	negative_roster.cut = 1
+	negative_roster.bound = 0
+	negative_roster.participants_digest = -1
+	negative_roster.data = PackedByteArray([2, 0, 0])
+	context.equal(Codec.encode(negative_roster, limits).code, T.Code.INVALID_MESSAGE, "a negative roster digest is refused")
 
 
 ## A certificate that names another value ends the match instead of freezing divergent values.
@@ -1014,3 +1039,104 @@ func _early_prepare(context: RefCounted) -> void:
 	context.equal(mesh.unconfirmed, 0, "the early prepare agrees without a fallback")
 	for survivor: int in [0, 1]:
 		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the match survives the early prepare")
+
+
+## A final-candidate proposal carrying a roster digest the receiver cannot reproduce.
+func _skewed_roster_fields(mesh: Dictionary) -> Dictionary:
+	var fields: Dictionary = _identity_fields(mesh)
+	fields["participants_digest"] = int(mesh.peers[1]._drops.live_roster_digest(mesh.peers[1])) + 1
+	fields["cut"] = 12
+	fields["cut_digest"] = 999
+	return fields
+
+
+## A proposal whose survivor roster the receiving survivor cannot reproduce
+## never joins the agreement: the skewed candidate is refused and the genuine
+## proposal still completes the drop.
+func _skewed_roster_proposal_is_refused(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 2)
+	var injections: Array[Dictionary] = [
+		{"to": 1, "from": 0, "fields": _skewed_roster_fields.bind(mesh)},
+	]
+	_detect(context, mesh, [0, 1], 600000, true, [], injections)
+	var cuts: Array[int] = _cuts(mesh, [0, 1])
+	context.equal(cuts[0] >= 0, true, "the genuine proposal still completes the drop")
+	context.equal(cuts[1], cuts[0], "both survivors freeze the same frame")
+	context.equal(mesh.unconfirmed, 0, "the skewed proposal changed no agreement")
+	for survivor: int in [0, 1]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the match survives the skewed proposal")
+
+
+## The identity fields of the closed operation, addressed to the departed target.
+func _closed_operation_event(mesh: Dictionary, fields: Dictionary) -> Dictionary:
+	var event: Dictionary = {}
+	for field: String in ["operation", "target_set_digest", "coordinator", "coordinator_generation"]:
+		event[field] = _identity_fields(mesh)[field]
+	for field: String in fields:
+		event[field] = fields[field]
+	event["slots"] = _identity_fields(mesh)["data"]
+	event["participants_digest"] = mesh.peers[1]._drops.live_roster_digest(mesh.peers[1])
+	return event
+
+
+## A replayed proposal or value of an operation that already closed is refused
+## outright, before any local barrier state is consulted.
+func _replayed_operation_is_refused(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 2)
+	# The answers never arrive, so the operation closes without a certificate.
+	_detect(context, mesh, [0, 1], 800000, false, [], [], true)
+	for survivor: int in [0, 1]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.TERMINATED, "the operation closed without a certificate")
+	var follower: Variant = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
+	# A replayed value chunk of the closed operation.
+	var value: Dictionary = _closed_operation_event(mesh, {
+		"phase": 3,
+		"stage": 0,
+		"chunk_index": 0,
+		"chunk_count": 1,
+		"bytes": PackedByteArray([1, 2, 3]),
+	})
+	mesh.peers[1]._drops.received(mesh.peers[1], 0, value)
+	context.equal(int(follower.chunks.size()), 0, "the replayed value of the closed operation is refused")
+	# A replayed donor plan of the closed operation.
+	var plan: Dictionary = _closed_operation_event(mesh, {
+		"phase": 1,
+		"stage": 5,
+		"cut": 12,
+		"bound": 0,
+		"bytes": PackedByteArray([0, 16, 0]),
+	})
+	mesh.peers[1]._drops.received(mesh.peers[1], 0, plan)
+	context.equal(int(follower.history.first), -1, "the replayed plan of the closed operation is refused")
+
+
+## The retransmission journal evicts a departed member's record on the next
+## send sweep, while the live survivor keeps its own record and the abort
+## still reaches it.
+func _journal_evicts_departed_members(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 4)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 3)
+	# The answers are held back, so the pending agreement still counts every
+	# survivor when the second one leaves.
+	_detect(context, mesh, [0, 1, 2], 420000, false)
+	var barrier: Variant = mesh.peers[0]._drops.barrier(_id(3).hex_encode())
+	context.equal(bool(barrier.sent_to.has(0)), true, "the journal holds the departed survivor's record")
+	# The second survivor leaves while the pending agreement still counts it,
+	# so the coordinator's abort send sweeps the journal before it touches any
+	# destination.
+	context.equal(mesh.peers[1].close(mesh.now, 7), I.Code.OK, "the second survivor says goodbye")
+	_deliver(context, mesh, _drain(mesh), true)
+	mesh.now += 2000
+	# The abort may already have ended the match while the buffered reports
+	# of the lost participant were delivered.
+	mesh.peers[0].poll(mesh.now)
+	_deliver(context, mesh, _drain(mesh), true)
+	context.equal(mesh.reasons.has("participant_lost"), true, "the pending barrier names its lost participant")
+	context.equal(bool(barrier.sent_to.has(0)), false, "the departed member's retransmission record is evicted")
+	context.equal(bool(barrier.sent_to.has(1)), true, "the live survivor keeps its record")
+	context.equal(barrier.sent_to.size() <= mesh.count, true, "the journal never exceeds the membership")

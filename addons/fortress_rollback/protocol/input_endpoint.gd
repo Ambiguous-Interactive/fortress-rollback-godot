@@ -626,7 +626,8 @@ func send_checksum(frame: Variant, checksum: Variant, now_us: Variant) -> int:
 
 
 ## A coordinated drop barrier message. The payload carries the barrier phase, the pinned
-## operation identity, the agreed frame window and the frozen value's digest.
+## operation identity, the survivor roster's digest, the agreed frame window and the
+## frozen value's digest.
 func send_drop_barrier(payload: Variant, now_us: Variant) -> int:
 	var code: int = _gate(now_us)
 	if code != I.Code.OK:
@@ -637,7 +638,7 @@ func send_drop_barrier(payload: Variant, now_us: Variant) -> int:
 		return I.Code.INVALID_ARGUMENT
 	var message: T.Message = _packet(T.Kind.DROP_BARRIER)
 	var fields: Array[String] = ["phase", "stage", "reason", "coordinator", "coordinator_generation", "operation"]
-	fields.append_array(["target_set_digest", "cut", "bound", "available_through", "cut_digest", "chunk_index", "chunk_count"])
+	fields.append_array(["target_set_digest", "participants_digest", "cut", "bound", "available_through", "cut_digest", "chunk_index", "chunk_count"])
 	fields.append("witnessed")
 	for field: String in fields:
 		if not payload.get(field, null) is int:

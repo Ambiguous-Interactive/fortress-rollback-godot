@@ -190,6 +190,7 @@ static func _write_body(writer: StreamPeerBuffer, message: T.Message) -> void:
 			writer.put_data(message.data)
 			writer.put_u32(message.bytes.size())
 			writer.put_data(message.bytes)
+			writer.put_u64(message.participants_digest)
 
 
 static func _read_config(reader: Reader) -> T.Config:
@@ -277,6 +278,7 @@ static func _read_body(reader: Reader, message: T.Message, limits: T.Limits) -> 
 				reader.valid = false
 				return
 			message.bytes = reader.take(payload)
+			message.participants_digest = reader.number(8)
 
 
 static func _read_input(reader: Reader, message: T.Message, limits: T.Limits) -> void:

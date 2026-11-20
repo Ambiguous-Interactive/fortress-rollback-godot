@@ -722,7 +722,9 @@ See [supported features](supported.md) for the current feature and platform boun
   Read the [unequal confirmation frontier limit](peer-lifecycle.md#unequal-confirmation-frontiers) before relying on confirmed-history preservation.
   Physical departure and remaining live fault cases are open in
   [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
-  Full upstream wire participant certificates, operation sequencing and the retransmission journal remain open in
-  [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
+  The wire roster digest, era-composed operation sequences and the bounded
+  retransmission journals are unit-pinned against mutations; the pinned-source
+  trace comparison of the extended fields remains open in
+  [#414](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/414).
 - Hot join and session reactivation remain unavailable until
   [#50](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/50) passes its acceptance gates.
