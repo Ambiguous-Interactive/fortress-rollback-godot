@@ -72,6 +72,20 @@ def observation_controls(engine, output, source):
 
 
 
+def prepare_publication_control(engine, output):
+    # A prepare recorded at its publication seam but never routed must be caught
+    # by the fixture's own completeness assertion, before any Python comparison.
+    result = subprocess.run([str(engine), '--headless', '--path', str(ROOT), '--script',
+        'res://tests/oracle/drop_history_trace.gd', '--', '--unrouted-prepare'],
+        cwd=ROOT, env=rust_environment(), capture_output=True, text=True, encoding='utf-8', timeout=120)
+    (output / 'observer-unrouted-prepare.log').write_text(result.stdout + result.stderr)
+    require(result.returncode == 1, 'unrouted prepare control must fail the fixture')
+    godot = parse_godot(result.stdout, result.stderr)
+    failure = {'kind': 'equality', 'label': 'every accepted observed control reaches owned routing', 'expected': 'true', 'actual': 'false'}
+    require(godot['failures'] == [failure], 'unrouted prepare control exact completeness diagnostic')
+    return 'observed_unrouted_prepare'
+
+
 def interior_history_control(engine, output, source, target_slots=1):
     result = subprocess.run([str(engine), '--headless', '--path', str(ROOT), '--script',
         'res://tests/oracle/drop_history_trace.gd', '--', '--multi-row-history', '--corrupt-interior-history',
@@ -172,23 +186,26 @@ def main():
     controls = []
     for repeat in (1, 2):
         scenarios = {}
-        for name, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup in [
-                ('clean', False, 1, 1, False, False, False, False, 0), ('lost-history', True, 1, 1, False, False, False, False, 0),
-                ('multi-clean', False, 4, 1, False, False, False, False, 0), ('multi-lost-history', True, 4, 1, False, False, False, False, 0),
-                ('grouped-clean', False, 4, 2, False, False, False, False, 0), ('grouped-lost-history', True, 4, 2, False, False, False, False, 0),
-                ('unequal-clean', False, 4, 2, True, False, False, False, 0), ('unequal-lost-history', True, 4, 2, True, False, False, False, 0),
-                ('unequal-lost-commit', False, 4, 2, True, True, False, False, 0), ('unequal-lost-history-and-commit', True, 4, 2, True, True, False, False, 0),
-                ('unequal-lost-ack', False, 4, 2, True, False, True, False, 0),
-                ('unequal-lost-history-commit-and-ack', True, 4, 2, True, True, True, False, 0),
-                ('unequal-lost-inventory', False, 4, 2, True, False, False, True, 0),
-                ('unequal-lost-inventory-history-commit-and-ack', True, 4, 2, True, True, True, True, 0),
-                ('wrapped-clean', False, 4, 2, True, False, False, False, 251),
-                ('wrapped-lost-inventory-history-commit-and-ack', True, 4, 2, True, True, True, True, 251)]:
+        for name, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, prepare_loss, warmup in [
+                ('clean', False, 1, 1, False, False, False, False, False, 0), ('lost-history', True, 1, 1, False, False, False, False, False, 0),
+                ('multi-clean', False, 4, 1, False, False, False, False, False, 0), ('multi-lost-history', True, 4, 1, False, False, False, False, False, 0),
+                ('grouped-clean', False, 4, 2, False, False, False, False, False, 0), ('grouped-lost-history', True, 4, 2, False, False, False, False, False, 0),
+                ('unequal-clean', False, 4, 2, True, False, False, False, False, 0), ('unequal-lost-history', True, 4, 2, True, False, False, False, False, 0),
+                ('unequal-lost-commit', False, 4, 2, True, True, False, False, False, 0), ('unequal-lost-history-and-commit', True, 4, 2, True, True, False, False, False, 0),
+                ('unequal-lost-ack', False, 4, 2, True, False, True, False, False, 0),
+                ('unequal-lost-history-commit-and-ack', True, 4, 2, True, True, True, False, False, 0),
+                ('unequal-lost-inventory', False, 4, 2, True, False, False, True, False, 0),
+                ('unequal-lost-inventory-history-commit-and-ack', True, 4, 2, True, True, True, True, False, 0),
+                ('unequal-lost-prepare', False, 4, 2, True, False, False, False, True, 0),
+                ('wrapped-clean', False, 4, 2, True, False, False, False, False, 251),
+                ('wrapped-lost-inventory-history-commit-and-ack', True, 4, 2, True, True, True, True, False, 251)]:
             fault_args = ['--drop-first-history'] if loss else []
             if warmup:
                 fault_args.append('--wrapped-history')
             if inventory_loss:
                 fault_args.append('--drop-first-inventory')
+            if prepare_loss:
+                fault_args.append('--drop-first-prepare')
             if ack_loss:
                 fault_args.append('--drop-first-ack')
             if commit_loss:
@@ -207,9 +224,9 @@ def main():
                                       'res://tests/oracle/drop_history_trace.gd', '--', *fault_args],
                                       args.output / f'godot-{name}-{repeat}.log')
             godot = parse_godot(stdout, stderr)
-            evidence[name] = compare(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup)
+            evidence[name] = compare(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup, prepare_loss)
             controls.extend(name + ':' + control for control in negative_controls(
-                source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup))
+                source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup, prepare_loss))
             scenarios[name] = {'source': source, 'godot': godot}
         controls.extend(wrapped_evidence_controls(scenarios['unequal-clean'], scenarios['wrapped-clean']))
         controls.extend(loss_evidence_controls(scenarios['clean'], scenarios['lost-history']))
@@ -226,6 +243,7 @@ def main():
         raise ValueError('drop history: fresh-process repeat mismatch')
     controls = sorted(set(controls))
     controls.extend(observation_controls(engine, args.output, observed[0]['clean']['source']))
+    controls.append(prepare_publication_control(engine, args.output))
     controls.append(interior_history_control(engine, args.output, observed[0]['multi-clean']['source']))
     controls.append('grouped:' + interior_history_control(engine, args.output, observed[0]['grouped-clean']['source'], 2))
     require_unchanged('local source inventory', local_sources, inventory())
@@ -246,7 +264,8 @@ def main():
         'execution_identities_unchanged': True, 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),
         'evidence': evidence, 'negative_controls': controls,
         'scope': ('Paired one/four-row single-target and four-row two-target clean/lost-first-history three-endpoint original-history/cut scenarios: source explicit removal; '
-                  'Godot elapsed timeout; equal and unequal exposed frontiers; first-inventory/COMMIT/ACK loss alone and combined with donor-data loss; '
+                  'Godot elapsed timeout; equal and unequal exposed frontiers; first-prepare loss alone; first-inventory/COMMIT/ACK loss alone or combined with donor data; '
+                  'prepare publications are paired with their routing; '
                   '251-frame warmup wraps the original queues before equal-policy donor recovery; distinct non-interoperable wires. '
                   'Every barrier payload names its carried roster digest; the coordinator survivor-link proposal is compared byte-exact '
                   'against the pinned participants.')}, indent=2) + '\n')

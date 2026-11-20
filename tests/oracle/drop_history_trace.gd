@@ -10,6 +10,8 @@ func _initialize() -> void:
 	var status_control: int = -1
 	var arguments: PackedStringArray = OS.get_cmdline_user_args()
 	var inventory_loss: bool = arguments.has("--drop-first-inventory")
+	var prepare_loss: bool = arguments.has("--drop-first-prepare")
+	var unrouted_prepare: bool = arguments.has("--unrouted-prepare")
 	var ack_loss: bool = arguments.has("--drop-first-ack")
 	var commit_loss: bool = arguments.has("--drop-first-commit")
 	var loss: bool = arguments.has("--drop-first-history")
@@ -18,7 +20,8 @@ func _initialize() -> void:
 	var grouped: bool = arguments.has("--multiple-target-slots")
 	var wrapped: bool = arguments.has("--wrapped-history")
 	var unequal: bool = arguments.has("--unequal-exposure")
-	var expected_arguments: int = int(inventory_loss) + int(ack_loss) + int(commit_loss) + int(loss) + int(multi) + int(corrupt) + int(grouped) + int(unequal) + int(wrapped)
+	var expected_arguments: int = int(inventory_loss) + int(prepare_loss) + int(unrouted_prepare) + int(ack_loss) + int(commit_loss) + int(loss) \
+		+ int(multi) + int(corrupt) + int(grouped) + int(unequal) + int(wrapped)
 	if (corrupt and not multi) or arguments.size() != expected_arguments:
 		if arguments.size() != 2 or arguments[0] != "--observer-status" or arguments[1] not in ["none", "predicted", "unknown"]:
 			printerr("drop history: unknown observer control")
@@ -32,7 +35,8 @@ func _initialize() -> void:
 			"unknown":
 				status_control = 42
 	var result: Dictionary = Fixture.new().observe(
-		context, status_control, loss, 4 if multi else 1, corrupt, 2 if grouped else 1, unequal, commit_loss, ack_loss, inventory_loss, 251 if wrapped else 0
+		context, status_control, loss, 4 if multi else 1, corrupt, 2 if grouped else 1, unequal, commit_loss, ack_loss, inventory_loss, \
+		prepare_loss, unrouted_prepare, 251 if wrapped else 0
 	)
 	print("FORTRESS_DROP_HISTORY_RESULT " + JSON.stringify(result))
 	quit(0 if context.failures.is_empty() else 1)

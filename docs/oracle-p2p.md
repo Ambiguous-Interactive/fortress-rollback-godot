@@ -639,8 +639,8 @@ python3 scripts/oracle/drop_history_launch.py --godot godot
 
 Both pinned engines run this gate in the existing oracle CI leg. The launcher
 executes one-row and four-row single-target cases plus four-row two-target cases,
-each with clean and lost-first-backfill delivery, twice in fresh processes. Four additional grouped four-row cases use unequal exposed confirmation,
-including first-COMMIT loss alone and combined with first-backfill loss. Two further unequal grouped cases lose the first follower ACK, alone and after both earlier losses. It records the pinned
+each with clean and lost-first-backfill delivery, twice in fresh processes. Five additional grouped four-row cases use unequal exposed confirmation,
+including first-COMMIT loss alone and combined with first-backfill loss, and a case that loses the coordinator's first prepare. Two further unequal grouped cases lose the first follower ACK, alone and after both earlier losses. It records the pinned
 archive, complete upstream source inventory, local sources and project settings,
 resolved pinned cargo/rustc identities, engine/oracle identities and comparison bytes. Sources and executables must remain unchanged
 until the receipt commits.
@@ -686,7 +686,7 @@ paired control with identical canonical input history. The lost-COMMIT cases dis
 irreversible COMMIT before socket delivery. Each runtime must deliver a later exact retry,
 freeze both target slots at eleven and preserve every original canonical prefix. Combined
 loss separately withholds the first donor packet before dropping the first COMMIT.
-Source and Godot trace version 6 retain separate loss banks and inventory/COMMIT/ACK emissions/receipts.
+Source and Godot trace version 6 retain separate loss banks and prepare/inventory/COMMIT/ACK emissions/receipts.
 ACK loss selects the follower's own COMMITTED participant report; the pinned source can forward other participants' certificates.
 The source must resend the same follower certificate through its retained journal. Godot must receive an exact COMMIT retry after the lost ACK,
 then deliver the same ACK bytes. Its global observed control order distinguishes those operations from an invented early response.
@@ -706,11 +706,11 @@ routing and recipient-grouped result collection. The parser checks order domains
 per-participant order and receipt after its actual emission, then requires inventory consumption
 before the first COMMIT emission. Controls separately move inventory emissions and only their
 consumption after COMMIT; unchanged payloads and delivery identities cannot conceal either error.
-The Godot fixture also separates accepted production publication from receive entry. A test-only
-drop subclass observes exact packets newly appended by the synchronous production send; per-packet
-FIFO observations survive later routing and deliberate loss. Receive order is captured before calling
+The Godot fixture also separates accepted production publication from receive entry. A test-only drop subclass observes exact packets newly appended by the synchronous production send; per-packet
+FIFO observations survive later routing and deliberate loss. Every production barrier payload, including the donor plan sent straight to an endpoint, reaches its recipient through one publication seam, so a prepare, inventory, COMMIT or acknowledgement published but never routed fails the fixture's own completeness assertion rather than a
+Python comparison; a controlled unrouted-prepare mutant fails exactly that assertion and survives when prepare publications are not recorded. A separate first-prepare loss scenario drops the coordinator's first routed proposal and reconciles its emission, receipt and byte-identical retry like the other control losses. Receive order is captured before calling
 `peer.receive`, so a COMMIT published inside that call follows input handoff. Only successful receives
-are retained. Inventory, COMMIT and ACK action orders share one bounded counter; duplicate orders,
+are retained. Inventory, COMMIT, acknowledgement and prepare action orders share one bounded counter whose every draw is guarded in the fixture; duplicate orders,
 receipt before publication and COMMIT before inventory consumption each fail explicit controls.
 Both cases preserve all twenty independent canonical boundaries, finalized inputs and statuses.
 For COMMIT loss,
