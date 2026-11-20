@@ -10,6 +10,8 @@ const Membership = preload("res://addons/fortress_rollback/transport/signalfish_
 const Adapter = preload("res://addons/fortress_rollback/transport/signalfish_adapter.gd")
 const Direct = preload("res://addons/fortress_rollback/transport/signalfish_webrtc.gd")
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
+const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
+const DirectTypes = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_types.gd")
 const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
@@ -175,7 +177,7 @@ func run(host: Node, count: int) -> bool:
 		if begun != I.Code.OK:
 			host.errors.append("begin_%d" % begun)
 			return false
-		var direct: Direct = Direct.new()
+		var direct: Direct = DropDirect.new() if bool(JavaScriptBridge.eval("window.fortressDropMissing || false")) else Direct.new()
 		host.transports.append(direct)
 		var options: Direct.Options = host._direct_options()
 		var connected_code: int = direct.configure(host.meshes[index], host.memberships[index], host.adapters[index], peer, options)
@@ -185,6 +187,57 @@ func run(host: Node, count: int) -> bool:
 	if host.mixed_enabled and not host.mixed.configure(host, mode):
 		return false
 	return true
+
+
+class DropDirect:
+	extends Direct
+
+	## The missing-history witness withholds only the departing slot's original
+	## input rows on one selected link. Every other packet keeps the production
+	## transport path.
+	var _drop_identity: PackedByteArray = PackedByteArray()
+	var _drop_from: int = -1
+	var _drop_through: int = -1
+	var _dropped: int = 0
+
+	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int) -> void:
+		_drop_identity = identity.duplicate()
+		_drop_from = from_frame
+		_drop_through = through_frame
+
+	func poll(now_us: int, next_token_factory: Callable = Callable()) -> DirectTypes.Result:
+		_withhold_missing_inputs()
+		return super.poll(now_us, next_token_factory)
+
+	func drop_report() -> Dictionary:
+		return {"dropped": _dropped, "from": _drop_from, "through": _drop_through}
+
+	func _withhold_missing_inputs() -> void:
+		if _drop_identity.is_empty() or _membership == null or _peer == null:
+			return
+		var current: int = _peer.status().current_frame - 1
+		if current < _drop_from or current > _drop_through:
+			return
+		var kept: Array[Peer.Packet] = []
+		for packet: Peer.Packet in _pending:
+			if packet != null and packet.bytes.size() >= 4 and _destination(packet) == _drop_identity and _is_input(packet.bytes):
+				_dropped += 1
+				_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
+			else:
+				kept.append(packet)
+		_pending = kept
+
+	func _destination(packet: Peer.Packet) -> PackedByteArray:
+		return _membership.identity(_membership.uuid_for_peer_id(packet.to.decode_u32(0)))
+
+	func _is_input(bytes: PackedByteArray) -> bool:
+		var limits: T.Limits = T.Limits.new()
+		limits.player_count = _membership.roster().size()
+		var decoded: T.Result = Codec.decode(bytes, limits)
+		if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.INPUT:
+			return false
+		var last: int = decoded.message.start_frame + decoded.message.frame_count - 1
+		return decoded.message.start_frame <= _drop_through and last >= _drop_from
 
 
 static func raw_connection() -> WebRTCPeerConnection:

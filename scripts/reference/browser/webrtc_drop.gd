@@ -51,16 +51,26 @@ func run(host: Node, count: int) -> bool:
 	var slot: int = host.memberships[0].slot(host.clients[0].get_player_id())
 	var departing_uuid: String = JavaScriptBridge.eval("window.fortressDepartingUuid")
 	var departing_slot: int = host.memberships[0].slot(departing_uuid)
+	var missing_history: bool = bool(JavaScriptBridge.eval("window.fortressDropMissing || false"))
+	if missing_history and host.local_index == 2:
+		var own_slot: int = host.memberships[0].slot(host.clients[0].get_player_id())
+		var target_slot: int = 2147483647
+		for candidate: int in range(count):
+			if candidate != own_slot:
+				target_slot = mini(target_slot, candidate)
+		var roster: PackedStringArray = host.memberships[0].roster()
+		host.transports[0].arm_drop(host.memberships[0].identity(roster[target_slot]), 4, 6)
 	for frame: int in 7:
-		if not await host._wait(
-			func() -> bool:
-				for endpoint: Dictionary in peer.network_status().peers.values():
-					if endpoint.last_received_frame < frame - 1:
-						return false
-				return true,
-			true
-		):
-			return false
+		if not missing_history:
+			if not await host._wait(
+				func() -> bool:
+					for endpoint: Dictionary in peer.network_status().peers.values():
+						if endpoint.last_received_frame < frame - 1:
+							return false
+					return true,
+				true
+			):
+				return false
 		host._update_transport_clock()
 		var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, frame, PackedByteArray([host._sample(frame, slot)]))]
 		if peer.step(host.transport_us, samples).code != S.Code.OK:
@@ -86,8 +96,19 @@ func run(host: Node, count: int) -> bool:
 	elif not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressDropGo || false"), true):
 		return false
 	if host.local_index == 2:
+		var missing_inputs: Dictionary = {}
+		if host.transports[0].has_method("drop_report"):
+			missing_inputs = host.transports[0].drop_report()
 		host.records.append(
-			{"players": count, "departed": true, "slot": slot, "frames_submitted": 7, "uuid": host.clients[0].get_player_id(), "roster": host.memberships[0].roster()}
+			{
+				"players": count,
+				"departed": true,
+				"slot": slot,
+				"frames_submitted": 7,
+				"uuid": host.clients[0].get_player_id(),
+				"roster": host.memberships[0].roster(),
+				"missing_inputs": missing_inputs,
+			}
 		)
 		return true
 	host._update_transport_clock()
@@ -185,6 +206,10 @@ func run(host: Node, count: int) -> bool:
 			"certified": barrier.certified,
 			"certificates": barrier.certificates.size(),
 			"drop_events": dropped,
+			"history_donor": barrier.history.donor,
+			"history_first": barrier.history.first,
+			"history_cut": barrier.history.cut,
+			"history_installed": barrier.history.installed,
 			"minimum_confirmed": peer.status().confirmed_frame,
 			"canonical_comparisons": 38,
 			"active_comparisons": comparisons,

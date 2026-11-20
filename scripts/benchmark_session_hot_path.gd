@@ -20,6 +20,7 @@ const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Status = preload("res://addons/fortress_rollback/core/snapshot_status.gd")
 const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
+const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const PTypes = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 
@@ -37,6 +38,7 @@ const HASH_MASK: int = 9223372036854775807
 # changed, which is a reviewed change and not a benchmark repair.
 const BASELINE: Dictionary = {
 	"snapshot": 4150103641047209673,
+	"snapshot_read": 4150103641047209673,
 	"steady": {2: 1276642125363926553, 4: 193693954048565353, 8: 167760427949277961},
 	"rollback": {2: 804470947006420549, 4: 8216305103245225058, 8: 7771464832153107854},
 	"codec": {2: 1009799064992073792, 4: 5039977378390133760, 8: 8583044641210005760},
@@ -67,6 +69,25 @@ class ControlWriter:
 		return _bytes.slice(0, _cursor)
 
 
+# The previous snapshot reader: a per-byte copy into caller-owned storage.
+class ControlReader:
+	extends RefCounted
+
+	var _bytes: PackedByteArray = PackedByteArray()
+	var _cursor: int = 0
+
+	func _init(bytes: PackedByteArray) -> void:
+		_bytes = bytes.duplicate()
+
+	func read_into(destination: PackedByteArray) -> int:
+		if destination.size() > _bytes.size() - _cursor:
+			return Status.Code.UNDERFLOW
+		for index: int in range(destination.size()):
+			destination[index] = _bytes[_cursor + index]
+		_cursor += destination.size()
+		return Status.Code.OK
+
+
 class DriverGame:
 	extends RefCounted
 	var state: PackedByteArray = PackedByteArray()
@@ -95,7 +116,11 @@ class DriverGame:
 
 
 func _initialize() -> void:
-	var snapshot: Dictionary = _snapshot()
+	var payload: PackedByteArray = PackedByteArray()
+	payload.resize(STATE_BYTES)
+	payload.fill(9)
+	var snapshot: Dictionary = _snapshot(payload)
+	var snapshot_read: Dictionary = _snapshot_read(payload)
 	var reports: Array[Dictionary] = []
 	for players: int in PLAYER_COUNTS:
 		(
@@ -113,7 +138,8 @@ func _initialize() -> void:
 			)
 		)
 	var report: Dictionary = {
-		"engine": Engine.get_version_info().string, "state_bytes": STATE_BYTES, "frames": FRAMES, "samples": SAMPLES, "window": WINDOW, "snapshot": snapshot, "reports": reports
+		"engine": Engine.get_version_info().string, "state_bytes": STATE_BYTES, "frames": FRAMES, "samples": SAMPLES, "window": WINDOW,
+		"snapshot": snapshot, "snapshot_read": snapshot_read, "reports": reports
 	}
 	if not _matches_baseline(report):
 		push_error("the measured result differs from the published baseline")
@@ -221,10 +247,7 @@ func _rollback(players: int) -> Dictionary:
 
 
 # The snapshot path: the production writer and the previous per-byte control.
-func _snapshot() -> Dictionary:
-	var payload: PackedByteArray = PackedByteArray()
-	payload.resize(STATE_BYTES)
-	payload.fill(9)
+func _snapshot(payload: PackedByteArray) -> Dictionary:
 	var production: Array[int] = []
 	var control: Array[int] = []
 	var checksum: int = 0
@@ -340,6 +363,54 @@ func _rollback_run(players: int) -> Dictionary:
 		return {}
 	var usec: int = Time.get_ticks_usec() - start
 	return {"usec": usec, "checksum": checksum}
+
+
+func _snapshot_read(payload: PackedByteArray) -> Dictionary:
+	var production: Array[int] = []
+	var control: Array[int] = []
+	var checksum: int = 0
+	for sample: int in range(SAMPLES):
+		var run: Dictionary = _snapshot_read_run(payload)
+		production.append(run["production_us"])
+		control.append(run["control_us"])
+		checksum = run["checksum"]
+	var result: Dictionary = _summary(production, checksum, FRAMES)
+	result["control_p50_us"] = _percentile(control, 50)
+	result["control_p95_us"] = _percentile(control, 95)
+	return result
+
+
+func _snapshot_read_run(payload: PackedByteArray) -> Dictionary:
+	# The read bytes are hashed after the measured region, so the checksum
+	# never shares the measurement with the copy it checks.
+	var production_bytes: Array[PackedByteArray] = []
+	var control_bytes: Array[PackedByteArray] = []
+	var start: int = Time.get_ticks_usec()
+	for index: int in range(FRAMES):
+		var reader: RefCounted = Reader.new(payload, true)
+		var destination: PackedByteArray = PackedByteArray()
+		destination.resize(STATE_BYTES)
+		if reader.read_into(destination) != Status.Code.OK:
+			_fail("production reader failed")
+			return {}
+		production_bytes.append(destination)
+	var production: int = Time.get_ticks_usec() - start
+	start = Time.get_ticks_usec()
+	for index: int in range(FRAMES):
+		var reader: RefCounted = ControlReader.new(payload)
+		var destination: PackedByteArray = PackedByteArray()
+		destination.resize(STATE_BYTES)
+		if reader.read_into(destination) != Status.Code.OK:
+			_fail("control reader failed")
+			return {}
+		control_bytes.append(destination)
+	var control: int = Time.get_ticks_usec() - start
+	var checksum: int = HASH_OFFSET
+	for bytes: PackedByteArray in production_bytes:
+		checksum = _hash_bytes(bytes, checksum)
+	for bytes: PackedByteArray in control_bytes:
+		checksum = _hash_bytes(bytes, checksum)
+	return {"production_us": production, "control_us": control, "checksum": checksum}
 
 
 func _snapshot_run(payload: PackedByteArray) -> Dictionary:
@@ -465,6 +536,8 @@ func _percentile(samples: Array[int], percentile: int) -> int:
 
 func _matches_baseline(report: Dictionary) -> bool:
 	if report["snapshot"]["checksum"] != BASELINE["snapshot"]:
+		return false
+	if report["snapshot_read"]["checksum"] != BASELINE["snapshot_read"]:
 		return false
 	for entry: Dictionary in report["reports"]:
 		var players: int = entry["players"]

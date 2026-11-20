@@ -301,15 +301,20 @@ the match ends instead of rewriting a survivor's confirmed history.
 The Godot tier backfills missing actual ranges when one survivor retains the
 whole required interval for every target. Missing donor history, capacity failure,
 conflicting overlap or expiry ends the match without a local-frontier fallback.
-The deterministic byte-transport tests cover this recovery; the existing live
-browser witness does not yet exercise missing-history transfer. Full pinned-source
+The deterministic byte-transport tests cover this recovery. The exported
+`peer-drop-missing` label now exercises the same transfer in real SignalFish
+rooms: the departing page withholds its original frames four through six from
+one survivor at the direct-transport send boundary, the other survivor remains
+the complete donor, and both pages certify the agreed cut only after the
+missing bytes are installed. The validator requires the donor interval, the
+installed transfer and the continuing canonical history. Full pinned-source
 trace comparison and the expanded live fault matrix remain in
 [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
 `CONTINUE` terminates a match when no eligible donor retains the required actual history.
 Asymmetric delivery tests preserve and recover the full original suffix before the survivors continue.
 A captured donor journal also survives physical source-ring reuse; a fresh journal refuses the same evicted range.
-These checks do not establish the remaining pinned-source comparison or live missing-history transfer.
+These checks do not establish the remaining pinned-source comparison.
 
 The agreement runs in real sessions, not only in unit tests. Three peer
 sessions on the deterministic test transport play, one peer stops answering,
@@ -338,6 +343,10 @@ Its validator binds the received packet bytes to the original sender, session, o
 Actual relay receipts are required; binary sends or route-selection counters alone cannot qualify agreement.
 The `peer-drop-answer` case drops the follower's first actual inventory report at the RTC send boundary.
 An exact-byte report retry precedes certified agreement and canonical continuation on both engine pins.
+The `peer-drop-missing` case withholds the departing page's original input frames four through six on
+one direct link. The other survivor is the selected donor; its bounded journal installs the missing
+rows before certification, and both survivors continue canonical history. The validator requires the
+withholding count, the donor identity, the installed interval and the agreed cut.
 Room departure, process death, rollback-time
 departure, foreign proposals and a second browser
 departure remain under

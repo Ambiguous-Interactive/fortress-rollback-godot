@@ -205,6 +205,42 @@ class RelayDropEvidence(unittest.TestCase):
                 validate_drop_browser(value, relay_only=True)
 
 
+def missing_evidence():
+    value = evidence()
+    value['dropMissing'] = True
+    value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'] = {'dropped': 3, 'from': 4, 'through': 6}
+    proposer = value['records'][0]['peers'][0]['result']['records'][0]
+    follower = value['records'][0]['peers'][1]['result']['records'][0]
+    proposer.update(history_donor=follower['slot'], history_first=4, history_cut=proposer['freeze_frame'], history_installed=True)
+    follower.update(history_donor=follower['slot'], history_first=4, history_cut=follower['freeze_frame'], history_installed=False)
+    return value
+
+
+class MissingHistoryEvidence(unittest.TestCase):
+    def test_live_missing_history_requires_withholding_and_transfer(self):
+        original = missing_evidence()
+        self.assertIs(validate_drop_browser(original, missing_history=True), original)
+        mutations = [
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(dropped=0),
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(**{'from': 3}),
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(through=7),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_installed=False),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_donor=0),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_first=5),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_cut=4),
+        ]
+        for mutation in mutations:
+            value = copy.deepcopy(original)
+            mutation(value)
+            with self.subTest(mutation=mutations.index(mutation)), self.assertRaisesRegex(ValueError, 'missing-history|withholding'):
+                validate_drop_browser(value, missing_history=True)
+        for replacement in (False, 1, None):
+            value = copy.deepcopy(original)
+            value['dropMissing'] = replacement
+            with self.subTest(flag=replacement), self.assertRaisesRegex(ValueError, 'incomplete'):
+                validate_drop_browser(value, missing_history=True)
+
+
 class LostAnswerEvidence(unittest.TestCase):
     def test_lost_answer_requires_one_follower_drop_and_exact_retry(self):
         original = evidence()

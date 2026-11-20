@@ -44,7 +44,8 @@ func read_bytes(count: int) -> ReadResult:
 
 ## Copy the next destination.size() bytes into caller-owned storage without a ReadResult wrapper.
 ## Rejection preserves destination and cursor. Underflow is sticky across both read APIs.
-## Copies bytes in GDScript; read_bytes() can be faster for wide snapshots.
+## The successful copy is one native buffer operation, so a wide restore does not
+## cost one interpreted step per byte; read_bytes() keeps its owned result.
 func read_into(destination: PackedByteArray) -> int:
 	var code: int = status()
 	if code != Code.OK:
@@ -53,8 +54,8 @@ func read_into(destination: PackedByteArray) -> int:
 	if count > _bytes.size() - _cursor:
 		_error = Code.UNDERFLOW
 		return _error
-	for index: int in count:
-		destination[index] = _bytes[_cursor + index]
+	destination.clear()
+	destination.append_array(_bytes.slice(_cursor, _cursor + count))
 	_cursor += count
 	return Code.OK
 

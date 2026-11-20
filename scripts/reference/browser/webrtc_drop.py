@@ -2,10 +2,11 @@
 import re
 import hashlib
 
-def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False):
+def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False, missing_history=False):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('peerDrop') is not True
             or result.get('dropCorrupt') is not corrupt or result.get('dropAnswer', False) is not lost_answer
-            or result.get('dropRelay', False) is not relay_only or result.get('dropClose', False) is not physical_close or result.get('errors') != []
+            or result.get('dropRelay', False) is not relay_only or result.get('dropClose', False) is not physical_close
+            or result.get('dropMissing', False) is not missing_history or result.get('errors') != []
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2):
         raise ValueError('peer-drop browser run incomplete')
     records = result.get('records')
@@ -135,6 +136,21 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         for row in all_rows:
             if row.get('roster') != roster or type(row.get('slot')) is not int or row['slot'] != roster.index(row['uuid']):
                 raise ValueError('peer-drop frozen roster changed')
+        if missing_history:
+            departed = records[0]['peers'][2]['result']['records'][0]
+            report = departed.get('missing_inputs')
+            if (not isinstance(report, dict) or set(report) != {'dropped', 'from', 'through'}
+                    or type(report.get('dropped')) is not int or not 1 <= report['dropped'] <= 3
+                    or report.get('from') != 4 or report.get('through') != 6):
+                raise ValueError('peer-drop missing input withholding evidence missing')
+            proposer = next(row for row in survivors if row['role'] == 1)
+            follower = next(row for row in survivors if row['role'] == 0)
+            if (proposer.get('history_installed') is not True
+                    or type(proposer.get('history_first')) is not int or not 0 <= proposer['history_first'] <= 4
+                    or proposer.get('history_cut') != proposer.get('freeze_frame')
+                    or proposer.get('history_donor') != follower.get('slot')
+                    or follower.get('history_donor') != follower.get('slot')):
+                raise ValueError('peer-drop live missing-history transfer incomplete')
         proposer_slot = min(row['slot'] for row in survivors)
         for row in survivors:
             if row['role'] != int(row['slot'] == proposer_slot):
