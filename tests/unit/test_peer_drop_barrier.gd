@@ -11,6 +11,7 @@ const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.
 const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const Game = preload("res://tests/oracle/p2p_game.gd")
+const FirstDrop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
 
 
 func cases() -> PackedStringArray:
@@ -808,6 +809,10 @@ func _second_departure(context: RefCounted) -> void:
 	# the lowest surviving slot among the peers that are still in the match.
 	_leave(context, mesh, 0)
 	_detect(context, mesh, [1, 2, 3])
+	for survivor: int in [1, 2, 3]:
+		var first: Variant = mesh.peers[survivor]._drops.barrier(_id(0).hex_encode())
+		context.equal(first.state, FirstDrop.COMMITTED, "the first operation commits at survivor %d" % survivor)
+		context.equal(mesh.peers[survivor]._drops._commit_confirmed(mesh.peers[survivor], first), true, "every participant confirmed the first commit at survivor %d" % survivor)
 	_leave(context, mesh, 1)
 	_detect(context, mesh, [2, 3], 800000)
 	var cuts: Array[int] = _cuts(mesh, [2, 3])

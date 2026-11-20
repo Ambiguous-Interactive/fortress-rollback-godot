@@ -32,6 +32,12 @@ const RETRY_US: int = 50000
 ## The closed-operation journal's hard cap: one entry per supported member,
 ## evicting the oldest beyond it, like the pinned source's bounded deque.
 const CLOSED_JOURNAL_CAP: int = 8
+## A committed operation whose participant set broke retries its shared
+## termination signal for this long before ending the match (#425 review).
+const BROKEN_ABORT_US: int = 3 * RETRY_US
+## A committed follower repeats its own confirmation for this long, so one
+## lost follower-to-follower report cannot leave a healthy operation open.
+const CONFIRM_BROADCAST_US: int = 3 * RETRY_US
 ## The frozen value travels in bounded chunks.
 const CHUNK_BYTES: int = 1024
 const MAX_CHUNKS: int = 64
@@ -73,6 +79,11 @@ class Barrier:
 	var answers: Dictionary = {}
 	var certificates: Dictionary = {}
 	var acknowledged: Dictionary = {}
+	## Commit confirmations are retained even when they arrive before this
+	## follower applies the COMMIT: every participant certified the same value
+	## before the proposer committed, so an early confirmation is still the
+	## confirmation of this operation (#425).
+	var commit_acks: Dictionary = {}
 	var participants: PackedStringArray = PackedStringArray()
 	var chunks: Dictionary = {}
 	var chunk_count: int = 0
@@ -93,6 +104,23 @@ class Barrier:
 	var automatic: bool = false
 	## Whether this survivor's own endpoint for the target latched a departure.
 	var witnessed: bool = false
+	## A committed operation whose participant set broke. The survivor holds the
+	## match and retries the shared termination signal until `broken_at` expires.
+	var broken: bool = false
+	var broken_at: int = 0
+	## When this survivor applied the COMMIT, so it can repeat its confirmation
+	## for a bounded window without waiting for a duplicate COMMIT.
+	var committed_at: int = 0
+	## Bounded replies to a peer's repeated confirmation. Without a cap, two
+	## confirmed followers would answer each other's replies forever.
+	var confirmation_replies: Dictionary = {}
+	## True when this follower's confirmation publication was refused. The
+	## service loop retries only the refused links until they accept it.
+	var confirmation_failed: bool = false
+	## Survivors that acknowledged this broken operation's participant-loss
+	## abort. The sender keeps retrying until every live participant replies or
+	## the bounded window expires.
+	var abort_acks: Dictionary = {}
 
 
 var _departed: Dictionary = {}
@@ -132,7 +160,7 @@ func freeze_frame(key: String) -> int:
 ## True while a coordinated drop still waits for the survivors.
 func pending() -> bool:
 	for key: String in _barriers.keys():
-		if _barriers[key].state == PENDING:
+		if _barriers[key].state == PENDING or _barriers[key].broken:
 			return true
 	return false
 
@@ -165,6 +193,15 @@ func observed(host: Variant, index: int, reason: Variant = 0) -> bool:
 	var key: String = host._ids[index].hex_encode()
 	if is_gone(key):
 		return true
+	var broken: Array[Barrier] = _broken_commits(host, key)
+	if not broken.is_empty():
+		# Every committed operation that still lacks this participant's
+		# confirmation is broken by its departure. The certified freezes stay:
+		# closing an operation never rewrites one (#425).
+		_departed[key] = true
+		for barrier: Barrier in broken:
+			_break_commit(host, barrier)
+		return false
 	_departed[key] = true
 	var slots: PackedInt32Array = host._slots_by_peer[index]
 	var upper: int = host._core.status().confirmed_frame
@@ -237,11 +274,27 @@ func service(host: Variant, now_us: int) -> void:
 		if host._core.status().lifecycle == Types.Lifecycle.TERMINATED:
 			return
 		var barrier: Barrier = _barriers[key]
+		if barrier.broken:
+			if now_us - barrier.broken_at >= BROKEN_ABORT_US:
+				barrier.broken = false
+				barrier.state = FAILED
+				host._core.terminate(Types.Code.PROTOCOL_FAILED)
+			else:
+				_send(host, barrier, Phase.ABORT, Stage.NONE, Abort.PARTICIPANT_LOST, true)
+			continue
 		if barrier.state == COMMITTED:
-			if barrier.role == Role.PROPOSER and not _acknowledged_by_all(host, barrier):
-				# The commit is irreversible, so it is retried until every survivor
-				# acknowledges it. A lost commit must not leave a survivor behind.
-				_retry(host, barrier, now_us, Phase.COMMIT)
+			if barrier.role == Role.PROPOSER:
+				if not _acknowledged_by_all(host, barrier):
+					# The commit is irreversible, so it is retried until every survivor
+					# acknowledges it. A lost commit must not leave a survivor behind.
+					_retry(host, barrier, now_us, Phase.COMMIT)
+			elif now_us - barrier.committed_at < CONFIRM_BROADCAST_US \
+				and (barrier.confirmation_failed or not _commit_confirmed(host, barrier)):
+				# Repeat this follower's own confirmation so one lost or
+				# refused follower-to-follower report cannot strand a healthy
+				# operation. A refused send retries only the refused links.
+				if _send(host, barrier, Phase.REPORT, Stage.COMMITTED, 0, true):
+					barrier.confirmation_failed = false
 			continue
 		if barrier.state != PENDING:
 			continue
@@ -297,8 +350,15 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 			# frozen roster and stays answerable.
 			return
 	if is_dropped(key):
-		# Only the committed handshake remains live after freezing the slot.
+		# Only the committed handshake remains live after freezing the slot. A
+		# participant-loss abort is the shared termination signal: a survivor
+		# that still holds the operation open tells every committed survivor
+		# to end the match with it (#425 review).
 		if barrier == null or barrier.state != COMMITTED:
+			return
+		var loss_abort: bool = phase == Phase.ABORT and int(event.get("reason", 0)) == Abort.PARTICIPANT_LOST
+		if loss_abort:
+			_receive_abort(host, index, key, barrier, event)
 			return
 		if phase != Phase.COMMIT and not (phase == Phase.REPORT and int(event.get("stage", 0)) == Stage.COMMITTED):
 			return
@@ -318,7 +378,7 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 		Phase.COMMIT:
 			_receive_commit(host, peer_index, key, barrier, event)
 		Phase.ABORT:
-			_receive_abort(host, key, barrier, event)
+			_receive_abort(host, index, key, barrier, event)
 
 
 ## The proposer collects the survivor windows, certifies the value and commits.
@@ -381,6 +441,7 @@ func _drive_proposer(host: Variant, barrier: Barrier, now_us: int) -> void:
 		_abort(host, barrier, Abort.MISSING_HISTORY)
 		return
 	barrier.state = COMMITTED
+	barrier.committed_at = host._now
 	_close_operation(barrier)
 	_send(host, barrier, Phase.COMMIT)
 	_freeze(host, barrier.index, barrier.cut, barrier.value, true)
@@ -467,7 +528,7 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 
 ## A survivor reported its window, its certificate or its need for the value.
 func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, event: Dictionary) -> void:
-	if barrier == null or barrier.role != Role.PROPOSER:
+	if barrier == null:
 		return
 	if int(event.get("operation", -1)) != barrier.operation:
 		# A stale operation never joins the agreement.
@@ -479,6 +540,31 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 		# carried roster must be the one this proposer reproduced.
 		return
 	var stage: int = int(event.get("stage", Stage.NONE))
+	if stage == Stage.COMMITTED:
+		# Every committed survivor hears every other survivor's confirmation,
+		# so a follower can tell whether the fixed participant set closed the
+		# operation everywhere (#425).
+		var cut: int = int(event.get("cut", -1))
+		var digest: int = int(event.get("cut_digest", 0))
+		if cut == barrier.cut and digest == barrier.digest:
+			var duplicate: bool = barrier.acknowledged.has(identity) or barrier.commit_acks.has(identity)
+			if barrier.state == COMMITTED:
+				barrier.acknowledged[identity] = true
+			elif barrier.role == Role.FOLLOWER:
+				# Two followers can commit the same COMMIT in either delivery
+				# order, so a follower retains a peer's earlier confirmation.
+				# The proposer cannot: an honest follower cannot commit before
+				# the proposer's own COMMIT, so an early ACK there is forged.
+				barrier.commit_acks[identity] = true
+			var replies: int = int(barrier.confirmation_replies.get(identity, 0))
+			if duplicate and replies < 3 and barrier.state == COMMITTED and barrier.role == Role.FOLLOWER and _commit_confirmed(host, barrier):
+				# A confirmed follower answers a peer's repeated confirmation
+				# with its own, so a follower that missed it can still close.
+				barrier.confirmation_replies[identity] = replies + 1
+				_send(host, barrier, Phase.REPORT, Stage.COMMITTED, 0, true)
+		return
+	if barrier.role != Role.PROPOSER:
+		return
 	if stage == Stage.INVENTORY:
 		var reported_cut: int = int(event.get("cut", -1))
 		var reported_bound: int = int(event.get("bound", -1))
@@ -535,9 +621,6 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 			return
 		barrier.certificates[identity] = certificate
 		return
-	if stage == Stage.COMMITTED:
-		if barrier.state == COMMITTED and int(event.get("cut", -1)) == barrier.cut and int(event.get("cut_digest", 0)) == barrier.digest:
-			barrier.acknowledged[identity] = true
 
 
 ## The frozen value arrived in a bounded chunk.
@@ -591,18 +674,57 @@ func _receive_commit(host: Variant, index: int, key: String, barrier: Barrier, e
 		_abort(host, barrier, Abort.MISSING_HISTORY)
 		return
 	barrier.state = COMMITTED
+	barrier.committed_at = host._now
 	_close_operation(barrier)
 	_freeze(host, index, cut, barrier.value, true)
-	_send(host, barrier, Phase.REPORT, Stage.COMMITTED)
+	if not _send(host, barrier, Phase.REPORT, Stage.COMMITTED):
+		barrier.confirmation_failed = true
 
 
 ## Another survivor closed the operation without committing.
-func _receive_abort(host: Variant, key: String, barrier: Barrier, event: Dictionary) -> void:
-	if barrier == null or barrier.state != PENDING:
+func _receive_abort(host: Variant, index: int, key: String, barrier: Barrier, event: Dictionary) -> void:
+	if barrier == null:
 		return
 	if int(event.get("operation", -1)) != barrier.operation:
 		return
-	_fail(host, barrier, _abort_reason(int(event.get("reason", Abort.TIMEOUT))), false)
+	var reason: int = int(event.get("reason", Abort.TIMEOUT))
+	if barrier.state == COMMITTED:
+		# A committed survivor accepts the shared participant-loss signal even
+		# when its own local acknowledgements look complete. The sender is not
+		# closed, so continuing would let one survivor run while the other ends
+		# the same operation (#425 review).
+		if reason == Abort.PARTICIPANT_LOST:
+			var identity: String = host._ids[index].hex_encode()
+			if barrier.broken:
+				# This survivor already published its own loss and is retrying
+				# the signal. One reply must not stop recovery for the other
+				# required survivors, so it ends only when every live
+				# participant replied (#425 review).
+				barrier.abort_acks[identity] = true
+				if _abort_acknowledged(host, barrier):
+					barrier.broken = false
+					barrier.state = FAILED
+					host._core.terminate(Types.Code.PROTOCOL_FAILED)
+			else:
+				# Acknowledge the shared termination signal, then end. The
+				# sender records this survivor's reply.
+				_send(host, barrier, Phase.ABORT, Stage.NONE, Abort.PARTICIPANT_LOST, false)
+				_fail(host, barrier, _abort_reason(reason), false)
+		return
+	if barrier.state != PENDING:
+		return
+	_fail(host, barrier, _abort_reason(reason), false)
+
+
+## True when every live participant of the broken operation acknowledged the
+## shared participant-loss abort.
+func _abort_acknowledged(host: Variant, barrier: Barrier) -> bool:
+	for identity: String in barrier.participants:
+		if is_gone(identity):
+			continue
+		if not barrier.abort_acks.has(identity):
+			return false
+	return true
 
 
 ## This tier derives one operation locally from the target's frozen roster and eras.
@@ -656,6 +778,61 @@ func _participant_lost(barrier: Barrier) -> bool:
 		if is_gone(identity):
 			return true
 	return false
+
+
+## A committed survivor detected that its fixed participant set broke. Tell
+## every other survivor before ending, so a survivor whose local
+## acknowledgements looked complete still ends the same operation (#425).
+func _break_commit(host: Variant, barrier: Barrier) -> void:
+	if barrier.broken:
+		return
+	barrier.broken = true
+	barrier.broken_at = host._now
+	_send(host, barrier, Phase.ABORT, Stage.NONE, Abort.PARTICIPANT_LOST)
+	host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[barrier.index].duplicate(), "reason": "participant_lost"})
+
+
+## Every committed operation that this departing member leaves open. The same
+## survivor can hold more than one committed barrier, so all of them are
+## returned and broken rather than only the first match (#425 review).
+func _broken_commits(host: Variant, identity: String) -> Array[Barrier]:
+	var result: Array[Barrier] = []
+	for key: String in _barriers.keys():
+		var barrier: Barrier = _barriers[key]
+		if barrier.broken or barrier.state != COMMITTED or not barrier.participants.has(identity):
+			continue
+		if identity == _coordinator_identity(host, barrier):
+			# The coordinator's own commit is the COMMIT every survivor
+			# received, so it never sends a separate confirmation.
+			continue
+		if barrier.acknowledged.has(identity) or barrier.commit_acks.has(identity):
+			# The departing member confirmed the commit. Its own departure is a
+			# serial second drop, not a missing participant of this operation.
+			continue
+		result.append(barrier)
+	return result
+
+
+## True when every participant except the proposer confirmed the commit. The
+## proposer's own commit is the COMMIT every committed survivor received, so it
+## needs no separate acknowledgement; the remaining participants must each
+## prove they applied the same irreversible decision.
+func _commit_confirmed(host: Variant, barrier: Barrier) -> bool:
+	var coordinator: String = _coordinator_identity(host, barrier)
+	for identity: String in barrier.participants:
+		if identity == coordinator:
+			continue
+		if not barrier.acknowledged.has(identity) and not barrier.commit_acks.has(identity):
+			return false
+	return true
+
+
+## The identity of the survivor that owns the barrier's coordinator slot.
+func _coordinator_identity(host: Variant, barrier: Barrier) -> String:
+	for index: int in range(host._ids.size()):
+		if host._slots_by_peer[index].has(barrier.coordinator):
+			return host._ids[index].hex_encode()
+	return ""
 
 
 ## The number of survivors that answered and still take part in the match.
@@ -799,6 +976,8 @@ func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE,
 		if is_gone(key):
 			continue
 		if phase == Phase.COMMIT and barrier.acknowledged.has(key):
+			continue
+		if phase == Phase.ABORT and barrier.abort_acks.has(key):
 			continue
 		var previous: Dictionary = barrier.sent_to.get(index, {})
 		if retry and not previous.is_empty() and previous.phase == phase and previous.stage == stage \
@@ -981,11 +1160,7 @@ func _available_through(host: Variant, barrier: Barrier) -> int:
 
 ## True when every survivor that still takes part in the match acknowledged the commit.
 func _acknowledged_by_all(host: Variant, barrier: Barrier) -> bool:
-	var live: int = 0
-	for identity: String in barrier.acknowledged:
-		if not is_gone(identity):
-			live += 1
-	return live >= _live_survivors(host)
+	return _commit_confirmed(host, barrier)
 
 
 ## The peers that still take part in the match besides this survivor.

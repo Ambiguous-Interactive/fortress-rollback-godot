@@ -110,7 +110,8 @@ EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {
 EXPECTED['res://tests/unit/test_peer_drop_commit.gd'] = {
     'clean_ack_quiescence', 'lost_first_ack_recommits', 'malformed_committed_ack', 'malformed_duplicate_commit',
     'early_committed_ack', 'wrong_sender_commit', 'commit_deadline', 'duplicate_ready_control', 'contradictory_ready_cut', 'contradictory_ready_digest',
-    'drained_commit_pins_the_frontier', 'refused_checksum_pins_the_frontier'}
+    'drained_commit_pins_the_frontier', 'refused_checksum_pins_the_frontier', 'held_commit_early_confirmation',
+    'held_commit_delayed_confirmation'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'paused_final_tail', 'readable_layout'})
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'single_frame', 'single_frame_end', 'single_frame_control', 'host_loss', 'host_loss_control'})
 EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'callbacks', 'timeout', 'idle_confirmation'}
@@ -187,6 +188,7 @@ EXPECTED['res://tests/unit/test_replay_final_coverage.gd'] = {'final_state_cover
 EXPECTED['res://tests/unit/test_peer_drop_history.gd'].add('last_survivor_receipts')
 EXPECTED['res://tests/unit/test_peer_drop_multi_slot.gd'] = {
     'interleaved_slots', 'reversed_slot_ownership', 'last_survivor_multi_slot', 'last_survivor_missing_slot'}
+EXPECTED['res://tests/unit/test_peer_drop_overlap.gd'] = {'ready_commit_overlap', 'asymmetric_ack_departure', 'committed_abort_receiver'}
 EXPECTED['res://tests/unit/test_peer_notifications.gd'] = {
     'completion', 'stall_and_repair', 'failure', 'callback_failure', 'shared_engine', 'handler_stop', 'external_facade'}
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'].update({'source_departures', 'source_callback_lifetime', 'status_lifetime'})
@@ -278,6 +280,7 @@ FILES += ['tests/unit/test_spectator_recording_feedback.gd', 'tests/unit/test_sp
 FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_history.gd',
           'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd', 'tests/unit/test_peer_drop_multi_slot.gd']
 FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_external_parity.gd', 'tests/unit/test_peer_drop_backfill.gd']
+FILES += ['tests/unit/test_peer_drop_overlap.gd']
 FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd', 'tests/unit/test_peer_drop_replay.gd']
 FILES += ['tests/unit/test_peer_drop_history_pressure.gd', 'tests/unit/test_peer_drop_donor_fairness.gd']
 FILES += ['tests/unit/test_peer_drop_plan_fairness.gd']
@@ -392,6 +395,7 @@ const DropReadyPressure = preload("res://tests/unit/test_peer_drop_ready_pressur
 const DropRemoteDonorPressure = preload("res://tests/unit/test_peer_drop_remote_donor_pressure.gd")
 const DropLateAck = preload("res://tests/unit/test_peer_drop_late_ack.gd")
 const DropCommit = preload("res://tests/unit/test_peer_drop_commit.gd")
+const DropOverlap = preload("res://tests/unit/test_peer_drop_overlap.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const PeerExampleOwnership = preload("res://tests/unit/test_peer_example_ownership.gd")
@@ -426,7 +430,7 @@ func _run_suites() -> void:
 		ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, SpectatorHistory, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropReplay, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
-		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit,
+		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit, DropOverlap,
 		DriverInputPolicy, DriverTermination, PeerExampleOwnership, ExampleSceneExit, ExampleShortcuts, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation,
 		FallbackFailure, SpectatorRecordingFeedback, DriverLifecycleParity, AdapterReentry, OfflineSceneControls, PeerSceneControls, SpectatorHostStep]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)

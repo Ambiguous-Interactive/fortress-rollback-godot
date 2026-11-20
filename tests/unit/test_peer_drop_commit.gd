@@ -10,6 +10,7 @@ func cases() -> PackedStringArray:
 		"early_committed_ack", "wrong_sender_commit", "commit_deadline",
 		"duplicate_ready_control", "contradictory_ready_cut", "contradictory_ready_digest",
 		"drained_commit_pins_the_frontier", "refused_checksum_pins_the_frontier",
+		"held_commit_early_confirmation", "held_commit_delayed_confirmation",
 	])
 
 
@@ -31,6 +32,10 @@ func run_case(name: String, context: RefCounted) -> void:
 			_drained_commit_pins_the_frontier(context)
 		"refused_checksum_pins_the_frontier":
 			_refused_checksum_pins_the_frontier(context)
+		"held_commit_early_confirmation":
+			_held_commit_early_confirmation(context)
+		"held_commit_delayed_confirmation":
+			_held_commit_delayed_confirmation(context)
 		_:
 			_commit_ack(context, bool(SCENARIOS[name]))
 	context.finish()
@@ -395,6 +400,85 @@ func _committed_mutations(message: T.Message) -> Array[Dictionary]:
 	targets[1] += 1
 	mutations.append({"data": targets})
 	return mutations
+
+
+# Value: protects=a follower keeps a confirmation that arrives before its COMMIT; fails_when=the later commit loses it; why_new=COMMIT delivery order; seam=none
+func _held_commit_early_confirmation(context: RefCounted) -> void:
+	var mesh: Dictionary = _held_fixture(context, Drop.Phase.COMMIT, Drop.Stage.NONE, 1, 4)
+	if mesh.held.is_empty():
+		return
+	var commit: Dictionary = mesh.held[0]
+	var follower: Drop.Barrier = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
+	context.equal(follower.state, Drop.PENDING, "the held COMMIT keeps the follower pending")
+	context.equal(bool(follower.certified), true, "the pending follower certified the value")
+	for tick: int in range(20):
+		_service_commit(context, mesh)
+		if follower.commit_acks.has(_id(3).hex_encode()):
+			break
+	context.equal(follower.commit_acks.has(_id(3).hex_encode()), true, "the follower retained the earlier confirmation")
+	context.equal(follower.state, Drop.PENDING, "the retained confirmation does not apply the held COMMIT")
+	mesh.hold_phase = -1
+	_release_original(context, mesh, commit)
+	for round_trip: int in range(6):
+		_deliver(context, mesh, _drain(mesh))
+	context.equal(follower.state, Drop.COMMITTED, "the released COMMIT applies after the early confirmation")
+	context.equal(mesh.peers[1]._drops._commit_confirmed(mesh.peers[1], follower), true, "the retained confirmation closes the follower")
+	var cuts: Array[int] = _cuts(mesh, [0, 1, 3])
+	context.equal(cuts[0] >= 0, true, "the operation commits")
+	for index: int in range(cuts.size()):
+		context.equal(cuts[index], cuts[0], "every survivor agrees the commit")
+
+
+# Value: protects=a delayed follower retries a refused confirmation past the other window; fails_when=a serial departure breaks the first operation
+func _held_commit_delayed_confirmation(context: RefCounted) -> void:
+	var mesh: Dictionary = _held_fixture(context, Drop.Phase.COMMIT, Drop.Stage.NONE, 1, 4)
+	if mesh.held.is_empty():
+		return
+	var commit: Dictionary = mesh.held[0]
+	var follower: Drop.Barrier = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
+	for tick: int in range(170):
+		_service_commit(context, mesh)
+	context.equal(follower.state, Drop.PENDING, "the COMMIT stays held past the other follower's broadcast window")
+	context.equal(_commit_closed(mesh, 3), false, "the other follower is committed but waits for the delayed confirmation")
+	var endpoint: Variant = mesh.peers[1]._endpoint(2)
+	while endpoint._outbox.size() < endpoint._options.max_outbox:
+		endpoint._outbox.append(PackedByteArray())
+	mesh.hold_phase = -1
+	_release_original(context, mesh, commit)
+	context.equal(follower.state, Drop.COMMITTED, "the delayed COMMIT applies")
+	var dispatched: Array[Dictionary] = []
+	for packet: Peer.Packet in mesh.peers[1].drain_outbox():
+		if packet.bytes.is_empty():
+			# The filler that refused the endpoint is not a packet.
+			continue
+		dispatched.append({"from": 1, "to": packet.to[0] - 1, "bytes": packet.bytes})
+	context.equal(dispatched.size() > 0, true, "the accepted confirmation reaches its destinations")
+	_deliver(context, mesh, dispatched, true)
+	for tick: int in range(20):
+		_service_commit(context, mesh)
+		if _commit_closed(mesh, 3):
+			break
+	context.equal(_commit_closed(mesh, 3), true, "the refused confirmation retries and closes the other follower")
+	context.equal(mesh.peers[1].close(mesh.now), I.Code.OK, "the delayed follower says goodbye")
+	_deliver(context, mesh, _drain(mesh), true)
+	for tick: int in range(400):
+		mesh.now += 1000
+		for survivor: int in [0, 3]:
+			context.equal(mesh.peers[survivor].poll(mesh.now), I.Code.OK, "poll a survivor after the delayed serial departure")
+		_deliver(context, mesh, _drain(mesh), true)
+		if mesh.peers[0]._core.frozen_frame(1) >= 0 and mesh.peers[3]._core.frozen_frame(1) >= 0:
+			break
+	context.equal(mesh.peers[0]._core.frozen_frame(1), mesh.peers[3]._core.frozen_frame(1), "the survivors freeze the serial departure at one frame")
+	context.equal(mesh.peers[0]._core.frozen_frame(1) >= 0, true, "the serial departure completes")
+	for survivor: int in [0, 3]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the serial departure keeps the match running")
+
+
+## True when the survivor confirms its committed operation.
+func _commit_closed(mesh: Dictionary, survivor: int) -> bool:
+	var barrier: Drop.Barrier = mesh.peers[survivor]._drops.barrier(_id(2).hex_encode())
+	return barrier != null and barrier.state == Drop.COMMITTED \
+		and mesh.peers[survivor]._drops._commit_confirmed(mesh.peers[survivor], barrier)
 
 
 # Value: protects=committed handshake rejects foreign identity/value; fails_when=bad ACK completes or duplicate COMMIT re-ACKs; why_new=post-drop validation; seam=none

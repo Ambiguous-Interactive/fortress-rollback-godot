@@ -13,8 +13,12 @@ func run_case(name: String, context: RefCounted) -> void:
 		_partial_ack(context)
 		context.finish()
 		return
-	if name in ["late_ack_participant_loss", "late_ack_terminal"]:
-		_stopped_retry(context, name == "late_ack_terminal")
+	if name == "late_ack_participant_loss":
+		_participant_loss(context)
+		context.finish()
+		return
+	if name == "late_ack_terminal":
+		_stopped_retry(context)
 		context.finish()
 		return
 	for offset: int in [-1, 0, 1]:
@@ -68,31 +72,60 @@ func _keep_alive(context: RefCounted, mesh: Dictionary, sender: int, recipient: 
 	context.equal(mesh.peers[recipient].receive(encoded.bytes, _id(sender), mesh.now), I.Code.OK, "keep the actual survivor link live across negotiation expiry")
 
 
-# Value: protects=committed retries stop for lost participants and terminal sessions; fails_when=late recovery bypasses lifecycle gates;
+# Value: protects=a locally closed owner stops committed retries across the negotiation deadline; fails_when=late recovery bypasses a terminal session;
 # why_new=deadline-crossing ACK recovery keeps both survivors live; seam=none
-func _stopped_retry(context: RefCounted, local_terminal: bool) -> void:
+func _stopped_retry(context: RefCounted) -> void:
 	var mesh: Dictionary = _held_fixture(context, Drop.Phase.REPORT, Drop.Stage.COMMITTED, 0)
 	if mesh.held.is_empty() or mesh.commits.is_empty():
 		return
 	var original: T.Message = mesh.commits[0].message
 	var proposer: Drop.Barrier = _barrier(mesh)
-	var closer: int = 0 if local_terminal else 1
-	context.equal(mesh.peers[closer].close(mesh.now), I.Code.OK, "close the selected actual survivor before its missing ACK recovers")
-	var goodbye: Array[Dictionary] = _drain(mesh)
-	if not local_terminal:
-		super._deliver(context, mesh, goodbye)
-		_drain(mesh)
+	context.equal(mesh.peers[0].close(mesh.now), I.Code.OK, "close the local owner before its missing ACK recovers")
+	_drain(mesh)
 	context.equal(proposer.state, Drop.COMMITTED, "closure never revokes the original irreversible decision")
 	mesh.now = proposer.started_us + 250000
 	for turn: int in range(3):
-		context.equal(mesh.peers[0].poll(mesh.now), I.Code.TERMINATED if local_terminal else I.Code.OK, "late polling respects local termination or current survivor membership")
+		context.equal(mesh.peers[0].poll(mesh.now), I.Code.TERMINATED, "late polling respects local termination")
 		for packet: Peer.Packet in mesh.peers[0].drain_outbox():
 			var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
 			context.equal(decoded.code, T.Code.OK, "remaining bounded output retains valid framing")
 			if decoded.message.kind == T.Kind.DROP_BARRIER:
 				var original_commit: bool = decoded.message.phase == Drop.Phase.COMMIT and decoded.message.data == original.data
-				context.equal(original_commit, false, "no COMMIT retry addresses a removed survivor or terminated session")
+				context.equal(original_commit, false, "no COMMIT retry addresses a terminated session")
 		mesh.now += Drop.RETRY_US
+
+
+# Value: protects=a participant that leaves before its commit acknowledgement ends the match instead of letting the committed survivor continue alone;
+# fails_when=the still-running proposer keeps a committed operation with an unclosed participant set; why_new=#425 READY-to-commit overlap; seam=none
+func _participant_loss(context: RefCounted) -> void:
+	var mesh: Dictionary = _held_fixture(context, Drop.Phase.REPORT, Drop.Stage.COMMITTED, 0)
+	if mesh.held.is_empty() or mesh.commits.is_empty():
+		return
+	var original: T.Message = mesh.commits[0].message
+	var proposer: Drop.Barrier = _barrier(mesh)
+	context.equal(mesh.peers[1].close(mesh.now), I.Code.OK, "close the unacknowledged participant before its ACK recovers")
+	super._deliver(context, mesh, _drain(mesh), true)
+	_drain(mesh)
+	context.equal(proposer.state, Drop.COMMITTED, "departure never revokes the original irreversible decision")
+	context.equal(proposer.acknowledged.has(_id(1).hex_encode()), false, "the departed participant never acknowledged the commit")
+	mesh.now = proposer.started_us + 250000
+	var terminated: bool = false
+	for turn: int in range(6):
+		var polled: int = mesh.peers[0].poll(mesh.now)
+		context.equal(polled in [I.Code.OK, I.Code.TERMINATED], true, "the committed survivor holds the match while its abort retries")
+		terminated = terminated or polled == I.Code.TERMINATED
+		for packet: Peer.Packet in mesh.peers[0].drain_outbox():
+			var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+			context.equal(decoded.code, T.Code.OK, "remaining bounded output retains valid framing")
+			if decoded.message.kind == T.Kind.DROP_BARRIER:
+				var original_commit: bool = decoded.message.phase == Drop.Phase.COMMIT and decoded.message.data == original.data
+				context.equal(original_commit, false, "no COMMIT retry addresses the departed participant")
+		mesh.now += Drop.RETRY_US
+	context.equal(terminated, true, "the committed survivor ends the match with the lost participant")
+	context.equal(mesh.reasons.count("participant_lost"), 1, "the committed survivor names the lost participant once")
+	context.equal(mesh.peers[0].status().lifecycle, Types.Lifecycle.TERMINATED, "the committed operation closes with the match")
+	context.equal(mesh.peers[0].status().reason, Types.Code.PROTOCOL_FAILED, "the terminal cause is the protocol failure")
+	context.equal(mesh.peers[0]._core.frozen_frame(2), original.cut, "the committed survivor keeps its certified freeze")
 
 
 # Value: protects=each acknowledged survivor stops COMMIT traffic; fails_when=one lost ACK keeps healthy recipients retrying;
