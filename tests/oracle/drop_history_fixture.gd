@@ -4,6 +4,8 @@ var _inventory_emissions: Array[Dictionary] = []
 var _inventory_receipts: Array[Dictionary] = []
 var _lost_inventory: Array[Dictionary] = []
 var _drop_first_inventory: bool = false
+var _prepare_emissions: Array[Dictionary] = []
+var _prepare_receipts: Array[Dictionary] = []
 var _history_receipts: Array[Dictionary] = []
 var _history_emissions: Array[Dictionary] = []
 var _lost_history: Array[Dictionary] = []
@@ -145,6 +147,8 @@ func observe(
 		"donors": _donor_sources.keys(),
 		"inventory_emissions": _inventory_emissions,
 		"inventory_receipts": _inventory_receipts,
+		"prepare_emissions": _prepare_emissions,
+		"prepare_receipts": _prepare_receipts,
 		"lost_inventory": _lost_inventory,
 		"lost_history": _lost_history,
 		"lost_commit": _lost_commit,
@@ -175,11 +179,17 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		var history_emission: Dictionary = {}
 		var commit_emission: Dictionary = {}
 		var ack_emission: Dictionary = {}
+		var prepare_emission: Dictionary = {}
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			var publication_order: int = -1
 			if decoded.message.phase == Drop.Phase.COMMIT or (decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage in [Drop.Stage.INVENTORY, Drop.Stage.COMMITTED]):
 				publication_order = _observation.take(packet.from, packet.to, packet.bytes)
 				context.equal(publication_order > 0, true, "match actual accepted barrier publication before routing")
+			# The pinned trace observes survivor-to-survivor controls only, so the
+			# coordinator's proposal is captured on the same survivor link.
+			if decoded.message.phase == Drop.Phase.PREPARE and packet.from == 0 and packet.to == 1:
+				prepare_emission = {"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode(), "emission": _prepare_emissions.size(), "order": _observation.next_order()}
+				_prepare_emissions.append(prepare_emission)
 			if decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage == Drop.Stage.INVENTORY:
 				inventory_emission = {
 					"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode(), "emission": _inventory_emissions.size(), "order": publication_order
@@ -233,6 +243,8 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 			_ack_receipts.append(_received(ack_emission, receipt_order))
 		if code == I.Code.OK and not commit_emission.is_empty():
 			_commit_receipts.append(_received(commit_emission, receipt_order))
+		if code == I.Code.OK and not prepare_emission.is_empty():
+			_prepare_receipts.append(_received(prepare_emission, _observation.next_order()))
 		if code == I.Code.OK and decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
 				_seen += 1
