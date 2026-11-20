@@ -1,10 +1,10 @@
 # Session hot path measurement
 
 This is one measured production improvement toward [issue 43](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/43).
-It publishes the steady-frame, snapshot, rollback and codec costs of the
-production session, and it records the one change those measurements selected.
-It does not close that issue's allocation-count, sustained-memory and
-release-matrix gates.
+It publishes the steady-frame, snapshot, snapshot-read, rollback and codec
+costs of the production session, and it records the two changes those
+measurements selected. It does not close that issue's allocation-count,
+sustained-memory and release-matrix gates.
 
 `FortressSnapshotWriter.write_bytes()` copied the caller's bytes into the
 writer's buffer one interpreted step per byte, and the writer reserved its whole
@@ -12,6 +12,11 @@ capacity before the first write. The new path appends the caller's bytes with
 one native buffer append and keeps the capacity as a bound instead of a
 reservation. The written bytes, the sticky overflow behavior and the
 caller-owned copy are unchanged.
+
+`FortressSnapshotReader.read_into()` copied a restored snapshot one interpreted
+step per byte. The successful path now clears the caller-owned destination and
+appends one native slice; the failed path still preserves the destination and
+cursor, and the sticky underflow behavior is unchanged.
 
 ## Reproduce
 
@@ -40,6 +45,7 @@ is a reviewed change and not a benchmark repair.
 | `steady` | A whole session frame: local sample, confirmed remote samples, the ordered save and advance requests, the game's own save and the input view | 4 KiB game state, one local player, 400 frames, 15 samples |
 | `rollback` | The same session with the remote inputs one window late, so every correction loads a snapshot and resimulates the prediction window | 8-frame window, 400 frames, 15 samples |
 | `snapshot` | One snapshot write: the production writer against the previous per-byte control | 4 KiB payload, 400 writes, 15 samples |
+| `snapshot_read` | One snapshot read into caller-owned storage: the production reader against the previous per-byte control | 4 KiB payload, 400 reads, 15 samples |
 | `codec` | One protocol input packet: encode plus decode, with every player's input and status | 1-byte inputs, 400 packets, 15 samples |
 
 The session is configured exactly as a peer session: eight prediction frames,
@@ -53,10 +59,10 @@ unless the run corrects the window that often.
 
 Every workload accumulates a canonical checksum. The steady and rollback
 checksums cover the applied input bytes and statuses of every simulated frame,
-the snapshot checksum covers every written byte, and the codec checksum covers
-every decoded input byte. The checksums are identical before and after the
-change, on both pinned engines, so the faster path simulates exactly the same
-match.
+the snapshot checksum covers every written byte, the snapshot-read checksum
+covers every read byte, and the codec checksum covers every decoded input byte.
+The checksums are identical before and after the change, on both pinned engines,
+so the faster path simulates exactly the same match.
 
 ## Results
 
@@ -78,6 +84,20 @@ The snapshot write does not depend on the player count, so it is measured once:
 | --- | --- | --- | --- |
 | 4.7.2 | 58.3 → 2.9 | 60.4 → 3.3 | 57.9 |
 | 4.3 | 122.8 → 10.0 | 183.9 → 13.2 | 118.9 |
+
+The snapshot read is measured with the same 4 KiB payload and 400 reads:
+
+| Engine | Snapshot read p50 | Snapshot read p95 | Control p50 (previous copy) |
+| --- | --- | --- | --- |
+| 4.7.2 | 59.0 → 4.4 | 61.7 → 5.0 | 59.0 |
+| 4.3 | 112.7 → 11.7 | 126.3 → 12.8 | 112.7 |
+
+The read control was measured on the same host in the same process. Samples
+alternate which reader runs first, and the report keeps each pair of raw
+timings, so the control does not always run against the production run's
+heap state. The production path is about 13 times faster on 4.7.2 because one
+native slice replaces one interpreted step per byte. Read p50 and p95 are the
+per-read values divided from the 400-read workload.
 
 The snapshot write is the dominant cost of the steady frame with a 4 KiB state:
 it was about two thirds of the frame before the change. After the change the
@@ -104,10 +124,12 @@ storage is the bytes actually written rather than the configured maximum. The
 capacity still bounds the writer, and an overflowing write is still rejected
 before anything is copied. The new path allocates one buffer per append, where
 the previous path allocated one buffer per save; this is a native allocation
-per write, not a claim of zero allocation. The history slot, its checksum and
-its tags are unchanged, and the configured storage budget still covers the
-session's reserved payload. No allocation count, peak-memory or whole-game
-latency claim is made here.
+per write, not a claim of zero allocation. The reader keeps its caller-owned
+destination and copies through one native slice; it does not retain the restored
+bytes beyond that destination. The history slot, its checksum and its tags are
+unchanged, and the configured storage budget still covers the session's reserved
+payload. No allocation count, peak-memory or whole-game latency claim is made
+here.
 
 ## Regression budget
 
@@ -115,9 +137,10 @@ On the reference host, a steady frame with a 4 KiB state costs about 32 to 45
 microseconds for 2 and 4 players and about 68 to 88 microseconds for 8 players,
 with an observed spread of up to about 30 percent of the median. A change that
 raises the steady p50 above twice the measured median on the same hardware is
-worth investigating. The budget is deliberately not a CI gate: portable CI must
-not fail on an unstable timing threshold, and the browser matrix measures a
-different workload.
+worth investigating. The snapshot-read p50 target is under twice the measured
+4.4 microseconds on the same hardware. The budget is deliberately not a CI
+gate: portable CI must not fail on an unstable timing threshold, and the browser
+matrix measures a different workload.
 
 ## Correctness and source identity
 

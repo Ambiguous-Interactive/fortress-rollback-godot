@@ -13,14 +13,14 @@ def evidence(corrupt=False):
         row = {'players': 3, 'departed': index == 2, 'frames_submitted': 7 if index == 2 else 40, 'slot': index, 'uuid': roster[index], 'roster': roster}
         if index < 2:
             row.update(state='committed', drop_events=1, canonical_comparisons=38, active_comparisons=30,
-                       prediction_gap=2, freeze_frame=5, departing_slot=2, minimum_confirmed=38, rollback_loads=1,
-                       frozen_value=bytes([(5 * 17 + 2 * 31 + 1) & 255]).hex(),
+                       prediction_gap=2, freeze_frame=6, departing_slot=2, minimum_confirmed=38, rollback_loads=1,
+                       frozen_value=bytes([(6 * 17 + 2 * 31 + 1) & 255]).hex(),
                        role=1 - index, certified=index == 1, certificates=1 - index)
         if index < 2:
             other_id = hashlib.sha256(roster[1 - index].encode('ascii')).digest()[:8].hex()
             digest = ((0x14650fb0739d0383 ^ int(row['frozen_value'], 16)) * 1099511628211) & 0x3fffffffffffffff
             row.update(participants=[other_id], digest=f'{digest:016x}',
-                       certificate_rows=[{'peer': other_id, 'cut': 5, 'digest': f'{digest:016x}'}] if index == 0 else [])
+                       certificate_rows=[{'peer': other_id, 'cut': 6, 'digest': f'{digest:016x}'}] if index == 0 else [])
         result = {'passed': True, 'records': [row]}
         if corrupt and index < 2:
             result = {'passed': False, 'failure': {'stage': 'peer_drop_gameplay', 'errors': ['peer_drop_canonical_8']}}
@@ -203,6 +203,46 @@ class RelayDropEvidence(unittest.TestCase):
             row['relay_barriers'] = [changed.hex()]
             with self.subTest(byte=byte), self.assertRaisesRegex(ValueError, 'relay'):
                 validate_drop_browser(value, relay_only=True)
+
+
+def missing_evidence():
+    value = evidence()
+    value['dropMissing'] = True
+    value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'] = {
+        'dropped': 3, 'from': 4, 'through': 6, 'frames': [4, 5, 6], 'overlaps': 0, 'slot': 2, 'unsupported': 0}
+    proposer = value['records'][0]['peers'][0]['result']['records'][0]
+    follower = value['records'][0]['peers'][1]['result']['records'][0]
+    proposer.update(history_donor=follower['slot'], history_first=4, history_cut=proposer['freeze_frame'], history_installed=True)
+    follower.update(history_donor=follower['slot'], history_first=4, history_cut=follower['freeze_frame'], history_installed=False)
+    return value
+
+
+class MissingHistoryEvidence(unittest.TestCase):
+    def test_live_missing_history_requires_withholding_and_transfer(self):
+        original = missing_evidence()
+        self.assertIs(validate_drop_browser(original, missing_history=True), original)
+        mutations = [
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(dropped=0),
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(**{'from': 3}),
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(through=7),
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(frames=[3, 4, 5, 6]),
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(overlaps=1),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_installed=False),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_donor=0),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_first=5),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_cut=4),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_cut=3),
+        ]
+        for mutation in mutations:
+            value = copy.deepcopy(original)
+            mutation(value)
+            with self.subTest(mutation=mutations.index(mutation)), self.assertRaisesRegex(ValueError, 'missing-history|withholding'):
+                validate_drop_browser(value, missing_history=True)
+        for replacement in (False, 1, None):
+            value = copy.deepcopy(original)
+            value['dropMissing'] = replacement
+            with self.subTest(flag=replacement), self.assertRaisesRegex(ValueError, 'incomplete'):
+                validate_drop_browser(value, missing_history=True)
 
 
 class LostAnswerEvidence(unittest.TestCase):

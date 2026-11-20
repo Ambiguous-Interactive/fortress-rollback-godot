@@ -10,6 +10,8 @@ const Membership = preload("res://addons/fortress_rollback/transport/signalfish_
 const Adapter = preload("res://addons/fortress_rollback/transport/signalfish_adapter.gd")
 const Direct = preload("res://addons/fortress_rollback/transport/signalfish_webrtc.gd")
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
+const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
+const DirectTypes = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_types.gd")
 const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
@@ -175,7 +177,7 @@ func run(host: Node, count: int) -> bool:
 		if begun != I.Code.OK:
 			host.errors.append("begin_%d" % begun)
 			return false
-		var direct: Direct = Direct.new()
+		var direct: Direct = DropDirect.new() if bool(JavaScriptBridge.eval("window.fortressDropMissing || false")) else Direct.new()
 		host.transports.append(direct)
 		var options: Direct.Options = host._direct_options()
 		var connected_code: int = direct.configure(host.meshes[index], host.memberships[index], host.adapters[index], peer, options)
@@ -185,6 +187,131 @@ func run(host: Node, count: int) -> bool:
 	if host.mixed_enabled and not host.mixed.configure(host, mode):
 		return false
 	return true
+
+
+class DropDirect:
+	extends Direct
+
+	## The missing-history witness withholds only the departing slot's original
+	## input rows on one selected link. Every other packet keeps the production
+	## transport path.
+	var _drop_identity: PackedByteArray = PackedByteArray()
+	var _drop_slot: int = -1
+	var _drop_from: int = -1
+	var _drop_through: int = -1
+	var _unsupported: int = 0
+	var _overlaps: int = 0
+	var _frames: Dictionary = {}
+
+	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int, slot: int) -> void:
+		_drop_identity = identity.duplicate()
+		_drop_from = from_frame
+		_drop_through = through_frame
+		_drop_slot = slot
+
+	func poll(now_us: int, next_token_factory: Callable = Callable()) -> DirectTypes.Result:
+		_withhold_missing_inputs()
+		return super.poll(now_us, next_token_factory)
+
+	func drop_report() -> Dictionary:
+		var frames: Array[int] = []
+		for frame: int in _frames.keys():
+			frames.append(frame)
+		frames.sort()
+		return {"dropped": frames.size(), "from": _drop_from, "through": _drop_through,
+			"frames": frames, "overlaps": _overlaps, "slot": _drop_slot, "unsupported": _unsupported}
+
+	func _withhold_missing_inputs() -> void:
+		if _drop_identity.is_empty() or _membership == null or _peer == null:
+			return
+		var current: int = _peer.status().current_frame - 1
+		if current < _drop_from or current > _drop_through:
+			return
+		var limits: T.Limits = T.Limits.new()
+		limits.player_count = _membership.roster().size()
+		limits.max_packet_bytes = 65536
+		var kept: Array[Peer.Packet] = []
+		for packet: Peer.Packet in _pending:
+			if packet == null or packet.bytes.size() < 4 or _destination(packet) != _drop_identity:
+				kept.append(packet)
+				continue
+			var decoded: T.Result = Codec.decode(packet.bytes, limits)
+			if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.INPUT:
+				kept.append(packet)
+				continue
+			if decoded.message.players.size() != 1 or decoded.message.players[0] != _drop_slot:
+				_unsupported += 1
+				kept.append(packet)
+				continue
+			var start: int = decoded.message.start_frame
+			var last: int = start + decoded.message.frame_count - 1
+			if start > _drop_through or last < _drop_from:
+				kept.append(packet)
+				continue
+			var pieces: Array[Peer.Packet] = _trim_input(packet, decoded.message, limits)
+			for frame: int in range(maxi(start, _drop_from), mini(last, _drop_through) + 1):
+				_frames[frame] = true
+			for piece: Peer.Packet in pieces:
+				kept.append(piece)
+				_pending_bytes += piece.bytes.size()
+			_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
+		_pending = kept
+
+	func _trim_input(packet: Peer.Packet, message: T.Message, limits: T.Limits) -> Array[Peer.Packet]:
+		var result: Array[Peer.Packet] = []
+		var count: int = message.frame_count
+		var slots: int = message.players.size()
+		if count < 1 or slots < 1 or message.data.size() % (count * slots) != 0:
+			_overlaps += 1
+			var fallback: Array[Peer.Packet] = []
+			fallback.append(packet)
+			return fallback
+		var width: int = message.data.size() / (count * slots)
+		limits.input_width = width
+		var start: int = message.start_frame
+		var run_start: int = -1
+		var run_end: int = -1
+		for offset: int in range(count):
+			var frame: int = start + offset
+			if frame >= _drop_from and frame <= _drop_through:
+				if run_start >= 0:
+					var piece: Peer.Packet = _segment(packet, message, limits, run_start, run_end)
+					if piece != null:
+						result.append(piece)
+				run_start = -1
+				continue
+			if run_start < 0:
+				run_start = frame
+			run_end = frame
+		if run_start >= 0:
+			var piece: Peer.Packet = _segment(packet, message, limits, run_start, run_end)
+			if piece != null:
+				result.append(piece)
+		return result
+
+	func _segment(packet: Peer.Packet, message: T.Message, limits: T.Limits, start: int, last: int) -> Peer.Packet:
+		var piece: T.Message = T.Message.new()
+		piece.kind = T.Kind.INPUT
+		piece.session_id = message.session_id.duplicate()
+		piece.sender_id = message.sender_id.duplicate()
+		piece.connection_id = message.connection_id.duplicate()
+		piece.start_frame = start
+		piece.ack_frame = message.ack_frame
+		piece.frame_count = last - start + 1
+		piece.players = message.players.duplicate()
+		for status: T.Status in message.statuses:
+			piece.statuses.append(status)
+		var width: int = message.data.size() / (message.frame_count * message.players.size())
+		var offset: int = (start - message.start_frame) * message.players.size() * width
+		piece.data = message.data.slice(offset, offset + piece.frame_count * message.players.size() * width)
+		var encoded: T.Result = Codec.encode(piece, limits)
+		if encoded.code != T.Code.OK:
+			_overlaps += 1
+			return null
+		return Peer.Packet.new(packet.to, encoded.bytes)
+
+	func _destination(packet: Peer.Packet) -> PackedByteArray:
+		return _membership.identity(_membership.uuid_for_peer_id(packet.to.decode_u32(0)))
 
 
 static func raw_connection() -> WebRTCPeerConnection:

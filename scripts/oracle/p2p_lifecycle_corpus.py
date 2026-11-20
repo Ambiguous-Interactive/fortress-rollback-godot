@@ -2,8 +2,8 @@
 from p2p_contract import validate_scenario
 
 NAMES = ('control_boundaries', 'quality_echo_resume', 'quality_rtt_advantage', 'disconnect_boundary',
-         'partition_one_way', 'partition_heal', 'partition_heal_mesh', 'partition_fairness', 'checksums_match',
-         'checksums_repair', 'checksums_diverge', 'pacing_skew')
+         'partition_one_way', 'partition_heal', 'partition_heal_mesh', 'partition_heal_mesh8', 'partition_fairness',
+         'checksums_match', 'checksums_repair', 'checksums_diverge', 'pacing_skew')
 
 
 def corpus(binary, observe, selected=None):
@@ -209,6 +209,50 @@ def build(binary, observe, name):
         append('poll', peer=0, at=2500000)
         append('poll', peer=1, at=2500001)
         append('poll', peer=2, at=2500002)
+    elif name == 'partition_heal_mesh8':
+        # The three-player mesh heal at the supported maximum: eight players
+        # confirm a real prefix on every link, then lose only the direct 1<->2
+        # link in both directions while every other link stays healthy. Both
+        # cut endpoints latch their own remote-attributed interruption and
+        # predict until the withheld burst arrives below the disconnect
+        # timeout; all eight peers resume confirmed history together.
+        scenario['players'] = 8
+        for _ in range(3):
+            for peer in range(8):
+                step(peer)
+            flush()
+        starved = False
+        for frame in range(6):
+            now = 500000 + frame * 150000
+            for peer in range(8):
+                step(peer, at=now + peer)
+            flush_around(cut)
+            latched = {(r['peer'], e.get('peer')) for r in latest['records'] for e in r['events']
+                       if e['kind'] == 'network_interrupted'}
+            if {(1, 2), (2, 1)} <= latched:
+                starved = True
+        if not starved:
+            raise ValueError('partition heal mesh8 never attributed both cut interruptions')
+        burst = [p['id'] for p in latest['packets'] if p['id'] not in delivered and cut(p)]
+        if not burst:
+            raise ValueError('partition heal mesh8 withheld an empty burst')
+        for packet in burst:
+            delivered.add(packet); append('deliver', packet=packet, at=1500000, refresh=False)
+        latest = observe(binary, scenario)
+        resumed = sum(e['kind'] == 'network_resumed' for r in latest['records'] for e in r['events'])
+        if resumed != 2:
+            raise ValueError(f'partition heal mesh8 resumed {resumed} cut endpoints')
+        for frame in range(3):
+            now = 1600000 + frame * 150000
+            for peer in range(8):
+                step(peer, at=now + peer)
+            flush_around(lambda packet: False)
+        flush_around(lambda packet: False)
+        for peer in range(8):
+            step(peer)
+            flush_around(lambda packet: False)
+        for peer in range(8):
+            append('poll', peer=peer, at=2500000 + peer)
     elif name == 'partition_fairness':
         # Long-lived partition fairness: each of the mesh's three links takes
         # exactly one starvation turn in rotation. A three-round confirmed
