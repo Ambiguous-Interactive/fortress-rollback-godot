@@ -341,6 +341,22 @@ func _ingress(context: RefCounted) -> void:
 				I.Code.OK,
 				"valid retry succeeds after rejected options"
 			)
+	# A configured peer refuses reconfiguration, so the identity tables can
+	# never carry a previous session's members into a roster digest.
+	var reused: Peer = Peer.new()
+	var reused_options: Array = [H.Options.new(), I.Options.new(), L.Options.new()]
+	context.equal(
+		reused.configure(setup.peers[0]._config, setup.peers[0]._endpoint(0)._local, Game.new(2), reused_options[0], reused_options[1], reused_options[2]),
+		I.Code.OK,
+		"the fresh peer configures once"
+	)
+	context.equal(
+		reused.configure(setup.peers[0]._config, setup.peers[0]._endpoint(0)._local, Game.new(2), H.Options.new(), I.Options.new(), L.Options.new()),
+		I.Code.WRONG_STATE,
+		"a configured peer refuses a second session"
+	)
+	context.equal(reused._ids.size(), 1, "the remote table keeps exactly one session's members")
+	context.equal(reused._roster.size(), 2, "the roster keeps exactly one session's members")
 	var mesh: Dictionary = _build(context, 2)
 	context.equal(mesh.peers[0].poll(true), I.Code.INVALID_ARGUMENT, "bool clock rejected")
 	context.equal(mesh.peers[0].receive(PackedByteArray(), _id(7), 0), I.Code.WRONG_SOURCE, "unregistered transport source rejected")
