@@ -89,13 +89,15 @@ The snapshot read is measured with the same 4 KiB payload and 400 reads:
 
 | Engine | Snapshot read p50 | Snapshot read p95 | Control p50 (previous copy) |
 | --- | --- | --- | --- |
-| 4.7.2 | 58.5 → 4.4 | 64.9 → 4.6 | 58.5 |
-| 4.3 | 120.9 → 12.5 | 161.7 → 26.8 | 120.9 |
+| 4.7.2 | 59.0 → 4.4 | 61.7 → 5.0 | 59.0 |
+| 4.3 | 112.7 → 11.7 | 126.3 → 12.8 | 112.7 |
 
-The read control was measured on the same 4.7.2 host in the same process; the
-production path is about 13 times faster because one native slice replaces one
-interpreted step per byte. Read p50 and p95 are the per-read values divided from
-the 400-read workload.
+The read control was measured on the same host in the same process. Samples
+alternate which reader runs first, and the report keeps each pair of raw
+timings, so the control does not always run against the production run's
+heap state. The production path is about 13 times faster on 4.7.2 because one
+native slice replaces one interpreted step per byte. Read p50 and p95 are the
+per-read values divided from the 400-read workload.
 
 The snapshot write is the dominant cost of the steady frame with a 4 KiB state:
 it was about two thirds of the frame before the change. After the change the

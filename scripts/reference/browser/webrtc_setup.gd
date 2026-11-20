@@ -198,7 +198,6 @@ class DropDirect:
 	var _drop_identity: PackedByteArray = PackedByteArray()
 	var _drop_from: int = -1
 	var _drop_through: int = -1
-	var _dropped: int = 0
 	var _overlaps: int = 0
 	var _frames: Dictionary = {}
 
@@ -216,7 +215,7 @@ class DropDirect:
 		for frame: int in _frames.keys():
 			frames.append(frame)
 		frames.sort()
-		return {"dropped": _dropped, "from": _drop_from, "through": _drop_through,
+		return {"dropped": frames.size(), "from": _drop_from, "through": _drop_through,
 			"frames": frames, "overlaps": _overlaps}
 
 	func _withhold_missing_inputs() -> void:
@@ -243,7 +242,6 @@ class DropDirect:
 				kept.append(packet)
 				continue
 			var pieces: Array[Peer.Packet] = _trim_input(packet, decoded.message, limits)
-			_dropped += 1
 			for frame: int in range(maxi(start, _drop_from), mini(last, _drop_through) + 1):
 				_frames[frame] = true
 			for piece: Peer.Packet in pieces:

@@ -368,23 +368,53 @@ func _rollback_run(players: int) -> Dictionary:
 func _snapshot_read(payload: PackedByteArray) -> Dictionary:
 	var production: Array[int] = []
 	var control: Array[int] = []
+	var records: Array[Dictionary] = []
 	var checksum: int = 0
 	for sample: int in range(SAMPLES):
-		var run: Dictionary = _snapshot_read_run(payload)
+		var production_first: bool = sample % 2 == 0
+		var run: Dictionary = _snapshot_read_run(payload, production_first)
+		if run.is_empty():
+			return {}
 		production.append(run["production_us"])
 		control.append(run["control_us"])
 		checksum = run["checksum"]
+		records.append({
+			"order": "production-control" if production_first else "control-production",
+			"production_us": run["production_us"],
+			"control_us": run["control_us"],
+		})
 	var result: Dictionary = _summary(production, checksum, FRAMES)
 	result["control_p50_us"] = _percentile(control, 50)
 	result["control_p95_us"] = _percentile(control, 95)
+	result["order"] = "alternating-production-first"
+	result["records"] = records
 	return result
 
 
-func _snapshot_read_run(payload: PackedByteArray) -> Dictionary:
+func _snapshot_read_run(payload: PackedByteArray, production_first: bool) -> Dictionary:
 	# The read bytes are hashed after the measured region, so the checksum
 	# never shares the measurement with the copy it checks.
 	var production_bytes: Array[PackedByteArray] = []
 	var control_bytes: Array[PackedByteArray] = []
+	var production: int = 0
+	var control: int = 0
+	if production_first:
+		production = _time_production_read(payload, production_bytes)
+		control = _time_control_read(payload, control_bytes)
+	else:
+		control = _time_control_read(payload, control_bytes)
+		production = _time_production_read(payload, production_bytes)
+	if production < 0 or control < 0:
+		return {}
+	var checksum: int = HASH_OFFSET
+	for bytes: PackedByteArray in production_bytes:
+		checksum = _hash_bytes(bytes, checksum)
+	for bytes: PackedByteArray in control_bytes:
+		checksum = _hash_bytes(bytes, checksum)
+	return {"production_us": production, "control_us": control, "checksum": checksum}
+
+
+func _time_production_read(payload: PackedByteArray, output: Array[PackedByteArray]) -> int:
 	var start: int = Time.get_ticks_usec()
 	for index: int in range(FRAMES):
 		var reader: RefCounted = Reader.new(payload, true)
@@ -392,25 +422,22 @@ func _snapshot_read_run(payload: PackedByteArray) -> Dictionary:
 		destination.resize(STATE_BYTES)
 		if reader.read_into(destination) != Status.Code.OK:
 			_fail("production reader failed")
-			return {}
-		production_bytes.append(destination)
-	var production: int = Time.get_ticks_usec() - start
-	start = Time.get_ticks_usec()
+			return -1
+		output.append(destination)
+	return Time.get_ticks_usec() - start
+
+
+func _time_control_read(payload: PackedByteArray, output: Array[PackedByteArray]) -> int:
+	var start: int = Time.get_ticks_usec()
 	for index: int in range(FRAMES):
 		var reader: RefCounted = ControlReader.new(payload)
 		var destination: PackedByteArray = PackedByteArray()
 		destination.resize(STATE_BYTES)
 		if reader.read_into(destination) != Status.Code.OK:
 			_fail("control reader failed")
-			return {}
-		control_bytes.append(destination)
-	var control: int = Time.get_ticks_usec() - start
-	var checksum: int = HASH_OFFSET
-	for bytes: PackedByteArray in production_bytes:
-		checksum = _hash_bytes(bytes, checksum)
-	for bytes: PackedByteArray in control_bytes:
-		checksum = _hash_bytes(bytes, checksum)
-	return {"production_us": production, "control_us": control, "checksum": checksum}
+			return -1
+		output.append(destination)
+	return Time.get_ticks_usec() - start
 
 
 func _snapshot_run(payload: PackedByteArray) -> Dictionary:
