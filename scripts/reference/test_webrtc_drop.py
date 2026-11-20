@@ -165,12 +165,12 @@ class RelayDropEvidence(unittest.TestCase):
             row['mixed'] = {'switched': True, 'relay_peers': 2, 'caller_pending': 0, 'maximum_pending': 2,
                             'maximum_relay_pending': 0, 'maximum_relay_received': 1, 'route_budget': 8,
                             'send_budget': 32, 'receive_budget': 32, 'accepted_binary': 5}
-            packet = bytearray(101)
+            packet = bytearray(109)
             packet[:8] = b'FRGP\x03\x00\x0c\x00'
             packet[8:24] = bytes([1] * 16)
             other = original['records'][0]['peers'][1 - index]['result']['records'][0]
             packet[24:32] = hashlib.sha256(other['uuid'].encode('ascii')).digest()[:8]
-            packet[40:44] = (57).to_bytes(4, 'little')
+            packet[40:44] = (65).to_bytes(4, 'little')
             packet[44:46] = bytes([2, 2] if index == 0 else [4, 0])
             packet[50:52] = (1).to_bytes(2, 'little')
             packet[52:56] = (9).to_bytes(4, 'little')
@@ -186,7 +186,7 @@ class RelayDropEvidence(unittest.TestCase):
             lambda peer: peer['rtc']['channels'][2].update(postDropReceived=1),
             lambda peer: peer['rtc'].update(binarySent=0),
             lambda peer: peer['result']['records'][0].update(relay_barriers=[]),
-            lambda peer: peer['result']['records'][0].update(relay_barriers=['00' * 101]),
+            lambda peer: peer['result']['records'][0].update(relay_barriers=['00' * 109]),
             lambda peer: peer['result']['records'][0].update(operation=8),
             lambda peer: peer['result']['records'][0]['mixed'].update(accepted_binary=0),
         ]

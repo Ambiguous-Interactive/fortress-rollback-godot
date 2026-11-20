@@ -191,7 +191,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                             or type(row.get('target_generation')) is not int
                             or int.from_bytes(data[95:97], 'little') != row['target_generation']
                             or 98 + targets > len(data)
-                            or int.from_bytes(data[94 + targets:98 + targets], 'little') != len(data) - 98 - targets
+                            or int.from_bytes(data[94 + targets:98 + targets], 'little') != len(data) - 98 - targets - 8
                             or any(type(row.get(field)) is not int or int.from_bytes(data[start:end], 'little') != row[field]
                                    for field, start, end in [('coordinator', 48, 50), ('coordinator_generation', 50, 52), ('operation', 52, 56)])
                             or f"{int.from_bytes(data[56:64], 'little'):016x}" != row.get('target_set_digest')):
