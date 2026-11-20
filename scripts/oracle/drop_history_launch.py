@@ -264,7 +264,8 @@ def main():
         'execution_identities_unchanged': True, 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),
         'evidence': evidence, 'negative_controls': controls,
         'scope': ('Paired one/four-row single-target and four-row two-target clean/lost-first-history three-endpoint original-history/cut scenarios: source explicit removal; '
-                  'Godot elapsed timeout; equal and unequal exposed frontiers; first-prepare/inventory/COMMIT/ACK loss alone and combined with donor-data loss; '
+                  'Godot elapsed timeout; equal and unequal exposed frontiers; first-prepare loss alone; first-inventory/COMMIT/ACK loss alone or combined with donor data; '
+                  'prepare publications are paired with their routing; '
                   '251-frame warmup wraps the original queues before equal-policy donor recovery; distinct non-interoperable wires. '
                   'Every barrier payload names its carried roster digest; the coordinator survivor-link proposal is compared byte-exact '
                   'against the pinned participants.')}, indent=2) + '\n')

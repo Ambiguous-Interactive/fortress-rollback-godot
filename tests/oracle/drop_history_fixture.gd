@@ -185,8 +185,10 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 			if decoded.message.start_frame + decoded.message.frame_count - 1 > 7 + _warmup_frames:
 				continue
 		if _unrouted_prepare and _unrouted.is_empty() and decoded.code == T.Code.OK \
-			and decoded.message.kind == T.Kind.DROP_BARRIER and decoded.message.phase == Drop.Phase.PREPARE:
-			# A prepare published but never routed: the recorded publication stays
+			and decoded.message.kind == T.Kind.DROP_BARRIER and decoded.message.phase == Drop.Phase.PREPARE \
+			and decoded.message.stage == Drop.Stage.HISTORY:
+			# The donor plan is the prepare that bypassed the observer before this
+			# seam: dropping it before routing leaves its recorded publication
 			# unmatched, so the completeness assertion, not the Python comparator,
 			# is what fails.
 			_unrouted.append({"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode()})

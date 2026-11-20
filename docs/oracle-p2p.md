@@ -640,7 +640,7 @@ python3 scripts/oracle/drop_history_launch.py --godot godot
 Both pinned engines run this gate in the existing oracle CI leg. The launcher
 executes one-row and four-row single-target cases plus four-row two-target cases,
 each with clean and lost-first-backfill delivery, twice in fresh processes. Four additional grouped four-row cases use unequal exposed confirmation,
-including first-COMMIT loss alone and combined with first-backfill loss. Two further unequal grouped cases lose the first follower ACK, alone and after both earlier losses. It records the pinned
+including first-COMMIT loss alone and combined with first-backfill loss, and a case that loses the coordinator's first prepare. Two further unequal grouped cases lose the first follower ACK, alone and after both earlier losses. It records the pinned
 archive, complete upstream source inventory, local sources and project settings,
 resolved pinned cargo/rustc identities, engine/oracle identities and comparison bytes. Sources and executables must remain unchanged
 until the receipt commits.
@@ -686,7 +686,7 @@ paired control with identical canonical input history. The lost-COMMIT cases dis
 irreversible COMMIT before socket delivery. Each runtime must deliver a later exact retry,
 freeze both target slots at eleven and preserve every original canonical prefix. Combined
 loss separately withholds the first donor packet before dropping the first COMMIT.
-Source and Godot trace version 6 retain separate loss banks and inventory/COMMIT/ACK emissions/receipts.
+Source and Godot trace version 6 retain separate loss banks and prepare/inventory/COMMIT/ACK emissions/receipts.
 ACK loss selects the follower's own COMMITTED participant report; the pinned source can forward other participants' certificates.
 The source must resend the same follower certificate through its retained journal. Godot must receive an exact COMMIT retry after the lost ACK,
 then deliver the same ACK bytes. Its global observed control order distinguishes those operations from an invented early response.
