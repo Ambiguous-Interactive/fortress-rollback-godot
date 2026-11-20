@@ -62,6 +62,10 @@ class RepoStateTest(unittest.TestCase):
     def test_length_linter_clean_over_whole_repo(self):
         self.assertEqual(checker.main([str(self.root)]), 0)
 
+    def test_plan_is_present_and_within_its_own_limit(self):
+        self.assertTrue(llm_paths.PLAN_PATH.is_file(), "PLAN.md must exist")
+        self.assertEqual(checker.check_plan(), [])
+
     def test_index_covers_exactly_the_skill_set(self):
         text = (llm_paths.INDEX_PATH).read_text(encoding="utf-8")
         skill_dirs = sorted(p.name for p in llm_paths.SKILLS_DIR.iterdir() if p.is_dir())

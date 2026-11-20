@@ -180,6 +180,24 @@ that invalid transitions are rejected for the intended reason. Timeout, tool
 failure and parse failure are not successful invalid-transition rejection.
 Rust-specific Kani/SMT/Loom results do not establish GDScript correctness.
 
+## Performance claims
+
+Measure before optimizing; correctness gates remain mandatory afterward.
+Benchmark steady frames, maximum rollback, snapshots, serialization and
+polling. Vary players, input widths, snapshot sizes and supported prediction
+windows. Separate library, client simulation and transport cost.
+
+Record workload, warmup, CPU, OS, engine/browser versions and repeated
+samples. Report p50/p95/p99, memory high-water, buffer growth, bandwidth and
+stalls. Establish regression budgets from measured noise and reference
+hardware. Portable CI must not fail on arbitrary unstable timing thresholds.
+
+Prefer preallocated rings, reusable batches/scratch buffers and dense
+indexing. Prove snapshot isolation before removing copies. The initial
+guarantee is bounded storage and no intentional steady-state growth. Claim
+zero allocations only for measured paths using instrumentation with a
+known-allocation positive control; flat memory alone is insufficient.
+
 ## Release checklist
 
 - Every supported API/behavior has a mapped passing port test or reviewed

@@ -1,90 +1,25 @@
 # Fortress Rollback Godot — Implementation Plan
 
-## Purpose and source of truth
+## Purpose
 
-Build a correctness-first, GDScript-native reimplementation of Fortress Rollback
-for browser Godot games using SignalFish.
-
-Priority order is **correctness → simple client interface → measured performance**.
+Build a correctness-first, GDScript-native reimplementation of Fortress
+Rollback for browser Godot games using SignalFish. Priority order is
+**correctness → simple client interface → measured performance**.
 An optimization cannot weaken a correctness gate or obscure the client contract.
 
-This document contains durable decisions and navigation.
-**GitHub issues own implementation details, TODOs, dependencies, progress,
-experiments, acceptance criteria and closure evidence.**
-Do not maintain a second changing task checklist in this file.
-Read and update GitHub through authenticated MCP first, then authenticated `gh`
-for capability gaps; follow [GitHub operations](.llm/skills/github-operations/SKILL.md).
+This file is a durable map: product decisions, architecture boundaries,
+milestone gates and open-work navigation. GitHub issues own task detail,
+dependencies, progress and acceptance. `docs/` owns contracts and evidence;
+`.llm/` owns agent procedure; `progress/` is the machine-local session log.
+Past work stays in git history, CHANGELOG and `.llm/retrospectives/`.
 
-- Roadmap: [GDScript-native Fortress Rollback implementation and parity tracking](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/2).
-- Start here: [pin and reproduce the reference baseline](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/12).
-- The roadmap and parent/child issue links own the changing backlog.
-- Parent/child linked checklists provide the epic hierarchy.
-- Individual task prerequisites determine readiness; issue-number order does not.
-- Close parents only after their applicable child tasks and gates are satisfied.
+- Roadmap and backlog: [issue #2](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/2).
+- Start point for the pinned baseline: [issue #12](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/12).
+- Parent/child checklists provide the epic hierarchy. Task prerequisites, not
+  issue-number order, determine readiness.
+- Close a parent only after its applicable child tasks and gates are satisfied.
 
-Local development contracts and evidence entry points:
-
-- [Pinned reference setup, run instructions and evidence](docs/reference/README.md).
-  Source and tool pins were refreshed on 2026-10-28; historical receipts retain their original revisions.
-- [Devcontainer real-browser witnessing capability](.devcontainer/README.md#browser-witnessing-capability-385):
-  digest-pinned Chromium/Firefox and the pinned Playwright package acquired at post-create, verified
-  with real launches by `verify.sh` locally and by Devcontainer Verify on both architectures.
-- [Session/driver/state/transport interface ADR](docs/contracts.md).
-- [Verification and release evidence policy](docs/verification-policy.md).
-- [Fail-closed native test runner](docs/test-runner.md).
-- [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
-- [Match recording, replay files, verified captured prefixes and playback failure evidence](docs/integration.md#record-and-replay-a-match).
-- [Confirmed-input spectator playback, bounded envelopes, retained publication, viewed-history replay export and local buffering/pause/restart guidance](docs/spectators.md).
-- [Pinned-source spectator comparisons, including reordered and duplicated delivery](docs/spectators.md#check-playback-against-the-pinned-spectator-model).
-- [Native replay file drops, replay timeline and time navigation](docs/online-example.md#record-and-download-a-replay).
-- [Actual received browser prefix files, production-picker reimport and remaining supervision qualification](docs/experiments/buffer-ownership.md#received-browser-replay-downloads).
-- [Online match recording, downloads and online/spectator offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
-- [Online input ownership retries, modifier guards and live delay readiness](docs/online-example.md#install-and-run).
-- [Local peer packet pause, single-tick inspection and delay shortcuts gated by both live sessions](docs/peer-example.md).
-- [Addon candidate packaging and clean installation](docs/package.md).
-- [Supported features, browsers, platforms and explicit exclusions](docs/supported.md).
-- [Native/browser diagnostic file viewer, including portable JSON export and escaped recorded metadata and saved callback failure names and frames](docs/diagnostic-viewer.md).
-- [Offline canonical diagnostic reproduction](docs/diagnostic-reproduction.md).
-- [Runtime input-delay increases and their result codes](docs/integration.md#change-input-delay-during-a-match).
-- [Measured input-delay suggestions](docs/integration.md#suggested-input-delay).
-- [Playable input-driven shots, confirmation, prediction stalls and independently paused replay inspection](docs/integration.md#try-the-effects-example).
-- [Playable online room setup and controls](docs/online-example.md).
-- [Online suspension, elapsed-time expiry and fresh-room restart](docs/online-example.md#suspension-and-expiry).
-- [Online terminal connection cleanup and fresh-room recovery](docs/online-example.md#leave-and-restart).
-- [Actual server-process restart and old-room packet rejection](docs/online-example.md#verification).
-- [Source-family inventory and remaining semantic audit](docs/reference/INVENTORY.md).
-- [Measured packed-buffer and snapshot ownership](docs/experiments/buffer-ownership.md).
-- [Firefox late updater-lock regression and full shutdown](docs/experiments/firefox-shutdown.md).
-- [Measured integer and fixed-width encoding contracts](docs/experiments/integer-encoding.md).
-- [Measured session hot path, snapshot copy and codec cost](docs/experiments/session-hot-path-performance.md).
-- [Measured Reference Baseline job time and the dominant browser work](docs/reference/jobs.md).
-- [Audited raw input queue and prediction contracts](docs/input-queue.md).
-- [Actual upstream and production Godot sync-test differential traces](docs/oracle.md).
-- [Shared session engine, bounded snapshots and game driver](docs/session.md).
-- [Opt-in bounded canonical first-divergence evidence](docs/peer-lifecycle.md#opt-in-canonical-divergence-evidence).
-- [Bounded protocol message layout and source audit](docs/protocol.md).
-- [Fixed-peer byte handshake and injected time/token API](docs/handshake.md).
-- [Actual upstream/Godot handshake observations and scoped model refinement](docs/oracle-handshake.md).
-- [Fixed-membership byte sessions and transport-facing API](docs/peer-session.md).
-- [Peer timing, confirmed game checksums and terminal events](docs/peer-lifecycle.md).
-- [Owned rollback statistics and private diagnostic downloads](docs/peer-lifecycle.md#downloadable-observations).
-- [Opt-in online canonical state/input downloads](docs/online-example.md#diagnostics).
-- [Optional SignalFish membership, agreed UUID slots and plan fences](docs/signalfish-membership.md).
-- [SignalFish binary relay, bounded packet ownership and broadcast filtering](docs/signalfish-relay.md).
-- [SignalFish WebRTC bytes, channel selection and direct-path lifetime](docs/signalfish-webrtc.md).
-- [SignalFish per-peer fallback, direct restoration and mixed-path ownership](docs/signalfish-fallback.md).
-- [Bounded retained input, cumulative ACK and gossip exchange](docs/input-exchange.md).
-- [Actual upstream/Godot P2P fault traces](docs/oracle-p2p.md).
-- [Published P2P supported network profiles and the reproducible zero-unexplained-divergence report](docs/reference/p2p-profiles.md).
-- [Playable two-peer packet fault example](docs/peer-example.md).
-- [Runnable offline driver with paused single-frame inspection and presentation](docs/offline-example.md).
-- `make test-reference` runs offline tooling negative controls;
-  `make reference-baseline` reproduces the Rust reference, not the Godot port.
-
-The planning deliverable is this file and its linked issues.
-Issue creation does not establish implementation, test success or feature parity.
-
-## Agreed product decisions
+## Durable product decisions
 
 | Decision | Contract |
 | --- | --- |
@@ -98,126 +33,35 @@ Issue creation does not establish implementation, test success or feature parity
 | Default API | Small save/load/simulate driver plus explicit expert request API |
 | Feature delivery | Fixed-membership P2P first, then staged advanced parity |
 | Verification | Rust oracle, independent invariants, properties and bounded formal checks |
-| Development tools | Rust and formal tools permitted; excluded from shipped addon |
+| Development tools | Rust and formal tools permitted; excluded from the shipped addon |
 | Upstream notifications | Weekly/manual workflow updating a deduplicated GitHub issue |
 | Scene integration | Explicit state capture; automatic node replication is outside scope |
+| Simulation ownership | The game owns deterministic simulation and complete serialization; the library supplies orchestration, validation and sync-test tooling |
+| Time | Protocol time is separately injected and monotonic; browser suspension advances elapsed time truthfully |
+| Storage | Validate configuration once and derive bounded storage from explicit limits; no intentional steady-state growth |
 
-The game owns deterministic simulation and complete serialization.
-The library supplies orchestration, validation and sync-test tooling.
-Request-scoped inputs support owned reads or checked copies into exact-width game scratch buffers.
-The direct session driver also accepts local byte rows in ascending slot order through `step_local`,
-inferring the current sample frame and retaining the existing stalled-input and callback ownership rules.
-This convenience API reuses bounded wrappers; it is not a claim of faster or allocation-free execution.
-The scalar applied-status read preserves predicted and disconnected semantics alongside reusable input buffers.
-Queue history uses native byte copying with shared immutable private storage; submitted and returned buffers remain isolated.
-Rejected driver sample lists preserve the accepted poll time so corrected retries remain usable.
-Peer clients can read owned staged local samples to retry stalled steps without resampling.
-Callback and expert peer steps can omit retained local slots while requiring every unstaged slot before mutation.
-Internal readiness checks avoid owned sample copies; public retained-input reads remain isolated.
-They can also export owned finalized input rows for confirmed effects and spectator publication without recording.
-Replay failure evidence identifies the first failed game request and comparison domain.
-Normal replay inspection also exposes recorded provenance separately from checksum coverage.
-Timeline dragging previews its selected frame and time while state and checksum observations continue to name the displayed frame.
-The online replay viewer can inspect preceding or following control/status changes through bounded verified navigation.
-Its controls scroll within short or narrow windows so failure details and the displayed game remain reachable together.
-Its status-only filter skips changing controls when inspecting finalized player disconnect transitions.
-Five-second and start/end controls use the same verified seek budget and preserve active game and timeline ownership.
-It can export original input history before the displayed frame, retaining existing checksum evidence without generating new validation.
-It also discovers preceding/following recorded checksum boundaries, including final states, independently of visited checkpoint caches.
-Spectator playback observations distinguish contiguous input waits, deliberate delay, final tails and committed termination.
-The local spectator names stopped-viewing causes and failed game operations with their recorded frame, preserving the first cause through later host events.
-The local spectator example adjusts its viewing delay without rewinding playback or changing its pause and catch-up policy.
-Its host-delivery selector exposes delayed confirmation and prediction stalls independently of viewer policy, preserving queued delivery times.
-The effects example provides pointer delay/replay/restart actions and preserves confirmed presentation when restart is refused.
-Typed replay destinations submit on Enter through bounded verified navigation, restoring playback shortcuts only after accepted navigation.
-Pointer controls share its keyboard pause, single-frame, bounded one-time catch-up, clean host ending, known host-link loss, fresh match restart and viewed-replay save actions.
-Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
-Restarting the reusable integration loop stages a complete fresh game, session, driver and effects ledger before retiring its prior match.
-The local byte-peer example exposes pointer fault, delay and restart controls through the same shared-ownership gates as its shortcuts.
-Replay inspection can isolate either recorded player's control and status changes while verifying complete preceding history.
-The local spectator can single-step paused host input while ordinary delivery and rollback continue; viewer policy remains independent.
-The local peer example prepares replacement sessions before retiring the old match and preserves active shared game operations during reset.
-Online room and match service also preserve callback, notification and manual ownership before committing clocks or replay finishing.
-Visible online input-delay controls share keyboard readiness checks and show when a suggested delay is available.
-Online setup guards SDK callbacks and fences cancellation before accepting a new match or transport.
-Unsafe SDK plan/directive reentry during identity validation or plan conversion stops the old mesh before SDK consumption and requires a fresh session.
-The local spectator can catch up through its currently buffered playable rows without changing its viewing delay or normal rate.
-Follow live resumes viewing with zero delay and bounded catch-up to the latest contiguous received input.
-Callback Leave retires outstanding game work and fences canceled startup before SDK owners are physically released.
-Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
-Byte-peer driver/expert comparison also requires interruption, resumed correction, retained-input continuation and renewed timeout events independently of shared outcomes.
-Replay viewer controls preserve active callback/manual-request ownership and retire replaced players.
-Their enabled state, file chooser and failure downloads also respect active game ownership and timeline holds.
-Owning example scenes retire match and playback lifetimes on exit, including retained request views.
-Example integer button inputs are validated before byte conversion or controller-clock changes.
-Scene physics loops retry temporary ownership holds without replacing their current match.
-Browser file-read completions also preserve held timeline controls and active game requests.
-Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.
-An explicit paused-state action checks the selected replay boundary without consuming input.
-The local spectator offers pointer controls for bounded viewing delay and catch-up rate.
-Confirmed-effect hooks keep the shared integration session guarded until their bounded batch finishes; cancellation remains observable.
-Recording progress separates finalized exports, pending correction/confirmation and gameplay omitted beyond the configured cap without copying replay bytes.
-The spectator example also shows its viewed recording limit, advance warning and omitted viewed frames while playback continues.
-Spectator host observations separate authenticated liveness and pending final-row recovery from playback progress.
-Explicit finalized-boundary capture adds FRRP v6 terminal checksums; ordinary v4/v5 playback retains its historical coverage.
-Owned replay prefixes only trim existing storage; they cannot pad missing gameplay or checksum bytes into portable evidence.
-Validated terminal states share the bounded checkpoint cache, allowing direct return to a verified ending after backward inspection.
-Spectator startup traces compare actual pinned Rust and Godot execution against a scoped runtime-aligned model relation.
-A separate source comparison checks each initially disconnected reserved-slot position across all supported rosters, delay and ring reuse.
-Remote recording compares symmetric and asymmetric late corrections, repeated prediction stalls and resumed retained samples
-through default queue reuse with independent canonical histories;
-[pinned speculative-checksum discrepancies](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253) remain explicit.
-A separate two-endpoint browser witness records 257 original frames through repeated injected direct/relay send-buffer refusal.
-Both engine pins verify exact retained retries, post-wrap canonical history and recovery-only decoded recordings, including the final checksum.
-Physical congestion, the complete asymmetric browser schedule and unchanged-source recovery-only export remain open in #256.
-Native coordinated-drop recordings cover remote donors and lost/reordered multi-slot history through decoded callback/expert playback,
-with original status-sensitive canonical boundaries and captured final-state checks. Source and live drop-recording acceptance remains open in #45.
-The spectator SDK-adapter witness spans 257 original rows with recurrent refusal, exact retries, reordered/duplicate ingress,
-callback/expert viewing and decoded status-sensitive recordings. Actual SDK/server/browser qualification remains in #131 and #245.
-The retained-history source comparison also exercises donor recovery after two queue capacities of original gameplay,
-with unequal frontiers, two targets and combined control/history loss; broader live acceptance remains in #188.
-Native development receipts execute a bounded private authored-source image, record its hashes and starting Git identity,
-and bind the executed Python helper bytes: the helpers run from a private staged image whose digests are captured before
-any import and before any engine child starts; the live tree stays an evidence input whose drift during the run fails
-qualification (#298).
-Native test launches wait within an explicit host-capacity budget before starting engines, then retain requested parallelism under the machine-wide lease.
-The ownership witness overlaps its per-suite native engine processes in the same bounded wave, keeping one fresh process, watchdog and after-run boundary verification per suite; browser pages stay serial because they need a responsive host.
-The ownership matrix runs each Chromium phase as its own job, matching the existing Firefox shape, so the workflow's wall-time critical path is no longer one double-phase job.
-The oracle launchers run in bounded parallel subprocesses with fail-closed aggregation; each launcher keeps its own interpreter, output directory and receipt, and the shared cargo target stays correct under cargo's own build lock.
-The online leg's seven native probes overlap in one bounded two-worker wave that takes the host lease once for all its members; every probe keeps its exact command, watchdogs and output paths, the six browser-viewer cells stay serial, and one rejection never masks a sibling's failure. The wave's lease inheritance is identity-scoped: children receive the wave owner's name and pid through one environment value, and a member inherits only while the live lock record names that exact owner, rather than by the lease name alone.
-The unit-test wave shards across two same-tree CI jobs whose name-interleaved
-suites tile the discovered inventory exactly once, and the ownership witness
-splits into four interleaved suite parts per phase, so both the CPU-bound
-engine wave and the serial browser pages spread across runners without
-removing a gate.
-Cancellation fences queued launches and retires owned engine groups before releasing capacity; per-case watchdog isolation remains available after contention with one worker.
-An emptied-group signal verdict is classified once per process against the runner's real kernel before it is trusted, and a kernel that cannot prove an emptied group reports the may-survive failure instead of a clean teardown (#408).
-Every owned launch claims a dedicated cgroup v2 leaf when the hierarchy is writable, and the post-exit ownership sweeps read that leaf's kernel membership instead of the numeric process group id, so a group id the kernel reissued is never eligible for a cleanup signal in any window; platforms without a writable hierarchy keep the boundary-gated numeric scans as the documented fallback (#411).
-Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
-The same policy applies to custom transports and the SignalFish adapter.
-The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
-Godot physics and arbitrary scene state are not made deterministic by rollback.
+## Architecture boundaries
 
-## Reference revisions and provenance
-
-Research inspected these exact revisions:
-
-| Project | Research baseline |
+| Layer | Responsibility |
 | --- | --- |
-| Fortress Rollback | `d124c89080004d96971a629bb0427056ee1805e3` |
-| SignalFish Godot SDK | `8e1475ed12a618fb41660bd1c8a1b0c934dee77f` |
-| SignalFish server | `8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560` |
+| Deterministic core | Input queues, prediction, confirmation, saved-state history, rollback |
+| Session/protocol | Handshake, input exchange, ACKs, retries, pacing, lifecycle, checksums |
+| Transport adapters | Bounded fake network, SignalFish relay and WebRTC byte delivery |
+| Client driver | Ordered state callbacks, status handling and end-of-step notifications |
 
-These are inputs to baseline reproduction, not claims that all upstream suites
-were executed during planning. B1 records actual results and intentional updates.
-Pin toolchains, feature flags, lockfiles, engine/export-template pairs,
-browser runners, models and artifact integrity alongside source revisions.
+- One ordered request engine serves both facades. The driver and expert API
+  must never implement separate rollback algorithms.
+- Core classes are typed and SceneTree-independent; no hidden global state.
+- Simulation advances in whole frames with stable player order and integer-first
+  reference games. No network I/O, wall-clock reads or presentation work occurs
+  inside simulation callbacks.
+- SignalFish is optional: the core addon parses and runs without the SDK.
+  Fixed-membership sessions terminate explicitly when recoverable history is lost.
+- Frame/time domains, typed signatures and ownership: [ADR](docs/contracts.md),
+  [local sessions](docs/session.md), [protocol](docs/protocol.md),
+  [fixed peers](docs/peer-session.md), [handshake](docs/handshake.md).
 
-Keep upstream references in a development cache and preserve attribution.
-Every imported fixture records its source revision and translation, if any.
-A test inventory must come from the pinned tree, not historical README counts.
-
-## Epic map and milestone gates
+## Milestone map
 
 | Epic | Work and acceptance gate |
 | --- | --- |
@@ -234,721 +78,69 @@ A test inventory must come from the pinned tree, not historical README counts.
 E1 establishes the contracts. E2 and E3 can overlap after their prerequisites.
 E4 builds on verified representations and comparison tooling; E5 adds networking.
 E6 validates the browser target while E7's driver work proceeds against the core.
-E7's release gate requires both protocol and real-browser evidence.
-E8 features ship only after their individual gates.
-E9 starts once baseline and differential infrastructure exist; it need not wait
-for advanced parity. Epic dependencies are milestone gates, not blanket locks.
+E7's release gate requires both protocol and real-browser evidence. E8 features
+ship only after their individual gates. E9 starts once baseline and differential
+infrastructure exist; it need not wait for advanced parity. Epic dependencies are
+milestone gates, not blanket locks.
 
-## Task navigation
+## Open work
 
-The issue bodies specify requirements, dependencies, tests and closure evidence.
-This index is navigation rather than a duplicate progress tracker.
+GitHub issue state is authoritative. Every open task is reachable from the epic
+checklists; the table names only the active acceptance threads. A task that is
+already implemented but awaiting closure evidence still belongs to its issue.
 
-| Area | Task issues |
+| Track | Remaining outcome | Issues |
+| --- | --- | --- |
+| Coordinated drop | Live departure/fault matrix, unequal exposed frontiers, missing-history donor recovery, prepare routing | [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48), [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166), [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), [#419](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/419) |
+| Replay and recording | Asymmetric and long recordings, received browser replay downloads, final replay acceptance | [#45](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/45), [#256](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/256), [#290](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/290) |
+| Spectators | Live relay/startup qualification, exported host/viewer recovery, redundant hosts | [#47](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/47), [#131](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/131), [#245](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245), [#49](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/49) |
+| Transport and release | Mixed-path recovery, Firefox/WebKit/mixed-browser matrix, package the first supported release | [#38](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38), [#39](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39), [#44](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/44), [#75](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/75), [#104](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/104) |
+| Verification | Broader P2P time, delivery, profile and layout coverage | [#34](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/34), [#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59) |
+| Hot join | Reserved-slot admission and safe session reactivation | [#50](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/50) |
+| Performance | Measured hot-path optimization without weakening equivalence | [#43](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/43) |
+| Maintenance | Drift review and upgrades, review availability, browser job time, install hangs | [#53](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/53), [#148](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/148), [#164](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/164), [#249](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/249), [#276](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/276), [#387](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/387), [#388](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/388), [#389](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/389) |
+
+The drift carriers #387–#389 are reporting only; they never advance a pin.
+The supported surface and explicit exclusions are in [docs/supported.md](docs/supported.md).
+
+## Where truth lives
+
+| Question | Authoritative place |
 | --- | --- |
-| Baseline | [B1 pins](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/12); [B2 inventory](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/13); [B3 interfaces](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/14); [B4 evidence policy](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/15) |
-| Verification | [V1 runner](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/16); [V2 Rust oracle](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/17); [V3 comparator](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/18); [V4 network/shrinker](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/19); [V5 formal/properties](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/20); [V6 CI tiers](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/21) |
-| Experiments | [R1 integers/encoding](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/22); [R2 ownership](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/23); [R3 benchmarks](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/24) |
-| Core | [C1 queues/delay](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/25); [C2 prediction](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/26); [C3 rollback/history](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/27); [C4 sync-test](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/28); [C5 expert API](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/29) |
-| Protocol | [P1 codec](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/30); [P2 handshake](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/31); [P3 input/ACKs](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/32); [P4 pacing/desync/drop](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/33); [P5 mesh validation](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/34) |
-| SignalFish | [S1 SDK/identity](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/35); [S2 relay](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/36); [S3 WebRTC](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/37); [S4 fallback/lifecycle](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38); [S5 browsers](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39) |
-| Client/release | [A1 driver](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/40); [A2 examples/docs](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/41); [A3 diagnostics](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/42); [A4 optimization](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/43); [A5 release](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/44) |
-| Advanced parity | [X1 replay](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/45); [X2 runtime delay](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/46); [X3 spectators](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/47); [X4 coordinated drop](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48); [X5 redundant hosts](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/49); [X6 hot join](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/50) |
-| Maintenance | [M1 classification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/51); [M2 reporting](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/52); [M3 reviewed upgrades](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/53) |
+| Scope, priorities, milestone map | This file |
+| Task detail, dependencies, status, acceptance evidence | GitHub [#2](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/2) and epics #3–#11 |
+| Interface, frame/time, ownership contracts | [docs/contracts.md](docs/contracts.md), [docs/session.md](docs/session.md) |
+| Protocol, handshake, peers, queues | [docs/protocol.md](docs/protocol.md), [docs/handshake.md](docs/handshake.md), [docs/peer-session.md](docs/peer-session.md), [docs/input-queue.md](docs/input-queue.md), [docs/input-exchange.md](docs/input-exchange.md) |
+| Verification, evidence and performance claims | [docs/verification-policy.md](docs/verification-policy.md) |
+| Pins, inventory and drift procedure | [docs/reference/README.md](docs/reference/README.md), [pins.json](docs/reference/pins.json), [INVENTORY.md](docs/reference/INVENTORY.md) |
+| Supported surface and exclusions | [docs/supported.md](docs/supported.md) |
+| Feature usage and examples | [docs/integration.md](docs/integration.md), [docs/spectators.md](docs/spectators.md), [docs/online-example.md](docs/online-example.md), [docs/peer-example.md](docs/peer-example.md), [docs/offline-example.md](docs/offline-example.md) |
+| Differential and oracle evidence | [docs/oracle.md](docs/oracle.md), [docs/oracle-p2p.md](docs/oracle-p2p.md), [docs/oracle-replay.md](docs/oracle-replay.md), [docs/oracle-handshake.md](docs/oracle-handshake.md), [docs/peer-lifecycle.md](docs/peer-lifecycle.md) |
+| SignalFish transports | [docs/signalfish-membership.md](docs/signalfish-membership.md), [docs/signalfish-relay.md](docs/signalfish-relay.md), [docs/signalfish-webrtc.md](docs/signalfish-webrtc.md), [docs/signalfish-fallback.md](docs/signalfish-fallback.md) |
+| Durable lessons and history | [.llm/knowledge/](.llm/knowledge/), [.llm/retrospectives/](.llm/retrospectives/) |
+| Agent procedure | [.llm/context.md](.llm/context.md), [.llm/skills/](.llm/skills/) |
+| Session narrative | `progress/` (machine-local; never committed) |
 
-## Architecture
+Pins and provenance are recorded once in [pins.json](docs/reference/pins.json)
+and [docs/reference/README.md](docs/reference/README.md). Do not duplicate
+revisions here. Every imported fixture records its source revision and any
+translation.
 
-The runtime core includes the bounded raw queue, frame/generation-tagged snapshots,
-shared ordered request engine, local sync-test mode and synchronous game driver.
-`make oracle-probes` compares production Godot sync-test requests and canonical
-bytes, including snapshotted PRNG and pending-event games, directly with pinned upstream sessions. External-input tests verify
-asymmetric prediction and corrected replay. `make p2p-probes` compares actual
-upstream and Godot byte sessions across 2–8 slots, delayed inputs, packet faults
-and scoped timing, checksum and terminal observations. Explicit endpoint layouts
-compare couch co-op machines that own several local slots, including a stall
-released through reversed withheld flights and the missing-input refusal a
-partially staged row produces on each engine. Its lifecycle corpus
-includes a one-way partition: one peer receives nothing while the other keeps
-receiving, both peers latch their own interruption once quiet spans pass the
-shared notify bound, and the schedule ends at
-the starved peer's terminal with both peers' canonical states matching through
-the last shared operation. A bounded partition-heal case keeps the same
-starvation inside the disconnect timeout, delivers the withheld burst, requires
-the resumed starved peer to recover through a deep LOAD correction, re-delivers
-the first withheld report so the same echoed token is answered twice, requires
-peer 0 to re-measure that duplicate against its current clock exactly as the
-pinned oracle does, and ends synchronized with no terminal. A three-player
-partition-heal case confirms a real prefix on every link, cuts the direct
-1<->2 link in both directions while both cut peers keep their links to peer 0,
-latches each cut endpoint's remote-attributed interruption past the shared
-notify bound, heals inside the disconnect timeout with deep LOAD corrections
-through the public advance API and ends synchronized with no terminal; its
-controls include retargeting an attributed event peer into a self-interruption.
-A partition-fairness rotation gives each of the mesh's three links exactly one
-starvation turn: every rotation latches both cut endpoints' attributed
-interruptions, heals inside the disconnect timeout with deep LOAD corrections,
-re-synchronizes the mesh with confirmed rounds before the next link takes its
-turn, and ends with no terminal after all three links have starved once.
-The oracle's semantic decompression now mirrors the pinned encoder exactly: every
-flight row XOR-deltas against the destination's last-ACKED row, with delivery-time
-acknowledgement popping the receiver's pending rows, and the trace driver
-publishes each operation's packets in the pinned shared-socket order — every
-endpoint's queued controls first, then each endpoint's checksum reports with the
-step's own input flight. Quality echoes
-resolve their elapsed-millis
-token statelessly with a saturating subtraction, so duplicates and stale-era
-pongs re-measure instead of freezing the gauge; no pending-token inventory
-exists. A non-power-of-two queue profile case builds both
-adapters' rings from an explicit nine-row capacity, forces one deep correction
-through a withheld ten-round flight, wraps the ring three times and
-compares the capacity-aware runtime delay bounds. A session-engine differential
-drives the `global_floor` schedule — three players, prediction window four,
-capacity nine, a fast queue receiving ahead, a three-frame lagger and a delay
-raise during prediction — through the pinned SyncLayer and the shipped session,
-comparing ordered requests, canonical states, floor and retained-row
-observations and a fast-local-high-water floor mutant. Per-peer construction
-delays are heterogeneous across the mesh: the handshake no longer agrees on input
-delay because each endpoint's declared schedule is its own, the first remote
-frame lands at the peer's declared start, and `mesh_2_delays_2_0`,
-`mesh_3_delays_2_1_0_loss`, `mesh_4_delays_2_0_2_0` and `mesh_4_couch_delays_2_0`
-compare the per-peer delay-profile axis. The confirmed frontier follows the pinned
-upstream's lazily folded connect statuses: a runtime raise stamps the local slot
-to its padded `last_added` frame and joins the frontier immediately, and a
-committing drop freeze releases its ceiling in the same operation, so the peer
-facade re-derives the core's confirmation limit after every fold-input mutation
-while the match runs and is not terminated, including the event drains that
-process one; a terminated match keeps its last running frontier beside the
-terminal cause.
-`mesh_2_delays_2_0_raise` compares the profile-plus-raise axis and the pinned
-minimized #373 schedule stays as its regression case. A failing P2P schedule
-now shrinks to its first divergence: the launcher truncates at the named
-operation, greedily removes remaining operations while both reruns keep
-disagreeing, re-ranks anchored deliveries, and confirms the minimized scenario
-under the full gates. Window-eight cases cover the deepest supported rollback
-boundary, including the stall schedule that window four refuses and window
-eight recovers through one deep rollback.
-[#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59)
-retains broader peer/local-slot layouts and full width/profile acceptance.
-These scoped gates do not establish browser or full-feature release parity.
+## Session loop and plan hygiene
 
-| Layer | Responsibility |
-| --- | --- |
-| Deterministic core | Input queues, prediction, confirmation, saved-state history, rollback |
-| Session/protocol | Handshake, input exchange, ACKs, retries, pacing, lifecycle, checksums |
-| Transport adapters | Bounded fake network, SignalFish relay and WebRTC byte delivery |
-| Client driver | Ordered state callbacks, status handling and end-of-step notifications |
-
-Core classes are typed and SceneTree-independent; no hidden global state.
-Simulation advances in whole frames with stable player order and integer-first
-reference games. No network I/O, wall-clock reads or presentation work occurs
-inside simulation callbacks.
-
-Protocol time is separately injected and monotonic.
-Production may use a local monotonic clock; deterministic tests advance it
-explicitly. Protocol request identities have a controllable test source.
-Browser suspension advances elapsed protocol time truthfully on resume.
-
-Match audited upstream defaults where supported; examples run at 60 Hz.
-Validate configuration once and derive bounded storage from explicit limits.
-Keep engine-version-specific syntax out of the Godot 4.3-compatible core.
-
-## Public interface and ownership
-
-| Interface | Required behavior |
-| --- | --- |
-| `FortressConfig` | Validated input width, player setup, prediction/history and memory limits |
-| `FortressSession` | Poll, submit local input, advance, consume requests/events, inspect status |
-| `FortressGame` | Save to bounded writer, restore from snapshot reader, simulate frame inputs |
-| `FortressDriver` | Fulfill ordered requests synchronously through the same session engine; report the session state, counters and terminal cause |
-| `FortressTransport` | Bounded nonblocking send/receive with identity and backpressure |
-
-Driver and expert API must never implement separate rollback algorithms.
-Compare their ordered callbacks, notifications and canonical history through
-partial publication, retained-input retries and runtime input-delay changes.
-Represent save/load/advance requests and player input statuses explicitly.
-Use typed statuses to distinguish prediction stalls/not-ready from fatal errors.
-Document frame conventions and request completion before implementing storage.
-
-Submitted input bytes are copied into owned history.
-Snapshot slots own their storage and carry frame/generation tags.
-Callback views are valid only for their documented operation.
-Reject oversized snapshots, stale slots and incomplete request consumption.
-Refuse recursive advancement and stop explicitly on callback failure.
-Diagnostic playback uses the same callback ownership rule: busy controls preserve
-the active player, replacement retires it, and explicit cancellation expires views
-without replacing an earlier failure.
-
-Emit notifications after request processing; signals do not control mid-tick
-simulation. Presentation reads the final state after resimulation.
-Examples must prevent duplicate sound/effects using confirmed events or stable
-event identities; presentation state is not a substitute for complete snapshots.
-
-## Behavioral parity and evidence limits
-
-The parity ledger maps upstream behavior/test identity to source revision/hash,
-applicability, target task, port tests and coverage status.
-A future status flag or nonempty `port_test_ids` list alone is never coverage:
-`scripts/reference/coverage.py` certifies supported behaviors only against a
-result bundle whose passing, complete results executed at the ledger's pinned
-revision with their cited artifacts digest-bound, and `semantic_audit_complete`
-is held to the strict verified-equals-supported shape (#55).
-Allowed statuses distinguish pending, covered, deferred, not applicable and
-intentional divergence. Exclusions need a concrete rationale.
-
-Inventory includes inline tests, integration/property tests, fuzz targets,
-regression corpora, wire goldens, feature flags, examples/doctests, models and
-allocation contracts. Language-specific mechanisms can be inapplicable while
-their behavioral obligations remain relevant.
-
-The Rust oracle runs actual upstream code through public interfaces and existing
-verification hooks. It does not translate algorithms into a second homemade
-reference. Add minimal observation hooks only when justified and reviewed.
-
-Shared versioned scenarios specify configuration, byte inputs, API operations,
-explicit time and delivery decisions. Traces record ordered requests,
-input statuses, events/errors, confirmation and canonical state bytes.
-Encode wide integers/checksums losslessly across JSON tooling.
-
-Core comparisons are exact. Protocol comparisons use an explicit semantic
-projection because wire encodings may differ.
-Normalize representation and random token names only while preserving identity
-equality, event order, duplicate relationships and acknowledgement content.
-Unknown records, partial consumption, crashes and timeouts fail the gate.
-
-An independent offline reference game computes expected confirmed states from
-actual input histories. Compare peers at globally confirmed frames, before
-history eviction; speculative states may legitimately differ.
-Compare canonical bytes in tests, not just checksums.
-
-If upstream disagrees with an independent invariant, minimize and investigate.
-Record a reviewed divergence or upstream defect; never silently bless it.
-Golden regeneration is a reviewed change, not an automatic repair.
-
-## Formal, property and fault verification
-
-Reuse upstream TLA+ models beginning with handshake, input queue and rollback.
-Map observed runtime transitions to model actions/variables and document gaps.
-Require full trace consumption, non-vacuity witnesses and targeted mutations.
-Tool failure or timeout is not evidence of a rejected invalid transition.
-
-Bounded exhaustive checks cover small queues/windows and state-machine domains.
-Property tests cover run-twice identity, save/restore continuation,
-serialization identity and rollback-resimulation equivalence.
-Apply metamorphic relations only where their preconditions hold.
-
-The deterministic scheduler covers delay, jitter, loss, duplication, reordering,
-asymmetric partitions, healing, bandwidth and backpressure.
-Use stable scheduling and explicit seeds across every player count 2–8.
-State fairness and bounded recovery assumptions when testing liveness.
-
-Shrink failing traces while retaining scenario validity and the failure class.
-Keep minimized failures as permanent regression cases with provenance.
-Rust-specific Kani/SMT/Loom evidence does not automatically prove GDScript code.
-No finite test corpus or bounded model establishes whole-program equivalence.
-
-## SignalFish integration and browser behavior
-
-Reuse the existing SDK through an optional adapter.
-The core addon must parse and run without SignalFish installed.
-An exhausted prediction window must retain a bounded receipt-gossip carrier
-after ordinary input ACKs drain. Recovery preserves the same samples and
-conservative remote confirmation evidence; ordinary input-idle polling retains its existing compatibility behavior.
-Explicit peer recovery keeps bounded receipt gossip alive even below prediction-window
-exhaustion, so a final prefix can confirm without another sample when delivery continues.
-The [membership seam](docs/signalfish-membership.md) derives frozen UUID slots
-and binds the full roster/configuration into the existing peer handshake.
-Its plan route describes validated setup; byte delivery remains a separate adapter contract.
-Use SDK public interfaces for binary data, plans, signaling and mesh setup.
-
-Agree a stable UUID-to-player-slot roster and configuration at session start.
-Detect peer-ID collisions and validate transport-attributed senders.
-Keep rollback session identity, SignalFish incarnation and plan generation
-distinct; never renumber active players because roster order changed.
-
-Relay is a broadcast-capable path, so envelopes identify intended recipients.
-Validate negotiated binary mode and actual byte pass-through behavior.
-Binary relay is reliable and can introduce head-of-line delay.
-Bound application queues and receive work; expose backpressure rather than
-building unlimited latency. Preserve recoverability of unacknowledged inputs.
-
-Use unreliable unordered WebRTC input delivery with protocol redundancy.
-Inspect actual SDK/Godot channel options; do not claim zero retransmits if the
-mesh uses packet lifetime instead. Reserve packet consumption for the adapter.
-Respect server-selected offerer roles and latest plan generations.
-The direct adapter now provides bounded byte delivery and lifetime fences.
-The exported Chromium witness covers 2/4/8 peers on both pinned engines,
-and the Firefox pair now qualifies the same labels and rooms under Xvfb
-as separate witness jobs; the chromium-firefox pair stays deferred on its
-recorded ICE setup failure (#104).
-The slow eight-peer FIFO regression requires actual receipt and confirmation;
-live witness send/receive work budgets must match its tested configuration.
-The witness exercises elapsed transport deadlines and caller-owned handshake
-retries; [#72](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/72)
-records its loss regression and delivery gate.
-The bounded fallback coordinator routes individual unready links through relay
-and restores ready direct channels in the same rollback session. Injected
-three-peer tests cover overlapping delivery and corrected canonical game history.
-Terminal direct SDK errors fence composed relay publication; ordinary send pressure remains recoverable.
-Transport polls report the traffic they moved, refused packets included, so a
-bounded service batch can stop on an idle route without leaving valid bytes
-queued behind refused traffic.
-Exported Chromium also exercises actual mixed-path packets under injected
-single-link send pressure, using default and selected work budgets on both pins.
-It correlates one input packet across direct and relay receipt, requires restored
-direct sends, and rejects a fallback-disabled stall. A physical-outage room also closes one actual unreliable channel at frame four.
-The affected pair continues on relay through confirmed original game history,
-while healthy links stay direct. Each mixed-path endpoint also exports and decodes its
-40-frame finalized recording, with recovery-only final receipt service and independently
-checked original inputs, statuses and all 41 state boundaries. Long asymmetric recordings
-and sustained relay refusal remain in #256. Idempotent engine peer removal prevents duplicate
-SDK teardown errors. ICE restoration, relay congestion, replan handling and the
-full browser matrix remain acceptance work in S3–S5 and #75; keep those tasks open.
-
-Direct and relay paths use the same session identity and deduplication rules.
-Test overlapping delivery, asymmetric failure and mixed paths.
-A transport switch does not reset confirmation or simulation history.
-SignalFish authority/reconnection is not rollback authority/state recovery.
-
-On resume, bound catch-up and enforce timeout/history limits.
-Before advanced reactivation is supported, unrecoverable sessions require
-explicit termination/restart. Server-process death requires terminal cleanup and an explicit fresh-room restart.
-The exported online witness verifies that flow on both pinned engines, including
-old-room input delivered over new channels; server restart is not a transparent resume.
-Native WebRTC availability is verified independently of browser support.
-
-## Test tiers and release acceptance
-
-| Tier | Required evidence |
-| --- | --- |
-| PR (Gate) | Harness checks, changed-suite unit run on the minimum pin, tooling negative controls on tooling changes |
-| Merge (Qualify) | Full Chromium matrix on both pins: unit/integration/determinism inventory, ownership probes, differential oracle traces, transport witnesses |
-| Nightly | The moved axes: Firefox ownership and transport witness, SpectatorSession and handshake formal model checks |
-| Release | Native state-byte equality, real browser matrix, sustained bounded-memory runs |
-
-Native release comparisons cover Linux, macOS and Windows.
-Real browsers cover Chromium, Firefox and WebKit, including mixed peers.
-Report WebKit automation separately from actual Safari/device evidence.
-Run actual exported simulations over a pinned local SignalFish server;
-page load and connected-state smoke checks do not establish rollback coverage.
-
-Acceptance includes frame zero/sentinels, integer limits, ring wrap,
-prediction-window edges, earliest misprediction, snapshot aliasing and failures,
-invalid configuration, truncated packets, duplicate/stale ACKs,
-queue exhaustion, partitions, desync detection, re-plans and suspension.
-Mutations must demonstrate that the runner, comparator and models detect faults.
-
-All advertised features require mapped tests and no unexplained divergence.
-Publish engine/template/browser versions, network profiles and known exclusions.
-Package only the addon and required notices; verify clean installs without Rust.
-Release publication is separate from constructing the reviewable candidate.
-
-## Performance contract
-
-Measure before optimizing; correctness gates remain mandatory afterward.
-Benchmark steady frames, maximum rollback, snapshots, serialization and polling.
-Vary players, input widths, snapshot sizes and supported prediction windows.
-Separate library, client simulation and transport cost.
-
-Record workload, warmup, CPU, OS, engine/browser versions and repeated samples.
-Report p50/p95/p99, memory high-water, buffer growth, bandwidth and stalls.
-Establish regression budgets from measured noise and reference hardware.
-Portable CI must not fail on arbitrary unstable timing thresholds.
-
-Prefer preallocated rings, reusable batches/scratch buffers and dense indexing.
-Prove snapshot isolation before removing copies.
-Initial guarantee: bounded storage and no intentional steady-state growth.
-Claim zero allocations only for measured paths using instrumentation with a
-known-allocation positive control; flat memory alone is insufficient.
-
-## Advanced parity boundaries
-
-Driver and peer step/recovery results expose the first failed callback kind alongside terminal reason and frame.
-Driver-only clients can export owned opt-in canonical traces, including after callback failure, without retaining the expert session.
-Snapshot callbacks can read small fields into reusable buffers without a result wrapper; native byte reads remain preferable for wide snapshots.
-Local example restarts retire retained old host/viewer sessions and refuse replacement during active ordered work.
-Fixed-membership peers expose callback-free ordered request batches for advancement, recovery and final replay capture.
-Callback and manual peers share input publication and completion controls; pending batches fence transport mutation and expire on explicit cancellation.
-Core manual/driver recording comparisons preserve asymmetric and stalled correction histories through final recovery and checksum capture.
-Native relay recording also covers sustained injected SDK send refusal, exact retries and decoded original histories through queue reuse; real-server/browser acceptance remains open.
-Encoded P2P acceptance compares both public interfaces under delayed,
-lost and duplicated traffic, including multiple local slots and queue reuse. Independent original
-input history remains the state oracle; this local comparison does not qualify browser transport.
-Coordinated-departure acceptance also compares callback and expert traffic, retained certification,
-frozen statuses, predicted-suffix repair and every corrected canonical prefix through continuing gameplay.
-Peer callback and completion guards protect the shared engine across facades; terminal handler cancellation preserves its first cause and closes peer links.
-
-Replay viewers report recorded and actually checked checksum coverage separately; checksum-free playback cannot establish validated history.
-Replay configuration validates mutable recording structure before ownership. Portable export rejects malformed
-metadata/storage and incomplete input digests while preserving stored comparison evidence. Invalid replacements preserve existing playback and validation coverage;
-Optional replay compatibility checks accept FortressConfig instances/subclasses and refuse foreign objects before accessing their properties.
-Safe missing-digest and content comparisons remain at their owning playback boundary. Missing or incomplete
-recorded digests preserve their distinct first-cause label and computed row evidence through callback and expert playback.
-Pinned replay comparison covers every supported player count from two through eight, sparse checksums
-and an interior mismatch after unchecked frames through both playback interfaces and supported portable versions 4, 5 and 6. The pinned upstream
-replay stores inputs without player statuses, so disconnected-status recording remains a Godot extension.
-Actual all-local source recording/export now runs every roster size two through eight with
-input delays zero/two and prediction windows zero/two. Each runtime round-trips and plays its own format;
-source export timing and checksum differences remain explicit in the [recording comparison](docs/oracle-replay.md#actual-recording-applicability).
-Continuing extraction compares original gameplay after a mid-match export and retained early playback.
-Pinned Rust disables recording after `take_replay()`; Godot keeps recording and returns independent owned exports.
-Pausing or stepping a replay validates the displayed boundary and its selected input digest before allowing further playback.
-Expert replay clients can validate that same paused boundary through a save-only request batch without consuming input.
-Expert checkpoint navigation now shares callback restoration through ordered load/save requests, with exact snapshot validation before committing the selected frame.
-Viewer checkpoint controls use the owned inventory of retained validated boundaries and cannot bypass playback failure.
-Keyboard playback and frame inspection share the visible controls and preserve frame-entry focus.
-Repeated playback compares canonical bytes and checksums against retained boundaries even without recorded state checksums.
-Replay checkpoint acceleration is bounded and optional; repeated navigation reuses validated
-in-memory snapshots without changing the portable file format. Viewer completion distinguishes a verified final state from historical files without terminal checksums.
-Viewer speed controls change
-only the bounded number of recorded frames serviced; each simulation step stays fixed.
-Callback and expert replay playback share ordered save/advance requests in the same player.
-Expert integrations dispatch and acknowledge bounded views themselves; callback navigation remains optional.
-Actual-source recording comparisons cover all-local prediction windows zero and two,
-retaining empty source service attempts separately from completed simulation frames.
-Replay records confirmed gameplay history; diagnostic network traces are a
-separate format. Both need versions, validation and reproducible provenance.
-Version 5 replay rows preserve confirmed/disconnected player status alongside input bytes; version 4 reads with all-confirmed defaults.
-Historical v4/v5 files checksum pre-input boundaries only. Explicit driver and peer capture
-add a final-state checksum in v6 after the recorded prefix is finalized and repaired.
-The online Finish replay action stops local sampling while confirmation settles; an unavailable
-capture preserves historical coverage. Full replay acceptance remains in [#45](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/45).
-Native and exported Chromium compare every corrected dropped-player replay boundary through callback and expert playback on both engine pins.
-Receipt-only recording rows remain private until mesh confirmation, and coordinated drop repairs that staged tail before export.
-Every recorded frame carries a digest of its own input row and, in version 5, its player statuses, because the state
-checksum of the following frame only covers a row when that following frame
-carries a checksum. Those digests are a Godot-side integrity extension; the pinned
-upstream session owns the input history.
-Public recording reads refuse incomplete or invalid input/status rows without hiding complete earlier rows; missing metadata and digest bytes remain unavailable.
-Actual pinned replay comparisons also cover `u8`/`u16` input at two/eight players for 64 frames,
-including sparse checksums, interior mismatches and high-byte corruption through all three portable formats and both interfaces.
-A recording carries the roster, sample width, neutral input, seed and game version
-of the session that produced it, and a player refuses a recording that does not
-match the running game. A recording with substituted inputs is reported as such
-instead of being presented as a faithful copy.
-Validated replay playback and paused navigation check callback success and bounded snapshot status before
-accepting a boundary; a matching checksum cannot override a failed snapshot write.
-Replay completion also waits for open navigation, revalidation requests and game callbacks to finish.
-Confirmation reads current receipt-frame scalars without duplicating endpoint diagnostic history; public status snapshots stay owned.
-The ownership witness compares the complete driver, replay and spectator case inventory against native execution in pinned Chromium and Firefox on both engines.
-Firefox requires a visible Xvfb window and both declared control phases on each pin; one partition cannot establish qualification.
-This API evidence does not establish live transport or full browser-release acceptance.
-Runtime input-delay changes must preserve exact upstream scheduling behavior.
-The P2P differential wraps real queue rings under a withheld multi-round flood:
-every count two through eight climbs past the default 128-row ring — the
-eight-peer default case fits the deliberately raised 20000-operation scenario
-bound — and a named 32-row scale point keeps the full-fanout small-ring
-witness; the same flood at the deepest supported prediction window on four
-peers (`mesh_4_wrap_flood_window_8`) pins the wrap axis at the boundary window
-with its deeper stall cap and LOAD heal, the two delay profiles wrap the
-same flood under heterogeneous per-peer construction delays — the band's three
-distinct extremes on three peers and interleaved extremes on four — so delayed
-early samples stay stamped, compared and confirmed through the heal, the
-capacity-nine profile runs the same flood on the non-power-of-two nine-row
-ring, so the healed frontier passes the whole reduced ring several rows deep,
-the couch layout runs the same flood across two shared-address machines
-that each own two local slots, so every confirmed row folds two local samples
-per machine and the released burst heals both machines' flights through one
-deep LOAD correction with the engines' default desync reports compared past
-frame 60, the three-machine split and the asymmetric three-slot couch shape
-wrap the same flood across machines that own unequal local-slot inventories
-(`mesh_4_wrap_flood_split_2x1x1`, `mesh_4_wrap_flood_couch_3x1`), so evidence
-addresses machines while every slot count from one to three folds and flies,
-and the width profiles wrap the same default ring on wide 32-byte rows and at
-the compared minimum width (`mesh_4_wrap_flood_width_32`,
-`mesh_4_wrap_flood_width_1`), so every wrapped flight row, XOR-delta
-reference and confirmed fold runs at both compared width extremes with a
-tail-byte control proving the row comparison reads past the head bytes; a
-multi-slot machine advances on its first covered-row step, so layout builds
-observe after every slot step and each payload follows the machine's own
-frame — the committed solo schedules rebuild byte-identically.
-The flood withholds every packet for
-six rounds so the frontier
-freezes and the mesh stalls silently at the prediction limit, and the reversed
-duplicate-carrying burst heals through one deep LOAD correction with every
-later frontier still compared exactly.
-
-Single-host spectators precede redundant-host failover.
-The bounded confirmed-input spectator API shares the player request engine and
-supports delayed playback, caller-bounded catch-up and explicit host endings. Spectator
-confirmation comes from complete host rows; player-mesh confirmation controls are unavailable.
-Its local example streams corrected original inputs while the host continues.
-Versioned lifetime-bound row envelopes support bounded byte delivery and explicit host expiry.
-Every envelope packet carries a keyed tag over its header and body and the digest of the
-agreed match, so a viewer accepts only a host that holds the shared key and only a match
-it agreed. Network startup can bind the complete canonical original snapshot with the state-bound digest helper;
-the caller still owns state agreement, transfer and restoration. The envelope version is 3, and the version and the optional kinds
-are negotiated inside that authenticated boundary before the first row, so a peer that
-speaks another envelope fails at startup with one recorded reason.
-A viewer never simulates a host row it no longer retains, and a reconfigured viewer keeps
-the caller's playback policy when it still fits the new ring.
-Successful stream replacement retires the prior owned playback lifetime, including retained drivers.
-The small driver exposes owned finalized inputs and replay exports through the expert session's gates.
-Driver-only clients can cancel through the same terminal lifecycle, including inside callbacks; cancellation expires active views.
-Completion notifications guard the shared session, so another driver or expert facade cannot advance or reconfigure it between handlers.
-Remote-input sessions can recover and finalize confirmed replay history without another local sample
-or forward frame. The local spectator example exposes bounded catch-up rate controls independently of viewing delay.
-Its host can pause new input while pending delivery and correction settle; the viewer continues independently.
-Its identified saved recordings open in the shared replay viewer with their own game callbacks and control labels.
-The actual 36,000-frame spectator export round-trips through bounded seeking and complete playback against independently simulated original inputs.
-The spectator example uses that shared operation to settle its exact final host
-boundary before sending END; paused viewers can resume through the full clean tail.
-Authenticated retries remain idempotent through that buffered tail; input closure alone does not terminate playback.
-Direct clean closure refuses accepted rows beyond a gap without closing input; callers fill the missing rows and retry before draining the complete tail.
-After playback reaches the authenticated END boundary, relay polling preserves normal completion and discards late ingress; unfinished cancellation and failures stay distinct.
-The host publisher retains one exact refused packet, advances only on transport acceptance,
-and fences host replacement while keeping liveness separate from row pressure.
-Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
-Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
-Owned playback observations expose bounded row capacity and free slots alongside contiguous playable input and retained rows beyond a gap;
-paused local viewers show a resume/catch-up prompt when the live input buffer fills.
-The example names the first missing frame and shows both buffer counts while paused, including gaps beyond a retained contiguous prefix.
-These local events do not establish host authentication or a network handshake.
-`is_complete()` identifies serviced clean playback completion; cancellation and failures preserve their first cause without claiming completion.
-The spectator relay uses that completion authority even when cancellation occurs exactly at an authenticated final boundary or inside acceptance delivery.
-Actual pinned Rust and Godot spectator traces compare startup prefill, capacities two/three,
-catch-up speeds one/two and exact input transcripts through ring reuse. The scoped startup relation in
-[#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203) is complete.
-An anchored runtime-aligned model checks every observed state while preserving the original pinned
-startup counterexample and explicit synthetic synchronization setup. Separate actual-source traces compare
-delay one and capacity-minus-one through ring reuse, including exact catch-up service cycles.
-The source comparison also exercises every roster size two through eight with changing input in
-every slot, complete ordered ring observations and a player-order mutation that preserves row sums.
-Authenticated publisher/stream/driver acceptance also compares independent canonical history for every roster two through eight,
-widths one/four and delay zero/two through ring reuse, reordered duplicates, exact pressure retries and clean endings.
-Finalized disconnected statuses survive playback and recording; authenticated status erasure is a separate negative control.
-Broader delay and tail policies, event/status,
-arbitrary-delivery and live acceptance remain in #47 and #131.
-Spectator rows preserve finalized confirmed/disconnected status through publication, authenticated
-version 3 delivery, playback requests and confirmed exports. Byte-only callers default to
-all-confirmed; dropped matches must supply statuses. Frozen versions 1 and 2 are refused at startup.
-Scripted SDK adapter tests preserve corrected status-sensitive history through refused publication,
-source-ring eviction, delayed catch-up and clean completion; this does not qualify live drop delivery.
-Spectator playback rejects player-freeze operations; complete host rows remain the sole input authority.
-Authenticated startup offers share row delivery’s deadline, callback and terminal-lifetime fences.
-The receive-only SignalFish spectator adapter bounds authenticated host ingress, SDK lifetimes and elapsed expiry without seating viewers.
-Selected-host departure or reconnection stops buffered viewing immediately; admitted-viewer departure stops publication without changing seated gameplay.
-Unrelated participant roster events preserve ongoing streams, and setup callbacks use the same participant lifetime fences.
-The host SDK bridge publishes one pre-admitted viewer from frame zero with bounded exact-byte retries; separate authenticated acceptance remains caller-owned.
-SDK getters cannot publish through a host request they open synchronously; the exact packet remains retryable after request completion.
-Spectator relay retains authenticated startup acceptance for a caller-supplied control sender, independently of row pressure.
-Its bounded receive scan admits earlier gap rows behind refused future rows while retaining exact packet ownership.
-Runtime SDK receive limits must still fit the agreed spectator packets; shrinking them retires queued playback before delivery.
-Caller-owned startup acceptance refuses terminated or actively serviced viewers; an idle retry preserves the agreed bytes.
-Keepalive priority yields to queued row work so repeated host heartbeats cannot starve confirmed playback under a one-packet receive budget.
-Transport acceptance does not establish host receipt. Production application admission and broader
-upstream spectator differential/model acceptance remain open in #131 and #47. The reviewed SDK/server
-pins include the current upstream work; native relay and exported Chromium WebRTC qualify the upgraded integration.
-The [spectator qualification evidence](docs/reference/spectator-relay-qualification.md) records the qualified scope.
-The native Fortress witness requires actual SDK/server publication and viewer receipt,
-original canonical agreement and a bounded authenticated loopback admission/acceptance path.
-Native physical host/viewer socket departures stop paused buffered viewing; viewer loss
-also preserves the seated host's canonical continuation.
-The exported Chromium viewer now runs in an independent browser context on both engine pins,
-receives original state/configuration through a role-separated cross-origin authenticated control boundary,
-and consumes real relay OFFER/rows/END while comparing 48 independent canonical boundaries.
-Pause/catch-up, clean completion and altered initial-state rejection are qualified for this viewer/native-host slice.
-Physical exported-viewer departure also stops paused buffered playback while the native host preserves canonical seated gameplay.
-Physical selected-host departure stops the exported viewer before adapter polling can consume buffered rows;
-its own socket remains connected, and an independent seated SDK client confirms the exact host departure.
-Foreign-room admission is rejected before browser acceptance or simulation on both engine pins.
-The development control fixture retires queued acceptance at completion and rejects later replay under the same lifetime.
-The development bearer service is not a production identity provider; seated remote inputs remain an injected schedule.
-[Exported spectator qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245)
-retains exported host/seated transport, replacement, pressure and remaining browser lifecycle cells.
-Coordinated peer drop must preserve exposed confirmed history and irreversible
-commit semantics; a local minimum-received-frame shortcut is insufficient.
-An automatic timeout departure may stage its certificate only while a strict
-majority of the membership epoch remains locally reachable; a component
-without the majority ends the match with a recorded `missing_quorum` reason
-instead of staging complementary freezes toward a fork (the pinned upstream
-defect wallstop/fortress-rollback#383, fixed upstream by #385). Goodbye
-departures keep the explicit path and the last survivor keeps the pinned
-one-member freeze.
-The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so
-the survivors keep playing and reports a disconnected input status. The
-survivors now agree that frame first: the survivor that owns the lowest
-surviving slot proposes the cut, every other survivor answers with the frame
-window it can still freeze, and the proposer commits the frame all of them can
-retain, so the survivors keep one confirmed history. The survivors also certify
-the value they freeze on: every survivor answers with the frame through which
-it retains the departed slot's inputs, the proposer sends the frozen value to
-the survivors that already released it in bounded chunks, and every survivor
-certifies the frame and the digest of that value before the irreversible commit.
-A matching repeated commit is acknowledged after the slot freezes, and the
-proposer stops retries after every live survivor acknowledges. Every phase is
-fenced by the complete locally derived operation identity and sender role.
-Committed retries remain eligible after the pending agreement's negotiation deadline;
-acknowledgement, survivor departure or local termination ends their eligible work.
-Refused control sends remain immediately retryable after output drains; accepted survivor links keep their own retry intervals under partial pressure, including READY certificates.
-Historical donor plans apply the same per-survivor acceptance clocks, leaving healthy output capacity available for retained history chunks.
-Bounded donor chunk service rotates across survivors so refused links cannot starve later healthy links.
-Remote donors also yield accepted certificate turns to history retries while another certificate destination refuses.
-A survivor lost before commit aborts the local attempt with `participant_lost`
-and ends the match; committed decisions remain irreversible. A certificate
-that names another value ends the match with a recorded reason
-instead of freezing divergent values. An automatic timeout certificate also
-commits only when a fellow survivor attests, in its window report and again in
-its certificate, that its own endpoint for the target latched the departure;
-unwitnessed or inconsistent attestations end the match with recorded reasons
-(#353). The match holds while the barrier runs
-and a barrier that cannot agree ends the match with a recorded reason.
-A freeze refuses a cut below the protected confirmed frontier before changing history. Three real peer sessions now run that barrier end to end:
-one peer stops answering, the two survivors agree one frame, keep one
-confirmed history and keep playing, and a second departure leaves one
-survivor that preserves every retained original target input before freezing its slots at the receipt-raised cut. The reviewed prepare,
-backfill, certificate and commit barrier is ported: the Godot tier agrees the
-frame and the pinned tier certifies the frozen value. The retained-history tier negotiates its feature before gameplay, raises the cut to
-cover exposed frontiers and target receipts, and certifies complete retained actual
-intervals. Followers independently compare supplied frozen values with their retained cut inputs before certification.
-Bounded donor journals repair missing actual ranges before certification,
-including when the donor differs from the coordinator. [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188)
-retains expanded source and live missing-history acceptance. A scoped
-[actual-source comparison](docs/oracle-p2p.md#scoped-coordinated-drop-history-comparison)
-now checks clean and lost-first-history remote-donor recovery against independent original canonical prefixes and finalized statuses.
-Grouped four-row cases also create unequal public exposed frontiers four/five through a real coordinator advance; complete source inventories and negative controls bind that evidence.
-The unequal grouped schedule also loses the first irreversible COMMIT, alone and after donor-history loss, and requires its exact retry before continued original-history agreement.
-The same scope loses the first follower inventory answer, alone and with history/COMMIT/ACK loss, requiring its exact received retry before irreversible commit.
-Follower-acknowledgement loss additionally requires exact certificate redelivery. Godot observes the repeated COMMIT
-before the matching ACK response; the pinned source retains its independent certificate journal policy.
-Its one/four-row missing suffix cases do not establish complete barrier parity or the remaining fault matrix.
-The pinned source's
-wire participant list, its coordinator-local sequence and its retransmission
-journal are ported, and the drop-history differential corpus names the carried
-roster digest on every barrier payload shape beside the pinned prepare's
-participant list; the pinned tier's own cut selection and expanded source/live
-missing-history acceptance remain in
-[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188),
-and the live departure faults in
-[#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
-Native six-player sessions cover multiple local handles per endpoint. Exported
-Chromium covers a three-page WebRTC barrier after injected endpoint silence
-on both pins, with independent confirmed-history checks and a corruption
-control. A second case closes every RTC connection on the departed endpoint before agreement, then requires actual late direct delivery between survivors.
-The lost-answer case drops one real follower inventory report and requires an exact retry before certified continuation.
-Natural unequal-delivery tests preserve the needed suffix, and captured donor journals survive physical source-ring reuse.
-A relay-only cell closes every endpoint's direct RTC resources before agreement, requires actual addressed relay certificates and commit bytes,
-and preserves original canonical continuation on both engine pins.
-Room/process departure and the remaining live fault
-cases stay in
-[#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
-Hot join uses reserved/dropped slots with fixed player cardinality,
-bounded session-bound snapshot transfer and agreed activation frames.
-It must not infer admission from SignalFish reconnection alone.
-
-Apply feature-specific upstream models and runtime fault tests at each step.
-The final advanced task audits all remaining applicable upstream behavior and
-creates residual tasks before any complete-parity claim.
-
-The peer example can explicitly apply fresh measured input-delay suggestions through guarded pointer and keyboard actions.
-Replay speed shortcuts share the existing cadence, validation and ownership policy.
-The local spectator keeps its controls readable in short windows with scrolling, while fitting both game views below them.
-The playable effects example supports paused single-tick inspection through the actual driver, including prediction stalls and rollback.
-The offline and in-process peer examples pause on application focus loss and require explicit resume,
-preserving simulation and injected packet time while inspecting another window.
-Driver-only clients can discover ascending local slots and owned fixed-width neutral bytes for byte-only input submission without retaining configuration.
-Driver/expert callback-failure checks compare ordered requests, state and terminal diagnostics; spectator checks also preserve the recording prefix after queue reuse.
-Replay input-change and recorded-checksum navigation share pointer and keyboard readiness gates.
-Replay changes and spectator viewing-delay/catch-up controls also offer unshifted letter shortcuts across keyboard layouts.
-Replay viewing can repeat clean recordings through fresh validated playback lifetimes while preserving cadence and stopping on corruption.
-Opening its file chooser pauses playback and pending Repeat resume; canceled or rejected selections preserve the paused recording.
-Selected replay ranges also repeat through bounded validated navigation, checking the end boundary before returning to the selected start.
-The effects example can stop sampling and confirm its final tail before replaying the complete match.
-Effects-match service and replay playback pause on application focus loss and require explicit resume; selected replay seeks finish paused.
-The local spectator can freeze host, delivery and viewing together, including on focus loss, with explicit resume.
-Every example stop label names its terminal cause in plain language through the shared session reason text,
-the shared protocol endpoint text and the shared transport text (the peer example keeps its short healthy
-label), keeping the numeric code for tooling.
-These client controls do not close the broader driver equivalence, spectator live acceptance or replay source-parity gates.
-
-## Upstream tracking and upgrades
-
-Monitor Fortress plus relevant SignalFish SDK/server contracts weekly and
-manually. Maintain separate latest-observed and last-reviewed revisions.
-The weekly `Drift Report` workflow runs the classifier and appends each
-observation to one deduplicated issue per source; it only ever reports and
-never advances a pin.
-
-Classify source, constants/defaults, macros/attributes/cfg, build logic,
-tests/models/fixtures, dependencies and documentation.
-`scripts/reference/drift.py` performs that classification between two pinned
-source trees, maps every changed path onto its parity-ledger entry and fails
-closed on unmatched shapes or broken inputs; its conservative signals
-(whitespace/comment-only, constants, attributes/macros, cfg gates) inform
-review and never clear a path from it. Its pin flow binds the compared trees
-to the archives the operator supplies — the candidate archive's digest and
-extraction, and `--old` byte-matched against the reviewed pin's cached
-archive — and records the observation under `sources[name].review` in
-pins.json; its `--advance` mode rewrites the pin (revision, archive URL,
-digest and root)
-with `advanced_from`/`advanced_on` bookkeeping and per-path commit links —
-the report is the review evidence; the pin merges only after a full oracle
-requalification against the new revision. M2's weekly/manual `Drift Report`
-workflow runs the classifier on a schedule and reports each observation on one
-deduplicated carrier issue per source, reopened rather than duplicated and
-quiet for repeated identical states; it never writes pins.json.
-Token/AST analysis reduces noise but does not prove semantic equivalence.
-Unknown classification, API failure or incomplete diffs require review.
-
-Map changes to ledger entries and rerun old/new upstream scenarios.
-Unchanged observed traces do not erase source-change evidence.
-Dependency changes receive separate reporting and applicable checks.
-Handle additions, deletions, renames and rewritten/unreachable baselines.
-
-Update one deduplicated issue with revisions, commit links, affected tasks,
-classifications, actual results and a review checklist.
-Do not automatically regenerate goldens, merge updates or advance reviewed pins.
-A baseline advances only after changes are ported, justified inapplicable or
-recorded as intentional divergences with evidence.
-
-## Task execution, review and planning retrospective
-
-Every task follows this loop:
-1. State its hypothesis, observable contract and relevant upstream evidence.
+1. State the hypothesis, observable contract and upstream evidence.
 2. Demonstrate a meaningful failing case or negative control.
-3. Implement the smallest change and run independent/differential checks.
+3. Implement the smallest complete change and run independent/differential checks.
 4. Refactor or optimize only while preserving equivalence evidence.
-5. Record commands, versions, seeds, measurements, limitations and conclusions.
-6. Link the PR, update the parent issue and close only after acceptance passes.
+5. Record commands, versions, seeds, measurements, limits and conclusions in the
+   issue and session log; close only after acceptance passes.
 
-Bug fixes show pre-fix failure and post-fix success; use a pre-regression baseline
-when available and document when none exists.
-Research tasks produce executable experiments and explicit decisions.
-Risky changes receive the repository's code/adversarial reviews.
-Milestones include the required retrospective and canonical guidance updates.
+Use [verification-policy](docs/verification-policy.md) for evidence fields and
+[ship-session](.llm/skills/ship-session/SKILL.md) for delivery. Copy follows
+[user-copy](.llm/skills/user-copy/SKILL.md); source lines are at most 180 columns.
 
-Planning findings are captured here and in roadmap issue #2:
-- Bootstrap notes describe older assumptions; B2 audits and corrects them.
-- Upstream runtime-to-TLA+ traces support scoped reuse; V5 owns proof limits.
-- Binary relay differs from unreliable WebRTC; S2/S3 own separate evidence.
-- Packed-buffer ownership and allocation claims require probes; R2/R3 own them.
-
-These findings are tracked, not claimed as repaired runtime behavior.
-The planning session established PLAN.md and the GitHub backlog. Subsequent
-implementation evidence lives in `progress/` and the linked task issues.
-
-## Session completion contract
-
-Target sessions shorter than two hours and aggregate each session into one PR.
-Follow [ship-session](.llm/skills/ship-session/SKILL.md): after all current-head CI
-is green, scan inline threads, submitted reviews, conversation comments and check
-annotations with complete pagination. Address every actionable finding, repeat
-CI after fixes, and scan again immediately before merging. Squash merge the
-session PR to `main` yourself: the repository owner authorizes the agent to merge it
-without human review once the session is complete. Verify its merge SHA,
-fetch and fast-forward local `main` to `origin/main`, then verify main CI.
-
-Use [user-copy](.llm/skills/user-copy/SKILL.md) for comments, PR titles/bodies,
-commit messages and CHANGELOG entries. Editor and formatter source line widths
-are 180 characters; `make lint-source` checks every tracked source file.
-
-## Primary references
-
-- [Pinned Fortress source](https://github.com/wallstop/fortress-rollback/tree/d124c89080004d96971a629bb0427056ee1805e3)
-- [Upstream session interface](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/sessions/session_trait.rs)
-- [Confirmed-state simulation oracle](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/tests/simulation/harness/oracle.rs)
-- [Handshake runtime-to-model trace contract](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/specs/tla/traces/sync-handshake-v1/README.md)
-- [Pinned SignalFish Godot SDK](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/tree/8e1475ed12a618fb41660bd1c8a1b0c934dee77f)
-- [SignalFish transport fallback contract](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560/docs/architecture/transport-fallback.md)
-- [SignalFish delivery and incarnation contract](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560/docs/adr/0006-protocol-v3-delivery-reliability.md)
-- [Godot packed-array ownership](https://docs.godotengine.org/en/4.3/classes/class_packedbytearray.html)
-- [Godot web export constraints](https://docs.godotengine.org/en/4.3/tutorials/export/exporting_for_web.html)
+Keep this file lean. Each session removes completed or obsolete entries and adds
+new status to the owning issue or doc, never here. This file is capped at 180
+lines by `scripts/llm/check_llm_file_lengths.py`; `make lint-llm` fails when it
+grows. The map-not-log rationale and evidence are in
+[.llm/knowledge/plan-hygiene.md](.llm/knowledge/plan-hygiene.md).

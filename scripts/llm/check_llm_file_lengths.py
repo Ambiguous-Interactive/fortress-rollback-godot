@@ -1,9 +1,12 @@
-"""Enforce the 300-line hard limit across the .llm harness.
+"""Enforce the 300-line hard limit across the .llm harness and the plan cap.
 
 Three-tier ladder (mirrors the unity-helpers design):
 - >  MAX_LINES       -> error   (must split; CI and git hooks fail)
 - == MAX_LINES       -> critical (at the boundary; fails with --fail-on-critical)
 - >  SOFT_WARN_LINES -> warning (only shown with --verbose)
+
+Root `PLAN.md` is checked separately against `PLAN_MAX_LINES`: it is a
+navigation map, not a status log, so it gets the tighter cap.
 
 Usage:
     python3 scripts/llm/check_llm_file_lengths.py [--verbose]
@@ -39,37 +42,54 @@ def count_lines(path: Path) -> int:
     return len(path.read_text(encoding="utf-8", errors="replace").splitlines())
 
 
-def check_file(path: Path, verbose: bool = False) -> list[Finding]:
+def check_file(
+    path: Path,
+    verbose: bool = False,
+    max_lines: int = llm_paths.MAX_LINES,
+    soft_warn_lines: int = llm_paths.SOFT_WARN_LINES,
+) -> list[Finding]:
     n = count_lines(path)
     findings: list[Finding] = []
-    if n > llm_paths.MAX_LINES:
+    if n > max_lines:
         findings.append(
             Finding(
                 "error",
                 path,
-                f"{path}: {n} lines exceeds the {llm_paths.MAX_LINES}-line "
+                f"{path}: {n} lines exceeds the {max_lines}-line "
                 f"hard limit - split this file",
             )
         )
-    elif n == llm_paths.MAX_LINES:
+    elif n == max_lines:
         findings.append(
             Finding(
                 "critical",
                 path,
-                f"{path}: AT the {llm_paths.MAX_LINES}-line limit - "
+                f"{path}: AT the {max_lines}-line limit - "
                 f"one more line breaks the build",
             )
         )
-    elif verbose and n > llm_paths.SOFT_WARN_LINES:
+    elif verbose and n > soft_warn_lines:
         findings.append(
             Finding(
                 "warning",
                 path,
-                f"{path}: {n} lines (soft threshold "
-                f"{llm_paths.SOFT_WARN_LINES})",
+                f"{path}: {n} lines (soft threshold {soft_warn_lines})",
             )
         )
     return findings
+
+
+def check_plan(path: Path | None = None, verbose: bool = False) -> list[Finding]:
+    """Check root PLAN.md against its dedicated map-not-log cap."""
+    plan_path = Path(path) if path is not None else llm_paths.PLAN_PATH
+    if not plan_path.is_file():
+        return [Finding("error", plan_path, f"{plan_path}: file does not exist")]
+    return check_file(
+        plan_path,
+        verbose=verbose,
+        max_lines=llm_paths.PLAN_MAX_LINES,
+        soft_warn_lines=llm_paths.PLAN_SOFT_WARN_LINES,
+    )
 
 
 def check_paths(paths: list[Path], verbose: bool = False) -> list[Finding]:
@@ -88,7 +108,9 @@ def check_scope(
     root: Path | None = None, verbose: bool = False
 ) -> list[Finding]:
     base = llm_paths.resolve_root(root)
-    return check_paths(llm_paths.size_scope_files(base), verbose=verbose)
+    findings = check_paths(llm_paths.size_scope_files(base), verbose=verbose)
+    findings.extend(check_plan(base / "PLAN.md", verbose=verbose))
+    return findings
 
 
 def git_staged_files(root: Path) -> list[Path]:
@@ -144,19 +166,35 @@ def main(argv: list[str] | None = None) -> int:
         scoped = set(llm_paths.size_scope_files(base))
         in_scope = [base / rel for rel in staged if (base / rel) in scoped]
         findings = check_paths(in_scope, verbose=args.verbose)
+        if Path("PLAN.md") in staged:
+            findings.extend(check_plan(base / "PLAN.md", verbose=args.verbose))
     else:
         explicit: list[Path] = []
+        directories: list[Path] = []
         for raw in args.paths:
             path = Path(raw)
             if path.is_dir():
+                directories.append(path)
                 explicit.extend(llm_paths.size_scope_files(path))
             else:
                 explicit.append(path)
-        findings = (
-            check_paths(explicit, verbose=args.verbose)
-            if explicit
-            else check_scope(verbose=args.verbose)
-        )
+        if args.paths:
+            plan_paths: list[Path] = []
+            others: list[Path] = []
+            for path in explicit:
+                if path.resolve() == llm_paths.PLAN_PATH.resolve():
+                    plan_paths.append(path)
+                else:
+                    others.append(path)
+            for directory in directories:
+                plan_path = directory / "PLAN.md"
+                if plan_path.is_file() or directory.resolve() == llm_paths.REPO_ROOT:
+                    plan_paths.append(plan_path)
+            findings = check_paths(others, verbose=args.verbose)
+            for plan_path in dict.fromkeys(plan_paths):
+                findings.extend(check_plan(plan_path, verbose=args.verbose))
+        else:
+            findings = check_scope(verbose=args.verbose)
 
     for finding in findings:
         print(finding, file=sys.stderr)
