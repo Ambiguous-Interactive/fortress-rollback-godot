@@ -110,7 +110,8 @@ func _sample(player: int, frame: int) -> PackedByteArray:
 
 ## Peers with the lifecycle enabled, so a silent peer is detected by the timeout.
 func _build(
-	context: RefCounted, behavior: int, window: int = 8, count: int = 3, timeouts: Array[int] = [], barrier_timeout_us: int = 250000, replay_frames: int = 64
+	context: RefCounted, behavior: int, window: int = 8, count: int = 3, timeouts: Array[int] = [], barrier_timeout_us: int = 250000,
+	replay_frames: int = 64, snapshot_bytes: int = 32
 ) -> Dictionary:
 	var peers: Array[Peer] = []
 	var games: Array[RefCounted] = []
@@ -125,7 +126,7 @@ func _build(
 		config.history_slots = 9
 		config.check_distance = 0
 		config.sync_test = false
-		config.max_snapshot_bytes = 4 * 8
+		config.max_snapshot_bytes = snapshot_bytes
 		config.storage_budget_bytes = 1048576
 		config.replay_max_frames = replay_frames
 		var local: T.Message = T.Message.new()

@@ -25,10 +25,10 @@ executed.
 
 | Browser | Supported | Evidence |
 | --- | --- | --- |
-| Chromium 141.0.7390.37 on Linux | Yes, for the exported WebRTC witness | The exported Chromium witness runs 2/4/8-peer rooms on both pins |
-| Firefox 142.0.1 on Linux | Not qualified for release | Full API comparisons are required on both pins; live eight-player acceptance remains open |
+| Chromium 156.0.8078.4 on Linux | Yes, for the exported WebRTC witness | The exported Chromium witness runs 2/4/8-peer rooms on both pins in the merge qualification |
+| Firefox 157.0 on Linux | Not qualified for release | Both Firefox matrices run on both pins in the nightly tier; release evidence remains issue #39 |
 | WebKit | Not qualified | No browser matrix evidence yet |
-| Mixed browsers | Not qualified | Same open work as Firefox and WebKit |
+| Mixed browsers | Not qualified | The Chromium/Firefox pair fails hosted eight-player ICE setup; issue #104 owns that gap |
 
 ## Match scope
 
