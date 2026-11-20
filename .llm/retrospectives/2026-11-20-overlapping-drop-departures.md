@@ -17,7 +17,7 @@
 | 1 | Two automatic departures that overlap while the first barrier is open terminate every survivor with `participant_lost`, because the second departing peer is still a member of the frozen participant set. This is safe and must stay explicit; the serial second-departure case remains the supported path. | fact | `tests/unit/test_peer_drop_simultaneous.gd` fails without the participant check and passes on both pins with `mesh.reasons == participant_lost x3` and `frozen_frame == -1`; documented in `docs/peer-lifecycle.md` |
 | 2 | The supported-browser table had drifted two Chromium majors and two Firefox releases behind `docs/reference/pins.json`, and described Firefox as unqualified while both Firefox matrices run nightly. | fact | `docs/supported.md` versus `docs/reference/pins.json` (`chromium_version 156.0.8078.4`, `firefox_version 157.0`); `.github/workflows/nightly.yml` owns both Firefox matrices |
 | 3 | A test fixture cannot raise `drop_barrier_timeout_us` above `disconnect_timeout_us`; `L.Options.valid_options` refuses the configuration and the mesh builds with null cores. The failure reads as a generic `INVALID_ARGUMENT`. | fact | `addons/fortress_rollback/protocol/lifecycle_types.gd:32`; the first scratch build at 700000/400000 returned `configure=1` |
-| 4 | A lockstep (prediction window zero) peer drop always terminated with `missing_history`: the barrier compared the confirmed frontier (current - 1) with `rollback_floor()` (current). The departed row at the confirmed frontier was still retained, so the rejection was too strict. | production bug | new `tests/unit/test_peer_drop_lockstep.gd` failed on the original code at the running/frozen/missing assertions; fix in `peer_drop_barrier.gd::observed` passes 599 assertions on both pins |
+| 4 | A lockstep (prediction window zero) peer drop always terminated with `missing_history`: the barrier compared the confirmed frontier (current - 1) with `rollback_floor()` (current). The departed row at the confirmed frontier was still retained, so the rejection was too strict. | production bug | new `tests/unit/test_peer_drop_lockstep.gd` failed on the original code at the running/frozen/missing assertions; lockstep-only clamp in `peer_drop_barrier.gd::observed` passes 599 assertions on both pins |
 
 ## Actions Taken
 
@@ -26,7 +26,7 @@
 | 1 | Recorded the overlapping-departure fail-closed rule beside the existing participant-loss rule. | `docs/peer-lifecycle.md` | `make lint-llm` |
 | 2 | Replaced the stale browser versions and tier wording; named the mixed-browser ICE gap and its owning issue. | `docs/supported.md` | `make lint-llm` |
 | 3 | Added the five-peer regression with the real barrier and participant-loss assertions. | `tests/unit/test_peer_drop_simultaneous.gd` | new suite passes twice on Godot 4.3 and 4.7.2 |
-| 4 | Clamped the last-survivor cut bound to the confirmed frontier (`lower = mini(lower, upper)`) and added the lockstep regression. | `addons/fortress_rollback/core/peer_drop_barrier.gd` | all 122 drop cases pass twice per pin; `make gate` green |
+| 4 | Clamped the lockstep last-survivor cut bound to the confirmed frontier (`lower = mini(lower, upper)` only when the prediction window is zero) and added the lockstep regression; review feedback kept the rollback-floor guard for every predicting session. | `addons/fortress_rollback/core/peer_drop_barrier.gd` | all 122 drop cases pass twice per pin; `make gate` green on the reviewed tree |
 
 ## Prune Ledger
 
