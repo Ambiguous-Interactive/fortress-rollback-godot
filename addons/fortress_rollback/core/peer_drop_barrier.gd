@@ -186,15 +186,14 @@ func observed(host: Variant, index: int, reason: Variant = 0) -> bool:
 	var key: String = host._ids[index].hex_encode()
 	if is_gone(key):
 		return true
-	var broken: Barrier = _broken_commit(host, key)
-	if broken != null:
-		# The committed operation has not been acknowledged by every member of
-		# its fixed participant set. A member that disappears inside that
-		# window leaves at least one survivor unable to commit, so the committed
-		# survivor ends the match too instead of continuing alone. The certified
-		# freeze stays: closing the operation never rewrites it (#425).
+	var broken: Array[Barrier] = _broken_commits(host, key)
+	if not broken.is_empty():
+		# Every committed operation that still lacks this participant's
+		# confirmation is broken by its departure. The certified freezes stay:
+		# closing an operation never rewrites one (#425).
 		_departed[key] = true
-		_break_commit(host, broken)
+		for barrier: Barrier in broken:
+			_break_commit(host, barrier)
 		return false
 	_departed[key] = true
 	var slots: PackedInt32Array = host._slots_by_peer[index]
@@ -767,11 +766,11 @@ func _break_commit(host: Variant, barrier: Barrier) -> void:
 	host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[barrier.index].duplicate(), "reason": "participant_lost"})
 
 
-## A committed operation is closed only after every member of its fixed
-## participant set confirmed the commit. A member that departs before that
-## confirmation leaves another survivor unable to commit, so continuing would
-## let one survivor keep a frozen match while the other ended (#425).
-func _broken_commit(host: Variant, identity: String) -> Barrier:
+## Every committed operation that this departing member leaves open. The same
+## survivor can hold more than one committed barrier, so all of them are
+## returned and broken rather than only the first match (#425 review).
+func _broken_commits(host: Variant, identity: String) -> Array[Barrier]:
+	var result: Array[Barrier] = []
 	for key: String in _barriers.keys():
 		var barrier: Barrier = _barriers[key]
 		if barrier.broken or barrier.state != COMMITTED or not barrier.participants.has(identity):
@@ -784,8 +783,8 @@ func _broken_commit(host: Variant, identity: String) -> Barrier:
 			# The departing member confirmed the commit. Its own departure is a
 			# serial second drop, not a missing participant of this operation.
 			continue
-		return barrier
-	return null
+		result.append(barrier)
+	return result
 
 
 ## True when every participant except the proposer confirmed the commit. The
