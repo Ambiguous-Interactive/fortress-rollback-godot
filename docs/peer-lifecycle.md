@@ -194,7 +194,11 @@ The survivor set is fixed when a local barrier opens. If a member
 of that set disappears before commit, the barrier reports
 `peer_drop_unconfirmed` with `participant_lost` and ends the match. It cannot
 reduce the certificate requirement by omitting that survivor. A departure
-after commit does not undo the decision.
+after commit does not undo the decision. Two automatic departures that overlap
+before the first certificate commits therefore fail closed: every survivor
+reports `participant_lost`, freezes neither slot and ends the match, instead of
+committing a cut whose certificate omits the second departure. A serial second
+departure after the first commit keeps the one-member freeze.
 
 A certificate that names another value ends the match with
 `peer_drop_unconfirmed` and the reason `conflicting_history`, because the
