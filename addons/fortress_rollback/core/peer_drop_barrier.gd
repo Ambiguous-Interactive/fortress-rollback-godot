@@ -771,6 +771,13 @@ func publication_due(host: Variant, barrier: Barrier, phase: int, stage: int) ->
 	return false
 
 
+## The one publication seam of every barrier payload, the donor plan included.
+## The observer fixture hooks here, so a published control can be paired with
+## its routing no matter which production path sent it.
+func _publish(host: Variant, index: int, payload: Dictionary) -> int:
+	return host._endpoint(index).send_drop_barrier(payload, host._now)
+
+
 ## Send one barrier phase to every survivor that still takes part in the match.
 func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE, reason: int = 0, retry: bool = false) -> bool:
 	if phase == Phase.REPORT:
@@ -792,7 +799,7 @@ func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE,
 		if retry and not previous.is_empty() and previous.phase == phase and previous.stage == stage \
 			and previous.digest == payload.cut_digest and host._now - int(previous.at) < RETRY_US:
 			continue
-		var code: int = host._endpoint(index).send_drop_barrier(payload, host._now)
+		var code: int = _publish(host, index, payload)
 		if code != I.Code.OK:
 			# A refused barrier message never reaches the survivor.
 			sent = false
@@ -869,7 +876,7 @@ func _send_backfill(host: Variant, barrier: Barrier, identity: String) -> void:
 			payload["chunk_index"] = chunk
 			payload["chunk_count"] = count
 			payload["bytes"] = barrier.value.slice(chunk * CHUNK_BYTES, mini((chunk + 1) * CHUNK_BYTES, barrier.value.size()))
-			host._endpoint(peer).send_drop_barrier(payload, host._now)
+			_publish(host, peer, payload)
 		return
 
 

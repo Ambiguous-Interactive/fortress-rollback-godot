@@ -21,6 +21,8 @@ var _lost_commit: Array[Dictionary] = []
 var _drop_first_commit: bool = false
 var _drop_first_history: bool = false
 var _corrupt_interior_history: bool = false
+var _drop_first_prepare: bool = false
+var _lost_prepare: Array[Dictionary] = []
 var _warmup_frames: int = 0
 
 const Base = preload("res://tests/unit/test_peer_drop_backfill.gd")
@@ -69,10 +71,12 @@ func observe(
 	drop_first_commit: bool = false,
 	drop_first_ack: bool = false,
 	drop_first_inventory: bool = false,
+	drop_first_prepare: bool = false,
 	warmup: int = 0
 ) -> Dictionary:
 	_warmup_frames = warmup
 	_drop_first_inventory = drop_first_inventory
+	_drop_first_prepare = drop_first_prepare
 	_drop_first_ack = drop_first_ack
 	_drop_first_commit = drop_first_commit
 	_drop_first_history = drop_first_history
@@ -175,6 +179,13 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.INPUT and packet.from == 2 and packet.to == 0:
 			if decoded.message.start_frame + decoded.message.frame_count - 1 > 7 + _warmup_frames:
 				continue
+		if _drop_first_prepare and _lost_prepare.is_empty() and decoded.code == T.Code.OK \
+			and decoded.message.kind == T.Kind.DROP_BARRIER and decoded.message.phase == Drop.Phase.PREPARE:
+			# A prepare published but never routed: the recorded publication stays
+			# unmatched, so the completeness assertion, not the Python comparator,
+			# is what fails.
+			_lost_prepare.append({"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode()})
+			continue
 		var inventory_emission: Dictionary = {}
 		var history_emission: Dictionary = {}
 		var commit_emission: Dictionary = {}
@@ -182,13 +193,13 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		var prepare_emission: Dictionary = {}
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			var publication_order: int = -1
-			if decoded.message.phase == Drop.Phase.COMMIT or (decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage in [Drop.Stage.INVENTORY, Drop.Stage.COMMITTED]):
+			if Observation.tracked(decoded.message.phase, decoded.message.stage):
 				publication_order = _observation.take(packet.from, packet.to, packet.bytes)
 				context.equal(publication_order > 0, true, "match actual accepted barrier publication before routing")
 			# The pinned trace observes survivor-to-survivor controls only, so the
 			# coordinator's proposal is captured on the same survivor link.
 			if decoded.message.phase == Drop.Phase.PREPARE and packet.from == 0 and packet.to == 1:
-				prepare_emission = {"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode(), "emission": _prepare_emissions.size(), "order": _observation.next_order()}
+				prepare_emission = {"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode(), "emission": _prepare_emissions.size(), "order": publication_order}
 				_prepare_emissions.append(prepare_emission)
 			if decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage == Drop.Stage.INVENTORY:
 				inventory_emission = {
@@ -232,7 +243,7 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 			history_emission.packet = packet.bytes.hex_encode()
 		var receipt_order: int = -1
 		if not inventory_emission.is_empty() or not commit_emission.is_empty() or not ack_emission.is_empty():
-			receipt_order = _observation.next_order()
+			receipt_order = _next_order(context)
 		var code: int = mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now)
 		if terminated and code == I.Code.TERMINATED:
 			continue
@@ -244,7 +255,7 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		if code == I.Code.OK and not commit_emission.is_empty():
 			_commit_receipts.append(_received(commit_emission, receipt_order))
 		if code == I.Code.OK and not prepare_emission.is_empty():
-			_prepare_receipts.append(_received(prepare_emission, _observation.next_order()))
+			_prepare_receipts.append(_received(prepare_emission, _next_order(context)))
 		if code == I.Code.OK and decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
 				_seen += 1
@@ -256,3 +267,11 @@ func _received(emission: Dictionary, order: int) -> Dictionary:
 	var result: Dictionary = emission.duplicate(true)
 	result.order = order
 	return result
+
+
+## Every counter draw the fixture records is guarded: exhaustion is a fixture
+## failure, never a confusing Python-side order diagnostic.
+func _next_order(context: RefCounted) -> int:
+	var order: int = _observation.next_order()
+	context.equal(order > 0, true, "observation counter available")
+	return order

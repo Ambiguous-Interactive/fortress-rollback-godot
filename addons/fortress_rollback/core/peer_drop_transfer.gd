@@ -84,7 +84,7 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 				var previous: Dictionary = history.plan_sent_to.get(index, {})
 				if not previous.is_empty() and previous.digest == barrier.digest and ((local_donor and not history.plan_turn) or now_us - int(previous.at) < History.RETRY_US):
 					continue
-				if host._endpoint(index).send_drop_barrier(plan, host._now) == I.Code.OK:
+				if owner._publish(host, index, plan) == I.Code.OK:
 					history.plan_sent_to[index] = {"digest": barrier.digest, "at": now_us}
 					published = true
 		if local_donor and history.plan_turn and published:
@@ -123,7 +123,7 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 			payload.chunk_count = history.journal.size()
 			payload.bytes = history.journal[cursor]
 			work += 1
-			if host._endpoint(index).send_drop_barrier(payload, host._now) != I.Code.OK:
+			if owner._publish(host, index, payload) != I.Code.OK:
 				break
 			cursor += 1
 			advanced = true

@@ -72,6 +72,20 @@ def observation_controls(engine, output, source):
 
 
 
+def prepare_publication_control(engine, output):
+    # A prepare recorded at its publication seam but never routed must be caught
+    # by the fixture's own completeness assertion, before any Python comparison.
+    result = subprocess.run([str(engine), '--headless', '--path', str(ROOT), '--script',
+        'res://tests/oracle/drop_history_trace.gd', '--', '--drop-first-prepare'],
+        cwd=ROOT, env=rust_environment(), capture_output=True, text=True, encoding='utf-8', timeout=120)
+    (output / 'observer-unrouted-prepare.log').write_text(result.stdout + result.stderr)
+    require(result.returncode == 1, 'unrouted prepare control must fail the fixture')
+    godot = parse_godot(result.stdout, result.stderr)
+    failure = {'kind': 'equality', 'label': 'every accepted observed control reaches owned routing', 'expected': 'true', 'actual': 'false'}
+    require(godot['failures'] == [failure], 'unrouted prepare control exact completeness diagnostic')
+    return 'observed_unrouted_prepare'
+
+
 def interior_history_control(engine, output, source, target_slots=1):
     result = subprocess.run([str(engine), '--headless', '--path', str(ROOT), '--script',
         'res://tests/oracle/drop_history_trace.gd', '--', '--multi-row-history', '--corrupt-interior-history',
@@ -226,6 +240,7 @@ def main():
         raise ValueError('drop history: fresh-process repeat mismatch')
     controls = sorted(set(controls))
     controls.extend(observation_controls(engine, args.output, observed[0]['clean']['source']))
+    controls.append(prepare_publication_control(engine, args.output))
     controls.append(interior_history_control(engine, args.output, observed[0]['multi-clean']['source']))
     controls.append('grouped:' + interior_history_control(engine, args.output, observed[0]['grouped-clean']['source'], 2))
     require_unchanged('local source inventory', local_sources, inventory())
