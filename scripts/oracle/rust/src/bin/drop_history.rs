@@ -87,7 +87,7 @@ fn advance(session: &mut P2PSession<Profile>, game: &mut Game, player: usize,
 #[derive(Default)]
 struct Fault {
     enabled: bool, dropped: Vec<Value>, commit_enabled: bool, dropped_commit: Vec<Value>, ack_enabled: bool, ack_participant: usize,
-    dropped_ack: Vec<Value>, inventory_enabled: bool, dropped_inventory: Vec<Value>
+    dropped_ack: Vec<Value>, inventory_enabled: bool, dropped_inventory: Vec<Value>, prepare_enabled: bool, dropped_prepare: Vec<Value>
 }
 fn route(buffers: &[Arc<Mutex<Buffers>>], missing: bool, silent: bool, control: &mut Vec<Value>, fault: &mut Fault) -> Result<bool, String> {
     let mut delivered = false;
@@ -102,6 +102,11 @@ fn route(buffers: &[Arc<Mutex<Buffers>>], missing: bool, silent: bool, control: 
                     let packet = json!({"from":sender,"to":recipient,"body":body,"emission":control.len(),"order":order.ok_or("missing control emission order")?});
                     emitted_control = Some(packet.clone());
                     control.push(packet.clone());
+                    if fault.prepare_enabled && fault.dropped_prepare.is_empty() && sender == 0 && recipient == 1
+                        && body.contains_key("DropPrepare") {
+                        fault.dropped_prepare.push(packet);
+                        continue;
+                    }
                     if fault.inventory_enabled && fault.dropped_inventory.is_empty() && sender == 1 && recipient == 0
                         && body.get("DropReport").and_then(|value| value.get("stage")).and_then(Value::as_str) == Some("Inventory")
                         && body["DropReport"]["participant"].as_u64() == Some(fault.ack_participant as u64) {
@@ -138,7 +143,8 @@ fn settle(sessions: &mut [P2PSession<Profile>], buffers: &[Arc<Mutex<Buffers>>],
     }
     Err("unbounded settlement".into())
 }
-fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit_loss: bool, ack_loss: bool, inventory_loss: bool, warmup: i32) -> Result<Value, String> {
+fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit_loss: bool, ack_loss: bool, inventory_loss: bool,
+    prepare_loss: bool, warmup: i32) -> Result<Value, String> {
     let clock = Arc::new(Mutex::new(0_u64));
     let origin = web_time::Instant::now();
     let order = Arc::new(Mutex::new(0_usize));
@@ -165,7 +171,7 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
     }
     let mut control = Vec::new();
     let mut fault = Fault { enabled: loss, commit_enabled: commit_loss, ack_enabled: ack_loss, ack_participant: target_slots,
-        inventory_enabled: inventory_loss, ..Default::default() };
+        inventory_enabled: inventory_loss, prepare_enabled: prepare_loss, ..Default::default() };
     settle(&mut sessions, &buffers, false, false, &mut control, &mut fault)?;
     for session in &mut sessions {
         if format!("{:?}", session.current_state()) != "Running" { return Err("bootstrap".into()); }
@@ -226,7 +232,7 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
     }
     let mut result = json!({"format":6,"complete":true,"upstream_revision":"d124c89080004d96971a629bb0427056ee1805e3",
         "missing_rows":missing_rows,"target_slots":target_slots,"before":before,"dropped":dropped,
-        "lost_inventory":fault.dropped_inventory,"lost_history":fault.dropped,"lost_commit":fault.dropped_commit,"lost_ack":fault.dropped_ack,
+        "lost_inventory":fault.dropped_inventory,"lost_prepare":fault.dropped_prepare,"lost_history":fault.dropped,"lost_commit":fault.dropped_commit,"lost_ack":fault.dropped_ack,
         "controls":control,"received_controls":received_controls,"survivors":survivors});
     if warmup > 0 {
         result["warmup"] = json!(warmup);
@@ -241,14 +247,15 @@ fn main() {
     let grouped = arguments.contains(&"--multiple-target-slots".into());
     let commit_loss = arguments.contains(&"--drop-first-commit".into());
     let inventory_loss = arguments.contains(&"--drop-first-inventory".into());
+    let prepare_loss = arguments.contains(&"--drop-first-prepare".into());
     let ack_loss = arguments.contains(&"--drop-first-ack".into());
     let wrapped = arguments.contains(&"--wrapped-history".into());
     let unequal = arguments.contains(&"--unequal-exposure".into());
-    if arguments.len() != usize::from(inventory_loss) + usize::from(ack_loss) + usize::from(commit_loss) + usize::from(unequal)
+    if arguments.len() != usize::from(inventory_loss) + usize::from(prepare_loss) + usize::from(ack_loss) + usize::from(commit_loss) + usize::from(unequal)
         + usize::from(loss) + usize::from(multi) + usize::from(grouped) + usize::from(wrapped) {
         eprintln!("drop history: unexpected argument"); std::process::exit(2);
     }
-    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss, ack_loss, inventory_loss, if wrapped { 251 } else { 0 }) {
+    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss, ack_loss, inventory_loss, prepare_loss, if wrapped { 251 } else { 0 }) {
         Ok(result) => println!("{result}"),
         Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); }
     }

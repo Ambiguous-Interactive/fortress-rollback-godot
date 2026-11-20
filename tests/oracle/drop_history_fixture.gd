@@ -22,7 +22,9 @@ var _drop_first_commit: bool = false
 var _drop_first_history: bool = false
 var _corrupt_interior_history: bool = false
 var _drop_first_prepare: bool = false
+var _unrouted_prepare: bool = false
 var _lost_prepare: Array[Dictionary] = []
+var _unrouted: Array[Dictionary] = []
 var _warmup_frames: int = 0
 
 const Base = preload("res://tests/unit/test_peer_drop_backfill.gd")
@@ -72,11 +74,13 @@ func observe(
 	drop_first_ack: bool = false,
 	drop_first_inventory: bool = false,
 	drop_first_prepare: bool = false,
+	unrouted_prepare: bool = false,
 	warmup: int = 0
 ) -> Dictionary:
 	_warmup_frames = warmup
 	_drop_first_inventory = drop_first_inventory
 	_drop_first_prepare = drop_first_prepare
+	_unrouted_prepare = unrouted_prepare
 	_drop_first_ack = drop_first_ack
 	_drop_first_commit = drop_first_commit
 	_drop_first_history = drop_first_history
@@ -154,6 +158,7 @@ func observe(
 		"prepare_emissions": _prepare_emissions,
 		"prepare_receipts": _prepare_receipts,
 		"lost_inventory": _lost_inventory,
+		"lost_prepare": _lost_prepare,
 		"lost_history": _lost_history,
 		"lost_commit": _lost_commit,
 		"lost_ack": _lost_ack,
@@ -179,12 +184,12 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.INPUT and packet.from == 2 and packet.to == 0:
 			if decoded.message.start_frame + decoded.message.frame_count - 1 > 7 + _warmup_frames:
 				continue
-		if _drop_first_prepare and _lost_prepare.is_empty() and decoded.code == T.Code.OK \
+		if _unrouted_prepare and _unrouted.is_empty() and decoded.code == T.Code.OK \
 			and decoded.message.kind == T.Kind.DROP_BARRIER and decoded.message.phase == Drop.Phase.PREPARE:
 			# A prepare published but never routed: the recorded publication stays
 			# unmatched, so the completeness assertion, not the Python comparator,
 			# is what fails.
-			_lost_prepare.append({"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode()})
+			_unrouted.append({"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode()})
 			continue
 		var inventory_emission: Dictionary = {}
 		var history_emission: Dictionary = {}
@@ -217,6 +222,9 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 					"from": packet.from, "to": packet.to, "bytes": decoded.message.bytes.hex_encode(), "packet": packet.bytes.hex_encode(), "emission": _history_emissions.size()
 				}
 				_history_emissions.append(history_emission)
+		if _drop_first_prepare and _lost_prepare.is_empty() and not prepare_emission.is_empty():
+			_lost_prepare.append(prepare_emission)
+			continue
 		if _drop_first_inventory and _lost_inventory.is_empty() and not inventory_emission.is_empty():
 			_lost_inventory.append(inventory_emission)
 			continue

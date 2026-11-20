@@ -98,13 +98,13 @@ def delay_source_inventory_retries(source):
     for order, packet in enumerate(reordered_events, 1):
         packet['order'] = order
     orders = {packet['emission']: packet['order'] for packet in source['controls']}
-    for bank in ('lost_inventory', 'lost_history', 'lost_commit', 'lost_ack'):
+    for bank in ('lost_inventory', 'lost_prepare', 'lost_history', 'lost_commit', 'lost_ack'):
         for packet in source[bank]:
             packet['order'] = orders[packet['emission']]
     reordered = [packet for packet in source['controls'] if packet['emission'] not in retry_ids] + retries
     indices = {packet['emission']: index for index, packet in enumerate(reordered)}
     source['controls'] = [{**packet, 'emission': indices[packet['emission']]} for packet in reordered]
-    for bank in ('received_controls', 'lost_inventory', 'lost_history', 'lost_commit', 'lost_ack'):
+    for bank in ('received_controls', 'lost_inventory', 'lost_prepare', 'lost_history', 'lost_commit', 'lost_ack'):
         source[bank] = [{**packet, 'emission': indices[packet['emission']]} for packet in source[bank]]
     source['received_controls'].sort(key=lambda packet: (packet['to'], packet['emission']))
 
@@ -122,7 +122,7 @@ def delay_source_inventory_consumption(source):
 
 
 def scale_godot_order(godot):
-    for bank in ('prepare_emissions', 'prepare_receipts', 'inventory_emissions', 'inventory_receipts', 'lost_inventory',
+    for bank in ('prepare_emissions', 'prepare_receipts', 'inventory_emissions', 'inventory_receipts', 'lost_inventory', 'lost_prepare',
                  'commit_emissions', 'commit_receipts', 'lost_commit', 'ack_emissions', 'ack_receipts', 'lost_ack'):
         for packet in godot[bank]:
             packet['order'] *= 4
@@ -143,7 +143,7 @@ def controls(clean, lost):
     first = source['lost_inventory'][0]
     retained = [packet for packet in source['controls'] if packet['emission'] == first['emission'] or not same(payload(packet), payload(first))]
     indices = {packet['emission']: index for index, packet in enumerate(retained)}
-    for bank in ('controls', 'received_controls', 'lost_inventory', 'lost_history', 'lost_commit', 'lost_ack'):
+    for bank in ('controls', 'received_controls', 'lost_inventory', 'lost_prepare', 'lost_history', 'lost_commit', 'lost_ack'):
         source[bank] = [{**packet, 'emission': indices[packet['emission']]} for packet in source[bank] if packet['emission'] in indices]
     no_godot_retry = copy.deepcopy(lost)
     no_godot_retry['godot'].update(inventory_emissions=no_godot_retry['godot']['inventory_emissions'][:1], inventory_receipts=[])

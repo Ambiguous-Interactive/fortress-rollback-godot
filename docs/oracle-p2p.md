@@ -708,7 +708,7 @@ before the first COMMIT emission. Controls separately move inventory emissions a
 consumption after COMMIT; unchanged payloads and delivery identities cannot conceal either error.
 The Godot fixture also separates accepted production publication from receive entry. A test-only drop subclass observes exact packets newly appended by the synchronous production send; per-packet
 FIFO observations survive later routing and deliberate loss. Every production barrier payload, including the donor plan sent straight to an endpoint, reaches its recipient through one publication seam, so a prepare, inventory, COMMIT or acknowledgement published but never routed fails the fixture's own completeness assertion rather than a
-Python comparison; a controlled unrouted-prepare mutant fails exactly that assertion and survives when prepare publications are not recorded. Receive order is captured before calling
+Python comparison; a controlled unrouted-prepare mutant fails exactly that assertion and survives when prepare publications are not recorded. A separate first-prepare loss scenario drops the coordinator's first routed proposal and reconciles its emission, receipt and byte-identical retry like the other control losses. Receive order is captured before calling
 `peer.receive`, so a COMMIT published inside that call follows input handoff. Only successful receives
 are retained. Inventory, COMMIT, acknowledgement and prepare action orders share one bounded counter whose every draw is guarded in the fixture; duplicate orders,
 receipt before publication and COMMIT before inventory consumption each fail explicit controls.
