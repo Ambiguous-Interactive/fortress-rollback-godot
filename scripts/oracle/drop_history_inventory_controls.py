@@ -122,10 +122,10 @@ def delay_source_inventory_consumption(source):
 
 
 def scale_godot_order(godot):
-    for kind in ('prepare', 'inventory', 'commit', 'ack'):
-        for bank in (kind + '_emissions', kind + '_receipts', 'lost_' + kind):
-            for packet in godot.get(bank, []):
-                packet['order'] *= 4
+    for bank in ('prepare_emissions', 'prepare_receipts', 'inventory_emissions', 'inventory_receipts', 'lost_inventory',
+                 'commit_emissions', 'commit_receipts', 'lost_commit', 'ack_emissions', 'ack_receipts', 'lost_ack'):
+        for packet in godot[bank]:
+            packet['order'] *= 4
 
 
 def controls(clean, lost):

@@ -242,10 +242,10 @@ bounded: one accepted-send entry per live destination, with a departed
 member's entry evicted on the next send sweep. The pinned-source trace
 comparison names the extended fields: the drop-history differential corpus
 captures the coordinator's survivor-link proposal beside every other barrier
-payload, byte-compares the carried roster digest on each shape under its own
-diagnostic, expands the pinned prepare's participant handles into the
-fixture's per-slot identities and requires the carried digest to fingerprint
-them, and corrupts the digest on every payload shape in its negative controls
+payload and byte-compares the carried roster digest on each shape under its
+own diagnostic, with the fixture's documented derivation recording that the
+digest covers exactly the roster the pinned prepare names; the corpus
+corrupts the digest on every payload shape in its negative controls
 ([#414](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/414)).
 See [source observations](oracle-p2p.md) for the comparison boundary and
 [the example](peer-example.md) for visible faults.
