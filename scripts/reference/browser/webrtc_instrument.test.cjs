@@ -488,7 +488,7 @@ test('peer-drop answer loss drops one inventory report and passes its exact retr
     instrument({ endpoint: 'wss://localhost', count: 3, index: 1, peerDrop: true, dropAnswer: true });
     const channel = new window.RTCPeerConnection().createDataChannel('unreliable', { id: 3 });
     const packet = new Uint8Array(104);
-    packet.set([70, 82, 71, 80, 2, 0, 12, 0]);
+    packet.set([70, 82, 71, 80, 3, 0, 12, 0]);
     packet[40] = 60;
     packet[44] = 2;
     packet[45] = 1;
@@ -531,7 +531,7 @@ function predictionFixture() {
   vm.runInContext(`${code}; delayedInputs();`, context);
   return { context, sent, timers, createChannel: () => new Connection().createDataChannel(), channel: new Connection().createDataChannel(), window: context.window };
 }
-const predictionInput = () => { const bytes = new Uint8Array(25); bytes.set([70, 82, 71, 80, 2, 0, 3, 0]); bytes.fill(1, 8); return bytes; };
+const predictionInput = () => { const bytes = new Uint8Array(25); bytes.set([70, 82, 71, 80, 3, 0, 3, 0]); bytes.fill(1, 8); return bytes; };
 
 test('prediction barrier owns exact originals and blocks retries until explicit predicted-step release', () => {
   const f = predictionFixture();
