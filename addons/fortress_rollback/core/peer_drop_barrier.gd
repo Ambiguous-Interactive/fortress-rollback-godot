@@ -114,6 +114,9 @@ class Barrier:
 	## Bounded replies to a peer's repeated confirmation. Without a cap, two
 	## confirmed followers would answer each other's replies forever.
 	var confirmation_replies: Dictionary = {}
+	## True when this follower's confirmation publication was refused. The
+	## service loop retries only the refused links until they accept it.
+	var confirmation_failed: bool = false
 
 
 var _departed: Dictionary = {}
@@ -281,10 +284,13 @@ func service(host: Variant, now_us: int) -> void:
 					# The commit is irreversible, so it is retried until every survivor
 					# acknowledges it. A lost commit must not leave a survivor behind.
 					_retry(host, barrier, now_us, Phase.COMMIT)
-			elif not _commit_confirmed(host, barrier) and now_us - barrier.committed_at < CONFIRM_BROADCAST_US:
-				# Repeat this follower's own confirmation so one lost
-				# follower-to-follower report cannot strand a healthy operation.
-				_send(host, barrier, Phase.REPORT, Stage.COMMITTED, 0, true)
+			elif now_us - barrier.committed_at < CONFIRM_BROADCAST_US \
+				and (barrier.confirmation_failed or not _commit_confirmed(host, barrier)):
+				# Repeat this follower's own confirmation so one lost or
+				# refused follower-to-follower report cannot strand a healthy
+				# operation. A refused send retries only the refused links.
+				if _send(host, barrier, Phase.REPORT, Stage.COMMITTED, 0, true):
+					barrier.confirmation_failed = false
 			continue
 		if barrier.state != PENDING:
 			continue
@@ -667,7 +673,8 @@ func _receive_commit(host: Variant, index: int, key: String, barrier: Barrier, e
 	barrier.committed_at = host._now
 	_close_operation(barrier)
 	_freeze(host, index, cut, barrier.value, true)
-	_send(host, barrier, Phase.REPORT, Stage.COMMITTED)
+	if not _send(host, barrier, Phase.REPORT, Stage.COMMITTED):
+		barrier.confirmation_failed = true
 
 
 ## Another survivor closed the operation without committing.

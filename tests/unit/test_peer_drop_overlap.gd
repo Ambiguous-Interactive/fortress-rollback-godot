@@ -13,12 +13,16 @@ const PARTICIPANTS: Array[int] = [PROPOSER, PENDING, SECOND]
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["ready_commit_overlap", "asymmetric_ack_departure"])
+	return PackedStringArray(["ready_commit_overlap", "asymmetric_ack_departure", "committed_abort_receiver"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	if name == "asymmetric_ack_departure":
 		_asymmetric_ack(context)
+		context.finish()
+		return
+	if name == "committed_abort_receiver":
+		_committed_abort_receiver(context)
 		context.finish()
 		return
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 4, [], 250000, 64, 48)
@@ -159,6 +163,26 @@ func _committed_count(mesh: Dictionary) -> int:
 		if barrier != null and barrier.state == Drop.COMMITTED:
 			count += 1
 	return count
+
+
+## A locally confirmed survivor accepts the shared participant-loss abort and
+## ends, even though no participant departure is visible on its own endpoints.
+func _committed_abort_receiver(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 4, [], 250000, 64, 48)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, TARGET)
+	_detect(context, mesh, PARTICIPANTS, 800000)
+	var key: String = _id(TARGET).hex_encode()
+	context.equal(mesh.peers[PROPOSER]._drops._commit_confirmed(mesh.peers[PROPOSER], mesh.peers[PROPOSER]._drops.barrier(key)), true, "the proposer has every confirmation")
+	var abort: Dictionary = _identity_fields(mesh, TARGET)
+	abort["phase"] = Drop.Phase.ABORT
+	abort["reason"] = Drop.Abort.PARTICIPANT_LOST
+	abort["slots"] = abort["data"]
+	mesh.peers[PROPOSER]._drops.received(mesh.peers[PROPOSER], 0, abort)
+	_drain(mesh)
+	context.equal(mesh.peers[PROPOSER].status().lifecycle, Types.Lifecycle.TERMINATED, "the confirmed survivor ends on the shared abort")
+	context.equal(mesh.reasons.has("participant_lost"), true, "the accepted abort names the lost participant")
+	context.equal(mesh.peers[PROPOSER]._core.frozen_frame(TARGET), int(mesh.peers[PROPOSER]._drops.barrier(key).cut), "the certified freeze stays")
 
 
 ## Drive the drop until the proposer commits while every COMMIT packet to the
