@@ -14,7 +14,7 @@ func cases() -> PackedStringArray:
 
 
 func run_case(_name: String, context: RefCounted) -> void:
-	var mesh: Dictionary = _build_five(context)
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 5, [], 250000, 64, 48)
 	_play(context, mesh, 6, true)
 	# Both departing peers finish their last exchanged frame, then go silent together.
 	_leave(context, mesh, 3)
@@ -30,68 +30,6 @@ func run_case(_name: String, context: RefCounted) -> void:
 	context.equal(mesh.reasons.count("participant_lost"), SURVIVORS.size(), "every survivor names the missing participant instead of a timeout")
 	context.equal(mesh.cuts.is_empty(), true, "no survivor publishes a partial drop")
 	context.finish()
-
-
-# The shared barrier fixture fixes a 32-byte snapshot ceiling for four peers; the
-# five-peer mesh reserves the game's own fixed-header size for every player.
-func _build_five(context: RefCounted) -> Dictionary:
-	var count: int = 5
-	var peers: Array[Peer] = []
-	var games: Array[RefCounted] = []
-	for player: int in range(count):
-		var config: Config = Config.new()
-		config.player_count = count
-		config.local_players = PackedInt32Array([player])
-		config.input_width = 4
-		config.neutral_input = PackedByteArray([0, 0, 0, 0])
-		config.max_prediction_frames = 8
-		config.history_slots = 9
-		config.check_distance = 0
-		config.sync_test = false
-		config.max_snapshot_bytes = 8 * (count + 1)
-		config.storage_budget_bytes = 1048576
-		config.replay_max_frames = 64
-		var local: T.Message = T.Message.new()
-		local.kind = T.Kind.SYNC_REQUEST
-		local.sender_id = _id(player)
-		local.connection_id = _id(player + 20)
-		local.session_id = _id(90, 16)
-		local.config.player_count = count
-		local.config.input_width = 4
-		local.config.max_prediction = 8
-		local.config.desync_interval = 60
-		local.config.neutral_input = config.neutral_input.duplicate()
-		var roster: Array[PackedByteArray] = []
-		for slot: int in range(count):
-			roster.append(_id(slot))
-		local.config.roster = roster
-		var handshake: H.Options = H.Options.new()
-		handshake.roundtrips = 1
-		var controls: L.Options = L.Options.new()
-		controls.enabled = true
-		controls.disconnect_notify_us = 100000
-		controls.disconnect_timeout_us = 400000
-		controls.keepalive_interval_us = 1000
-		controls.quality_report_interval_us = 1000
-		controls.disconnect_behavior = L.Disconnect.CONTINUE
-		controls.drop_barrier_timeout_us = 250000
-		var game: RefCounted = Game.new(count)
-		var peer: Peer = Peer.new()
-		context.equal(peer.configure(config, local, game, handshake, I.Options.new(), controls), I.Code.OK, "configure a five-peer mesh")
-		peers.append(peer)
-		games.append(game)
-	var tokens: Array = []
-	for player: int in range(peers.size()):
-		var peer_tokens: Array[PackedByteArray] = []
-		for remote: PackedByteArray in peers[player].peer_ids():
-			peer_tokens.append(_id(remote[0] + player * 8, 16))
-		tokens.append(peer_tokens)
-	for index: int in range(peers.size()):
-		context.equal(peers[index].begin(0, tokens[index]), I.Code.OK, "begin the five-peer mesh")
-	var mesh: Dictionary = {"peers": peers, "games": games, "now": 0, "cuts": {}, "unconfirmed": 0, "reasons": [], "count": count}
-	for _iteration: int in range(6):
-		_deliver(context, mesh, _drain(mesh))
-	return mesh
 
 
 func _wait_for_departures(context: RefCounted, mesh: Dictionary, elapsed: int) -> void:
