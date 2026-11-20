@@ -2,7 +2,7 @@
 import copy
 import struct
 
-from drop_history_contract import FIXTURE_ROSTER_DIGEST, check_delivery, fields, integer, payload, require, same
+from drop_history_contract import check_delivery, fields, fixture_roster_digest, integer, payload, require, same
 
 
 def follower_inventory(packet, target_slots):
@@ -28,7 +28,7 @@ def check_godot_inventory(packet, missing_rows, target_slots, unequal, warmup=0)
                 # The inventory report attests the sender's own latched departure.
                 + struct.pack('<I4BHHIQiiiQHH2BI', 62 + len(targets) + len(receipts), 2, 1, 0, 0, 0, 21 << 8,
                               era + 1, digest, warmup + 4 + int(unequal), max(0, warmup - 2), warmup + 7 + missing_rows, 0, 0, 64, 1, 0, len(targets))
-                + targets + struct.pack('<I', len(receipts)) + receipts + struct.pack('<Q', FIXTURE_ROSTER_DIGEST))
+                + targets + struct.pack('<I', len(receipts)) + receipts + struct.pack('<Q', fixture_roster_digest(target_slots)))
     require(bytes.fromhex(raw) == expected, 'Godot exact original inventory')
 
 

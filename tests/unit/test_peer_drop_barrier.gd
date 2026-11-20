@@ -913,6 +913,11 @@ func _codec_round_trip(context: RefCounted) -> void:
 	negative_roster.participants_digest = -1
 	negative_roster.data = PackedByteArray([2, 0, 0])
 	context.equal(Codec.encode(negative_roster, limits).code, T.Code.INVALID_MESSAGE, "a negative roster digest is refused")
+	# The projection emits every barrier digest as an exact lowercase hex string.
+	var projected: Dictionary = Codec.semantic_projection(message, limits).projection
+	context.equal(projected["target_set_digest"], "b", "the target digest projects as exact lowercase hex")
+	context.equal(projected["participants_digest"], "c", "the roster digest projects as exact lowercase hex")
+	context.equal(projected["cut_digest"], "d", "the value digest projects as exact lowercase hex")
 
 
 ## A certificate that names another value ends the match instead of freezing divergent values.
