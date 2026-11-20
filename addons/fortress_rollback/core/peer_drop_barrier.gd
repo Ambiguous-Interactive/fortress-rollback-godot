@@ -178,8 +178,7 @@ func observed(host: Variant, index: int, reason: Variant = 0) -> bool:
 		# survivor ends the match too instead of continuing alone. The certified
 		# freeze stays: closing the operation never rewrites it (#425).
 		_departed[key] = true
-		host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[broken.index].duplicate(), "reason": "participant_lost"})
-		host._core.terminate(Types.Code.PROTOCOL_FAILED)
+		_break_commit(host, broken)
 		return false
 	_departed[key] = true
 	var slots: PackedInt32Array = host._slots_by_peer[index]
@@ -313,8 +312,15 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 			# frozen roster and stays answerable.
 			return
 	if is_dropped(key):
-		# Only the committed handshake remains live after freezing the slot.
+		# Only the committed handshake remains live after freezing the slot. A
+		# participant-loss abort is the shared termination signal: a survivor
+		# that still holds the operation open tells every committed survivor
+		# to end the match with it (#425 review).
 		if barrier == null or barrier.state != COMMITTED:
+			return
+		var loss_abort: bool = phase == Phase.ABORT and int(event.get("reason", 0)) == Abort.PARTICIPANT_LOST
+		if loss_abort:
+			_receive_abort(host, key, barrier, event)
 			return
 		if phase != Phase.COMMIT and not (phase == Phase.REPORT and int(event.get("stage", 0)) == Stage.COMMITTED):
 			return
@@ -629,11 +635,22 @@ func _receive_commit(host: Variant, index: int, key: String, barrier: Barrier, e
 
 ## Another survivor closed the operation without committing.
 func _receive_abort(host: Variant, key: String, barrier: Barrier, event: Dictionary) -> void:
-	if barrier == null or barrier.state != PENDING:
+	if barrier == null:
 		return
 	if int(event.get("operation", -1)) != barrier.operation:
 		return
-	_fail(host, barrier, _abort_reason(int(event.get("reason", Abort.TIMEOUT))), false)
+	var reason: int = int(event.get("reason", Abort.TIMEOUT))
+	if barrier.state == COMMITTED:
+		# A committed survivor accepts the shared participant-loss signal even
+		# when its own local acknowledgements look complete. The sender is not
+		# closed, so continuing would let one survivor run while the other ends
+		# the same operation (#425 review).
+		if reason == Abort.PARTICIPANT_LOST:
+			_fail(host, barrier, _abort_reason(reason), false)
+		return
+	if barrier.state != PENDING:
+		return
+	_fail(host, barrier, _abort_reason(reason), false)
 
 
 ## This tier derives one operation locally from the target's frozen roster and eras.
@@ -687,6 +704,15 @@ func _participant_lost(barrier: Barrier) -> bool:
 		if is_gone(identity):
 			return true
 	return false
+
+
+## A committed survivor detected that its fixed participant set broke. Tell
+## every other survivor before ending, so a survivor whose local
+## acknowledgements looked complete still ends the same operation (#425).
+func _break_commit(host: Variant, barrier: Barrier) -> void:
+	_send(host, barrier, Phase.ABORT, Stage.NONE, Abort.PARTICIPANT_LOST)
+	host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[barrier.index].duplicate(), "reason": "participant_lost"})
+	host._core.terminate(Types.Code.PROTOCOL_FAILED)
 
 
 ## A committed operation is closed only after every member of its fixed

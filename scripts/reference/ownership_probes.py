@@ -187,7 +187,7 @@ EXPECTED['res://tests/unit/test_replay_final_coverage.gd'] = {'final_state_cover
 EXPECTED['res://tests/unit/test_peer_drop_history.gd'].add('last_survivor_receipts')
 EXPECTED['res://tests/unit/test_peer_drop_multi_slot.gd'] = {
     'interleaved_slots', 'reversed_slot_ownership', 'last_survivor_multi_slot', 'last_survivor_missing_slot'}
-EXPECTED['res://tests/unit/test_peer_drop_overlap.gd'] = {'ready_commit_overlap'}
+EXPECTED['res://tests/unit/test_peer_drop_overlap.gd'] = {'ready_commit_overlap', 'asymmetric_ack_departure'}
 EXPECTED['res://tests/unit/test_peer_notifications.gd'] = {
     'completion', 'stall_and_repair', 'failure', 'callback_failure', 'shared_engine', 'handler_stop', 'external_facade'}
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'].update({'source_departures', 'source_callback_lifetime', 'status_lifetime'})
