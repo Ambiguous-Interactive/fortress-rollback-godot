@@ -59,7 +59,7 @@ func run(host: Node, count: int) -> bool:
 			if candidate != own_slot:
 				target_slot = mini(target_slot, candidate)
 		var roster: PackedStringArray = host.memberships[0].roster()
-		host.transports[0].arm_drop(host.memberships[0].identity(roster[target_slot]), 4, 6)
+		host.transports[0].arm_drop(host.memberships[0].identity(roster[target_slot]), 4, 6, own_slot)
 	for frame: int in 7:
 		if not missing_history:
 			if not await host._wait(

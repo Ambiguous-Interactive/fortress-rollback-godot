@@ -196,15 +196,18 @@ class DropDirect:
 	## input rows on one selected link. Every other packet keeps the production
 	## transport path.
 	var _drop_identity: PackedByteArray = PackedByteArray()
+	var _drop_slot: int = -1
 	var _drop_from: int = -1
 	var _drop_through: int = -1
+	var _unsupported: int = 0
 	var _overlaps: int = 0
 	var _frames: Dictionary = {}
 
-	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int) -> void:
+	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int, slot: int) -> void:
 		_drop_identity = identity.duplicate()
 		_drop_from = from_frame
 		_drop_through = through_frame
+		_drop_slot = slot
 
 	func poll(now_us: int, next_token_factory: Callable = Callable()) -> DirectTypes.Result:
 		_withhold_missing_inputs()
@@ -216,7 +219,7 @@ class DropDirect:
 			frames.append(frame)
 		frames.sort()
 		return {"dropped": frames.size(), "from": _drop_from, "through": _drop_through,
-			"frames": frames, "overlaps": _overlaps}
+			"frames": frames, "overlaps": _overlaps, "slot": _drop_slot, "unsupported": _unsupported}
 
 	func _withhold_missing_inputs() -> void:
 		if _drop_identity.is_empty() or _membership == null or _peer == null:
@@ -234,6 +237,10 @@ class DropDirect:
 				continue
 			var decoded: T.Result = Codec.decode(packet.bytes, limits)
 			if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.INPUT:
+				kept.append(packet)
+				continue
+			if decoded.message.players.size() != 1 or decoded.message.players[0] != _drop_slot:
+				_unsupported += 1
 				kept.append(packet)
 				continue
 			var start: int = decoded.message.start_frame

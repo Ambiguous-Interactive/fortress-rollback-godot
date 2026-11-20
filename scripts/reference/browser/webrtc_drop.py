@@ -139,16 +139,17 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         if missing_history:
             departed = records[0]['peers'][2]['result']['records'][0]
             report = departed.get('missing_inputs')
-            if (not isinstance(report, dict) or set(report) != {'dropped', 'from', 'through', 'frames', 'overlaps'}
+            if (not isinstance(report, dict) or set(report) != {'dropped', 'from', 'through', 'frames', 'overlaps', 'slot', 'unsupported'}
                     or report.get('dropped') != 3
                     or report.get('from') != 4 or report.get('through') != 6
-                    or report.get('frames') != [4, 5, 6] or report.get('overlaps') != 0):
+                    or report.get('frames') != [4, 5, 6] or report.get('overlaps') != 0
+                    or report.get('unsupported') != 0 or report.get('slot') != departed.get('slot')):
                 raise ValueError('peer-drop missing input withholding evidence missing')
             proposer = next(row for row in survivors if row['role'] == 1)
             follower = next(row for row in survivors if row['role'] == 0)
             if (proposer.get('history_installed') is not True
                     or type(proposer.get('history_first')) is not int or not 0 <= proposer['history_first'] <= 4
-                    or type(proposer.get('history_cut')) is not int or proposer['history_cut'] < 4
+                    or type(proposer.get('history_cut')) is not int or proposer['history_cut'] < 6
                     or proposer.get('history_cut') != proposer.get('freeze_frame')
                     or proposer.get('history_donor') != follower.get('slot')
                     or follower.get('history_donor') != follower.get('slot')):
