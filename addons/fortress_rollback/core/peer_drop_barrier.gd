@@ -186,6 +186,10 @@ func observed(host: Variant, index: int, reason: Variant = 0) -> bool:
 			return false
 	if last_survivor:
 		upper = maxi(upper, Inventory.highest(receipts))
+		# Lockstep keeps no rollback history, so its floor is the current frame
+		# while the confirmed frontier is the valid cut. The freeze still needs
+		# the departed row at that cut, which `covers` checks below.
+		lower = mini(lower, upper)
 	if upper < lower or (last_survivor and not Inventory.covers(receipts, slots, lower, upper)):
 		# An incomplete retained interval cannot authorize a grouped freeze.
 		host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[index].duplicate(), "reason": "missing_history"})

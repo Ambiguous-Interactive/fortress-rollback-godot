@@ -123,6 +123,9 @@ attestation travels in the Godot-side barrier report; the pinned source owns no 
 The last survivor also raises the cut through every retained actual input from the departed endpoint.
 All of that endpoint's player slots must retain complete history through the same cut before any slot freezes.
 Missing grouped history ends the match with `missing_history`; received original inputs are never replaced by an earlier frozen value.
+A lockstep session (prediction window zero) keeps no rollback history, so its rollback
+floor is the current frame; its last survivor still freezes at the confirmed frontier
+while the departed endpoint's row at that frontier is retained.
 
 With more than one survivor left, the survivors agree the frozen frame before
 any of them freezes a slot. The survivor that owns the lowest surviving slot
