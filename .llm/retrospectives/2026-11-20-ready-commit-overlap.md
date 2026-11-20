@@ -31,7 +31,8 @@
 | 4 | Record the new closure rule, the READY-to-commit outcome and the pinned-source divergence. | `docs/peer-lifecycle.md`, `PLAN.md`, `CHANGELOG.md` | `make lint-source`, `make lint-llm` |
 | 5 | Broadcast a participant-loss abort from a committed-but-unconfirmed survivor, retry it for a bounded window, and acknowledge it on the accepting side. Repeat and answer confirmations so one lost follower-to-follower report recovers. Narrow the break to the departing identity and the coordinator rule. | `addons/fortress_rollback/core/peer_drop_barrier.gd`, `tests/unit/test_peer_drop_overlap.gd` | all 127 `test_peer_drop_*` cases pass twice per pin; the asymmetric serial-departure control passes |
 | 6 | Break every matching committed barrier for one departure, not only the first. | `addons/fortress_rollback/core/peer_drop_barrier.gd` | full drop suite green on both pins |
-| 7 | Add the held-COMMIT early-confirmation regression for the follower retention path. | `tests/unit/test_peer_drop_commit.gd` | `held_commit_early_confirmation` passes twice per pin |
+| 7 | Track per-survivor abort acknowledgements, keep retrying until every live participant replies, and stop early only when all replied. | `addons/fortress_rollback/core/peer_drop_barrier.gd` | full drop suite green on both pins |
+| 8 | Add the held-COMMIT early-confirmation regression for the follower retention path. | `tests/unit/test_peer_drop_commit.gd` | `held_commit_early_confirmation` passes twice per pin |
 
 ## Prune Ledger
 

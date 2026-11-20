@@ -117,6 +117,10 @@ class Barrier:
 	## True when this follower's confirmation publication was refused. The
 	## service loop retries only the refused links until they accept it.
 	var confirmation_failed: bool = false
+	## Survivors that acknowledged this broken operation's participant-loss
+	## abort. The sender keeps retrying until every live participant replies or
+	## the bounded window expires.
+	var abort_acks: Dictionary = {}
 
 
 var _departed: Dictionary = {}
@@ -354,7 +358,7 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 			return
 		var loss_abort: bool = phase == Phase.ABORT and int(event.get("reason", 0)) == Abort.PARTICIPANT_LOST
 		if loss_abort:
-			_receive_abort(host, key, barrier, event)
+			_receive_abort(host, index, key, barrier, event)
 			return
 		if phase != Phase.COMMIT and not (phase == Phase.REPORT and int(event.get("stage", 0)) == Stage.COMMITTED):
 			return
@@ -374,7 +378,7 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 		Phase.COMMIT:
 			_receive_commit(host, peer_index, key, barrier, event)
 		Phase.ABORT:
-			_receive_abort(host, key, barrier, event)
+			_receive_abort(host, index, key, barrier, event)
 
 
 ## The proposer collects the survivor windows, certifies the value and commits.
@@ -678,7 +682,7 @@ func _receive_commit(host: Variant, index: int, key: String, barrier: Barrier, e
 
 
 ## Another survivor closed the operation without committing.
-func _receive_abort(host: Variant, key: String, barrier: Barrier, event: Dictionary) -> void:
+func _receive_abort(host: Variant, index: int, key: String, barrier: Barrier, event: Dictionary) -> void:
 	if barrier == null:
 		return
 	if int(event.get("operation", -1)) != barrier.operation:
@@ -690,22 +694,37 @@ func _receive_abort(host: Variant, key: String, barrier: Barrier, event: Diction
 		# closed, so continuing would let one survivor run while the other ends
 		# the same operation (#425 review).
 		if reason == Abort.PARTICIPANT_LOST:
+			var identity: String = host._ids[index].hex_encode()
 			if barrier.broken:
 				# This survivor already published its own loss and is retrying
-				# the signal. The peer's matching abort ends the wait without a
-				# second event.
-				barrier.broken = false
-				barrier.state = FAILED
-				host._core.terminate(Types.Code.PROTOCOL_FAILED)
+				# the signal. One reply must not stop recovery for the other
+				# required survivors, so it ends only when every live
+				# participant replied (#425 review).
+				barrier.abort_acks[identity] = true
+				if _abort_acknowledged(host, barrier):
+					barrier.broken = false
+					barrier.state = FAILED
+					host._core.terminate(Types.Code.PROTOCOL_FAILED)
 			else:
 				# Acknowledge the shared termination signal, then end. The
-				# sender stops its bounded retry on this matching abort.
+				# sender records this survivor's reply.
 				_send(host, barrier, Phase.ABORT, Stage.NONE, Abort.PARTICIPANT_LOST, false)
 				_fail(host, barrier, _abort_reason(reason), false)
 		return
 	if barrier.state != PENDING:
 		return
 	_fail(host, barrier, _abort_reason(reason), false)
+
+
+## True when every live participant of the broken operation acknowledged the
+## shared participant-loss abort.
+func _abort_acknowledged(host: Variant, barrier: Barrier) -> bool:
+	for identity: String in barrier.participants:
+		if is_gone(identity):
+			continue
+		if not barrier.abort_acks.has(identity):
+			return false
+	return true
 
 
 ## This tier derives one operation locally from the target's frozen roster and eras.
@@ -957,6 +976,8 @@ func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE,
 		if is_gone(key):
 			continue
 		if phase == Phase.COMMIT and barrier.acknowledged.has(key):
+			continue
+		if phase == Phase.ABORT and barrier.abort_acks.has(key):
 			continue
 		var previous: Dictionary = barrier.sent_to.get(index, {})
 		if retry and not previous.is_empty() and previous.phase == phase and previous.stage == stage \
