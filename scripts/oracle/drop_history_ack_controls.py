@@ -20,7 +20,7 @@ def remove_source_ack_retries(source):
 
 
 def insert_godot_ack_retry(godot, before_repeated_commit):
-    for bank in ('inventory_emissions', 'lost_inventory', 'inventory_receipts', 'commit_emissions', 'lost_commit', 'commit_receipts',
+    for bank in ('prepare_emissions', 'prepare_receipts', 'inventory_emissions', 'lost_inventory', 'inventory_receipts', 'commit_emissions', 'lost_commit', 'commit_receipts',
                  'ack_emissions', 'lost_ack', 'ack_receipts'):
         for packet in godot[bank]:
             packet['order'] *= 4
@@ -38,7 +38,7 @@ def insert_godot_ack_retry(godot, before_repeated_commit):
 
 
 def retime_godot_ack_retry(godot, before_repeated_commit):
-    for bank in ('inventory_emissions', 'lost_inventory', 'inventory_receipts', 'commit_emissions', 'lost_commit', 'commit_receipts',
+    for bank in ('prepare_emissions', 'prepare_receipts', 'inventory_emissions', 'lost_inventory', 'inventory_receipts', 'commit_emissions', 'lost_commit', 'commit_receipts',
                  'ack_emissions', 'lost_ack', 'ack_receipts'):
         for packet in godot[bank]:
             packet['order'] *= 4

@@ -812,9 +812,14 @@ Follower-acknowledgement loss additionally requires exact certificate redelivery
 before the matching ACK response; the pinned source retains its independent certificate journal policy.
 Its one/four-row missing suffix cases do not establish complete barrier parity or the remaining fault matrix.
 The pinned source's
-wire participant list, its coordinator-local sequence, its retransmission
-journal and its own cut selection remain open in
-[#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
+wire participant list, its coordinator-local sequence and its retransmission
+journal are ported, and the drop-history differential corpus names the carried
+roster digest on every barrier payload shape beside the pinned prepare's
+participant list; the pinned tier's own cut selection and expanded source/live
+missing-history acceptance remain in
+[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188),
+and the live departure faults in
+[#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 Native six-player sessions cover multiple local handles per endpoint. Exported
 Chromium covers a three-page WebRTC barrier after injected endpoint silence
 on both pins, with independent confirmed-history checks and a corruption

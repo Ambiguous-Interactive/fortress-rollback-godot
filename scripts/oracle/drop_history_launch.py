@@ -247,7 +247,9 @@ def main():
         'evidence': evidence, 'negative_controls': controls,
         'scope': ('Paired one/four-row single-target and four-row two-target clean/lost-first-history three-endpoint original-history/cut scenarios: source explicit removal; '
                   'Godot elapsed timeout; equal and unequal exposed frontiers; first-inventory/COMMIT/ACK loss alone and combined with donor-data loss; '
-                  '251-frame warmup wraps the original queues before equal-policy donor recovery; distinct non-interoperable wires.')}, indent=2) + '\n')
+                  '251-frame warmup wraps the original queues before equal-policy donor recovery; distinct non-interoperable wires. '
+                  'Every barrier payload names its carried roster digest; the coordinator survivor-link proposal is compared byte-exact '
+                  'against the pinned participants.')}, indent=2) + '\n')
     print('drop history: two survivors preserve twenty original canonical prefixes and statuses through '
           'one/four-row single/two-target donor recovery and lost inventory/commits/acknowledgements, twice', flush=True)
 

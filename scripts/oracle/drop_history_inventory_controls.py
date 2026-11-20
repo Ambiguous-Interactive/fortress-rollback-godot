@@ -2,7 +2,7 @@
 import copy
 import struct
 
-from drop_history_contract import check_delivery, fields, fixture_roster_digest, integer, payload, require, same
+from drop_history_contract import carry_roster, check_delivery, fields, fixture_roster_digest, integer, payload, require, same
 
 
 def follower_inventory(packet, target_slots):
@@ -29,6 +29,7 @@ def check_godot_inventory(packet, missing_rows, target_slots, unequal, warmup=0)
                 + struct.pack('<I4BHHIQiiiQHH2BI', 62 + len(targets) + len(receipts), 2, 1, 0, 0, 0, 21 << 8,
                               era + 1, digest, warmup + 4 + int(unequal), max(0, warmup - 2), warmup + 7 + missing_rows, 0, 0, 64, 1, 0, len(targets))
                 + targets + struct.pack('<I', len(receipts)) + receipts + struct.pack('<Q', fixture_roster_digest(target_slots)))
+    carry_roster(bytes.fromhex(raw), target_slots)
     require(bytes.fromhex(raw) == expected, 'Godot exact original inventory')
 
 
@@ -48,12 +49,12 @@ def check_source_observation_order(source):
 
 
 def check_godot_observation_order(godot):
-    events = [packet for kind in ('inventory', 'commit', 'ack') for action in ('emissions', 'receipts') for packet in godot[kind + '_' + action]]
+    events = [packet for kind in ('prepare', 'inventory', 'commit', 'ack') for action in ('emissions', 'receipts') for packet in godot[kind + '_' + action]]
     for packet in events:
         integer(packet['order'], 1, 8192, 'Godot observation order')
     orders = [packet['order'] for packet in events]
     require(len(set(orders)) == len(orders), 'Godot unique observation order')
-    for kind in ('inventory', 'commit', 'ack'):
+    for kind in ('prepare', 'inventory', 'commit', 'ack'):
         emissions = godot[kind + '_emissions']
         receipts = godot[kind + '_receipts']
         require(all(packet['order'] > emissions[packet['emission']]['order'] for packet in receipts), 'Godot receipt follows publication')
@@ -121,10 +122,10 @@ def delay_source_inventory_consumption(source):
 
 
 def scale_godot_order(godot):
-    for kind in ('inventory', 'commit', 'ack'):
-        for bank in (kind + '_emissions', kind + '_receipts', 'lost_' + kind):
-            for packet in godot[bank]:
-                packet['order'] *= 4
+    for bank in ('prepare_emissions', 'prepare_receipts', 'inventory_emissions', 'inventory_receipts', 'lost_inventory',
+                 'commit_emissions', 'commit_receipts', 'lost_commit', 'ack_emissions', 'ack_receipts', 'lost_ack'):
+        for packet in godot[bank]:
+            packet['order'] *= 4
 
 
 def controls(clean, lost):
@@ -174,7 +175,7 @@ def controls(clean, lost):
              ('fabricated_Godot_inventory_loss', fabricated_godot, 'Godot inventory emission/loss/receipt accounting'),
              ('missing_source_inventory_retry', no_source_retry, 'source exact inventory retry receipt'),
              ('missing_Godot_inventory_retry', no_godot_retry, 'Godot exact inventory retry receipt'),
-             ('changed_Godot_inventory_retry', wrong_packet, 'Godot exact original inventory')]
+             ('changed_Godot_inventory_retry', wrong_packet, 'Godot barrier roster digest')]
     for name, candidate, diagnostic in cases:
         try:
             compare(candidate['source'], candidate['godot'], False, 4, 2, True, False, False, True)

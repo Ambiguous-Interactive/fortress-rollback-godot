@@ -20,7 +20,10 @@ def roster_digest(identities):
 
 def fixture_roster_digest(target_slots):
     """The live roster of the fixture's drop: peers zero and one, one entry per
-    slot; the departed peer two contributes nothing."""
+    slot; the departed peer two contributes nothing. These are exactly the two
+    survivors the pinned DropPrepare names (its participant handles zero and
+    target_slots are those peers' first slots), so the carried digest on every
+    Godot barrier payload fingerprints the pinned prepare's participant list."""
     identities = []
     for peer in range(2):
         identities.extend(['%02x00000000000000' % (peer + 1)] * target_slots)
@@ -42,6 +45,14 @@ def fields(value, names, label):
 
 def integer(value, minimum, maximum, label):
     require(type(value) is int and minimum <= value <= maximum, label)
+
+
+def carry_roster(raw, target_slots):
+    """Every barrier payload ends with the carried roster digest, so the
+    extended field fails under its own diagnostic before the exact bytes."""
+    require(len(raw) >= 8, 'Godot barrier roster digest')
+    require(struct.unpack_from('<Q', raw, len(raw) - 8)[0] == fixture_roster_digest(target_slots),
+            'Godot barrier roster digest')
 
 
 def history_bytes(missing_rows, target_slots, warmup=0):
@@ -184,6 +195,7 @@ def check_godot_packet(raw, missing_rows, target_slots, warmup=0):
     require(type(raw) is str and len(raw) == 212 + target_slots * 6 + missing_rows * target_slots * 8
             and all(character in '0123456789abcdef' for character in raw), 'Godot packet bytes')
     packet = bytes.fromhex(raw)
+    carry_roster(packet, target_slots)
     require(packet[:8] == b'FRGP\x03\x00\x0c\x00' and packet[8:24] == bytes([91]) + bytes(15)
             and packet[24:32] == bytes([2]) + bytes(7) and packet[32:40] == bytes([22]) + bytes(7), 'Godot packet identity')
     require(struct.unpack_from('<I', packet, 40)[0] == 62 + target_slots * 3 + missing_rows * target_slots * 4
@@ -205,6 +217,45 @@ def check_godot_packet(raw, missing_rows, target_slots, warmup=0):
             'Godot history packet original bytes')
 
 
+def check_godot_prepare(packet, missing_rows, target_slots, warmup=0, unequal=False):
+    """The coordinator's survivor-link proposal: the opening window offer and the
+    donor plan (stage HISTORY), each retried byte-identical, the plan re-emitted
+    when the frozen value's digest becomes known. The plan carries the
+    receipt-raised cut and the first missing frame, like the transfer it names."""
+    fields(packet, 'from to packet emission order', 'Godot prepare')
+    integer(packet['order'], 1, 8192, 'Godot prepare order')
+    # The fixture captures the coordinator's survivor-link proposals only, so
+    # the sender fields are part of the trace schema, not a separate refusal.
+    raw = packet['packet']
+    require(type(raw) is str and len(raw) in (212 + target_slots * 6, 218 + target_slots * 6)
+            and all(character in '0123456789abcdef' for character in raw), 'Godot prepare bytes')
+    data = bytes.fromhex(raw)
+    carry_roster(data, target_slots)
+    cut = warmup + 7 + missing_rows
+    target_era = 23 << 8
+    targets = b''.join(struct.pack('<BH', slot, target_era) for slot in range(2 * target_slots, 3 * target_slots))
+    def digest(value):
+        number = 0x14650fb0739d0383
+        for byte in value:
+            number = ((number ^ byte) * 1099511628211) & 0x3fffffffffffffff
+        return number or 1
+    frozen = bytes((cut * 11 + slot * 7 + index) % 251 for slot in range(2 * target_slots, 3 * target_slots)
+                   for index in range(4))
+    def body(stage, op_cut, op_bound, op_digest, plan):
+        return (b'FRGP\x03\x00\x0c\x00' + bytes([91]) + bytes(15) + bytes([1]) + bytes(7) + bytes([21]) + bytes(7)
+                + struct.pack('<I4BHHIQiiiQHH2BI', 62 + len(targets) + len(plan), 1, stage, 0, 0, 0, 21 << 8,
+                              target_era + 1, digest(targets), op_cut, op_bound, warmup + 7, op_digest,
+                              0, 0, 0, 0, len(targets))
+                + targets + struct.pack('<I', len(plan)) + plan
+                + struct.pack('<Q', fixture_roster_digest(target_slots)))
+    donor_plan = struct.pack('<BH', target_slots, 1024)
+    opening = body(0, warmup + 4, max(0, warmup - 2 + int(unequal)), 0, b'')
+    uncertified = body(5, cut, warmup + 8, 0, donor_plan)
+    certified = body(5, cut, warmup + 8, digest(frozen), donor_plan)
+    require(data in (opening, uncertified, certified), 'Godot exact original prepare')
+    return data == certified
+
+
 def check_godot_commit(packet, missing_rows, target_slots, acknowledgement=False, warmup=0, unequal=False):
     fields(packet, 'from to packet emission order', 'Godot commit')
     integer(packet['order'], 1, 8192, 'Godot commit order')
@@ -212,6 +263,7 @@ def check_godot_commit(packet, missing_rows, target_slots, acknowledgement=False
     raw = packet['packet']
     require(type(raw) is str and len(raw) == 212 + target_slots * 6
             and all(character in '0123456789abcdef' for character in raw), 'Godot commit bytes')
+    carry_roster(bytes.fromhex(raw), target_slots)
     cut = warmup + 7 + missing_rows
     target_era = 23 << 8
     targets = b''.join(struct.pack('<BH', slot, target_era) for slot in range(2 * target_slots, 3 * target_slots))
@@ -263,8 +315,8 @@ def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=F
     fields(source, 'format complete missing_rows target_slots upstream_revision before dropped controls '
            'received_controls survivors lost_history lost_commit lost_ack lost_inventory', 'source')
     fields(godot, 'format complete missing_rows target_slots before cuts history_packets donors history_emissions history_receipts '
-           'survivors failures lost_history lost_commit commit_emissions commit_receipts lost_ack ack_emissions ack_receipts '
-           'lost_inventory inventory_emissions inventory_receipts', 'Godot')
+           'prepare_emissions prepare_receipts survivors failures lost_history lost_commit commit_emissions commit_receipts '
+           'lost_ack ack_emissions ack_receipts lost_inventory inventory_emissions inventory_receipts', 'Godot')
     for label, value in [('source', source), ('Godot', godot)]:
         require(same(value['format'], 6) and value['complete'] is True, label + ' completion')
         require(same(value['missing_rows'], missing_rows), label + ' missing rows')
@@ -275,6 +327,9 @@ def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=F
     require(same(source['dropped'], [target_slots, target_slots]), 'source drops')
     check_source_controls(source['controls'], 'source emitted controls', missing_rows, target_slots, unequal, warmup=warmup)
     check_source_controls(source['received_controls'], 'source received controls', missing_rows, target_slots, unequal, warmup=warmup)
+    # The pinned prepare's participant list is pinned by check_source_content and
+    # the carried Godot digest by carry_roster; the equivalence of the two rosters
+    # is fixture_roster_digest's documented derivation, not a separate check.
     require(same(godot['cuts'], [[cut] * target_slots, [cut] * target_slots]) and same(godot['donors'], [1]), 'Godot cut or donor')
     integer(godot['history_packets'], 1, 4096, 'Godot historical transfer')
     require(godot['failures'] == [], 'Godot assertion failures')
@@ -307,6 +362,11 @@ def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=F
         check_godot_commit(packet, missing_rows, target_slots, acknowledgement=True, warmup=warmup, unequal=unequal)
     check_delivery(godot['ack_emissions'], godot['lost_ack'], godot['ack_receipts'], 'Godot acknowledgement', observed=True)
     check_inventory(source, godot, inventory_loss, missing_rows, target_slots, unequal, warmup)
+    require(type(godot['prepare_emissions']) is list and 1 <= len(godot['prepare_emissions']) <= 4096, 'Godot prepare emissions')
+    certified = [packet for packet in godot['prepare_emissions'] if check_godot_prepare(packet, missing_rows, target_slots, warmup, unequal)]
+    require(bool(certified), 'Godot digest-bearing prepare plan')
+    check_delivery(godot['prepare_emissions'], [], godot['prepare_receipts'], 'Godot prepare', observed=True)
+    require(min(packet['order'] for packet in certified) < godot['commit_emissions'][0]['order'], 'Godot digest-bearing prepare precedes commit')
     check_godot_observation_order(godot)
     if ack_loss:
         first = next(packet for packet in source['controls'] if packet['from'] == 1 and packet['to'] == 0
@@ -384,7 +444,7 @@ def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1,
         'lost_status': ('Godot original rows, statuses or canonical states', lambda s, g:
             g['survivors'][0]['rows'][8 + missing_rows]['state']['inputs'][2 * target_slots].update(status='confirmed')),
         'truncated_donor_packet': ('Godot packet bytes', lambda s, g: g['history_receipts'][0].update(packet='00')),
-        'corrupt_donor_packet': ('Godot history packet original bytes', lambda s, g: g['history_receipts'][0].update(
+        'corrupt_donor_packet': ('Godot barrier roster digest', lambda s, g: g['history_receipts'][0].update(
             packet=g['history_receipts'][0]['packet'][:-2] + '00')),
         'foreign_donor': ('Godot original donor receipt', lambda s, g: g['history_receipts'][0].update(**{'from': 0})),
         'bool_frame': ('Godot original rows, statuses or canonical states', lambda s, g: g['survivors'][0]['rows'][0].update(frame=False)),
@@ -445,6 +505,34 @@ def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1,
                 raw = bytearray.fromhex(packet['packet'])
                 raw[offset:offset + width] = (1).to_bytes(width, 'little')
                 packet['packet'] = raw.hex()
+
+    def godot_byte_mutation(banks, offset):
+        def mutate(source, godot):
+            for bank in banks:
+                for packet in godot[bank]:
+                    raw = bytearray.fromhex(packet['packet'])
+                    raw[offset] ^= 1
+                    packet['packet'] = raw.hex()
+        return mutate
+
+    mutations['Godot_history_roster_digest'] = ('Godot barrier roster digest', godot_byte_mutation(
+        ('history_emissions', 'lost_history', 'history_receipts'), -1))
+    mutations['Godot_prepare_roster_digest'] = ('Godot barrier roster digest',
+        godot_byte_mutation(('prepare_emissions', 'prepare_receipts'), -1))
+    mutations['Godot_inventory_roster_digest'] = ('Godot barrier roster digest', godot_byte_mutation(
+        ('inventory_emissions', 'inventory_receipts', 'lost_inventory'), -1))
+    mutations['Godot_commit_roster_digest'] = ('Godot barrier roster digest', godot_byte_mutation(
+        ('commit_emissions', 'commit_receipts', 'lost_commit'), -1))
+    mutations['Godot_acknowledgement_roster_digest'] = ('Godot barrier roster digest', godot_byte_mutation(
+        ('ack_emissions', 'ack_receipts', 'lost_ack'), -1))
+    # The trailer flips above leave the donor bytes, the inventory receipts and
+    # the prepare body without their own named mutation, so each keeps one.
+    mutations['Godot_history_donor_byte'] = ('Godot history packet original bytes',
+        godot_byte_mutation(('history_emissions', 'lost_history', 'history_receipts'), 98 + 3 * target_slots))
+    mutations['Godot_prepare_phase_byte'] = ('Godot exact original prepare',
+        godot_byte_mutation(('prepare_emissions', 'prepare_receipts'), 44))
+    mutations['Godot_inventory_receipt_byte'] = ('Godot exact original inventory',
+        godot_byte_mutation(('inventory_emissions', 'inventory_receipts', 'lost_inventory'), -9))
 
     for name, offset, width in [('generation', 50, 2), ('sequence', 52, 4), ('digest', 56, 8), ('target_generation', 95, 2)]:
         mutations['Godot_operation_' + name] = ('Godot history packet operation',
