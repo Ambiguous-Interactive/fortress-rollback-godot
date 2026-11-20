@@ -45,6 +45,7 @@
 | 4 | Recorded the routing rule and measured bloat evidence. | `.llm/knowledge/plan-hygiene.md`, `.llm/knowledge/README.md` | `make lint-llm` link check |
 | 5 | Added one critical rule and the editing procedure. | `.llm/context.md`, `.llm/skills/llm-harness/SKILL.md` | `make lint-llm` |
 | 6 | Recorded the external context-engineering evidence. | `.llm/research/agent-instruction-files-2026.md` | link and length checks |
+| 7 | Closed two review findings in the checker: a missing plan now fails whole-scope checks, and an explicit repository directory includes its plan cap. | `scripts/llm/check_llm_file_lengths.py`, `scripts/tests/test_llm_length_linter.py`, `scripts/tests/test_llm_instructions_lint.py` | both new tests were red first, then 37 harness tests green |
 
 ## Prune Ledger
 

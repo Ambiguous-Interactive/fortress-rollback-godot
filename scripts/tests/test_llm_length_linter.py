@@ -76,10 +76,21 @@ class CheckFileTest(unittest.TestCase):
         write_lines(index, llm_paths.MAX_LINES + 50)
         skills_dir = self.root / ".llm" / "skills" / "some-skill"
         write_lines(skills_dir / "SKILL.md", 10)
+        write_lines(self.root / "PLAN.md", 5)
         scope = checker.check_scope(root=self.root)
         # The oversized generated index must not appear; the SKILL.md is clean.
         self.assertFalse(any(f.path == index for f in scope))
         self.assertEqual(scope, [])
+
+    def test_scope_reports_a_missing_plan(self):
+        findings = checker.check_scope(root=self.root)
+        self.assertEqual([f.level for f in findings], ["error"])
+        self.assertIn("PLAN.md", str(findings[0].path))
+
+    def test_explicit_directory_checks_the_plan_cap(self):
+        write_lines(self.root / ".llm" / "good.md", 5)
+        write_lines(self.root / "PLAN.md", llm_paths.PLAN_MAX_LINES + 1)
+        self.assertEqual(checker.main([str(self.root)]), 1)
 
     def test_plan_over_limit_is_error(self):
         path = write_lines(self.root / "PLAN.md", llm_paths.PLAN_MAX_LINES + 1)

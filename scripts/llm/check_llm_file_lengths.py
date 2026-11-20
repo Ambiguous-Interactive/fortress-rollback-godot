@@ -109,9 +109,7 @@ def check_scope(
 ) -> list[Finding]:
     base = llm_paths.resolve_root(root)
     findings = check_paths(llm_paths.size_scope_files(base), verbose=verbose)
-    plan_path = base / "PLAN.md"
-    if plan_path.is_file():
-        findings.extend(check_plan(plan_path, verbose=verbose))
+    findings.extend(check_plan(base / "PLAN.md", verbose=verbose))
     return findings
 
 
@@ -172,22 +170,29 @@ def main(argv: list[str] | None = None) -> int:
             findings.extend(check_plan(base / "PLAN.md", verbose=args.verbose))
     else:
         explicit: list[Path] = []
+        directories: list[Path] = []
         for raw in args.paths:
             path = Path(raw)
             if path.is_dir():
+                directories.append(path)
                 explicit.extend(llm_paths.size_scope_files(path))
             else:
                 explicit.append(path)
-        if explicit:
-            plan = [
-                path
-                for path in explicit
-                if path.resolve() == llm_paths.PLAN_PATH.resolve()
-            ]
-            others = [path for path in explicit if path not in plan]
+        if args.paths:
+            plan_paths: list[Path] = []
+            others: list[Path] = []
+            for path in explicit:
+                if path.resolve() == llm_paths.PLAN_PATH.resolve():
+                    plan_paths.append(path)
+                else:
+                    others.append(path)
+            for directory in directories:
+                plan_path = directory / "PLAN.md"
+                if plan_path.is_file() or directory.resolve() == llm_paths.REPO_ROOT:
+                    plan_paths.append(plan_path)
             findings = check_paths(others, verbose=args.verbose)
-            if plan:
-                findings.extend(check_plan(plan[0], verbose=args.verbose))
+            for plan_path in dict.fromkeys(plan_paths):
+                findings.extend(check_plan(plan_path, verbose=args.verbose))
         else:
             findings = check_scope(verbose=args.verbose)
 
