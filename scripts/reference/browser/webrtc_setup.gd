@@ -199,6 +199,8 @@ class DropDirect:
 	var _drop_from: int = -1
 	var _drop_through: int = -1
 	var _dropped: int = 0
+	var _overlaps: int = 0
+	var _frames: Dictionary = {}
 
 	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int) -> void:
 		_drop_identity = identity.duplicate()
@@ -210,7 +212,12 @@ class DropDirect:
 		return super.poll(now_us, next_token_factory)
 
 	func drop_report() -> Dictionary:
-		return {"dropped": _dropped, "from": _drop_from, "through": _drop_through}
+		var frames: Array[int] = []
+		for frame: int in _frames.keys():
+			frames.append(frame)
+		frames.sort()
+		return {"dropped": _dropped, "from": _drop_from, "through": _drop_through,
+			"frames": frames, "overlaps": _overlaps}
 
 	func _withhold_missing_inputs() -> void:
 		if _drop_identity.is_empty() or _membership == null or _peer == null:
@@ -218,26 +225,88 @@ class DropDirect:
 		var current: int = _peer.status().current_frame - 1
 		if current < _drop_from or current > _drop_through:
 			return
+		var limits: T.Limits = T.Limits.new()
+		limits.player_count = _membership.roster().size()
+		limits.max_packet_bytes = 65536
 		var kept: Array[Peer.Packet] = []
 		for packet: Peer.Packet in _pending:
-			if packet != null and packet.bytes.size() >= 4 and _destination(packet) == _drop_identity and _is_input(packet.bytes):
-				_dropped += 1
-				_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
-			else:
+			if packet == null or packet.bytes.size() < 4 or _destination(packet) != _drop_identity:
 				kept.append(packet)
+				continue
+			var decoded: T.Result = Codec.decode(packet.bytes, limits)
+			if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.INPUT:
+				kept.append(packet)
+				continue
+			var start: int = decoded.message.start_frame
+			var last: int = start + decoded.message.frame_count - 1
+			if start > _drop_through or last < _drop_from:
+				kept.append(packet)
+				continue
+			var pieces: Array[Peer.Packet] = _trim_input(packet, decoded.message, limits)
+			_dropped += 1
+			for frame: int in range(maxi(start, _drop_from), mini(last, _drop_through) + 1):
+				_frames[frame] = true
+			for piece: Peer.Packet in pieces:
+				kept.append(piece)
+				_pending_bytes += piece.bytes.size()
+			_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
 		_pending = kept
+
+	func _trim_input(packet: Peer.Packet, message: T.Message, limits: T.Limits) -> Array[Peer.Packet]:
+		var result: Array[Peer.Packet] = []
+		var count: int = message.frame_count
+		var slots: int = message.players.size()
+		if count < 1 or slots < 1 or message.data.size() % (count * slots) != 0:
+			_overlaps += 1
+			var fallback: Array[Peer.Packet] = []
+			fallback.append(packet)
+			return fallback
+		var width: int = message.data.size() / (count * slots)
+		limits.input_width = width
+		var start: int = message.start_frame
+		var run_start: int = -1
+		var run_end: int = -1
+		for offset: int in range(count):
+			var frame: int = start + offset
+			if frame >= _drop_from and frame <= _drop_through:
+				if run_start >= 0:
+					var piece: Peer.Packet = _segment(packet, message, limits, run_start, run_end)
+					if piece != null:
+						result.append(piece)
+				run_start = -1
+				continue
+			if run_start < 0:
+				run_start = frame
+			run_end = frame
+		if run_start >= 0:
+			var piece: Peer.Packet = _segment(packet, message, limits, run_start, run_end)
+			if piece != null:
+				result.append(piece)
+		return result
+
+	func _segment(packet: Peer.Packet, message: T.Message, limits: T.Limits, start: int, last: int) -> Peer.Packet:
+		var piece: T.Message = T.Message.new()
+		piece.kind = T.Kind.INPUT
+		piece.session_id = message.session_id.duplicate()
+		piece.sender_id = message.sender_id.duplicate()
+		piece.connection_id = message.connection_id.duplicate()
+		piece.start_frame = start
+		piece.ack_frame = message.ack_frame
+		piece.frame_count = last - start + 1
+		piece.players = message.players.duplicate()
+		for status: T.Status in message.statuses:
+			piece.statuses.append(status)
+		var width: int = message.data.size() / (message.frame_count * message.players.size())
+		var offset: int = (start - message.start_frame) * message.players.size() * width
+		piece.data = message.data.slice(offset, offset + piece.frame_count * message.players.size() * width)
+		var encoded: T.Result = Codec.encode(piece, limits)
+		if encoded.code != T.Code.OK:
+			_overlaps += 1
+			return null
+		return Peer.Packet.new(packet.to, encoded.bytes)
 
 	func _destination(packet: Peer.Packet) -> PackedByteArray:
 		return _membership.identity(_membership.uuid_for_peer_id(packet.to.decode_u32(0)))
-
-	func _is_input(bytes: PackedByteArray) -> bool:
-		var limits: T.Limits = T.Limits.new()
-		limits.player_count = _membership.roster().size()
-		var decoded: T.Result = Codec.decode(bytes, limits)
-		if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.INPUT:
-			return false
-		var last: int = decoded.message.start_frame + decoded.message.frame_count - 1
-		return decoded.message.start_frame <= _drop_through and last >= _drop_from
 
 
 static func raw_connection() -> WebRTCPeerConnection:

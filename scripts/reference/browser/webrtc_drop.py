@@ -139,9 +139,10 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         if missing_history:
             departed = records[0]['peers'][2]['result']['records'][0]
             report = departed.get('missing_inputs')
-            if (not isinstance(report, dict) or set(report) != {'dropped', 'from', 'through'}
+            if (not isinstance(report, dict) or set(report) != {'dropped', 'from', 'through', 'frames', 'overlaps'}
                     or type(report.get('dropped')) is not int or not 1 <= report['dropped'] <= 3
-                    or report.get('from') != 4 or report.get('through') != 6):
+                    or report.get('from') != 4 or report.get('through') != 6
+                    or report.get('frames') != [4, 5, 6] or report.get('overlaps') != 0):
                 raise ValueError('peer-drop missing input withholding evidence missing')
             proposer = next(row for row in survivors if row['role'] == 1)
             follower = next(row for row in survivors if row['role'] == 0)

@@ -208,7 +208,8 @@ class RelayDropEvidence(unittest.TestCase):
 def missing_evidence():
     value = evidence()
     value['dropMissing'] = True
-    value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'] = {'dropped': 3, 'from': 4, 'through': 6}
+    value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'] = {
+        'dropped': 3, 'from': 4, 'through': 6, 'frames': [4, 5, 6], 'overlaps': 0}
     proposer = value['records'][0]['peers'][0]['result']['records'][0]
     follower = value['records'][0]['peers'][1]['result']['records'][0]
     proposer.update(history_donor=follower['slot'], history_first=4, history_cut=proposer['freeze_frame'], history_installed=True)
@@ -224,6 +225,8 @@ class MissingHistoryEvidence(unittest.TestCase):
             lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(dropped=0),
             lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(**{'from': 3}),
             lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(through=7),
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(frames=[3, 4, 5, 6]),
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(overlaps=1),
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_installed=False),
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_donor=0),
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_first=5),

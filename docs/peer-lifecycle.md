@@ -345,8 +345,8 @@ The `peer-drop-answer` case drops the follower's first actual inventory report a
 An exact-byte report retry precedes certified agreement and canonical continuation on both engine pins.
 The `peer-drop-missing` case withholds the departing page's original input frames four through six on
 one direct link. The other survivor is the selected donor; its bounded journal installs the missing
-rows before certification, and both survivors continue canonical history. The validator requires the
-withholding count, the donor identity, the installed interval and the agreed cut.
+rows before certification, and both survivors continue canonical history. The validator requires exactly frames four through six (no overlapping packet range),
+the donor identity, the installed interval and the agreed cut.
 Room departure, process death, rollback-time
 departure, foreign proposals and a second browser
 departure remain under
