@@ -37,7 +37,8 @@ func cases() -> PackedStringArray:
 			"early_prepare",
 			"skewed_roster_proposal_is_refused",
 			"replayed_operation_is_refused",
-			"journal_evicts_departed_members"
+			"journal_evicts_departed_members",
+			"foreign_roster_commit_replay"
 		]
 	)
 
@@ -88,6 +89,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_replayed_operation_is_refused(context)
 		"journal_evicts_departed_members":
 			_journal_evicts_departed_members(context)
+		"foreign_roster_commit_replay":
+			_foreign_roster_commit_replay(context)
 	context.finish()
 
 
@@ -1145,3 +1148,30 @@ func _journal_evicts_departed_members(context: RefCounted) -> void:
 	context.equal(bool(barrier.sent_to.has(0)), false, "the departed member's retransmission record is evicted")
 	context.equal(bool(barrier.sent_to.has(1)), true, "the live survivor keeps its record")
 	context.equal(barrier.sent_to.size() <= mesh.count, true, "the journal never exceeds the membership")
+
+
+## A commit replay whose carried roster the receiver cannot reproduce emits no
+## acknowledgement, while a legitimate replay still re-acknowledges.
+func _foreign_roster_commit_replay(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 2)
+	_detect(context, mesh, [0, 1])
+	var cuts: Array[int] = _cuts(mesh, [0, 1])
+	context.equal(cuts[0] >= 0, true, "the drop commits")
+	var follower: Variant = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
+	var base: Dictionary = _identity_fields(mesh)
+	base["phase"] = 4
+	base["cut"] = cuts[0]
+	base["cut_digest"] = int(follower.digest)
+	base["slots"] = _identity_fields(mesh)["data"]
+	base["participants_digest"] = int(mesh.peers[1]._drops.live_roster_digest(mesh.peers[1]))
+	var before: int = int(follower.sent_to.get(0, {}).get("at", -1))
+	var foreign: Dictionary = base.duplicate()
+	foreign["participants_digest"] = int(base["participants_digest"]) + 1
+	mesh.peers[1]._drops.received(mesh.peers[1], 0, foreign)
+	context.equal(int(follower.sent_to.get(0, {}).get("at", -1)), before, "a foreign-roster commit replay emits no acknowledgement")
+	mesh.now += 2000
+	mesh.peers[1]._drops.received(mesh.peers[1], 0, base.duplicate())
+	context.equal(int(follower.sent_to.get(0, {}).get("at", -1)) != before, true, "the honest replay still re-acknowledges")
+	context.equal(mesh.peers[0].status().lifecycle, Types.Lifecycle.RUNNING, "the replays disturb no agreement")
