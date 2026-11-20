@@ -237,10 +237,10 @@ derivation is the highest target era plus one, exactly this tier's rule) with
 a bounded closed-operation journal: every committed or failed operation is
 journaled with its full identity, and a replayed proposal or value of a
 closed operation is refused while commits and acknowledgements stay
-answerable. The per-operation retransmission record is explicitly bounded:
-one accepted-send entry per live destination, with a departed member's entry
-evicted on the next send sweep. The remaining pinned-source trace comparison
-of the extended fields stays open in
+answerable. The barrier controls' retransmission record is explicitly
+bounded: one accepted-send entry per live destination, with a departed
+member's entry evicted on the next send sweep. The remaining pinned-source
+trace comparison of the extended fields stays open in
 [#414](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/414).
 See [source observations](oracle-p2p.md) for the comparison boundary and
 [the example](peer-example.md) for visible faults.

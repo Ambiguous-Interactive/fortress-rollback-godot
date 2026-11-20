@@ -76,9 +76,9 @@ static func project(message: T.Message) -> Dictionary:
 			record["stage"] = message.stage
 			record["coordinator"] = message.coordinator
 			record["coordinator_generation"] = message.coordinator_generation
-			record["target_set_digest"] = message.target_set_digest
-			record["participants_digest"] = message.participants_digest
-			record["cut_digest"] = message.cut_digest
+			record["target_set_digest"] = "%x" % message.target_set_digest
+			record["participants_digest"] = "%x" % message.participants_digest
+			record["cut_digest"] = "%x" % message.cut_digest
 			record["available_through"] = message.available_through
 			record["chunk_index"] = message.chunk_index
 			record["chunk_count"] = message.chunk_count

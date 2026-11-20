@@ -78,10 +78,11 @@ class Barrier:
 	var chunk_count: int = 0
 	var certified: bool = false
 	var adopted: bool = false
-	## The per-operation retransmission journal: one accepted-send record per
-	## live destination. The hard cap is the fixed membership, so no message is
-	## journaled twice; the overflow policy is eviction of departed members,
-	## whose entries can never authorize another retry.
+	## The barrier controls' per-operation retransmission journal: one
+	## accepted-send record per live destination. The hard cap is the fixed
+	## membership, so no message is journaled twice; the overflow policy is
+	## eviction of departed members, whose entries can never authorize another
+	## retry. The donor transfer keeps its own structurally bounded journals.
 	var sent_to: Dictionary = {}
 	var started_us: int = 0
 	var chunk_budget: int = 0
@@ -913,7 +914,9 @@ func _target_digest(slots: PackedInt32Array, generations: PackedInt32Array) -> i
 
 ## The digest of one survivor roster, in roster order. Every survivor derives
 ## the same fixed-membership roster, so equal rosters digest equal bytes; the
-## digest is a consistency check, not an integrity primitive.
+## digest is a consistency check, not an integrity primitive. The concatena-
+## tion is unambiguous because validated roster identities are exactly eight
+## bytes wide.
 func _roster_digest(participants: PackedStringArray) -> int:
 	var bytes: PackedByteArray = PackedByteArray()
 	for identity: String in participants:
