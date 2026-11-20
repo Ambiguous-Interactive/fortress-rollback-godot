@@ -198,10 +198,14 @@ of that set disappears before commit, the barrier reports
 `peer_drop_unconfirmed` with `participant_lost` and ends the match. It cannot
 reduce the certificate requirement by omitting that survivor. A departure
 after commit does not undo the decision. Two automatic departures that overlap
-before the first certificate commits therefore fail closed: every survivor
-reports `participant_lost`, freezes neither slot and ends the match, instead of
-committing a cut whose certificate omits the second departure. A serial second
-departure after the first commit keeps the one-member freeze.
+before the first certificate commits fail closed on every survivor that detects
+the loss while its operation is still pending: it reports `participant_lost`,
+freezes neither slot and ends the match. A commit is irreversible, so a survivor
+that committed before it detected the second departure keeps the certified
+freeze; a late participant-loss abort cannot revoke it. The cross-survivor
+ordering for a departure that lands between READY and commit is tracked as issue
+#425.
+A serial second departure after the first commit keeps the one-member freeze.
 
 A certificate that names another value ends the match with
 `peer_drop_unconfirmed` and the reason `conflicting_history`, because the

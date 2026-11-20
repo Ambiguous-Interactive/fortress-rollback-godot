@@ -18,6 +18,7 @@
 | 2 | The supported-browser table had drifted two Chromium majors and two Firefox releases behind `docs/reference/pins.json`, and described Firefox as unqualified while both Firefox matrices run nightly. | fact | `docs/supported.md` versus `docs/reference/pins.json` (`chromium_version 156.0.8078.4`, `firefox_version 157.0`); `.github/workflows/nightly.yml` owns both Firefox matrices |
 | 3 | A test fixture cannot raise `drop_barrier_timeout_us` above `disconnect_timeout_us`; `L.Options.valid_options` refuses the configuration and the mesh builds with null cores. The failure reads as a generic `INVALID_ARGUMENT`. | fact | `addons/fortress_rollback/protocol/lifecycle_types.gd:32`; the first scratch build at 700000/400000 returned `configure=1` |
 | 4 | A lockstep (prediction window zero) peer drop always terminated with `missing_history`: the barrier compared the confirmed frontier (current - 1) with `rollback_floor()` (current). The departed row at the confirmed frontier was still retained, so the rejection was too strict. | production bug | new `tests/unit/test_peer_drop_lockstep.gd` failed on the original code at the running/frozen/missing assertions; lockstep-only clamp in `peer_drop_barrier.gd::observed` passes 599 assertions on both pins |
+| 5 | The first draft of the overlap paragraph overclaimed a uniform outcome. A survivor that commits before it detects the second departure keeps an irreversible freeze; only the survivors that detect the loss while pending abort with `participant_lost`. The pending abort is required by the existing participant-loss tests. | fact | CodeRabbit review on PR #424; `tests/unit/test_peer_drop_participant_loss.gd` fails when the abort is gated on `certified` because READY publication is withheld after the flag is set |
 
 ## Actions Taken
 
@@ -26,7 +27,8 @@
 | 1 | Recorded the overlapping-departure fail-closed rule beside the existing participant-loss rule. | `docs/peer-lifecycle.md` | `make lint-llm` |
 | 2 | Replaced the stale browser versions and tier wording; named the mixed-browser ICE gap and its owning issue. | `docs/supported.md` | `make lint-llm` |
 | 3 | Added the five-peer regression with the real barrier and participant-loss assertions. | `tests/unit/test_peer_drop_simultaneous.gd` | new suite passes twice on Godot 4.3 and 4.7.2 |
-| 4 | Clamped the lockstep last-survivor cut bound to the confirmed frontier (`lower = mini(lower, upper)` only when the prediction window is zero) and added the lockstep regression; review feedback kept the rollback-floor guard for every predicting session. | `addons/fortress_rollback/core/peer_drop_barrier.gd` | all 122 drop cases pass twice per pin; `make gate` green on the reviewed tree |
+| 4 | Clamped the lockstep last-survivor cut bound to the confirmed frontier (`lower = mini(lower, upper)` only when the prediction window is zero) and added the lockstep regression; review feedback kept the rollback-floor guard for every predicting session. | `addons/fortress_rollback/core/peer_drop_barrier.gd`, `tests/unit/test_peer_drop_lockstep.gd` | all 122 drop cases pass twice per pin; `make gate` green on the reviewed tree |
+| 5 | Restated the overlap outcome precisely and opened the READY-to-commit ordering as a tracked protocol decision. | `docs/peer-lifecycle.md`, issue #425 | drop suites green; docs updated |
 
 ## Prune Ledger
 
@@ -39,6 +41,6 @@
 ## Outcome
 
 - State: `findings-acted`
-- Follow-ups: live missing-history transfer and exported rollback-time/second
-  departure witnesses remain in #166/#188; the mixed Chromium/Firefox ICE setup
-  gap remains in #104/#39.
+- Follow-ups: the READY-to-commit overlap ordering is #425; live missing-history
+  transfer and exported rollback-time/second departure witnesses remain in
+  #166/#188; the mixed Chromium/Firefox ICE setup gap remains in #104/#39.
