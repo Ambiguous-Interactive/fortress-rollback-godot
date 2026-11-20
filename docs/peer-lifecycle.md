@@ -177,14 +177,18 @@ is irreversible and freezes the departed slot at the certified frame, so the
 survivors keep one confirmed history and one frozen value instead of splitting
 at their own frontiers.
 
-The proposer retries COMMIT every 50 milliseconds while a live survivor has
-not acknowledged. The negotiation deadline only expires pending agreements;
-an irreversible commit remains retryable after that deadline. Each acknowledged
-survivor stops receiving retries while other acknowledgements remain missing. A survivor
-repeats its acknowledgement for a matching duplicate commit, including after
-its slot freeze. Acknowledgements must match the certified frame and value;
-once every live survivor acknowledges, commit retries stop. Neither duplicates
-nor acknowledgements freeze the slot again or repeat `peer_dropped`.
+The proposer retries COMMIT every 50 milliseconds while a non-coordinator
+participant has not acknowledged it. Every acknowledgement reaches every
+survivor. A follower retains a peer's acknowledgement even when it arrives
+before the follower applies the COMMIT, because every participant certified the
+same value before the proposer committed. The negotiation deadline only
+expires pending agreements; an irreversible commit remains retryable after
+that deadline. Each acknowledged survivor stops receiving retries while other
+acknowledgements remain missing. A survivor repeats its acknowledgement for a
+matching duplicate commit, including after its slot freeze. Acknowledgements
+must match the certified frame and value; once every non-coordinator
+participant acknowledges, commit retries stop. Neither duplicates nor
+acknowledgements freeze the slot again or repeat `peer_dropped`.
 
 The barrier refuses a stale operation, a prepare of another connected era, a
 duplicated certificate and a commit that arrives without the local
@@ -197,15 +201,29 @@ The survivor set is fixed when a local barrier opens. If a member
 of that set disappears before commit, the barrier reports
 `peer_drop_unconfirmed` with `participant_lost` and ends the match. It cannot
 reduce the certificate requirement by omitting that survivor. A departure
-after commit does not undo the decision. Two automatic departures that overlap
-before the first certificate commits fail closed on every survivor that detects
-the loss while its operation is still pending: it reports `participant_lost`,
-freezes neither slot and ends the match. A commit is irreversible, so a survivor
-that committed before it detected the second departure keeps the certified
-freeze; a late participant-loss abort cannot revoke it. The cross-survivor
-ordering for a departure that lands between READY and commit is tracked as issue
-#425.
-A serial second departure after the first commit keeps the one-member freeze.
+after a confirmed commit does not undo the decision. Two departures that
+overlap one operation fail closed on every survivor that can still observe the
+lost participant. A survivor whose operation is still pending reports
+`participant_lost`, freezes no slot and ends the match. A survivor that already
+committed keeps its certified freeze, which no abort can rewrite, but also ends
+the match when the departed member belongs to that operation's fixed
+participant set and had not acknowledged the commit. This closes the
+READY-to-commit ordering uniformly: the committed survivor cannot keep a frozen
+match running while another survivor ends the same operation ([#425](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/425)).
+A serial second departure after every participant acknowledged the first
+commit keeps the one-member freeze and opens a new operation for the second
+departure.
+
+The pinned source checks participant loss only while its operation is not
+committed (`active.phase != CoordinatedDropPhase::Committed`,
+`src/sessions/p2p_session.rs` around lines 2395-2412), so a committed survivor
+there could keep running while a pending one failed closed. This tier uses its
+commit acknowledgements to extend the check to a committed operation that is
+not closed everywhere. That is a deliberate stricter behavior for the fixed
+participant set, not a claim of complete pinned parity. A lost confirmation
+never makes two survivors diverge: a survivor that has not observed every
+confirmation treats a later departure as a broken participant set and ends the
+match.
 
 A certificate that names another value ends the match with
 `peer_drop_unconfirmed` and the reason `conflicting_history`, because the

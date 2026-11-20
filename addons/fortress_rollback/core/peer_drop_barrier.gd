@@ -73,6 +73,11 @@ class Barrier:
 	var answers: Dictionary = {}
 	var certificates: Dictionary = {}
 	var acknowledged: Dictionary = {}
+	## Commit confirmations are retained even when they arrive before this
+	## follower applies the COMMIT: every participant certified the same value
+	## before the proposer committed, so an early confirmation is still the
+	## confirmation of this operation (#425).
+	var commit_acks: Dictionary = {}
 	var participants: PackedStringArray = PackedStringArray()
 	var chunks: Dictionary = {}
 	var chunk_count: int = 0
@@ -165,6 +170,17 @@ func observed(host: Variant, index: int, reason: Variant = 0) -> bool:
 	var key: String = host._ids[index].hex_encode()
 	if is_gone(key):
 		return true
+	var broken: Barrier = _broken_commit(host, key)
+	if broken != null:
+		# The committed operation has not been acknowledged by every member of
+		# its fixed participant set. A member that disappears inside that
+		# window leaves at least one survivor unable to commit, so the committed
+		# survivor ends the match too instead of continuing alone. The certified
+		# freeze stays: closing the operation never rewrites it (#425).
+		_departed[key] = true
+		host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[broken.index].duplicate(), "reason": "participant_lost"})
+		host._core.terminate(Types.Code.PROTOCOL_FAILED)
+		return false
 	_departed[key] = true
 	var slots: PackedInt32Array = host._slots_by_peer[index]
 	var upper: int = host._core.status().confirmed_frame
@@ -467,7 +483,7 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 
 ## A survivor reported its window, its certificate or its need for the value.
 func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, event: Dictionary) -> void:
-	if barrier == null or barrier.role != Role.PROPOSER:
+	if barrier == null:
 		return
 	if int(event.get("operation", -1)) != barrier.operation:
 		# A stale operation never joins the agreement.
@@ -479,6 +495,24 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 		# carried roster must be the one this proposer reproduced.
 		return
 	var stage: int = int(event.get("stage", Stage.NONE))
+	if stage == Stage.COMMITTED:
+		# Every committed survivor hears every other survivor's confirmation,
+		# so a follower can tell whether the fixed participant set closed the
+		# operation everywhere (#425).
+		var cut: int = int(event.get("cut", -1))
+		var digest: int = int(event.get("cut_digest", 0))
+		if cut == barrier.cut and digest == barrier.digest:
+			if barrier.state == COMMITTED:
+				barrier.acknowledged[identity] = true
+			elif barrier.role == Role.FOLLOWER:
+				# Two followers can commit the same COMMIT in either delivery
+				# order, so a follower retains a peer's earlier confirmation.
+				# The proposer cannot: an honest follower cannot commit before
+				# the proposer's own COMMIT, so an early ACK there is forged.
+				barrier.commit_acks[identity] = true
+		return
+	if barrier.role != Role.PROPOSER:
+		return
 	if stage == Stage.INVENTORY:
 		var reported_cut: int = int(event.get("cut", -1))
 		var reported_bound: int = int(event.get("bound", -1))
@@ -535,9 +569,6 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 			return
 		barrier.certificates[identity] = certificate
 		return
-	if stage == Stage.COMMITTED:
-		if barrier.state == COMMITTED and int(event.get("cut", -1)) == barrier.cut and int(event.get("cut_digest", 0)) == barrier.digest:
-			barrier.acknowledged[identity] = true
 
 
 ## The frozen value arrived in a bounded chunk.
@@ -656,6 +687,42 @@ func _participant_lost(barrier: Barrier) -> bool:
 		if is_gone(identity):
 			return true
 	return false
+
+
+## A committed operation is closed only after every member of its fixed
+## participant set confirmed the commit. A member that departs before that
+## confirmation leaves another survivor unable to commit, so continuing would
+## let one survivor keep a frozen match while the other ended (#425).
+func _broken_commit(host: Variant, identity: String) -> Barrier:
+	for key: String in _barriers.keys():
+		var barrier: Barrier = _barriers[key]
+		if barrier.state != COMMITTED or not barrier.participants.has(identity):
+			continue
+		if not _commit_confirmed(host, barrier):
+			return barrier
+	return null
+
+
+## True when every participant except the proposer confirmed the commit. The
+## proposer's own commit is the COMMIT every committed survivor received, so it
+## needs no separate acknowledgement; the remaining participants must each
+## prove they applied the same irreversible decision.
+func _commit_confirmed(host: Variant, barrier: Barrier) -> bool:
+	var coordinator: String = _coordinator_identity(host, barrier)
+	for identity: String in barrier.participants:
+		if identity == coordinator:
+			continue
+		if not barrier.acknowledged.has(identity) and not barrier.commit_acks.has(identity):
+			return false
+	return true
+
+
+## The identity of the survivor that owns the barrier's coordinator slot.
+func _coordinator_identity(host: Variant, barrier: Barrier) -> String:
+	for index: int in range(host._ids.size()):
+		if host._slots_by_peer[index].has(barrier.coordinator):
+			return host._ids[index].hex_encode()
+	return ""
 
 
 ## The number of survivors that answered and still take part in the match.
@@ -981,11 +1048,7 @@ func _available_through(host: Variant, barrier: Barrier) -> int:
 
 ## True when every survivor that still takes part in the match acknowledged the commit.
 func _acknowledged_by_all(host: Variant, barrier: Barrier) -> bool:
-	var live: int = 0
-	for identity: String in barrier.acknowledged:
-		if not is_gone(identity):
-			live += 1
-	return live >= _live_survivors(host)
+	return _commit_confirmed(host, barrier)
 
 
 ## The peers that still take part in the match besides this survivor.

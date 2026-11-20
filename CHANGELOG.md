@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- **Coordinated drop**: Fix committed drops that continued after a second departure ended the match on a pending survivor. Both survivors now end with `participant_lost`, and the certified freeze stays unchanged ([#425](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/425)).
+
 - **Fix the drop-history fixture silently ignoring an unrouted prepare (#419)**: every barrier payload now reaches its recipient through one publication seam, so a prepare published but never routed fails the fixture instead of passing unnoticed.
 
 - **Fix the drop-history corpus ignoring a lost coordinator proposal (#419)**: a new unequal-frontier scenario drops the first prepare and requires the exact byte-identical retry, the same agreed cut and the same donor recovery.
