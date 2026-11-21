@@ -23,6 +23,7 @@
 | 6 | A cap documented only in a test is not enforced by the pre-commit hook or `make lint-llm`; the length linter must own it. | harness | Adversarial finding 16; `check_llm_file_lengths.check_goal` |
 | 7 | The research note overclaimed a 1,000-line `gdlint` cap and misdescribed the Kite scout rule, TDD MCP, canary and AGENTS.md evidence. | research | Adversarial findings 11-15; corrected note |
 | 8 | The goal's own "encode mechanical rules as checks" rule applied to this change: the cap and required phrases now have mechanical owners. | rule | `GOAL.md` work style; `check_llm_file_lengths`; `test_llm_repo_state` |
+| 9 | External review found edge cases in the new rules: a shared-path branch can be necessary, a surviving mutant can be equivalent, a branch can be unreachable, fresh review can be unavailable, and only actionable findings need a fix. | rule | CodeRabbit review on PR #429; OpenAI review finding on the main-CI rule |
 
 ## Actions Taken
 
@@ -33,6 +34,7 @@
 | 3 | Add characterization-before-refactor, make-the-change-easy and targeted mutation guidance. | `.llm/skills/testing/SKILL.md` | repository-state test |
 | 4 | Enforce the 120-line goal cap in the length linter and keep the phrase contract in the repository-state test. | `scripts/llm/check_llm_file_lengths.py`, `scripts/tests/` | `make gate` |
 | 5 | Record the adopted and rejected practices with corrected citations. | `.llm/research/goal-and-code-quality-2026.md` | link lint and source test |
+| 6 | Make the branch, mutant and unreachable-branch rules conditional; record an unavailable fresh review; scope finding resolution to actionable findings; state the red-main recovery rule explicitly. | `GOAL.md`, `.llm/skills/code-review/SKILL.md`, `.llm/skills/testing/SKILL.md` | repository-state tests and `make gate` |
 
 ## Prune Ledger
 

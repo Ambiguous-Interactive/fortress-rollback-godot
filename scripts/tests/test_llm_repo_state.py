@@ -144,6 +144,9 @@ class RepoStateTest(unittest.TestCase):
             "fresh context",
             "one fix round",
             "evidence-backed",
+            "record the review as unavailable",
+            "Non-actionable findings",
+            "main CI is red",
             "regression test",
         ):
             with self.subTest(phrase=phrase):
@@ -178,6 +181,7 @@ class RepoStateTest(unittest.TestCase):
             "Keep type contracts honest",
             "Watch total size",
             "Keep orchestration atomic",
+            "named simpler alternative",
             "Presumptive blockers",
         ):
             with self.subTest(phrase=phrase):
@@ -196,6 +200,8 @@ class RepoStateTest(unittest.TestCase):
             "make the change easy",
             "targeted mutation",
             "surviving mutant",
+            "unreachable branch",
+            "unless it is equivalent",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)

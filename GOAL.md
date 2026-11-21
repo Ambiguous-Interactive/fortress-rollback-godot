@@ -9,7 +9,7 @@ and the result is structurally sound.
 - Carry forward any in-progress work.
 - Address open [issues](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues), most gameplay impacting first.
 - Drive any open dependency to green (incorporate) if relevant.
-- Ensure main CI is green; if it is not, RCA the issue and implement a comprehensive fix.
+- If main CI is red, RCA the failure and implement a comprehensive fix before finishing.
 - Drive any draft or in-progress PR from a previous session to completion.
 - Drive `PLAN.md` improvements as far forward as possible towards the next major milestone(s).
 - Aggregate all of one session's work into one PR; do not stack PRs.
@@ -67,7 +67,7 @@ Target: consensus among all reviewers that the result needs zero revisions.
 - Run the structural pass in [.llm/skills/code-review/SKILL.md](.llm/skills/code-review/SKILL.md) on every non-trivial change.
 - Run a fresh-context adversarial review for risky changes, per [.llm/skills/adversarial-review/SKILL.md](.llm/skills/adversarial-review/SKILL.md).
 - Do not explicitly trigger bot reviews. The adversarial review and complete feedback scan are the review; no human approval is needed.
-- A finding is addressed by a pushed fix with a green check, or by a recorded, reproducible evidence-backed reason it is not a defect.
+- An actionable finding is addressed by a pushed fix with a green check, or by a recorded, reproducible evidence-backed reason it is not a defect. Non-actionable findings are recorded as advisory.
 
 ## Progress Tracking
 
@@ -81,8 +81,10 @@ Target: consensus among all reviewers that the result needs zero revisions.
 1. Use sub-agents for parallel or specialized work; give each implementation
    sub-agent its own worktree and a fresh context.
 2. After a sub-agent completes, have an **adversarial sub-agent** review it
-   critically (fresh context: the diff plus the relevant spec excerpt, never
-   the author's rationale).
+   critically when possible (fresh context: the diff plus the relevant spec
+   excerpt, never the author's rationale). If a fresh session is unavailable,
+   record the review as unavailable; do not substitute the author's context or
+   treat it as a pass.
 3. Address actionable findings in **at most one fix round**, then re-review the
    updated diff once. An in-scope actionable finding blocks merge: fix it or
    record reproducible evidence that it is not a defect. Do not loop past the

@@ -142,7 +142,7 @@ how to cover it, never whether. Triple-proof protocol:
 - [ ] New sim-state fields traced through serialize/restore/checksum/replay
 - [ ] Regression tests written for any broken behavior (before the fix)
 - [ ] Structural pass run; a code-judo move was taken or explicitly ruled out
-- [ ] No new special-case branch in a shared path or near-duplicate helper
+- [ ] A new special-case branch in a shared path or near-duplicate helper is flagged only with a named simpler alternative; otherwise it is justified as genuinely different behavior
 - [ ] Suppression list consulted before reporting nitpicks
 - [ ] For high-risk changes: adversarial pass requested (see
       [adversarial-review](../adversarial-review/SKILL.md))

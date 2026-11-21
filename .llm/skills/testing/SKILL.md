@@ -76,16 +76,18 @@ implementation: rewrite it at the owning boundary.
 When existing behavior is not already pinned, write a characterization test
 before refactoring. It records what the code does, including observed quirks;
 it is not a specification. Pick the smallest public seam, assert the actual
-output, add inputs until every branch you will touch is covered, and run it
-green before the first refactor. Keep it green after every step. Fix a
-characterized bug in a separate commit with its own regression test. When a
-change is awkward in the current design, make the change easy (a
+output, and add inputs until every reachable branch you will touch is covered.
+Document an unreachable branch with a short reason instead of forcing coverage.
+Then run it green before the first refactor, and keep it green after every step.
+Fix a characterized bug in a separate commit with its own regression test. When
+a change is awkward in the current design, make the change easy (a
 behavior-preserving refactor) first, then make the easy change.
 
 For high-risk changed logic, run a targeted mutation check on the changed
 files: break an operator or return value and require a named test to fail at
 the intended assertion. Scope runs to the diff, never chase a global 100%
-mutation score, and treat each surviving mutant as a missing assertion.
+mutation score. A surviving mutant is a missing assertion unless it is
+equivalent; record the equivalence argument instead of adding a test.
 
 ## Coverage Taxonomy
 
@@ -173,8 +175,9 @@ A benchmark is a test of a measurement, and it fails like a test.
    characterization test; keep behavior changes and refactors in separate
    commits so review can prove which one happened.
 10. **Prove test sensitivity, not test count.** For high-risk logic, a targeted
-    mutation that survives is a missing assertion. Record the mutant, the
-    intended failure, and the assertion that now kills it.
+    mutation that survives is a missing assertion unless it is equivalent;
+    record the equivalence argument instead of adding a test. Otherwise record
+    the mutant, the intended failure, and the assertion that now kills it.
 
 ## Evidence references
 
