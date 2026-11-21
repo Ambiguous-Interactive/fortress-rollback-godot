@@ -1,7 +1,7 @@
 // Value: constructor tracking charges orphan connections that never create a data channel.
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { instrument, isDropCanonicalFailure, isRoomContinueFailure, resourcesClosed, closeDepartingRtc } = require('./webrtc.cjs');
+const { instrument, isDropCanonicalFailure, isRoomContinueFailure, isProcessMissingFailure, resourcesClosed, closeDepartingRtc } = require('./webrtc.cjs');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
@@ -105,6 +105,30 @@ test('all constructed peer connections must close, including channel-free orphan
     assert.equal(window.fortressResources.connections.every(connection => connection.connectionState === 'closed'), false);
     orphan.close();
     assert.equal(window.fortressResources.connections.every(connection => connection.connectionState === 'closed'), true);
+  } finally {
+    delete global.WebSocket;
+    delete global.window;
+    delete global.RTCPeerConnection;
+  }
+});
+
+// Value: the process-death label must enter the room branch and the pre-close hold, not the ordinary gate.
+test('process death routes the room lifecycle and the dedicated hold flag', () => {
+  class Connection {}
+  global.WebSocket = class { send() {} };
+  global.RTCPeerConnection = Connection;
+  global.window = { RTCPeerConnection: Connection };
+  try {
+    instrument({ endpoint: 'wss://localhost', count: 3, index: 2, faults: false, corrupt: false, defaultFactory: false,
+      dropProcess: true });
+    assert.equal(window.fortressDropProcess, true);
+    assert.equal(window.fortressDropRoom, true);
+    assert.equal(window.fortressDropProcessMissing, false);
+    instrument({ endpoint: 'wss://localhost', count: 3, index: 2, faults: false, corrupt: false, defaultFactory: false,
+      dropProcessMissing: true });
+    assert.equal(window.fortressDropProcess, false);
+    assert.equal(window.fortressDropRoom, true);
+    assert.equal(window.fortressDropProcessMissing, true);
   } finally {
     delete global.WebSocket;
     delete global.window;
@@ -372,6 +396,31 @@ test('room departure control fails only at the post-fence continuation', () => {
   for (const value of [null, {}, { passed: true,
     failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'], records: [row] } }])
     assert.equal(isRoomContinueFailure(value), false);
+});
+
+// Value: the missing-event control must fail at the bounded fence/gate wait, not from an unrelated error.
+test('process-death missing-event control fails only at the membership waits', () => {
+  const survivor = { passed: false, failure: { stage: 'peer_drop_room_fence',
+    errors: ['peer_drop_room_fence'], local_index: 0, records: [], uuid: '00000000-0000-0000-0000-000000000000', hold_ms: -1 } };
+  const departing = { passed: false, failure: { stage: 'handshake',
+    errors: ['peer_drop_room_gate'], local_index: 2, records: [], uuid: '00000000-0000-0000-0000-000000000002', hold_ms: 1234 } };
+  assert.equal(isProcessMissingFailure(survivor, 'survivor'), true);
+  assert.equal(isProcessMissingFailure(departing, 'departing'), true);
+  for (const [value, role] of [[survivor, 'departing'], [departing, 'survivor']])
+    assert.equal(isProcessMissingFailure(value, role), false);
+  for (const errors of [[], ['peer_drop_room_fence', 'x'], ['peer_drop_room_gate']])
+    assert.equal(isProcessMissingFailure({ ...survivor, failure: { ...survivor.failure, errors } }, 'survivor'), false);
+  for (const records of [undefined, [{}]])
+    assert.equal(isProcessMissingFailure({ ...survivor, failure: { ...survivor.failure, records } }, 'survivor'), false);
+  for (const [field, value] of [['local_index', 2], ['local_index', 3], ['local_index', true],
+    ['uuid', ''], ['uuid', null], ['stage', 'handshake']])
+    assert.equal(isProcessMissingFailure({ ...survivor, failure: { ...survivor.failure, [field]: value } }, 'survivor'), false);
+  for (const [field, value] of [['local_index', 0], ['local_index', 1], ['uuid', ''],
+    ['hold_ms', -1], ['hold_ms', true], ['stage', 'peer_drop_room_fence'], ['stage', 'gameplay']])
+    assert.equal(isProcessMissingFailure({ ...departing, failure: { ...departing.failure, [field]: value } }, 'departing'), false);
+  assert.equal(isProcessMissingFailure({ ...survivor, passed: true }, 'survivor'), false);
+  for (const value of [null, {}, { passed: false }])
+    assert.equal(isProcessMissingFailure(value, 'survivor'), false);
 });
 
 // Value: actual browser teardown waits for signaling closure before contexts can hide leaked sockets.

@@ -55,7 +55,8 @@ async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault,
   disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false, dropClose = false,
   dropAnswer = false, dropRelay = false, dropMissing = false, dropSecond = false, dropRollback = false, dropForeign = false,
-  dropRoom = false, dropRoomContinue = false, recordingPressure = false }) {
+  dropRoom = false, dropRoomContinue = false, dropProcess = false, dropProcessMissing = false,
+  dropRoomAfterDrop = false, dropRoomBeforeDrop = false, recordingPressure = false }) {
   window.fortressRecordingPressure = recordingPressure;
   window.fortressEndpoint = endpoint;
   window.fortressPlayers = count;
@@ -72,8 +73,13 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   window.fortressDropSecond = dropSecond;
   window.fortressDropRollback = dropRollback;
   window.fortressDropForeign = dropForeign;
-  window.fortressDropRoom = dropRoom || dropRoomContinue;
+  window.fortressDropRoom = dropRoom || dropRoomContinue || dropProcess || dropProcessMissing
+    || dropRoomAfterDrop || dropRoomBeforeDrop;
   window.fortressDropRoomContinue = dropRoomContinue;
+  window.fortressDropRoomAfterDrop = dropRoomAfterDrop;
+  window.fortressDropRoomBeforeDrop = dropRoomBeforeDrop;
+  window.fortressDropProcess = dropProcess;
+  window.fortressDropProcessMissing = dropProcessMissing;
   window.fortressDropCorrupt = dropCorrupt;
   window.fortressDropClose = dropClose || dropRelay;
   window.fortressDropRelay = dropRelay;
@@ -262,6 +268,21 @@ function isRoomContinueFailure(witness) {
     && integer(row.frames_after_fence) && integer(row.continue_code);
 }
 
+function isProcessMissingFailure(witness, role) {
+  const failure = witness?.failure;
+  const departing = role === 'departing';
+  const expected = departing ? 'peer_drop_room_gate' : 'peer_drop_room_fence';
+  const index = failure?.local_index;
+  return witness?.passed === false && Array.isArray(failure?.errors)
+    && JSON.stringify(failure.errors) === JSON.stringify([expected])
+    && Array.isArray(failure.records) && failure.records.length === 0
+    && (departing ? index === 2 : (index === 0 || index === 1))
+    && typeof failure.uuid === 'string' && failure.uuid.length > 0
+    && (departing
+      ? Number.isInteger(failure.hold_ms) && failure.hold_ms >= 0 && failure.stage === 'handshake'
+      : failure.stage === 'peer_drop_room_fence');
+}
+
 function resourcesClosed(requireSockets) {
   return window.fortressResources.channels.every(channel => channel.readyState === 'closed')
     && window.fortressResources.connections.every(connection => connection.connectionState === 'closed')
@@ -335,9 +356,14 @@ async function main() {
   const defaultFactory = process.argv[4] === 'default';
   const peerDrop = ['peer-drop', 'peer-drop-corrupt', 'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay',
     'peer-drop-missing', 'peer-drop-second', 'peer-drop-rollback', 'peer-drop-foreign',
-    'peer-drop-room', 'peer-drop-room-continue'].includes(process.argv[4]);
+    'peer-drop-room', 'peer-drop-room-continue', 'peer-drop-process', 'peer-drop-process-missing',
+    'peer-drop-room-after-drop', 'peer-drop-room-before-drop'].includes(process.argv[4]);
   const dropRoom = process.argv[4] === 'peer-drop-room';
   const dropRoomContinue = process.argv[4] === 'peer-drop-room-continue';
+  const dropProcess = process.argv[4] === 'peer-drop-process';
+  const dropProcessMissing = process.argv[4] === 'peer-drop-process-missing';
+  const dropRoomAfterDrop = process.argv[4] === 'peer-drop-room-after-drop';
+  const dropRoomBeforeDrop = process.argv[4] === 'peer-drop-room-before-drop';
   const dropMissing = process.argv[4] === 'peer-drop-missing';
   const dropSecond = process.argv[4] === 'peer-drop-second';
   const dropRollback = process.argv[4] === 'peer-drop-rollback';
@@ -397,6 +423,11 @@ async function main() {
       const pages = [];
       const displays = [];
       const roomFailures=[];
+      let evidencePages = pages;
+      let departedUuid = null;
+      let processClosed = null;
+      let processHeld = null;
+      let survivorUuids = null;
       let teardown;
       try {
         await boundedRoom(async () => {
@@ -419,7 +450,7 @@ async function main() {
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
             faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop,
             dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, dropSecond, dropRollback, dropForeign,
-            dropRoom, dropRoomContinue, recordingPressure });
+            dropRoom, dropRoomContinue, dropProcess, dropProcessMissing, dropRoomAfterDrop, dropRoomBeforeDrop, recordingPressure });
           await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
         }
         await pages[0].waitForFunction(() => document.body.dataset.fortressRoom !== undefined, null, { timeout: 60000 });
@@ -459,6 +490,83 @@ async function main() {
                 if (after.length !== 2 || after.some(frame => frame !== '7'))
                   throw new Error(JSON.stringify({ control: 'room_survivor_continued', before, after }));
               }
+            } else if (dropRoomAfterDrop || dropRoomBeforeDrop) {
+              await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
+              await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
+              const marker = dropRoomAfterDrop ? 'fortressDropComplete' : 'fortressDropPending';
+              await Promise.all(pages.slice(0, 2).map(page => page.waitForFunction(
+                name => document.body.dataset[name] === 'true' || document.body.dataset.fortressWebrtc !== undefined,
+                marker, { timeout: 30000 })));
+              const marked = await Promise.all(pages.slice(0, 2).map(page => page.evaluate(
+                name => document.body.dataset[name] === 'true', marker)));
+              if (marked.some(value => !value))
+                throw new Error(JSON.stringify({ control: 'room_marker_missing', marker, marked }));
+              await pages[2].evaluate(() => { window.fortressDropRoomAfter = true; });
+              await Promise.all(pages.slice(0, 2).map(page => page.waitForFunction(
+                () => document.body.dataset.fortressRoomFenced === 'true', null, { timeout: 30000 })));
+              await pages[2].waitForFunction(() => document.body.dataset.fortressRoomLeft === 'true', null, { timeout: 30000 });
+              const expected = dropRoomAfterDrop ? '40' : '7';
+              const before = await Promise.all(pages.slice(0, 2).map(page => page.evaluate(() => document.body.dataset.fortressFrame)));
+              if (before.length !== 2 || before.some(frame => frame !== expected))
+                throw new Error(JSON.stringify({ control: 'room_survivor_frame', before, expected }));
+              await new Promise(resolve => setTimeout(resolve, 500));
+              const after = await Promise.all(pages.slice(0, 2).map(page => page.evaluate(() => document.body.dataset.fortressFrame)));
+              if (after.length !== 2 || after.some(frame => frame !== expected))
+                throw new Error(JSON.stringify({ control: 'room_survivor_continued', before, after, expected }));
+            } else if (dropProcess || dropProcessMissing) {
+              await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
+              departedUuid = await pages[2].evaluate(() => document.body.dataset.fortressUuid);
+              if (typeof departedUuid !== 'string' || !departedUuid)
+                throw new Error(JSON.stringify({ control: 'process_identity_missing', departedUuid }));
+              survivorUuids = await Promise.all(pages.slice(0, 2).map(page => page.evaluate(() => document.body.dataset.fortressUuid)));
+              if (survivorUuids.some(uuid => typeof uuid !== 'string' || !uuid || uuid === departedUuid)
+                || new Set(survivorUuids).size !== 2)
+                throw new Error(JSON.stringify({ control: 'process_survivor_identity', departedUuid, survivorUuids }));
+              await Promise.all(pages.slice(0, 2).map(page => page.evaluate(value => {
+                window.fortressDepartingUuid = value; window.fortressDropGo = true;
+              }, departedUuid)));
+              if (dropProcess) {
+                await pages[2].waitForFunction(() => document.body.dataset.fortressHoldHealthy !== undefined,
+                  null, { timeout: 5000 });
+                processHeld = await pages[2].evaluate(() => ({
+                  witness: document.body.dataset.fortressWebrtc ?? null,
+                  teardown: document.body.dataset.fortressTeardownArmed ?? null,
+                  go: window.fortressDropGo === true,
+                  frame: document.body.dataset.fortressFrame ?? null,
+                  healthy: document.body.dataset.fortressHoldHealthy === 'true',
+                  connected: document.body.dataset.fortressHoldConnected === 'true',
+                  authenticated: document.body.dataset.fortressHoldAuthenticated === 'true',
+                  room: document.body.dataset.fortressHoldRoom ?? '',
+                  errors: Number(document.body.dataset.fortressHoldErrors ?? -1),
+                }));
+                if (processHeld.witness !== null || processHeld.teardown !== null || processHeld.go
+                  || processHeld.frame !== '6' || !processHeld.healthy || !processHeld.connected
+                  || !processHeld.authenticated || !processHeld.room || processHeld.errors !== 0)
+                  throw new Error(JSON.stringify({ control: 'process_departure_not_held', processHeld }));
+                await contexts[2].close();
+                processClosed = true;
+                evidencePages = pages.slice(0, 2);
+                await Promise.all(evidencePages.map(page => page.waitForFunction(
+                  () => document.body.dataset.fortressRoomFenced === 'true', null, { timeout: 30000 })));
+                const before = await Promise.all(evidencePages.map(page => page.evaluate(() => document.body.dataset.fortressFrame)));
+                if (before.length !== 2 || before.some(frame => frame !== '7'))
+                  throw new Error(JSON.stringify({ control: 'room_survivor_frame', before }));
+                await new Promise(resolve => setTimeout(resolve, 500));
+                const after = await Promise.all(evidencePages.map(page => page.evaluate(() => document.body.dataset.fortressFrame)));
+                if (after.length !== 2 || after.some(frame => frame !== '7'))
+                  throw new Error(JSON.stringify({ control: 'room_survivor_continued', before, after }));
+              } else {
+                await Promise.all(pages.slice(0, 2).map(page => page.waitForFunction(
+                  () => document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 30000 })));
+                await pages[2].evaluate(() => { window.fortressDropRoomGiveUp = true; });
+                await pages[2].waitForFunction(() => document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 30000 });
+                const results = await Promise.all(pages.map(page => page.evaluate(() => JSON.parse(document.body.dataset.fortressWebrtc))));
+                const ids = results.map(result => result.failure?.uuid);
+                if (!isProcessMissingFailure(results[0], 'survivor') || !isProcessMissingFailure(results[1], 'survivor')
+                  || !isProcessMissingFailure(results[2], 'departing')
+                  || ids[2] !== departedUuid || ids[0] !== survivorUuids[0] || ids[1] !== survivorUuids[1])
+                  throw new Error(JSON.stringify({ control: 'wrong_process_missing_boundary', results }));
+              }
             } else if (dropClose || dropRelay) await closeDepartingRtc(pages, undefined, dropRelay);
             else {
               await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
@@ -477,21 +585,22 @@ async function main() {
               } else await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
             }
           }
-          if (!dropRoom && !dropRoomContinue) await waitGameplay(pages, undefined, undefined, recordingPressure ? 256 : 39);
-          await Promise.all(pages.map(page => page.evaluate(() => { window.fortressTeardownArmed = true; })));
-          await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressTeardownArmed === 'true',
+          if (!dropRoom && !dropRoomContinue && !dropRoomAfterDrop && !dropRoomBeforeDrop && !dropProcess && !dropProcessMissing)
+            await waitGameplay(pages, undefined, undefined, recordingPressure ? 256 : 39);
+          await Promise.all(evidencePages.map(page => page.evaluate(() => { window.fortressTeardownArmed = true; })));
+          await Promise.all(evidencePages.map(page => page.waitForFunction(() => document.body.dataset.fortressTeardownArmed === 'true',
             null, { timeout: 10000 })));
-          await Promise.all(pages.map(page => page.evaluate(() => { window.fortressTeardownReady = true; })));
+          await Promise.all(evidencePages.map(page => page.evaluate(() => { window.fortressTeardownReady = true; })));
         }
-        await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressWebrtc !== undefined,
+        await Promise.all(evidencePages.map(page => page.waitForFunction(() => document.body.dataset.fortressWebrtc !== undefined,
           null, { timeout: 10000 })));
         try {
-          await Promise.all(pages.map(page => page.waitForFunction(resourcesClosed, peerDrop || recordingPressure, { timeout: 10000 })));
+          await Promise.all(evidencePages.map(page => page.waitForFunction(resourcesClosed, peerDrop || recordingPressure, { timeout: 10000 })));
         } catch (error) {
           const causes=[error];
           teardown={resources:null};
           try {
-            const observed=await Promise.allSettled(pages.map(async page=>page.evaluate(()=>({
+            const observed=await Promise.allSettled(evidencePages.map(async page=>page.evaluate(()=>({
               result: document.body.dataset.fortressWebrtc,
               connections: window.fortressResources.connections.map(connection=>({state:connection.connectionState,
                 ice:connection.iceConnectionState,signaling:connection.signalingState})),
@@ -503,7 +612,7 @@ async function main() {
           } catch(diagnosticError) {causes.push(diagnosticError);}
           throw causes.length===1?error:new AggregateError(causes,'resource closure and diagnostics failed');
         }
-        const peers = await Promise.all(pages.map(page => page.evaluate(() => ({
+        const peers = await Promise.all(evidencePages.map(page => page.evaluate(() => ({
           result: JSON.parse(document.body.dataset.fortressWebrtc), rtc: { ...window.fortressRtc, teardown: {
             channels: window.fortressResources.channels.filter(channel => channel.readyState === 'closed').length,
             connections_created: window.fortressResources.connections.length,
@@ -511,11 +620,13 @@ async function main() {
             websockets_created: window.fortressSockets.length,
             websockets: window.fortressSockets.filter(record => record.socket.readyState === WebSocket.CLOSED).length } },
         }))));
+        if (dropProcess && (peers.length !== 2 || peers.some(peer => peer.result?.passed !== true)))
+          throw new Error(JSON.stringify({ control: 'wrong_process_fence_boundary', peers }));
         if (errors.length) throw new Error(JSON.stringify({ errors, peers }));
         for (const [index, peer] of peers.entries()) {
           if (dropCorrupt && index < 2 && !isDropCanonicalFailure(peer.result))
             throw new Error(JSON.stringify({ control: 'wrong_drop_canonical_boundary', peers }));
-          if (!corrupt && !defaultFactory && !dropCorrupt && !dropRoomContinue && peer.result.passed !== true) throw new Error(JSON.stringify(peers));
+          if (!corrupt && !defaultFactory && !dropCorrupt && !dropRoomContinue && !dropProcessMissing && peer.result.passed !== true) throw new Error(JSON.stringify(peers));
           if (corrupt && (peer.result.passed !== false || peer.result.failure.stage !== 'gameplay'
             || peer.result.failure.errors.length !== 1 || !/^canonical_prefix_frame_[1-9][0-9]*$/.test(peer.result.failure.errors[0])))
             throw new Error(JSON.stringify({ control: 'wrong_failure_boundary', peers }));
@@ -530,7 +641,7 @@ async function main() {
             throw new Error(JSON.stringify({ control: 'wrong_room_fence_boundary', peers }));
         }
         peers.forEach((peer, index) => { peer.browser = browserPair[index % 2]; peer.display = displays[index]; });
-        records.push({ players: count, peers });
+        records.push({ players: count, peers, departedUuid, processClosed, processHeld, survivorUuids });
         });
       } catch (error) {
         roomFailures.push(error);
@@ -555,7 +666,8 @@ async function main() {
       browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })),
       version: browsers[0].version(), browser_instances: 2, firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
       faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose,
-      dropAnswer, dropRelay, dropMissing, dropSecond, dropRollback, dropForeign, dropRoom, dropRoomContinue, recordingPressure, records, errors }));
+      dropAnswer, dropRelay, dropMissing, dropSecond, dropRollback, dropForeign, dropRoom, dropRoomContinue,
+      dropProcess, dropProcessMissing, dropRoomAfterDrop, dropRoomBeforeDrop, recordingPressure, records, errors }));
   } catch (error) {
     failures.push(error);
     try {
@@ -575,7 +687,7 @@ async function main() {
   }
 }
 
-module.exports = { instrument, isDropCanonicalFailure, isRoomContinueFailure, resourcesClosed, closeDepartingRtc };
+module.exports = { instrument, isDropCanonicalFailure, isRoomContinueFailure, isProcessMissingFailure, resourcesClosed, closeDepartingRtc };
 if (require.main === module) main().catch(error => {
   process.exitCode=1;
   try {console.error(inspect(error,{customInspect:false,getters:false,depth:8}));} catch {console.error('Browser probe failed; diagnostic unavailable.');}

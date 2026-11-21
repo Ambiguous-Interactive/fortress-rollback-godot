@@ -373,11 +373,26 @@ live roster change (`player_left`, `room_left`, a join, a reconnect or a
 connection failure) ends the frozen membership; the seam latches
 `restart_required`, detaches the mesh and refuses plans and bytes, and the
 survivors stop instead of opening a barrier. A killed process reaches the
-same fence once the server announces its departure; the exported witness
-drives the explicit room event, not a killed page. A coordinated drop may
+same fence: the `peer-drop-process` witness closes the departing page's browser
+context after seven inputs, the server announces the closed socket, and both
+survivors fence while the departed page publishes no row. A killed OS process
+is expected to reach the same server path when its socket closes, but the
+witness closes the context and does not separately kill the process. The Node
+harness reads the departing identity and verifies the page is still holding a
+healthy, authenticated room connection immediately before the close, because
+that page cannot publish it afterwards. The server-notice wait is bounded at
+ten seconds; the local server notices a closed socket in milliseconds. A
+coordinated drop may
 commit before the room event arrives; its certified freeze stays valid, but
 the changed roster still ends the match because the fixed membership no longer
-holds. The witness does not exercise that ordering. The application needs a
+holds. The `peer-drop-room-after-drop` witness commits a coordinated drop,
+runs the canonical continuation to 40 inputs, then leaves the room; the
+survivors record the certified cut and frozen value, the 38-prefix canonical
+history and the terminal fence together. The `peer-drop-room-before-drop`
+control delivers the room event while the barrier is pending and proves the
+fence leaves the pre-drop canonical history unchanged with no certified
+value; the control parks the barrier after its pending event so the ordering
+is deterministic, and it does not claim a live commit race. The application needs a
 new session ID and a new frozen roster; the witness checks that no survivor or
 live-roster entry takes the departed slot, and a later joiner requires a new
 session. Endpoint silence while the room roster is unchanged remains the only case that
@@ -386,8 +401,9 @@ Chromium and Firefox for both pinned engines: the departing page leaves the
 room after seven inputs, the survivors observe `player_left`, latch
 `restart_required`, keep their frozen slots, publish no drop and submit no
 further input, and `peer-drop-room-continue` proves a post-fence step fails
-validation with `peer_drop_room_continued`. The remaining boundary schedules
-stay under
+validation with `peer_drop_room_continued`; `peer-drop-process-missing`
+withholds the server event and proves both survivor fence waits fail. The
+remaining boundary schedules stay under
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 
 ## Downloadable observations

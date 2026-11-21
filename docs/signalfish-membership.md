@@ -158,14 +158,24 @@ an endpoint-silence drop: when the server announces a departure
 (`player_left`), a voluntary exit (`room_left`), a join, a reconnect or a
 connection failure, the seam latches `restart_required`, detaches the SDK mesh
 and refuses every later plan and byte. A killed browser process reaches the
-same fence once the server announces its departure; the exported witness
-drives the explicit room event, not a killed page. The application must stop
-the peer and create a new session. `disconnect_behavior
-= CONTINUE` in the rollback core is authorized only by endpoint silence while
-every frozen member is still a room member; a room event that reaches the seam
-always fences, even if a coordinated drop already committed. A committed
-freeze keeps its certified history, but the changed membership still ends the
-match; the exported witness does not exercise that ordering.
+same fence once the server announces its departure: the `peer-drop-process`
+witness closes the departing page's browser context and reads its identity in
+the Node harness before the close, verifying that the page is still holding a
+healthy, authenticated room connection; the departed page cannot publish a row
+afterwards. A killed OS process is expected to reach the same server path when
+its socket closes, but the witness closes the context and does not separately
+kill the process. The application must stop the peer and create a new session.
+`disconnect_behavior = CONTINUE` in the rollback core is authorized only by
+endpoint silence while every frozen member is still a room member; a room
+event that reaches the seam always fences, even if a coordinated drop already
+committed. A committed freeze keeps its certified history, but the changed
+membership still ends the match: `peer-drop-room-after-drop` commits the drop,
+runs the full canonical continuation, then leaves the room and records the
+certified value, the canonical history and the terminal fence together.
+`peer-drop-room-before-drop` delivers the room event while the barrier is
+pending and keeps the pre-drop canonical history unchanged; it parks the
+barrier after its pending event so the pre-commit ordering is deterministic,
+and does not claim a live commit race.
 
 The slot mapping never moves. The departed UUID remains at its original slot
 in the frozen roster and is absent from the live room roster. The fence leaves
@@ -181,7 +191,12 @@ play seven inputs in a real room, one leaves the room, both survivors observe
 publish no drop and submit no further input. The
 `peer-drop-room-continue` control deliberately advances a survivor after the
 fence and fails with `peer_drop_room_continued`, so the no-continuation check
-is live rather than assumed.
+is live rather than assumed. `peer-drop-process` closes the departing page's
+context instead of calling `leave_room` and proves the same fence plus the
+bounded server-notice window; `peer-drop-process-missing` withholds the event
+and proves both survivor fence waits fail. `peer-drop-room-after-drop` and
+`peer-drop-room-before-drop` prove the drop-then-room and room-then-drop
+orderings.
 
 Synchronous SDK callbacks cannot replace an ended lifetime while attach, plan
 conversion or mesh teardown returns. Teardown marks the mesh released before calling
