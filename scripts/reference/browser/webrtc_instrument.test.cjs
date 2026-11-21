@@ -377,9 +377,9 @@ test('room departure control fails only at the post-fence continuation', () => {
 // Value: the missing-event control must fail at the bounded fence/gate wait, not from an unrelated error.
 test('process-death missing-event control fails only at the membership waits', () => {
   const survivor = { passed: false, failure: { stage: 'peer_drop_room_fence',
-    errors: ['peer_drop_room_fence'], local_index: 0, records: [] } };
+    errors: ['peer_drop_room_fence'], local_index: 0, records: [], uuid: '00000000-0000-0000-0000-000000000000', hold_ms: -1 } };
   const departing = { passed: false, failure: { stage: 'handshake',
-    errors: ['peer_drop_room_gate'], local_index: 2, records: [] } };
+    errors: ['peer_drop_room_gate'], local_index: 2, records: [], uuid: '00000000-0000-0000-0000-000000000002', hold_ms: 1234 } };
   assert.equal(isProcessMissingFailure(survivor, 'survivor'), true);
   assert.equal(isProcessMissingFailure(departing, 'departing'), true);
   for (const [value, role] of [[survivor, 'departing'], [departing, 'survivor']])
@@ -388,9 +388,13 @@ test('process-death missing-event control fails only at the membership waits', (
     assert.equal(isProcessMissingFailure({ ...survivor, failure: { ...survivor.failure, errors } }, 'survivor'), false);
   for (const records of [undefined, [{}]])
     assert.equal(isProcessMissingFailure({ ...survivor, failure: { ...survivor.failure, records } }, 'survivor'), false);
+  for (const [field, value] of [['local_index', 2], ['local_index', 3], ['local_index', true],
+    ['uuid', ''], ['uuid', null], ['stage', 'handshake']])
+    assert.equal(isProcessMissingFailure({ ...survivor, failure: { ...survivor.failure, [field]: value } }, 'survivor'), false);
+  for (const [field, value] of [['local_index', 0], ['local_index', 1], ['uuid', ''],
+    ['hold_ms', -1], ['hold_ms', true], ['stage', 'peer_drop_room_fence']])
+    assert.equal(isProcessMissingFailure({ ...departing, failure: { ...departing.failure, [field]: value } }, 'departing'), false);
   assert.equal(isProcessMissingFailure({ ...survivor, passed: true }, 'survivor'), false);
-  assert.equal(isProcessMissingFailure({ ...departing,
-    failure: { ...departing.failure, stage: 'peer_drop_room_fence' } }, 'departing'), false);
   for (const value of [null, {}, { passed: false }])
     assert.equal(isProcessMissingFailure(value, 'survivor'), false);
 });

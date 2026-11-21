@@ -662,6 +662,7 @@ def process_evidence():
     value['dropRoom'] = False
     value['records'][0]['departedUuid'] = roster[2]
     value['records'][0]['processClosed'] = True
+    value['records'][0]['processHeld'] = {'witness': None, 'teardown': None, 'go': False, 'frame': '6'}
     value['records'][0]['peers'] = value['records'][0]['peers'][:2]
     for index, peer in enumerate(value['records'][0]['peers']):
         row = peer['result']['records'][0]
@@ -678,12 +679,16 @@ def process_evidence():
 
 def process_missing_evidence():
     value = evidence()
+    roster = value['records'][0]['peers'][0]['result']['records'][0]['roster']
     value['dropProcessMissing'] = True
+    value['records'][0]['departedUuid'] = roster[2]
     for index, peer in enumerate(value['records'][0]['peers']):
         expected = 'peer_drop_room_gate' if index == 2 else 'peer_drop_room_fence'
         peer['result'] = {'passed': False, 'failure': {
             'stage': 'handshake' if index == 2 else 'peer_drop_room_fence',
-            'errors': [expected], 'local_index': index, 'records': []}}
+            'errors': [expected], 'local_index': index, 'records': [],
+            'uuid': roster[2] if index == 2 else roster[index],
+            'hold_ms': 1234 if index == 2 else -1}}
     return value
 
 
@@ -730,6 +735,11 @@ class ProcessDeathEvidence(unittest.TestCase):
             (lambda value: value['records'][0].pop('departedUuid'), 'departed identity'),
             (lambda value: value['records'][0].update(processClosed=False), 'did not close'),
             (lambda value: value['records'][0].pop('processClosed'), 'did not close'),
+            (lambda value: value['records'][0].update(processHeld={'witness': '{}', 'teardown': None, 'go': False, 'frame': '6'}), 'still holding'),
+            (lambda value: value['records'][0].update(processHeld={'witness': None, 'teardown': 'true', 'go': False, 'frame': '6'}), 'still holding'),
+            (lambda value: value['records'][0].update(processHeld={'witness': None, 'teardown': None, 'go': True, 'frame': '6'}), 'still holding'),
+            (lambda value: value['records'][0].update(processHeld={'witness': None, 'teardown': None, 'go': False, 'frame': '7'}), 'still holding'),
+            (lambda value: value['records'][0].pop('processHeld'), 'still holding'),
             (lambda value: value['records'][0].update(departedUuid='not-a-uuid'), 'departed identity'),
             (lambda value: value['records'][0].update(departedUuid=None), 'departed identity'),
             (lambda value: value['records'][0]['peers'].append(copy.deepcopy(value['records'][0]['peers'][0])), 'expected real exported peers'),
@@ -776,6 +786,11 @@ class ProcessDeathEvidence(unittest.TestCase):
             (lambda value: failure(value, 2).update(local_index=1), 'failure identity'),
             (lambda value: failure(value, 2).update(errors=['peer_drop_room_fence']), 'outside the fence wait'),
             (lambda value: failure(value, 1).update(errors=['peer_drop_room_gate']), 'outside the fence wait'),
+            (lambda value: failure(value, 2).update(stage='peer_drop_room_fence'), 'outside the fence wait'),
+            (lambda value: failure(value).update(stage='handshake'), 'outside the fence wait'),
+            (lambda value: failure(value, 2).update(hold_ms=-1), 'hold was not released'),
+            (lambda value: failure(value, 2).update(hold_ms=True), 'hold was not released'),
+            (lambda value: failure(value, 2).update(uuid='00000000-0000-0000-0000-000000000000'), 'outside the fence wait'),
             (lambda value: value['records'][0]['peers'][0]['result'].update(passed=True), 'did not fail'),
         ]
         for index, (mutate, message) in enumerate(mutations):

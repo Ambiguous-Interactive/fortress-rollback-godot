@@ -25,6 +25,11 @@
 | 6 | The process-death identity must come from the harness, not a survivor. The Python validator requires `departedUuid` on the run record, a UUID, and that it matches the frozen roster slot; a missing or forged field is rejected before any survivor row is trusted. | review | `_validate_process_evidence`; mutation tests |
 | 7 | A control that reports `peer_drop_room_gate` is not a fence failure. Classify the two survivor waits and the departing gate separately by `local_index`, and require empty control records so an unrelated failure cannot pass as the withheld event. | review | `_validate_process_missing`; 11 mutations |
 | 8 | The room-departure docs and probe limits still claimed process death and the post-drop ordering were not witnessed. Leaving that text after adding the labels would make the limits lie in the other direction. | process | `docs/peer-lifecycle.md`, `docs/signalfish-membership.md`, probe `limits` |
+| 9 | The process witness could pass without the context close causing the departure: page 2's own 4 s gate timeout closes its socket, and the survivors then fence on that manufactured event. A Node sentinel immediately before the close must prove `fortressWebrtc` and `fortressTeardownArmed` are unset, `fortressDropGo` is false and the page is still at frame 6; the page holds for 120 s instead of the ordinary gate. | review | adversarial round 1 finding 1; `processHeld` record and Python check |
+| 10 | The missing-event control had the same hole on its 30 s hold: a timeout would close the page's socket and manufacture the event. Give-up and timeout need distinct codes, and the departing failure must carry the hold duration and the departed UUID so the validators can tell a Node release from a timeout. | review | adversarial round 1 finding 2; `peer_drop_room_gate` vs `peer_drop_room_gate_timeout`, `hold_ms`, `uuid` |
+| 11 | The new room rows wrote `final_frame` and `frames_after_fence` as literals, so the Node's 500 ms sample re-read a stale dataset and could not fail. Measure the post-fence frame over a wall-clock window, exactly like the plain room path. | review | adversarial round 1 finding 3; `_measure_post_fence` |
+| 12 | The Node and Python process-missing validators disagreed on identity: Node ignored `local_index`, Python ignored `stage`, and Python did not require the departure UUID. Both must check the same tuple. Derive the after-drop barrier fields from the retained barrier instead of literals. | review | adversarial round 1 findings 4-5 |
+| 13 | The before-drop control parks the barrier after its pending event, so it proves the pending fence and unchanged history, not a live commit race. That is the deterministic realization of the requested pre-commit ordering; state the limit rather than claim a race the harness does not run. | review | adversarial round 1 finding 7; docs/probe limits |
 
 ## Actions Taken
 
@@ -37,6 +42,10 @@
 | 5 | Wire every label through `LABELS`, `PEAK_PLAYERS`, `ROOM_COUNTS`, owned logs and both workflow label lists. | probe, runner, workflows | `test_signalfish_webrtc_probe` 40 tests; documented counts 20 labels/24 rooms/11 waves |
 | 6 | Extend the Node and Python controls and tests. | `webrtc_instrument.test.cjs`, `test_webrtc_drop.py` | Node 207 tests; Python 40 tests |
 | 7 | Update the limits and lifetime docs and record the timer/keepalive facts. | docs, `.llm/knowledge/transport-tooling.md` | docs review, `make lint-llm` |
+| 8 | Add the pre-close departing-page sentinel and the 120 s process hold. | `webrtc.cjs`, `webrtc_drop.gd`, `webrtc_drop.py` | `processHeld` sentinel in every process run |
+| 9 | Split the missing-event give-up from the timeout and record the hold duration and UUID. | `webrtc_drop.gd`, `webrtc_drop.py`, Node helper | control row `hold_ms: 10067`, `uuid: departed` |
+| 10 | Measure the post-fence frame over a real window and derive the retained barrier fields. | `webrtc_drop.gd` | rows `final_frame: 40/7`, `frames_after_fence: 0`, `barrier_committed: true` |
+| 11 | Align the Node and Python failure tuples and add every mutation. | `webrtc.cjs`, `webrtc_drop.py`, both test suites | Node 207 tests; Python 40 tests |
 
 ## Prune Ledger
 

@@ -163,8 +163,12 @@ def _process_survivor_row(row, roster, departed_uuid, departed_slot, session):
 
 def _validate_process_evidence(result):
     peers = result['records'][0]['peers']
+    held = result['records'][0].get('processHeld')
     if result['records'][0].get('processClosed') is not True:
         raise ValueError('process-death witness did not close the departing browser context')
+    if (not isinstance(held, dict) or held.get('witness') is not None or held.get('teardown') is not None
+            or held.get('go') is not False or held.get('frame') != '6'):
+        raise ValueError('process-death departing page was not still holding before the close')
     if len(peers) != 2:
         raise ValueError('process-death witness must retain exactly two survivors')
     departed_uuid = result['records'][0].get('departedUuid')
@@ -204,6 +208,9 @@ def _validate_process_evidence(result):
 
 def _validate_process_missing(result):
     peers = result['records'][0]['peers']
+    departed_uuid = result['records'][0].get('departedUuid')
+    if not isinstance(departed_uuid, str) or not _UUID.fullmatch(departed_uuid):
+        raise ValueError('process-death missing-event control has no departing identity')
     if len(peers) != 3:
         raise ValueError('process-death missing-event control requires three peers')
     by_index = {}
@@ -219,9 +226,17 @@ def _validate_process_missing(result):
         records = failure.get('records')
         errors = failure.get('errors')
         expected = 'peer_drop_room_gate' if index == 2 else 'peer_drop_room_fence'
+        stage_ok = failure.get('stage') != 'peer_drop_room_fence' if index == 2 else \
+            failure.get('stage') == 'peer_drop_room_fence'
+        identity = failure.get('uuid')
+        identity_ok = (identity == departed_uuid) if index == 2 else \
+            (isinstance(identity, str) and bool(_UUID.fullmatch(identity)))
         if (not isinstance(errors, list) or errors != [expected]
-                or not isinstance(records, list) or records != []):
+                or not isinstance(records, list) or records != []
+                or not stage_ok or not identity_ok):
             raise ValueError('process-death missing-event control failed outside the fence wait')
+        if index == 2 and (type(failure.get('hold_ms')) is not int or failure['hold_ms'] < 0):
+            raise ValueError('process-death missing-event hold was not released by the Node')
         by_index[index] = failure
     if set(by_index) != {0, 1, 2}:
         raise ValueError('process-death missing-event control did not exercise every peer')
@@ -261,7 +276,7 @@ def _validate_before_drop(result):
                 and roster[row['slot']] == row['uuid']
                 and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 7
                 and type(row.get('fence_frame')) is int and row['fence_frame'] == 7
-                and type(row.get('final_frame')) is int and row['final_frame'] == 7
+                and type(row.get('final_frame')) is int and row['final_frame'] == row['fence_frame'] + row['frames_after_fence']
                 and type(row.get('frames_after_fence')) is int and row['frames_after_fence'] == 0
                 and row.get('room_fenced') is True
                 and row.get('fence_route') == 'restart_required'
@@ -301,7 +316,7 @@ def _validate_after_drop(result, survivors):
     for row in survivors:
         if not (type(row.get('fence_frame')) is int and row['fence_frame'] == row.get('frames_submitted')
                 and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 40
-                and type(row.get('final_frame')) is int and row['final_frame'] == row['fence_frame']
+                and type(row.get('final_frame')) is int and row['final_frame'] == row['fence_frame'] + row['frames_after_fence']
                 and type(row.get('frames_after_fence')) is int and row['frames_after_fence'] == 0
                 and row.get('room_fenced') is True
                 and row.get('fence_route') == 'restart_required'

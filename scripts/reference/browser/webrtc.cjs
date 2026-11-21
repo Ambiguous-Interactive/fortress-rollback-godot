@@ -78,6 +78,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   window.fortressDropRoomContinue = dropRoomContinue;
   window.fortressDropRoomAfterDrop = dropRoomAfterDrop;
   window.fortressDropRoomBeforeDrop = dropRoomBeforeDrop;
+  window.fortressDropProcess = dropProcess;
   window.fortressDropProcessMissing = dropProcessMissing;
   window.fortressDropCorrupt = dropCorrupt;
   window.fortressDropClose = dropClose || dropRelay;
@@ -269,11 +270,17 @@ function isRoomContinueFailure(witness) {
 
 function isProcessMissingFailure(witness, role) {
   const failure = witness?.failure;
-  const expected = role === 'departing' ? 'peer_drop_room_gate' : 'peer_drop_room_fence';
+  const departing = role === 'departing';
+  const expected = departing ? 'peer_drop_room_gate' : 'peer_drop_room_fence';
+  const index = failure?.local_index;
   return witness?.passed === false && Array.isArray(failure?.errors)
     && JSON.stringify(failure.errors) === JSON.stringify([expected])
     && Array.isArray(failure.records) && failure.records.length === 0
-    && (role === 'departing' ? failure.stage !== 'peer_drop_room_fence' : failure.stage === 'peer_drop_room_fence');
+    && (departing ? index === 2 : (index === 0 || index === 1))
+    && typeof failure.uuid === 'string' && failure.uuid.length > 0
+    && (departing
+      ? Number.isInteger(failure.hold_ms) && failure.hold_ms >= 0 && failure.stage !== 'peer_drop_room_fence'
+      : failure.stage === 'peer_drop_room_fence');
 }
 
 function resourcesClosed(requireSockets) {
@@ -419,6 +426,7 @@ async function main() {
       let evidencePages = pages;
       let departedUuid = null;
       let processClosed = null;
+      let processHeld = null;
       let teardown;
       try {
         await boundedRoom(async () => {
@@ -508,6 +516,15 @@ async function main() {
                 window.fortressDepartingUuid = value; window.fortressDropGo = true;
               }, departedUuid)));
               if (dropProcess) {
+                processHeld = await pages[2].evaluate(() => ({
+                  witness: document.body.dataset.fortressWebrtc ?? null,
+                  teardown: document.body.dataset.fortressTeardownArmed ?? null,
+                  go: window.fortressDropGo === true,
+                  frame: document.body.dataset.fortressFrame ?? null,
+                }));
+                if (processHeld.witness !== null || processHeld.teardown !== null || processHeld.go
+                  || processHeld.frame !== '6')
+                  throw new Error(JSON.stringify({ control: 'process_departure_not_held', processHeld }));
                 await contexts[2].close();
                 processClosed = true;
                 evidencePages = pages.slice(0, 2);
@@ -604,7 +621,7 @@ async function main() {
             throw new Error(JSON.stringify({ control: 'wrong_room_fence_boundary', peers }));
         }
         peers.forEach((peer, index) => { peer.browser = browserPair[index % 2]; peer.display = displays[index]; });
-        records.push({ players: count, peers, departedUuid, processClosed });
+        records.push({ players: count, peers, departedUuid, processClosed, processHeld });
         });
       } catch (error) {
         roomFailures.push(error);

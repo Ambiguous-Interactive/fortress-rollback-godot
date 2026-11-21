@@ -376,8 +376,9 @@ survivors stop instead of opening a barrier. A killed process reaches the
 same fence: the `peer-drop-process` witness closes the departing page's browser
 context after seven inputs, the server announces the closed socket, and both
 survivors fence while the departed page publishes no row. The Node harness
-reads the departing identity before the close because that page cannot publish
-it afterwards. The server-notice wait is bounded at ten seconds; the local
+reads the departing identity and verifies the page is still holding its
+connection immediately before the close, because that page cannot publish it
+afterwards. The server-notice wait is bounded at ten seconds; the local
 server notices a closed socket in milliseconds. A coordinated drop may
 commit before the room event arrives; its certified freeze stays valid, but
 the changed roster still ends the match because the fixed membership no longer
@@ -387,7 +388,8 @@ survivors record the certified cut and frozen value, the 38-prefix canonical
 history and the terminal fence together. The `peer-drop-room-before-drop`
 control delivers the room event while the barrier is pending and proves the
 fence leaves the pre-drop canonical history unchanged with no certified
-value. The application needs a
+value; the control parks the barrier after its pending event so the ordering
+is deterministic, and it does not claim a live commit race. The application needs a
 new session ID and a new frozen roster; the witness checks that no survivor or
 live-roster entry takes the departed slot, and a later joiner requires a new
 session. Endpoint silence while the room roster is unchanged remains the only case that

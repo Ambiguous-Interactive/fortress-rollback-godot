@@ -63,6 +63,8 @@ var room_player_left: Array[String] = []
 var room_left_seen: bool = false
 var pending_seen: bool = false
 var process_missing: bool = false
+var hold_ms: int = -1
+var local_uuid: String = ""
 var second_departure: bool = false
 var drop_witness: DropWitness = DropWitness.new()
 # The last service round moved bytes, sent bytes or still holds queued work.
@@ -86,6 +88,8 @@ func _publish(value: Dictionary) -> void:
 
 func _run() -> void:
 	var ok: bool = await Setup.new().run(self, player_count)
+	if not clients.is_empty():
+		local_uuid = clients[0].get_player_id()
 	if ok: ok = await _play(player_count)
 	if not room_departure:
 		ok = ok and _healthy(true)
@@ -116,6 +120,7 @@ func _run() -> void:
 	_cleanup()
 	if not ok or not errors.is_empty():
 		_publish({"passed": false, "failure": {"players": player_count, "stage": stage, "local_index": local_index,
+			"hold_ms": hold_ms, "uuid": local_uuid,
 			"errors": errors, "peer_failures": peer_failures, "records": records}})
 		return
 	_publish({"passed": true, "records": records, "binary_receives": received_binary})

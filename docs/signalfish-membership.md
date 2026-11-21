@@ -160,8 +160,8 @@ connection failure, the seam latches `restart_required`, detaches the SDK mesh
 and refuses every later plan and byte. A killed browser process reaches the
 same fence once the server announces its departure: the `peer-drop-process`
 witness closes the departing page's browser context and reads its identity in
-the Node harness before the close, because the departed page cannot publish a
-row afterwards. The application must stop the peer and create a new session.
+the Node harness before the close, verifying that the page is still holding
+its connection; the departed page cannot publish a row afterwards. The application must stop the peer and create a new session.
 `disconnect_behavior = CONTINUE` in the rollback core is authorized only by
 endpoint silence while every frozen member is still a room member; a room
 event that reaches the seam always fences, even if a coordinated drop already
@@ -170,7 +170,9 @@ membership still ends the match: `peer-drop-room-after-drop` commits the drop,
 runs the full canonical continuation, then leaves the room and records the
 certified value, the canonical history and the terminal fence together.
 `peer-drop-room-before-drop` delivers the room event while the barrier is
-pending and keeps the pre-drop canonical history unchanged.
+pending and keeps the pre-drop canonical history unchanged; it parks the
+barrier after its pending event so the pre-commit ordering is deterministic,
+and does not claim a live commit race.
 
 The slot mapping never moves. The departed UUID remains at its original slot
 in the frozen roster and is absent from the live room roster. The fence leaves
