@@ -72,8 +72,8 @@ upstream contract at the top (fully green, feedback addressed), then the
 repository-specific objective, work style, quality bar, review loop and
 progress rules. Procedure lives in skills; the goal links to them. It is
 capped at 120 lines by `scripts/llm/check_llm_file_lengths.py`, and
-`scripts/tests/test_llm_repo_state.py` pins the upstream and delivery phrases
-so a future edit cannot silently drop the contract.
+`scripts/tests/test_llm_repo_state.py` pins the upstream, delivery, quality
+and evidence phrases so a future edit cannot silently drop the contract.
 
 ## Tooling Map
 

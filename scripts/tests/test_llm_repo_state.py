@@ -166,6 +166,23 @@ class RepoStateTest(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
 
+    def test_goal_keeps_the_evidence_contract(self):
+        text = collapsed(llm_paths.GOAL_PATH.read_text(encoding="utf-8"))
+        for phrase in (
+            "Done means",
+            "Design before code",
+            "evidence, not theater",
+            "command and its output",
+            "Exercise the real path",
+            "Never weaken a check",
+            "Extract determinism",
+            "Three-strike",
+            "re-review only the new diff",
+            "advisory unless",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
     def test_code_review_keeps_the_structural_pass(self):
         text = collapsed(
             (llm_paths.SKILLS_DIR / "code-review" / "SKILL.md").read_text(
