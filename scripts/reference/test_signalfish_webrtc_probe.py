@@ -458,7 +458,8 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         expected_rooms = {'clean': 3, 'faults': 3, 'mixed': 3, 'mixed-default': 3, 'mixed-close': 3,
                           'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1,
                           'peer-drop': 1, 'peer-drop-corrupt': 1, 'peer-drop-close': 1,
-                          'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1}
+                          'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1,
+                          'peer-drop-second': 1}
         for label, expected in expected_rooms.items():
             rooms = eval(expression, {'label': label, 'room_count': webrtc_runner.room_count})
             self.assertEqual(rooms, expected, f'{label} must budget its actual room count')
@@ -494,15 +495,25 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                 self.assertIn(peak, (2, 3), f'{label} runs one room of two or three players')
             self.assertLessEqual(peak, webrtc_runner.MAX_CONCURRENT_PLAYERS)
 
+    def test_direct_label_lists_bind_the_runner_tables(self):
+        expected = sorted(set(webrtc_runner.ROOM_COUNTS) - {'mixed', 'mixed-default', 'mixed-close', 'recording-pressure'})
+        for name in ('reference-baseline.yml', 'nightly.yml'):
+            text = (ROOT / '.github/workflows' / name).read_text()
+            line = next((line for line in text.splitlines() if line.strip().startswith('labels=(')), None)
+            self.assertIsNotNone(line, f'{name} must name its direct labels')
+            labels = line.split('labels=(', 1)[1].split(')', 1)[0].split()
+            self.assertEqual(sorted(labels), expected, f'{name} must run every direct label')
+
     def test_label_waves_hold_the_hosted_page_budget_and_serial_pairs_repeat_history(self):
         serial = webrtc_runner.label_waves(['clean', 'faults'], overlap=False)
         self.assertEqual(serial, [['clean'], ['faults']], 'a headed pair keeps the historical serial run')
         direct = webrtc_runner.label_waves(['clean', 'faults', 'corrupt', 'default', 'mixed-disabled',
                                             'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
-                                            'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing'], overlap=True)
+                                            'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing',
+                                            'peer-drop-second'], overlap=True)
         self.assertEqual(direct, [['clean'], ['faults'], ['corrupt', 'default', 'mixed-disabled'],
                                   ['peer-drop', 'peer-drop-corrupt'], ['peer-drop-close', 'peer-drop-answer'],
-                                  ['peer-drop-relay', 'peer-drop-missing']])
+                                  ['peer-drop-relay', 'peer-drop-missing'], ['peer-drop-second']])
         mixed = webrtc_runner.label_waves(['mixed', 'mixed-default', 'mixed-close', 'recording-pressure'], overlap=True)
         self.assertEqual(mixed, [['mixed'], ['mixed-default'], ['mixed-close'], ['recording-pressure']])
         for plan in (direct, mixed, serial):

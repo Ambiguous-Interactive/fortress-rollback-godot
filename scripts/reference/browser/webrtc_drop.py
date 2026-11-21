@@ -2,11 +2,12 @@
 import re
 import hashlib
 
-def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False, missing_history=False):
+def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False, missing_history=False, second_departure=False):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('peerDrop') is not True
             or result.get('dropCorrupt') is not corrupt or result.get('dropAnswer', False) is not lost_answer
             or result.get('dropRelay', False) is not relay_only or result.get('dropClose', False) is not physical_close
-            or result.get('dropMissing', False) is not missing_history or result.get('errors') != []
+            or result.get('dropMissing', False) is not missing_history
+            or result.get('dropSecond', False) is not second_departure or result.get('errors') != []
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2):
         raise ValueError('peer-drop browser run incomplete')
     records = result.get('records')
@@ -51,21 +52,35 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         if witness.get('passed') is not True or not isinstance(rows, list) or len(rows) != 1:
             raise ValueError('peer-drop gameplay result missing')
         row = rows[0]
-        if (row.get('departed') is not (index == 2) or type(row.get('frames_submitted')) is not int
-                or row['frames_submitted'] != (7 if index == 2 else 40)):
-            raise ValueError('peer-drop departure or continued input missing')
-        if index == 2:
-            if physical_close or relay_only:
-                departure = rtc.get('departure', {})
-                for field, expected in [('frame', 6), ('channels_created', 6), ('channels_closed', 6)]:
-                    if type(departure.get(field)) is not int or departure[field] != expected:
-                        raise ValueError('peer-drop physical departure incomplete')
-                if (departure.get('survivor_frames') != [6, 6] or any(type(frame) is not int for frame in departure['survivor_frames'])
-                        or type(departure.get('connections_created')) is not int or departure['connections_created'] < 2
-                        or type(departure.get('connections_closed')) is not int
-                        or departure['connections_closed'] != departure['connections_created']):
-                    raise ValueError('peer-drop physical departure incomplete')
+        if second_departure and index == 2:
+            if (row.get('departed') is not True
+                    or type(row.get('departure_sequence')) is not int or row['departure_sequence'] != 1
+                    or type(row.get('frames_submitted')) is not int or row['frames_submitted'] != 7):
+                raise ValueError('peer-drop first departure evidence missing')
             continue
+        if not second_departure:
+            if (row.get('departed') is not (index == 2) or type(row.get('frames_submitted')) is not int
+                    or row['frames_submitted'] != (7 if index == 2 else 40)):
+                raise ValueError('peer-drop departure or continued input missing')
+            if index == 2:
+                if physical_close or relay_only:
+                    departure = rtc.get('departure', {})
+                    for field, expected in [('frame', 6), ('channels_created', 6), ('channels_closed', 6)]:
+                        if type(departure.get(field)) is not int or departure[field] != expected:
+                            raise ValueError('peer-drop physical departure incomplete')
+                    if (departure.get('survivor_frames') != [6, 6] or any(type(frame) is not int for frame in departure['survivor_frames'])
+                            or type(departure.get('connections_created')) is not int or departure['connections_created'] < 2
+                            or type(departure.get('connections_closed')) is not int
+                            or departure['connections_closed'] != departure['connections_created']):
+                        raise ValueError('peer-drop physical departure incomplete')
+                continue
+        elif index == 1:
+            if (row.get('departed') is not True
+                    or type(row.get('departure_sequence')) is not int or row['departure_sequence'] != 2
+                    or type(row.get('frames_submitted')) is not int or row['frames_submitted'] != 12
+                    or type(row.get('canonical_comparisons')) is not int or row['canonical_comparisons'] != 10
+                    or type(row.get('drop_events')) is not int or row['drop_events'] != 1):
+                raise ValueError('peer-drop second departure evidence missing')
         if physical_close or relay_only:
             mixed = row.get('mixed', {})
             continuing = [channel for channel in channels if channel.get('id') == 3 and type(channel.get('restoredSent')) is int
@@ -84,16 +99,35 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                     raise ValueError('peer-drop fallback work budget changed')
             if type(rtc.get('maximumRelayBuffered')) is not int or not 0 <= rtc['maximumRelayBuffered'] <= 262144:
                 raise ValueError('peer-drop relay socket exceeded its bound')
-        for field, expected in [('players', 3), ('state', 'committed'), ('drop_events', 1), ('canonical_comparisons', 38), ('active_comparisons', 30)]:
+        required = [('players', 3), ('state', 'committed')]
+        if second_departure and index == 0:
+            required += [('drop_events', 2), ('active_comparisons', 30)]
+        elif second_departure:
+            if type(row.get('active_comparisons')) is not int or row['active_comparisons'] < 2:
+                raise ValueError('peer-drop second departure active comparisons missing')
+            if type(row.get('minimum_confirmed')) is not int or row['minimum_confirmed'] < 10:
+                raise ValueError('peer-drop second departure confirmation missing')
+        else:
+            required += [('drop_events', 1), ('canonical_comparisons', 38), ('active_comparisons', 30)]
+        for field, expected in required:
             if row.get(field) != expected or (type(expected) is int and type(row.get(field)) is not int):
                 raise ValueError('peer-drop agreement or canonical history incomplete')
+        minimum_confirmed = 10 if second_departure and index == 1 else 38
         if (type(row.get('slot')) is not int or not 0 <= row['slot'] < 3
                 or type(row.get('freeze_frame')) is not int or not 0 <= row['freeze_frame'] <= 6
                 or type(row.get('departing_slot')) is not int or not 0 <= row['departing_slot'] < 3
-                or type(row.get('minimum_confirmed')) is not int or row['minimum_confirmed'] < 38
+                or type(row.get('minimum_confirmed')) is not int or row['minimum_confirmed'] < minimum_confirmed
                 or type(row.get('rollback_loads')) is not int or row['rollback_loads'] < 1
                 or type(row.get('prediction_gap')) is not int or row['prediction_gap'] < 1):
             raise ValueError('peer-drop frozen boundary or confirmation invalid')
+        if second_departure and index == 0:
+            departed_second = records[0]['peers'][1]['result']['records'][0]
+            if (type(row.get('second_slot')) is not int or not 0 <= row['second_slot'] < 3
+                    or type(row.get('second_freeze_frame')) is not int or not 10 <= row['second_freeze_frame'] <= 11
+                    or row['second_slot'] != departed_second.get('slot')
+                    or row['second_slot'] == row['departing_slot']
+                    or row.get('second_frozen_value') != bytes([(row['second_freeze_frame'] * 17 + row['second_slot'] * 31 + 1) & 255]).hex()):
+                raise ValueError('peer-drop second departure freeze missing')
         expected_value = bytes([(row['freeze_frame'] * 17 + row['departing_slot'] * 31 + 1) & 255]).hex()
         if row.get('frozen_value') != expected_value:
             raise ValueError('peer-drop frozen sample differs from original input')

@@ -51,6 +51,10 @@ func run(host: Node, count: int) -> bool:
 	var slot: int = host.memberships[0].slot(host.clients[0].get_player_id())
 	var departing_uuid: String = JavaScriptBridge.eval("window.fortressDepartingUuid")
 	var departing_slot: int = host.memberships[0].slot(departing_uuid)
+	var departing_identity: PackedByteArray = host.memberships[0].identity(departing_uuid)
+	var second_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropSecond || false"))
+	var second_uuid: String = JavaScriptBridge.eval("window.fortressSecondUuid || ''")
+	var second_identity: PackedByteArray = host.memberships[0].identity(second_uuid) if not second_uuid.is_empty() else PackedByteArray()
 	var missing_history: bool = bool(JavaScriptBridge.eval("window.fortressDropMissing || false"))
 	if missing_history and host.local_index == 2:
 		var own_slot: int = host.memberships[0].slot(host.clients[0].get_player_id())
@@ -103,6 +107,7 @@ func run(host: Node, count: int) -> bool:
 			{
 				"players": count,
 				"departed": true,
+				"departure_sequence": 1,
 				"slot": slot,
 				"frames_submitted": 7,
 				"uuid": host.clients[0].get_player_id(),
@@ -126,15 +131,12 @@ func run(host: Node, count: int) -> bool:
 		true
 	):
 		return false
-	var barrier: Drop.Barrier = null
-	for remote: PackedByteArray in peer.peer_ids():
-		var candidate: Drop.Barrier = peer._drops.barrier(remote.hex_encode())
-		if candidate != null:
-			barrier = candidate
+	var barrier: Drop.Barrier = peer._drops.barrier(departing_identity.hex_encode())
 	if barrier == null or barrier.state != Drop.COMMITTED or barrier.value != PackedByteArray([host._sample(barrier.cut, departing_slot)]):
 		host.errors.append("peer_drop_certificate")
 		return false
 	var cut: int = barrier.cut
+	var cuts: Dictionary = {departing_slot: cut}
 	var prediction_gap: int = peer.status().current_frame - cut - 1
 	if prediction_gap < 1:
 		return false
@@ -142,7 +144,8 @@ func run(host: Node, count: int) -> bool:
 		host.games[0].corrupt_continuation = true
 	host.stage = "peer_drop_gameplay"
 	var comparisons: int = 0
-	for frame: int in range(8, 40):
+	var loop_end: int = 12 if second_departure else 40
+	for frame: int in range(8, loop_end):
 		if not await host._wait(
 			func() -> bool:
 				for row: Dictionary in peer.diagnostics().peers:
@@ -158,18 +161,109 @@ func run(host: Node, count: int) -> bool:
 			return false
 		JavaScriptBridge.eval("document.body.dataset.fortressFrame = '%d'" % frame)
 		if frame >= 10:
-			if host.games[0].history.get(frame - 2) != expected(host, frame - 2, count, departing_slot, cut):
+			if host.games[0].history.get(frame - 2) != expected(host, frame - 2, count, cuts):
 				host.errors.append("peer_drop_canonical_%d" % (frame - 2))
 				return false
 			comparisons += 1
 		if not host._service_batch():
 			return false
 		await host.get_tree().create_timer(0.002).timeout
+	var certificates: Array[Dictionary] = []
+	for identity: String in barrier.certificates:
+		var certificate: Dictionary = barrier.certificates[identity]
+		certificates.append({"peer": identity, "cut": certificate.cut, "digest": "%016x" % int(certificate.digest)})
+	var row: Dictionary = {
+		"players": count,
+		"departed": false,
+		"slot": slot,
+		"uuid": host.clients[0].get_player_id(),
+		"roster": host.memberships[0].roster(),
+		"participants": barrier.participants,
+		"certificate_rows": certificates,
+		"digest": "%016x" % barrier.digest,
+		"departing_slot": departing_slot,
+		"frames_submitted": 40,
+		"prediction_gap": prediction_gap,
+		"freeze_frame": cut,
+		"frozen_value": barrier.value.hex_encode(),
+		"state": barrier.state,
+		"role": barrier.role,
+		"certified": barrier.certified,
+		"certificates": barrier.certificates.size(),
+		"drop_events": 0,
+		"history_donor": barrier.history.donor,
+		"history_first": barrier.history.first,
+		"history_cut": barrier.history.cut,
+		"history_installed": barrier.history.installed,
+		"minimum_confirmed": peer.status().confirmed_frame,
+		"canonical_comparisons": 38,
+		"active_comparisons": comparisons,
+		"rollback_loads": host.games[0].loads,
+		"relay_barriers": relay_barriers.duplicate(),
+		"session_id": host.memberships[0].handshake_message().session_id.hex_encode(),
+		"target_generation": barrier.generations[0],
+		"operation": barrier.operation,
+		"coordinator": barrier.coordinator,
+		"coordinator_generation": barrier.coordinator_generation,
+		"target_set_digest": "%016x" % barrier.target_set_digest,
+		"direct": host._transport_totals(),
+		"mixed": host.mixed.report() if host.mixed_enabled else {}
+	}
+	if second_departure and host.local_index == 1:
+		for frame: int in range(1, 11):
+			if host.games[0].history.get(frame) != expected(host, frame, count, cuts):
+				host.errors.append("peer_drop_canonical_%d" % frame)
+				return false
+		var observed_drops: int = 0
+		for event: Dictionary in events:
+			if event.kind == "peer_dropped":
+				observed_drops += 1
+		row["departed"] = true
+		row["departure_sequence"] = 2
+		row["frames_submitted"] = 12
+		row["canonical_comparisons"] = 10
+		row["drop_events"] = observed_drops
+		host.records.append(row)
+		return true
+	if second_departure:
+		if second_identity.is_empty():
+			host.errors.append("peer_drop_second_identity")
+			return false
+		host.stage = "peer_drop_second_departure"
+		if not await host._wait(
+			func() -> bool: return peer._drops.is_dropped(second_identity.hex_encode()), true
+		):
+			return false
+		var second_cut: int = peer._drops.freeze_frame(second_identity.hex_encode())
+		var second_slot: int = host.memberships[0].slot(second_uuid)
+		if second_cut < 0 or second_slot < 0:
+			host.errors.append("peer_drop_second_freeze")
+			return false
+		cuts[second_slot] = second_cut
+		host.stage = "peer_drop_gameplay"
+		for frame: int in range(12, 40):
+			host._update_transport_clock()
+			var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, frame, PackedByteArray([host._sample(frame, slot)]))]
+			if peer.step(host.transport_us, samples).code != S.Code.OK:
+				return false
+			JavaScriptBridge.eval("document.body.dataset.fortressFrame = '%d'" % frame)
+			if host.games[0].history.get(frame - 2) != expected(host, frame - 2, count, cuts):
+				host.errors.append("peer_drop_canonical_%d" % (frame - 2))
+				return false
+			comparisons += 1
+			if not host._service_batch():
+				return false
+			await host.get_tree().create_timer(0.002).timeout
+		row["active_comparisons"] = comparisons
+		row["drop_events"] = 2
+		row["second_slot"] = second_slot
+		row["second_freeze_frame"] = second_cut
+		row["second_frozen_value"] = PackedByteArray([host._sample(second_cut, second_slot)]).hex_encode()
 	host.stage = "final_confirmation"
 	if not await host._wait(func() -> bool: return peer.status().confirmed_frame >= 38, true):
 		return false
 	for frame: int in range(1, 39):
-		if host.games[0].history.get(frame) != expected(host, frame, count, departing_slot, cut):
+		if host.games[0].history.get(frame) != expected(host, frame, count, cuts):
 			host.errors.append("peer_drop_canonical_%d" % frame)
 			return false
 	var dropped: int = 0
@@ -179,63 +273,26 @@ func run(host: Node, count: int) -> bool:
 		if event.kind == "peer_drop_unconfirmed":
 			host.errors.append("peer_drop_unconfirmed")
 			return false
-	if dropped != 1:
+	if dropped != (2 if second_departure else 1):
 		host.errors.append("peer_drop_publication")
 		return false
-	var certificates: Array[Dictionary] = []
-	for identity: String in barrier.certificates:
-		var certificate: Dictionary = barrier.certificates[identity]
-		certificates.append({"peer": identity, "cut": certificate.cut, "digest": "%016x" % int(certificate.digest)})
-	host.records.append(
-		{
-			"players": count,
-			"departed": false,
-			"slot": slot,
-			"uuid": host.clients[0].get_player_id(),
-			"roster": host.memberships[0].roster(),
-			"participants": barrier.participants,
-			"certificate_rows": certificates,
-			"digest": "%016x" % barrier.digest,
-			"departing_slot": departing_slot,
-			"frames_submitted": 40,
-			"prediction_gap": prediction_gap,
-			"freeze_frame": cut,
-			"frozen_value": barrier.value.hex_encode(),
-			"state": barrier.state,
-			"role": barrier.role,
-			"certified": barrier.certified,
-			"certificates": barrier.certificates.size(),
-			"drop_events": dropped,
-			"history_donor": barrier.history.donor,
-			"history_first": barrier.history.first,
-			"history_cut": barrier.history.cut,
-			"history_installed": barrier.history.installed,
-			"minimum_confirmed": peer.status().confirmed_frame,
-			"canonical_comparisons": 38,
-			"active_comparisons": comparisons,
-			"rollback_loads": host.games[0].loads,
-			"relay_barriers": relay_barriers.duplicate(),
-			"session_id": host.memberships[0].handshake_message().session_id.hex_encode(),
-			"target_generation": barrier.generations[0],
-			"operation": barrier.operation,
-			"coordinator": barrier.coordinator,
-			"coordinator_generation": barrier.coordinator_generation,
-			"target_set_digest": "%016x" % barrier.target_set_digest,
-			"direct": host._transport_totals(),
-			"mixed": host.mixed.report() if host.mixed_enabled else {}
-		}
-	)
+	row["drop_events"] = dropped
+	row["minimum_confirmed"] = peer.status().confirmed_frame
+	row["rollback_loads"] = host.games[0].loads
+	row["direct"] = host._transport_totals()
+	host.records.append(row)
 	return true
 
 
-static func expected(host: Node, frame: int, count: int, departed: int, cut: int) -> PackedByteArray:
+static func expected(host: Node, frame: int, count: int, cuts: Dictionary) -> PackedByteArray:
 	var result: PackedByteArray = PackedByteArray()
 	result.resize(4 + 4 * count)
 	result.encode_u32(0, frame)
 	for slot: int in count:
+		var cut: int = int(cuts.get(slot, 2147483647))
 		var value: int = 0
 		for previous: int in frame:
-			var sample_frame: int = mini(previous, cut) if slot == departed else previous
+			var sample_frame: int = mini(previous, cut) if previous > cut else previous
 			value = (value * 33 + host._sample(sample_frame, slot)) & 0xffffffff
 		result.encode_u32(4 + 4 * slot, value)
 	return result

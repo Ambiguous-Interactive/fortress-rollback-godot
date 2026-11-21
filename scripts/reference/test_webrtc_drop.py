@@ -245,6 +245,62 @@ class MissingHistoryEvidence(unittest.TestCase):
                 validate_drop_browser(value, missing_history=True)
 
 
+def second_evidence():
+    value = evidence()
+    value['dropSecond'] = True
+    first = value['records'][0]['peers'][2]['result']['records'][0]
+    first['departure_sequence'] = 1
+    second = value['records'][0]['peers'][1]['result']['records'][0]
+    second.update(departed=True, departure_sequence=2, frames_submitted=12, canonical_comparisons=10,
+                  active_comparisons=2, minimum_confirmed=10, drop_events=1)
+    last = value['records'][0]['peers'][0]['result']['records'][0]
+    last.update(drop_events=2, second_slot=1, second_freeze_frame=11,
+                second_frozen_value=bytes([(11 * 17 + 1 * 31 + 1) & 255]).hex())
+    return value
+
+
+class SecondDepartureEvidence(unittest.TestCase):
+    def test_second_browser_departure_requires_two_publications_and_the_last_frontier(self):
+        original = second_evidence()
+        self.assertIs(validate_drop_browser(original, second_departure=True), original)
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            validate_drop_browser(original)
+        second = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
+        last = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
+        first = lambda value: value['records'][0]['peers'][2]['result']['records'][0]
+        with self.assertRaisesRegex(ValueError, 'first departure evidence'):
+            missing_first = copy.deepcopy(original)
+            first(missing_first).pop('departure_sequence')
+            validate_drop_browser(missing_first, second_departure=True)
+        mutations = [
+            (lambda value: value.update(dropSecond=False), 'incomplete'),
+            (lambda value: second(value).update(departed=False), 'second departure evidence'),
+            (lambda value: second(value).update(departure_sequence=1), 'second departure evidence'),
+            (lambda value: second(value).update(frames_submitted=40), 'second departure evidence'),
+            (lambda value: second(value).update(canonical_comparisons=11), 'second departure evidence'),
+            (lambda value: second(value).update(drop_events=2), 'second departure evidence'),
+            (lambda value: second(value).update(drop_events=True), 'second departure evidence'),
+            (lambda value: second(value).update(active_comparisons=1), 'active comparisons'),
+            (lambda value: second(value).update(minimum_confirmed=9), 'confirmation'),
+            (lambda value: first(value).update(departure_sequence=2), 'first departure evidence'),
+            (lambda value: first(value).update(departure_sequence=True), 'first departure evidence'),
+            (lambda value: first(value).update(frames_submitted=40), 'first departure evidence'),
+            (lambda value: last(value).update(drop_events=1), 'agreement or canonical'),
+            (lambda value: last(value).update(active_comparisons=29), 'agreement or canonical'),
+            (lambda value: last(value).update(second_slot=2), 'second departure freeze'),
+            (lambda value: last(value).update(second_slot=0), 'second departure freeze'),
+            (lambda value: last(value).update(second_slot='1'), 'second departure freeze'),
+            (lambda value: last(value).update(second_freeze_frame=9), 'second departure freeze'),
+            (lambda value: last(value).update(second_freeze_frame=12), 'second departure freeze'),
+            (lambda value: last(value).update(second_frozen_value='00'), 'second departure freeze'),
+        ]
+        for index, (mutate, message) in enumerate(mutations):
+            value = copy.deepcopy(original)
+            mutate(value)
+            with self.subTest(mutation=index), self.assertRaisesRegex(ValueError, message):
+                validate_drop_browser(value, second_departure=True)
+
+
 class LostAnswerEvidence(unittest.TestCase):
     def test_lost_answer_requires_one_follower_drop_and_exact_retry(self):
         original = evidence()

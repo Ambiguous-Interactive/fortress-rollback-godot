@@ -347,9 +347,12 @@ The `peer-drop-missing` case withholds the departing page's original input frame
 one direct link. The other survivor is the selected donor; its bounded journal installs the missing
 rows before certification, and both survivors continue canonical history. The validator requires exactly frames four through six (no overlapping packet range),
 the donor identity, the installed interval and the agreed cut.
-Room departure, process death, rollback-time
-departure, foreign proposals and a second browser
-departure remain under
+The `peer-drop-second` case departs one page after seven inputs and a second page after twelve.
+The remaining survivor certifies the first cut, observes the second departure as a new
+operation, freezes that slot on its own confirmed frontier and continues to 40 inputs.
+The validator requires both publication events, both departing identities, the second
+frozen sample and 30 active plus 38 canonical prefix comparisons.
+Room departure, process death, rollback-time departure and foreign proposals remain under
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 
 ## Downloadable observations
