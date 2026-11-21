@@ -121,6 +121,11 @@ class Barrier:
 	## abort. The sender keeps retrying until every live participant replies or
 	## the bounded window expires.
 	var abort_acks: Dictionary = {}
+	## Prepare messages this survivor refused because the sender did not own the
+	## coordination, named another operation or carried an unreproducible
+	## roster. The live foreign-proposal witness reads it as a delivery receipt;
+	## the agreement is otherwise untouched.
+	var refused_proposals: int = 0
 
 
 var _departed: Dictionary = {}
@@ -330,6 +335,8 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 		return
 	if barrier != null:
 		if not _matches_identity(barrier, event):
+			if phase == Phase.PREPARE:
+				barrier.refused_proposals += 1
 			return
 		if barrier.state == PENDING and _participant_lost(barrier):
 			_abort(host, barrier, Abort.PARTICIPANT_LOST)
@@ -342,6 +349,9 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 			return
 		var coordinator_only: bool = phase in [Phase.PREPARE, Phase.COMMIT] or (phase == Phase.BACKFILL and int(event.get("stage", 0)) != Stage.HISTORY)
 		if coordinator_only and not host._slots_by_peer[index].has(barrier.coordinator):
+			# Only the survivor that owns the coordinated slot may propose.
+			if phase == Phase.PREPARE:
+				barrier.refused_proposals += 1
 			return
 		if (phase == Phase.BACKFILL or phase == Phase.COMMIT) \
 			and int(event.get("participants_digest", 0)) != barrier.roster_digest:
@@ -497,8 +507,10 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 		return
 	if not _owns_lowest(host, index, barrier.index):
 		# Only the survivor that owns the lowest surviving slot may propose.
+		barrier.refused_proposals += 1
 		return
 	if not _matches_identity(barrier, event):
+		barrier.refused_proposals += 1
 		return
 	if int(event.get("participants_digest", 0)) != live_roster_digest(host):
 		# A proposal whose survivor roster this session cannot reproduce never
@@ -506,6 +518,7 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 		# derivation, never trusted as the anchor. The buffered-prepare path is
 		# validated here too, because its roster is read after this survivor
 		# observed the departure itself.
+		barrier.refused_proposals += 1
 		return
 	if int(event.get("stage", 0)) == Stage.HISTORY:
 		if not Transfer.adopt(host, barrier, event):

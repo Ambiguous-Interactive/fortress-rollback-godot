@@ -54,7 +54,7 @@ async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly
 
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault,
   disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false, dropClose = false,
-  dropAnswer = false, dropRelay = false, dropMissing = false, dropSecond = false, dropRollback = false, recordingPressure = false }) {
+  dropAnswer = false, dropRelay = false, dropMissing = false, dropSecond = false, dropRollback = false, dropForeign = false, recordingPressure = false }) {
   window.fortressRecordingPressure = recordingPressure;
   window.fortressEndpoint = endpoint;
   window.fortressPlayers = count;
@@ -70,6 +70,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   window.fortressDropMissing = dropMissing;
   window.fortressDropSecond = dropSecond;
   window.fortressDropRollback = dropRollback;
+  window.fortressDropForeign = dropForeign;
   window.fortressDropCorrupt = dropCorrupt;
   window.fortressDropClose = dropClose || dropRelay;
   window.fortressDropRelay = dropRelay;
@@ -310,10 +311,11 @@ async function main() {
   const corrupt = process.argv[4] === 'corrupt';
   const defaultFactory = process.argv[4] === 'default';
   const peerDrop = ['peer-drop', 'peer-drop-corrupt', 'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay',
-    'peer-drop-missing', 'peer-drop-second', 'peer-drop-rollback'].includes(process.argv[4]);
+    'peer-drop-missing', 'peer-drop-second', 'peer-drop-rollback', 'peer-drop-foreign'].includes(process.argv[4]);
   const dropMissing = process.argv[4] === 'peer-drop-missing';
   const dropSecond = process.argv[4] === 'peer-drop-second';
   const dropRollback = process.argv[4] === 'peer-drop-rollback';
+  const dropForeign = process.argv[4] === 'peer-drop-foreign';
   const dropCorrupt = process.argv[4] === 'peer-drop-corrupt';
   const dropClose = process.argv[4] === 'peer-drop-close';
   const dropAnswer = process.argv[4] === 'peer-drop-answer';
@@ -390,7 +392,7 @@ async function main() {
           });
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
             faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop,
-            dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, dropSecond, dropRollback, recordingPressure });
+            dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, dropSecond, dropRollback, dropForeign, recordingPressure });
           await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
         }
         await pages[0].waitForFunction(() => document.body.dataset.fortressRoom !== undefined, null, { timeout: 60000 });
@@ -505,7 +507,7 @@ async function main() {
       browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })),
       version: browsers[0].version(), browser_instances: 2, firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
       faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose,
-      dropAnswer, dropRelay, dropMissing, dropSecond, dropRollback, recordingPressure, records, errors }));
+      dropAnswer, dropRelay, dropMissing, dropSecond, dropRollback, dropForeign, recordingPressure, records, errors }));
   } catch (error) {
     failures.push(error);
     try {

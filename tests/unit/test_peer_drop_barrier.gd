@@ -1034,6 +1034,7 @@ func _stale_messages(context: RefCounted) -> void:
 	context.equal(proposer.certificates.size(), 1, "the certificate is counted once")
 	context.equal(int(proposer.certificates.values()[0]["digest"]), int(proposer.digest), "the certificate names the certified value")
 	context.equal(int(proposer.certificates.values()[0]["cut"]), int(proposer.cut), "the certificate names the certified frame")
+	context.equal(int(proposer.refused_proposals), 1, "the foreign prepare is counted once on the coordinator")
 	# The unauthorized commit never moves the certified frame of the survivor.
 	var follower: Variant = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
 	context.equal(int(follower.cut), int(proposer.cut), "the survivor keeps the certified frame")

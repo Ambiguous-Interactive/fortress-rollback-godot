@@ -436,5 +436,65 @@ class RollbackDepartureEvidence(unittest.TestCase):
                 validate_drop_browser(value, rollback_departure=True)
 
 
+class ForeignProposalEvidence(unittest.TestCase):
+    def test_foreign_proposal_requires_delivery_and_no_agreement_change(self):
+        original = evidence()
+        original['dropForeign'] = True
+        for index, peer in enumerate(original['records'][0]['peers'][:2]):
+            peer['result']['records'][0].update(
+                foreign_sent=1 if index == 1 else 0, foreign_received=1 if index == 0 else 0)
+        self.assertIs(validate_drop_browser(original, foreign_proposal=True), original)
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            validate_drop_browser(original)
+        for mode in ('corrupt', 'physical_close', 'lost_answer', 'relay_only', 'missing_history',
+                     'second_departure', 'rollback_departure'):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, 'exclusive'):
+                validate_drop_browser(original, foreign_proposal=True, **{mode: True})
+        follower = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
+        proposer = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
+
+        def forged_cut(value):
+            frozen = bytes([(2 * 17 + 2 * 31 + 1) & 255]).hex()
+            digest = ((0x14650fb0739d0383 ^ int(frozen, 16)) * 1099511628211) & 0x3fffffffffffffff
+            for peer in value['records'][0]['peers'][:2]:
+                row = peer['result']['records'][0]
+                row.update(freeze_frame=2, frozen_value=frozen, prediction_gap=5, digest=f'{digest:016x}')
+                if row['role'] == 1:
+                    row['certificate_rows'][0].update(cut=2, digest=f'{digest:016x}')
+        mutations = [
+            (lambda value: value.update(dropForeign=False), 'incomplete'),
+            (lambda value: value.update(dropForeign=1), 'incomplete'),
+            (lambda value: value.update(dropForeign=None), 'incomplete'),
+            (lambda value: follower(value).update(foreign_sent=0), 'foreign proposal evidence missing'),
+            (lambda value: follower(value).update(foreign_sent=4), 'foreign proposal evidence missing'),
+            (lambda value: follower(value).update(foreign_sent=True), 'foreign proposal evidence missing'),
+            (lambda value: follower(value).update(foreign_sent='1'), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(foreign_received=0), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(foreign_received=4), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(foreign_received=True), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(foreign_received=2), 'foreign proposal evidence missing'),
+            (lambda value: follower(value).update(foreign_received=1), 'foreign proposal evidence missing'),
+            (lambda value: follower(value).update(foreign_received=False), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(foreign_sent=1), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(foreign_sent=False), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(frozen_value='00'), 'frozen sample'),
+            (forged_cut, 'foreign proposal evidence missing'),
+        ]
+        for index, (mutate, message) in enumerate(mutations):
+            value = copy.deepcopy(original)
+            mutate(value)
+            with self.subTest(mutation=index), self.assertRaisesRegex(ValueError, message):
+                validate_drop_browser(value, foreign_proposal=True)
+        unflagged = evidence()
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            validate_drop_browser(unflagged, foreign_proposal=True)
+        empty = copy.deepcopy(original)
+        for peer in empty['records'][0]['peers'][:2]:
+            peer['result']['records'][0].pop('foreign_sent', None)
+            peer['result']['records'][0].pop('foreign_received', None)
+        with self.assertRaisesRegex(ValueError, 'foreign proposal evidence missing'):
+            validate_drop_browser(empty, foreign_proposal=True)
+
+
 if __name__ == '__main__':
     unittest.main()
