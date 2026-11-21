@@ -442,7 +442,8 @@ class ForeignProposalEvidence(unittest.TestCase):
         original['dropForeign'] = True
         for index, peer in enumerate(original['records'][0]['peers'][:2]):
             peer['result']['records'][0].update(
-                foreign_sent=1 if index == 1 else 0, foreign_received=1 if index == 0 else 0)
+                foreign_sent=1 if index == 1 else 0, foreign_received=1 if index == 0 else 0,
+                foreign_cut=2, foreign_digest=999)
         self.assertIs(validate_drop_browser(original, foreign_proposal=True), original)
         with self.assertRaisesRegex(ValueError, 'incomplete'):
             validate_drop_browser(original)
@@ -477,6 +478,11 @@ class ForeignProposalEvidence(unittest.TestCase):
             (lambda value: follower(value).update(foreign_received=False), 'foreign proposal evidence missing'),
             (lambda value: proposer(value).update(foreign_sent=1), 'foreign proposal evidence missing'),
             (lambda value: proposer(value).update(foreign_sent=False), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(foreign_cut=3), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(foreign_cut=-1), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(foreign_cut=True), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(foreign_digest=998), 'foreign proposal evidence missing'),
+            (lambda value: proposer(value).update(foreign_digest=True), 'foreign proposal evidence missing'),
             (lambda value: proposer(value).update(frozen_value='00'), 'frozen sample'),
             (forged_cut, 'foreign proposal evidence missing'),
         ]

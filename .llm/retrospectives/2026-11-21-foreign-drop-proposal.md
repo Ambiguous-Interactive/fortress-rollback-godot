@@ -26,6 +26,7 @@
 | 7 | Retrying every xdotool call would weaken the ambiguity and malformed-geometry checks, so only the window search retries, only after `ETIMEDOUT`, and only once with a 4 s bound. | rule | `webrtc_display.cjs`; `webrtc_display.test.cjs` delayed, ambiguous and never-appearing controls |
 | 8 | `run_godot_tests.py --suite test_peer_drop_barrier` is read as a resource path and reports `missing_or_duplicate_suite`; the suite argument must be `res://tests/unit/test_peer_drop_barrier.gd`. | process | First focused run: count 0 and the named error; the resource-path run passed |
 | 9 | The first process-death design added survivor-only watchdog and launcher plumbing that the chosen foreign witness does not need. The final change reuses the ordinary three-page flow and adds one refused-proposal counter. | code judo | Reverted `webrtc_watchdog.cjs` and the launcher `survivors`/`processDeath` shape before landing |
+| 10 | A generic refused-proposal count does not prove the witness's own payload was delivered: another mismatched prepare could increment it. The barrier now keeps the refused prepare's cut and digest, and the validator requires the forged values (2/999). | review | OpenAI review thread on PR #434; both pins report `foreign_cut: 2`, `foreign_digest: 999` |
 
 ## Actions Taken
 
@@ -40,6 +41,7 @@
 | 7 | Retry the first-window search once with a 4 s bound after `ETIMEDOUT`; keep every other call and every rejection at 2 s. | `webrtc_display.cjs` | `webrtc_display.test.cjs` 27 tests |
 | 8 | Run the Firefox `clean` label on a normal and a two-CPU-pinned display. | receipts | `4.3 clean passed in 17s`, `WALL 42s`; pinned `passed in 50s`, `WALL 76s` |
 | 9 | Record the delivery-evidence, room-lifetime and window-retry facts. | `.llm/knowledge/transport-tooling.md` | three rows with evidence |
+| 10 | Keep the refused prepare's cut and digest and require the forged values in the validator. | `peer_drop_barrier.gd`, `webrtc_drop.gd`, `webrtc_drop.py`, `test_webrtc_drop.py` | live rows cut 2/digest 999; negative controls for a wrong cut and digest |
 
 ## Prune Ledger
 

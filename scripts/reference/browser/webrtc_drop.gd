@@ -334,6 +334,8 @@ func run(host: Node, count: int) -> bool:
 		"rollback_loads": host.games[0].loads,
 		"foreign_sent": _foreign_sent,
 		"foreign_received": barrier.refused_proposals,
+		"foreign_cut": barrier.refused_cut,
+		"foreign_digest": barrier.refused_digest,
 		"relay_barriers": relay_barriers.duplicate(),
 		"session_id": host.memberships[0].handshake_message().session_id.hex_encode(),
 		"target_generation": barrier.generations[0],

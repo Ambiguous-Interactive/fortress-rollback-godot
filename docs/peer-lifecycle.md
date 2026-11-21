@@ -365,7 +365,8 @@ The `peer-drop-foreign` case has the non-coordinating survivor publish a well-fo
 the real departed target while the agreement is pending. The coordinator receives the exact bytes
 at the RTC boundary and refuses them because only the survivor that owns the lowest surviving slot
 may propose; its committed cut, frozen value and continuing canonical history are unchanged. The
-validator requires a delivered proposal, no agreement change and no forged cut in the freeze.
+validator requires a delivered proposal whose refused cut and digest match the forged payload,
+no agreement change and no forged cut in the freeze.
 Room departure, process death and the remaining boundary schedules remain under
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 
