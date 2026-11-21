@@ -30,6 +30,9 @@
 | 11 | The new room rows wrote `final_frame` and `frames_after_fence` as literals, so the Node's 500 ms sample re-read a stale dataset and could not fail. Measure the post-fence frame over a wall-clock window, exactly like the plain room path. | review | adversarial round 1 finding 3; `_measure_post_fence` |
 | 12 | The Node and Python process-missing validators disagreed on identity: Node ignored `local_index`, Python ignored `stage`, and Python did not require the departure UUID. Both must check the same tuple. Derive the after-drop barrier fields from the retained barrier instead of literals. | review | adversarial round 1 findings 4-5 |
 | 13 | The before-drop control parks the barrier after its pending event, so it proves the pending fence and unchanged history, not a live commit race. That is the deterministic realization of the requested pre-commit ordering; state the limit rather than claim a race the harness does not run. | review | adversarial round 1 finding 7; docs/probe limits |
+| 14 | The pre-close sentinel checked only DOM markers; a page that had already recorded a connection failure or lost its room still passed. The hold must check the live signaling client every iteration and publish its health (`connected`, `authenticated`, room code, errors) for the Node and Python validators. | review | adversarial round 2 finding A; live `processHeld` `healthy: true, room: 28SMZR, errors: 0` |
+| 15 | The Python frame-sum formula ran before the `frames_after_fence` type check, so a missing or non-integer field raised `KeyError`/`TypeError` instead of the named rejection. Survivor failure UUIDs were also unbound, and the room-leave wait disagreed with the Node's 30 s deadline. | review | adversarial round 2 findings B-D; `survivorUuids`, reordered checks, 30 s leave wait |
+| 16 | `fortressDropProcess` had no unit test; deleting the flag would silently restore the old 4 s gate. The after-drop marker wait could also hang 120 s on a page that had already failed. Pin the flag wiring and race the marker with a published failure. | review | adversarial round 2 findings E-F; Node `process death routes...` test, failure-aware 30 s markers |
 
 ## Actions Taken
 
@@ -46,6 +49,9 @@
 | 9 | Split the missing-event give-up from the timeout and record the hold duration and UUID. | `webrtc_drop.gd`, `webrtc_drop.py`, Node helper | control row `hold_ms: 10067`, `uuid: departed` |
 | 10 | Measure the post-fence frame over a real window and derive the retained barrier fields. | `webrtc_drop.gd` | rows `final_frame: 40/7`, `frames_after_fence: 0`, `barrier_committed: true` |
 | 11 | Align the Node and Python failure tuples and add every mutation. | `webrtc.cjs`, `webrtc_drop.py`, both test suites | Node 207 tests; Python 40 tests |
+| 12 | Check the live signaling client during the process hold and publish its health for the pre-close sentinel. | `webrtc_drop.gd`, `webrtc.cjs`, `webrtc_drop.py` | live `processHeld` `healthy/connected/authenticated/errors`; Python 40 tests |
+| 13 | Bind the missing control's survivor UUIDs and reorder the frame formula after its type checks. | `webrtc.cjs`, `webrtc_drop.py` | `survivorUuids`; mutation tables |
+| 14 | Pin the process flag wiring and make the marker waits failure-aware. | `webrtc_instrument.test.cjs`, `webrtc.cjs` | Node 208 tests |
 
 ## Prune Ledger
 
