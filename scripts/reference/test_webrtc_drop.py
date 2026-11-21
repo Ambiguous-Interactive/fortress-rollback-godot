@@ -417,6 +417,8 @@ class RollbackDepartureEvidence(unittest.TestCase):
             (lambda value: departed(value).update(departure_sequence=99), 'departure or continued input missing'),
             (lambda value: departed(value).update(held_packets=0), 'held packet'),
             (lambda value: departed(value).update(sent_packets=0), 'held packet'),
+            (lambda value: departed(value).update(held_packets=2, sent_packets=1), 'held packet'),
+            (lambda value: departed(value).update(sent_packets=21), 'held packet'),
             (lambda value: survivor(value).update(pending_at_detection=6), 'rollback correction'),
             (lambda value: survivor(value).update(pending_at_detection=8), 'rollback correction'),
             (lambda value: survivor(value).update(pending_at_detection=True), 'rollback correction'),

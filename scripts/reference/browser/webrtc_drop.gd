@@ -126,6 +126,10 @@ func run(host: Node, count: int) -> bool:
 			JavaScriptBridge.eval("document.body.dataset.fortressDropPrepared = '7'")
 			if not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressDropSend || false")):
 				return false
+			var waiting: Dictionary = host.transports[0].status()
+			if waiting.get("pending_packets", 0) != 0:
+				host.errors.append("peer_drop_rollback_busy")
+				return false
 			if host.transports[0].enqueue_batch(held) != 0:
 				host.errors.append("peer_drop_rollback_enqueue")
 				return false
@@ -134,7 +138,7 @@ func run(host: Node, count: int) -> bool:
 			if sent.code != 0:
 				host.errors.append("peer_drop_rollback_send_%d" % sent.code)
 				return false
-			if sent.sent < 1:
+			if sent.sent < held.size():
 				host.errors.append("peer_drop_rollback_unsent")
 				return false
 			host.sent_packets += sent.sent
@@ -172,6 +176,13 @@ func run(host: Node, count: int) -> bool:
 		if not await host._wait(func() -> bool: return peer.status().pending_rollback_frame == 7, true):
 			host.errors.append("peer_drop_rollback_pending")
 			return false
+		for event: Dictionary in events:
+			if event.kind in ["peer_dropped", "peer_drop_pending"]:
+				host.errors.append("peer_drop_rollback_prefreeze")
+				return false
+		if peer._drops.barrier(departing_identity.hex_encode()) != null:
+			host.errors.append("peer_drop_rollback_prefreeze")
+			return false
 		# Capture the correction before the drop wait: the freeze must not be
 		# able to manufacture the pending marker the validator trusts.
 		pending_at_detection = peer.status().pending_rollback_frame
@@ -200,7 +211,10 @@ func run(host: Node, count: int) -> bool:
 		return false
 	var cuts: Dictionary = {departing_slot: cut}
 	var prediction_gap: int = peer.status().current_frame - cut - 1
-	if (rollback_departure and prediction_gap != 0) or (not rollback_departure and prediction_gap < 1):
+	if rollback_departure and prediction_gap != 0:
+		host.errors.append("peer_drop_rollback_gap_%d" % prediction_gap)
+		return false
+	if not rollback_departure and prediction_gap < 1:
 		return false
 	if JavaScriptBridge.eval("window.fortressDropCorrupt || false"):
 		host.games[0].corrupt_continuation = true

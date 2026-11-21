@@ -358,9 +358,9 @@ The `peer-drop-rollback` case makes both survivors predict frame seven before th
 page submits its eighth input. Both survivors hold a real actual-input correction pending at
 frame seven when the departure is observed; the agreed cut settles at seven because the held
 packet reached both survivors before the barrier observed the departure. The validator requires
-the pending marker captured before the freeze, the held packet's send, the cut at seven, the
-certified freeze and the canonical 38-prefix continuation. A cut-six record means the held
-packet did not arrive and is rejected.
+the pending marker captured before the freeze, a drained held outbox and a send that covers it,
+the cut at seven, the certified freeze and the canonical 38-prefix continuation. A cut-six
+record means the held packet did not arrive and is rejected.
 Room departure, process death and foreign proposals remain under
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 

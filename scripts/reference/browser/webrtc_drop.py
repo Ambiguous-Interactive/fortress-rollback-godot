@@ -88,7 +88,9 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 if not _departing_row(row, 1, 8 if rollback_departure else 7):
                     raise ValueError('peer-drop departure or continued input missing')
                 if rollback_departure and (type(row.get('held_packets')) is not int or row['held_packets'] < 1
-                                           or type(row.get('sent_packets')) is not int or row['sent_packets'] < 1):
+                                           or type(row.get('sent_packets')) is not int or row['sent_packets'] < 1
+                                           or row['sent_packets'] < row['held_packets']
+                                           or row['sent_packets'] > rtc['sent']):
                     raise ValueError('peer-drop rollback held packet was not sent')
                 if physical_close or relay_only:
                     departure = rtc.get('departure', {})

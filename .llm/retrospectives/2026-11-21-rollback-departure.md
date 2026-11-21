@@ -28,6 +28,10 @@
 | 12 | The adversarial review found `pending_at_detection` was read after the freeze. `freeze_with_value` sets `_first_incorrect = cut + 1` when the simulated tail is past the cut, so a lost held packet produced a synthetic pending marker at cut six and passed. | bug | `addons/fortress_rollback/core/input_queue.gd:344`; the final witness captures the marker before the drop wait and requires cut seven |
 | 13 | The departing page's send was not required: an empty outbox still recorded eight submitted frames, and `poll` could queue nothing. | bug | `webrtc_drop.gd:117-131`; final witness requires a non-empty held outbox and `sent.sent >= 1`, and records `held_packets`/`sent_packets` |
 | 14 | The manual send reused the pre-wait clock and bypassed the normal send/receive accounting. | bug | `webrtc_drop.gd:113-124`; the final witness refreshes the clock before `poll` and adds the send/receive counts |
+| 15 | The second adversarial review found the held/sent fields were never compared: `held=2, sent=1` and `sent=21` against `rtc.sent=20` passed, and a poll could leave held packets queued. | bug | `webrtc_drop.gd` held/sent checks and `webrtc_drop.py` cross-check; new controls for an incomplete send and an impossible send |
+| 16 | The pre-freeze capture ran after a transport-servicing wait, so a drop serviced during that wait could freeze before the capture. | bug | The witness now rejects any `peer_dropped`/`peer_drop_pending` event or existing barrier before capturing the marker |
+| 17 | The pending marker is the minimum across every queue, not the departed slot's queue. The cut-7 held input and canonical continuation still prove a frame-7 correction, but the witness does not isolate the departed slot. | advisory | Recorded as a named gap: per-slot evidence needs a core API the label does not use |
+| 18 | A non-zero rollback prediction gap returned `false` without a host error. | bug | `webrtc_drop.gd` now appends `peer_drop_rollback_gap_<n>` |
 
 ## Actions Taken
 
@@ -47,6 +51,10 @@
 | 12 | Capture the pending marker before the drop wait and require the held cut at seven. | `webrtc_drop.gd`, `webrtc_drop.py` | live rows `pending_at_detection: 7`, `freeze_frame: 7` |
 | 13 | Require a non-empty held outbox and a successful send; record `held_packets` and `sent_packets`. | `webrtc_drop.gd`, `webrtc_drop.py` | live rows `held_packets: 4`, `sent_packets: 4` |
 | 14 | Refresh the transport clock before the manual send and count its sends/receives. | `webrtc_drop.gd` | live rows and `make gate` |
+| 15 | Require an empty transport queue, a send that covers the held batch, and `sent_packets <= rtc.sent`; add both controls. | `webrtc_drop.gd`, `webrtc_drop.py`, `test_webrtc_drop.py` | reference tests pass |
+| 16 | Reject any drop event or barrier before the pre-freeze capture. | `webrtc_drop.gd` | live label passes; no pre-freeze event |
+| 17 | Record the global-marker limitation as an advisory gap. | this retrospective | per-slot pending needs a core API |
+| 18 | Append the prediction-gap error instead of returning silently. | `webrtc_drop.gd` | code review |
 
 ## Prune Ledger
 
