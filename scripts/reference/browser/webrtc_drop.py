@@ -27,10 +27,12 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         raise ValueError('peer-drop requires three real exported peers')
     survivors = []
     for index, peer in enumerate(records[0]['peers']):
-        witness = peer.get('result', {})
-        rtc = peer.get('rtc', {})
-        if any(type(rtc.get(field)) is not int or rtc[field] < 1 for field in ('sent', 'received')):
+        rtc = peer.get('rtc')
+        if not isinstance(rtc, dict) or any(type(rtc.get(field)) is not int or rtc[field] < 1 for field in ('sent', 'received')):
             raise ValueError('peer-drop physical packet evidence missing')
+        witness = peer.get('result')
+        if not isinstance(witness, dict):
+            raise ValueError('peer-drop gameplay result missing')
         channels = rtc.get('channels')
         if not isinstance(channels, list) or len(channels) != 6:
             raise ValueError('peer-drop channel inventory incomplete')
@@ -109,7 +111,8 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 raise ValueError('peer-drop relay socket exceeded its bound')
         required = [('players', 3), ('state', 'committed')]
         if second_departure and index == 0:
-            required += [('drop_events', 2), ('active_comparisons', 30), ('canonical_comparisons', 38)]
+            required += [('drop_events', 2), ('active_comparisons', 30), ('canonical_comparisons', 38),
+                         ('frames_submitted', 40), ('departed', False)]
         elif second_departure:
             if type(row.get('active_comparisons')) is not int or row['active_comparisons'] < 2:
                 raise ValueError('peer-drop second departure active comparisons missing')
@@ -128,14 +131,17 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 or type(row.get('rollback_loads')) is not int or row['rollback_loads'] < 1
                 or type(row.get('prediction_gap')) is not int or row['prediction_gap'] < 1):
             raise ValueError('peer-drop frozen boundary or confirmation invalid')
-        if second_departure and index == 0:
-            departed_second = records[0]['peers'][1]['result']['records'][0]
-            if (type(row.get('second_slot')) is not int or not 0 <= row['second_slot'] < 3
-                    or type(row.get('second_freeze_frame')) is not int or not 10 <= row['second_freeze_frame'] <= 11
-                    or row['second_slot'] != departed_second.get('slot')
-                    or row['second_slot'] == row['departing_slot']
-                    or row.get('second_frozen_value') != bytes([(row['second_freeze_frame'] * 17 + row['second_slot'] * 31 + 1) & 255]).hex()):
-                raise ValueError('peer-drop second departure freeze missing')
+        if second_departure:
+            roster = row.get('roster')
+            slot = row.get('departing_slot')
+            first_id = None
+            if isinstance(roster, list) and type(slot) is int and 0 <= slot < len(roster) and isinstance(roster[slot], str):
+                first_id = hashlib.sha256(roster[slot].encode('ascii')).digest()[:8].hex()
+            frames = row.get('drop_frames')
+            if (first_id is None or not isinstance(frames, dict) or frames.get(first_id) != row['freeze_frame']
+                    or type(row.get('pending_events')) is not int or row['pending_events'] < 1
+                    or not isinstance(row.get('commit_ack_peers'), list) or not isinstance(row.get('acknowledged_peers'), list)):
+                raise ValueError('peer-drop publication frame missing')
         expected_value = bytes([(row['freeze_frame'] * 17 + row['departing_slot'] * 31 + 1) & 255]).hex()
         if row.get('frozen_value') != expected_value:
             raise ValueError('peer-drop frozen sample differs from original input')
@@ -144,6 +150,27 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 or type(row.get('certificates')) is not int or row['certificates'] != row['role']):
             raise ValueError('peer-drop all-survivor certificate missing')
         survivors.append(row)
+    if second_departure:
+        last = next((row for row in survivors if row.get('departed') is False), None)
+        proposer = next((row for row in survivors if row.get('role') == 1), None)
+        departed_second = records[0]['peers'][1]['result']['records'][0]
+        second_id = hashlib.sha256(departed_second['uuid'].encode('ascii')).digest()[:8].hex()
+        if last is None or proposer is None:
+            raise ValueError('peer-drop second departure survivor missing')
+        second_slot = last.get('second_slot')
+        second_frame = last.get('second_freeze_frame')
+        frames = last.get('drop_frames')
+        if (type(second_slot) is not int or not 0 <= second_slot < 3
+                or type(second_frame) is not int or not 10 <= second_frame <= 11
+                or second_slot != departed_second.get('slot')
+                or second_slot == last.get('departing_slot')
+                or not isinstance(frames, dict) or frames.get(second_id) != second_frame
+                or last.get('second_frozen_value') != bytes([(second_frame * 17 + second_slot * 31 + 1) & 255]).hex()):
+            raise ValueError('peer-drop second departure freeze missing')
+        closed = set(proposer.get('commit_ack_peers', [])) | set(proposer.get('acknowledged_peers', []))
+        participants = proposer.get('participants')
+        if not isinstance(participants, list) or not participants or not all(identity in closed for identity in participants):
+            raise ValueError('peer-drop first commit unconfirmed')
     if lost_answer:
         lost = []
         for index, peer in enumerate(records[0]['peers']):

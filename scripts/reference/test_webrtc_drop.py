@@ -49,6 +49,9 @@ class PeerDropEvidence(unittest.TestCase):
             lambda value: value['records'][0]['peers'][0]['rtc']['teardown'].update(websockets_created=0),
             lambda value: value['records'][0]['peers'][0]['rtc']['teardown'].pop('websockets'),
             lambda value: value['records'][0]['peers'][0]['rtc']['teardown'].pop('websockets_created'),
+            lambda value: value['records'][0]['peers'][1].update(result=None),
+            lambda value: value['records'][0]['peers'][1]['result'].pop('records'),
+            lambda value: value['records'][0]['peers'][1].update(rtc=None),
         ]
         for field, replacement in [('drop_events', 2), ('canonical_comparisons', 0), ('active_comparisons', 0),
                                    ('freeze_frame', -1), ('frozen_value', '00'), ('minimum_confirmed', 0),
@@ -248,13 +251,18 @@ class MissingHistoryEvidence(unittest.TestCase):
 def second_evidence():
     value = evidence()
     value['dropSecond'] = True
+    roster = value['records'][0]['peers'][0]['result']['records'][0]['roster']
+    first_id = hashlib.sha256(roster[2].encode('ascii')).digest()[:8].hex()
+    second_id = hashlib.sha256(roster[1].encode('ascii')).digest()[:8].hex()
     first = value['records'][0]['peers'][2]['result']['records'][0]
     first['departure_sequence'] = 1
     second = value['records'][0]['peers'][1]['result']['records'][0]
     second.update(departed=True, departure_sequence=2, frames_submitted=12, canonical_comparisons=10,
-                  active_comparisons=2, minimum_confirmed=10, drop_events=1)
+                  active_comparisons=2, minimum_confirmed=10, drop_events=1, pending_events=1,
+                  drop_frames={first_id: 6}, commit_ack_peers=[], acknowledged_peers=[second_id])
     last = value['records'][0]['peers'][0]['result']['records'][0]
-    last.update(drop_events=2, second_slot=1, second_freeze_frame=11,
+    last.update(drop_events=2, second_slot=1, second_freeze_frame=11, pending_events=1,
+                drop_frames={first_id: 6, second_id: 11}, commit_ack_peers=[second_id], acknowledged_peers=[],
                 second_frozen_value=bytes([(11 * 17 + 1 * 31 + 1) & 255]).hex())
     return value
 
@@ -268,6 +276,10 @@ class SecondDepartureEvidence(unittest.TestCase):
         second = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
         last = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
         first = lambda value: value['records'][0]['peers'][2]['result']['records'][0]
+        def without_second(value):
+            row = last(value)
+            first_id = hashlib.sha256(row['roster'][2].encode('ascii')).digest()[:8].hex()
+            row['drop_frames'] = {first_id: 6}
         with self.assertRaisesRegex(ValueError, 'first departure evidence'):
             missing_first = copy.deepcopy(original)
             first(missing_first).pop('departure_sequence')
@@ -291,10 +303,18 @@ class SecondDepartureEvidence(unittest.TestCase):
             (lambda value: first(value).update(roster=['00'] * 3), 'first departure evidence'),
             (lambda value: second(value).pop('uuid'), 'second departure evidence'),
             (lambda value: second(value).update(uuid=first(value)['uuid']), 'second departure evidence'),
-            (lambda value: second(value).update(slot=0), 'second departure freeze'),
+            (lambda value: second(value).update(slot=0), 'second departure evidence'),
             (lambda value: last(value).update(drop_events=1), 'agreement or canonical'),
             (lambda value: last(value).update(active_comparisons=29), 'agreement or canonical'),
             (lambda value: last(value).update(canonical_comparisons=0), 'agreement or canonical'),
+            (lambda value: last(value).update(frames_submitted=13), 'agreement or canonical'),
+            (lambda value: last(value).update(departed='yes'), 'agreement or canonical'),
+            (lambda value: last(value).update(drop_frames={}), 'publication frame'),
+            (lambda value: last(value).update(pending_events=0), 'publication frame'),
+            (without_second, 'second departure freeze'),
+            (lambda value: last(value).update(commit_ack_peers=[], acknowledged_peers=[]), 'first commit unconfirmed'),
+            (lambda value: second(value).update(drop_frames={}), 'publication frame'),
+            (lambda value: second(value).update(pending_events=0), 'publication frame'),
             (lambda value: last(value).update(second_slot=2), 'second departure freeze'),
             (lambda value: last(value).update(second_slot=0), 'second departure freeze'),
             (lambda value: last(value).update(second_slot='1'), 'second departure freeze'),

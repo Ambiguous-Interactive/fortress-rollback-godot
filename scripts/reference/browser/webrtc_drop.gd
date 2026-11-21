@@ -172,6 +172,13 @@ func run(host: Node, count: int) -> bool:
 	for identity: String in barrier.certificates:
 		var certificate: Dictionary = barrier.certificates[identity]
 		certificates.append({"peer": identity, "cut": certificate.cut, "digest": "%016x" % int(certificate.digest)})
+	var dropped_frames: Dictionary = {}
+	var pending_events: int = 0
+	for event: Dictionary in events:
+		if event.kind == "peer_dropped":
+			dropped_frames[event.peer.hex_encode()] = event.frame
+		elif event.kind == "peer_drop_pending":
+			pending_events += 1
 	var row: Dictionary = {
 		"players": count,
 		"departed": false,
@@ -191,6 +198,10 @@ func run(host: Node, count: int) -> bool:
 		"certified": barrier.certified,
 		"certificates": barrier.certificates.size(),
 		"drop_events": 0,
+		"drop_frames": dropped_frames,
+		"pending_events": pending_events,
+		"commit_ack_peers": barrier.commit_acks.keys(),
+		"acknowledged_peers": barrier.acknowledged.keys(),
 		"history_donor": barrier.history.donor,
 		"history_first": barrier.history.first,
 		"history_cut": barrier.history.cut,
@@ -214,15 +225,11 @@ func run(host: Node, count: int) -> bool:
 			if host.games[0].history.get(frame) != expected(host, frame, count, cuts):
 				host.errors.append("peer_drop_canonical_%d" % frame)
 				return false
-		var observed_drops: int = 0
-		for event: Dictionary in events:
-			if event.kind == "peer_dropped":
-				observed_drops += 1
 		row["departed"] = true
 		row["departure_sequence"] = 2
 		row["frames_submitted"] = 12
 		row["canonical_comparisons"] = 10
-		row["drop_events"] = observed_drops
+		row["drop_events"] = dropped_frames.size()
 		host.records.append(row)
 		return true
 	if second_departure:
@@ -254,6 +261,17 @@ func run(host: Node, count: int) -> bool:
 			if not host._service_batch():
 				return false
 			await host.get_tree().create_timer(0.002).timeout
+		dropped_frames.clear()
+		pending_events = 0
+		for event: Dictionary in events:
+			if event.kind == "peer_dropped":
+				dropped_frames[event.peer.hex_encode()] = event.frame
+			elif event.kind == "peer_drop_pending":
+				pending_events += 1
+		row["drop_frames"] = dropped_frames
+		row["pending_events"] = pending_events
+		row["commit_ack_peers"] = barrier.commit_acks.keys()
+		row["acknowledged_peers"] = barrier.acknowledged.keys()
 		row["active_comparisons"] = comparisons
 		row["drop_events"] = 2
 		row["second_slot"] = second_slot
@@ -266,17 +284,14 @@ func run(host: Node, count: int) -> bool:
 		if host.games[0].history.get(frame) != expected(host, frame, count, cuts):
 			host.errors.append("peer_drop_canonical_%d" % frame)
 			return false
-	var dropped: int = 0
 	for event: Dictionary in events:
-		if event.kind == "peer_dropped":
-			dropped += 1
 		if event.kind == "peer_drop_unconfirmed":
 			host.errors.append("peer_drop_unconfirmed")
 			return false
-	if dropped != (2 if second_departure else 1):
+	if dropped_frames.size() != (2 if second_departure else 1):
 		host.errors.append("peer_drop_publication")
 		return false
-	row["drop_events"] = dropped
+	row["drop_events"] = dropped_frames.size()
 	row["minimum_confirmed"] = peer.status().confirmed_frame
 	row["rollback_loads"] = host.games[0].loads
 	row["direct"] = host._transport_totals()
