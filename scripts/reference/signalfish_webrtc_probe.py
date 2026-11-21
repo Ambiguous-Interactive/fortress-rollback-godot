@@ -40,7 +40,8 @@ HOST_WAIT_SECONDS = 900.0
 # each line whole on the shared stderr stream.
 PRINT_LOCK = threading.Lock()
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
-          'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-second', 'peer-drop-rollback', 'peer-drop-foreign', 'recording-pressure')
+          'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-second', 'peer-drop-rollback', 'peer-drop-foreign',
+          'peer-drop-room', 'peer-drop-room-continue', 'recording-pressure')
 
 
 def validate_engine(engine, expected):
@@ -397,7 +398,8 @@ def main():
                        'peer-drop', 'peer-drop-events', 'peer-drop-corrupt', 'peer-drop-corrupt-events',
                        'peer-drop-close', 'peer-drop-close-events', 'peer-drop-answer', 'peer-drop-answer-events', 'peer-drop-relay', 'peer-drop-relay-events',
                        'peer-drop-missing', 'peer-drop-missing-events', 'peer-drop-second', 'peer-drop-second-events',
-                       'peer-drop-rollback', 'peer-drop-rollback-events', 'peer-drop-foreign', 'peer-drop-foreign-events')]
+                       'peer-drop-rollback', 'peer-drop-rollback-events', 'peer-drop-foreign', 'peer-drop-foreign-events',
+                       'peer-drop-room', 'peer-drop-room-events', 'peer-drop-room-continue', 'peer-drop-room-continue-events')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -618,7 +620,9 @@ def main():
                                                                missing_history=label == 'peer-drop-missing',
                                                                second_departure=label == 'peer-drop-second',
                                                                rollback_departure=label == 'peer-drop-rollback',
-                                                               foreign_proposal=label == 'peer-drop-foreign')
+                                                               foreign_proposal=label == 'peer-drop-foreign',
+                                                               room_departure=label == 'peer-drop-room',
+                                                               room_continue=label == 'peer-drop-room-continue')
                             elif label == 'recording-pressure':
                                 result = validate_pressure(json.loads(output), recording_engine)
                             elif label in ('corrupt', 'default'):
@@ -628,7 +632,9 @@ def main():
                                                           default_budgets=label == 'mixed-default', physical_close=label == 'mixed-close', expected_engine=recording_engine)
                         with PRINT_LOCK:
                             print(f'{version} {label} passed in {time.monotonic() - started:.0f}s', file=sys.stderr, flush=True)
-                        return {'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default', 'mixed-disabled', 'peer-drop-corrupt') else None,
+                        control = label if label in ('corrupt', 'default', 'mixed-disabled', 'peer-drop-corrupt',
+                                                      'peer-drop-room-continue') else None
+                        return {'engine': actual, 'faults': faults, 'control': control,
                                 'command': browser_command, 'result': result}
 
                     # Chromium pairs overlap labels while their live pages stay within one
@@ -653,7 +659,7 @@ def main():
                         'Ordinary labels use 2/4/8 peers, 40 submitted frames and 38 corrected canonical prefixes per peer. '
                         'Recording-pressure uses two peers and 257 original frames across queue reuse with repeated synthetic direct/socket buffer refusal, '
                         'post-wrap exact-byte relay retries, real addressed server receipts and decoded original final-state recordings. '
-                        'Peer-drop labels use three peers: one stops protocol service after seven inputs, while two certify a frozen sample '
+                        'Ordinary peer-drop labels use three peers: one stops protocol service after seven inputs, while two certify a frozen sample '
                         'over real WebRTC and continue to 40 inputs with 38 independent canonical prefix checks. Ordinary drop labels retain ICE. '
                         'The peer-drop-close label stops one endpoint and closes every constructed RTC connection and channel before survivors agree, '
                         'then unavailable routes use the bounded relay fallback. Signaling membership remains frozen. '
@@ -671,7 +677,12 @@ def main():
                         'The peer-drop-foreign label has the non-coordinating survivor publish a well-formed prepare for the real departed '
                         'target; the coordinator receives it, refuses it because only the lowest surviving slot may propose, keeps its own '
                         'agreed cut and value, and continues with 38 canonical prefix checks. '
-                        'Post-drop simulation corruption must fail the canonical gate. No room departure, process death or complete pinned barrier parity claim. '
+                        'The peer-drop-room label has one page leave the live room after seven inputs; both survivors observe player_left, '
+                        'latch restart_required, keep the frozen roster and departed slot, publish no drop and submit no further input. '
+                        'The peer-drop-room-continue control steps a survivor after the fence and must fail validation with '
+                        'peer_drop_room_continued. A killed browser process is not separately driven here; the server shares one '
+                        'departure path for explicit leaves and socket disconnects, so the same player_left fence is expected but not measured. '
+                        'Post-drop simulation corruption must fail the canonical gate. No complete pinned barrier parity claim. '
                         'All successful browser data channels and peer connections close at teardown. Snapshot restore corruption fails '
                         'at the gameplay canonical prefix comparison. Mixed runs exercise actual relay bytes and direct restoration under '
                         'synthetic single-link send pressure, with default and selected work budgets and correlated overlapping input bytes. '

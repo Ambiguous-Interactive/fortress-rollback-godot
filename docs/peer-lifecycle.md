@@ -367,7 +367,27 @@ at the RTC boundary and refuses them because only the survivor that owns the low
 may propose; its committed cut, frozen value and continuing canonical history are unchanged. The
 validator requires a delivered proposal whose refused cut, digest and coordinator-gate reason match the forged payload,
 no agreement change and no forged cut in the freeze.
-Room departure, process death and the remaining boundary schedules remain under
+
+Room departure takes the membership fence, not the `CONTINUE` drop path. A
+live roster change (`player_left`, `room_left`, a join, a reconnect or a
+connection failure) ends the frozen membership; the seam latches
+`restart_required`, detaches the mesh and refuses plans and bytes, and the
+survivors stop instead of opening a barrier. A killed process reaches the
+same fence once the server announces its departure; the exported witness
+drives the explicit room event, not a killed page. A coordinated drop may
+commit before the room event arrives; its certified freeze stays valid, but
+the changed roster still ends the match because the fixed membership no longer
+holds. The witness does not exercise that ordering. The application needs a
+new session ID and a new frozen roster; the witness checks that no survivor or
+live-roster entry takes the departed slot, and a later joiner requires a new
+session. Endpoint silence while the room roster is unchanged remains the only case that
+`CONTINUE` may resolve. The exported `peer-drop-room` label exercises this on
+Chromium and Firefox for both pinned engines: the departing page leaves the
+room after seven inputs, the survivors observe `player_left`, latch
+`restart_required`, keep their frozen slots, publish no drop and submit no
+further input, and `peer-drop-room-continue` proves a post-fence step fails
+validation with `peer_drop_room_continued`. The remaining boundary schedules
+stay under
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 
 ## Downloadable observations

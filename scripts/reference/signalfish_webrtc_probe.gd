@@ -58,6 +58,9 @@ var recording_pressure: bool = false
 var pressure_service_turn: int = 0
 var mixed: Mixed = Mixed.new()
 var drop_enabled: bool = false
+var room_departure: bool = false
+var room_player_left: Array[String] = []
+var room_left_seen: bool = false
 var second_departure: bool = false
 var drop_witness: DropWitness = DropWitness.new()
 # The last service round moved bytes, sent bytes or still holds queued work.
@@ -67,6 +70,7 @@ func _ready() -> void:
 	recording_pressure = JavaScriptBridge.eval("window.fortressRecordingPressure || false")
 	frame_count = 257 if recording_pressure else 40
 	drop_enabled = JavaScriptBridge.eval("window.fortressPeerDrop || false")
+	room_departure = JavaScriptBridge.eval("window.fortressDropRoom || false")
 	second_departure = JavaScriptBridge.eval("window.fortressDropSecond || false")
 	mixed_enabled = JavaScriptBridge.eval("window.fortressMixed || false")
 	endpoint = JavaScriptBridge.eval("window.fortressEndpoint")
@@ -80,9 +84,17 @@ func _publish(value: Dictionary) -> void:
 func _run() -> void:
 	var ok: bool = await Setup.new().run(self, player_count)
 	if ok: ok = await _play(player_count)
-	ok = ok and _healthy(true)
-	var control: bool = JavaScriptBridge.eval("window.fortressCorrupt || window.fortressDefaultFactory || window.fortressDropCorrupt || false")
-	if ok or control:
+	if not room_departure:
+		ok = ok and _healthy(true)
+	var control: bool = JavaScriptBridge.eval("window.fortressCorrupt || window.fortressDefaultFactory || window.fortressDropCorrupt || window.fortressDropRoomContinue || false")
+	if room_departure:
+		if ok or control:
+			JavaScriptBridge.eval("document.body.dataset.fortressGameplayDone = 'true'")
+			# The fence is the room witness's terminal state; the generic
+			# lifetime checks would reject the deliberate departure.
+			if ok and not await _wait_room_teardown():
+				ok = false
+	elif ok or control:
 		JavaScriptBridge.eval("document.body.dataset.fortressGameplayDone = 'true'")
 		# The departing pages stop servicing their endpoint so the survivor's
 		# disconnect timer sees the loss; they still wait for the shared teardown.
@@ -100,7 +112,7 @@ func _run() -> void:
 			errors.append("teardown_barrier")
 	_cleanup()
 	if not ok or not errors.is_empty():
-		_publish({"passed": false, "failure": {"players": player_count, "stage": stage, "errors": errors, "peer_failures": peer_failures}})
+		_publish({"passed": false, "failure": {"players": player_count, "stage": stage, "errors": errors, "peer_failures": peer_failures, "records": records}})
 		return
 	_publish({"passed": true, "records": records, "binary_receives": received_binary})
 
@@ -358,11 +370,32 @@ func _observe_client(client: SDK) -> void:
 	# Variant defaults match the optional payloads of the pinned SDK's different public signals.
 	for signal_name: String in FAILURE_SIGNALS:
 		client.connect(signal_name, func(_first: Variant = null, _second: Variant = null) -> void:
+			if room_departure and signal_name == "room_left" and local_index == 2:
+				room_left_seen = true
+				return
+			if room_departure and signal_name == "disconnected" and local_index == 2:
+				return
 			print("SDK_FAILURE ", signal_name, " ", _first, " ", _second)
 			_record_failure(signal_name))
 	for signal_name: String in MEMBERSHIP_SIGNALS:
 		client.connect(signal_name, func(_first: Variant = null, _second: Variant = null) -> void:
-			if membership_frozen: _record_failure(signal_name))
+			if membership_frozen:
+				if room_departure and signal_name == "player_left" and _first is String and local_index != 2:
+					room_player_left.append(_first)
+					return
+				_record_failure(signal_name))
+
+
+## Room departure removes the player from the room but leaves the SDK socket
+## open. Poll only the signaling client: the adapter has already detached the
+## mesh, so no transport or generic lifetime check may run after the fence.
+func _wait_room_teardown() -> bool:
+	for attempt: int in 3000:
+		for client: SDK in clients: client.poll()
+		if JavaScriptBridge.eval("window.fortressTeardownArmed || false"): return true
+		await _wait_turn()
+	errors.append("teardown_wait_timeout")
+	return false
 
 func _record_failure(signal_name: String) -> void:
 	if not tearing_down: errors.append(signal_name)
