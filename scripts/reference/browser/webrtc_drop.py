@@ -2,6 +2,18 @@
 import re
 import hashlib
 
+
+def _departing_row(row, sequence, frames):
+    roster = row.get('roster')
+    slot = row.get('slot')
+    return (row.get('departed') is True
+            and type(row.get('departure_sequence')) is int and row['departure_sequence'] == sequence
+            and type(row.get('frames_submitted')) is int and row['frames_submitted'] == frames
+            and isinstance(row.get('uuid'), str)
+            and type(slot) is int and 0 <= slot < 3
+            and isinstance(roster, list) and len(roster) == 3 and roster[slot] == row['uuid'])
+
+
 def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False, missing_history=False, second_departure=False):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('peerDrop') is not True
             or result.get('dropCorrupt') is not corrupt or result.get('dropAnswer', False) is not lost_answer
@@ -53,9 +65,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
             raise ValueError('peer-drop gameplay result missing')
         row = rows[0]
         if second_departure and index == 2:
-            if (row.get('departed') is not True
-                    or type(row.get('departure_sequence')) is not int or row['departure_sequence'] != 1
-                    or type(row.get('frames_submitted')) is not int or row['frames_submitted'] != 7):
+            if not _departing_row(row, 1, 7):
                 raise ValueError('peer-drop first departure evidence missing')
             continue
         if not second_departure:
@@ -75,9 +85,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                         raise ValueError('peer-drop physical departure incomplete')
                 continue
         elif index == 1:
-            if (row.get('departed') is not True
-                    or type(row.get('departure_sequence')) is not int or row['departure_sequence'] != 2
-                    or type(row.get('frames_submitted')) is not int or row['frames_submitted'] != 12
+            if (not _departing_row(row, 2, 12)
                     or type(row.get('canonical_comparisons')) is not int or row['canonical_comparisons'] != 10
                     or type(row.get('drop_events')) is not int or row['drop_events'] != 1):
                 raise ValueError('peer-drop second departure evidence missing')
