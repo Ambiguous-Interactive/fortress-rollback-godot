@@ -244,6 +244,7 @@ func run(host: Node, count: int) -> bool:
 		):
 			return false
 		var second_cut: int = peer._drops.freeze_frame(second_identity.hex_encode())
+		var second_frontier: int = peer.status().confirmed_frame
 		var second_slot: int = host.memberships[0].slot(second_uuid)
 		if second_cut < 0 or second_slot < 0:
 			host.errors.append("peer_drop_second_freeze")
@@ -280,6 +281,7 @@ func run(host: Node, count: int) -> bool:
 		row["drop_events"] = 2
 		row["second_slot"] = second_slot
 		row["second_freeze_frame"] = second_cut
+		row["second_frontier"] = second_frontier
 		row["second_frozen_value"] = PackedByteArray([host._sample(second_cut, second_slot)]).hex_encode()
 	host.stage = "final_confirmation"
 	if not await host._wait(func() -> bool: return peer.status().confirmed_frame >= 38, true):

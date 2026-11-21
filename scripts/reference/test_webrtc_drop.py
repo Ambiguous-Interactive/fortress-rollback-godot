@@ -261,7 +261,7 @@ def second_evidence():
                   active_comparisons=2, minimum_confirmed=10, drop_events=1, pending_events=1,
                   drop_frames={first_id: 6}, commit_ack_peers=[], acknowledged_peers=[second_id])
     last = value['records'][0]['peers'][0]['result']['records'][0]
-    last.update(drop_events=2, second_slot=1, second_freeze_frame=11, pending_events=1,
+    last.update(drop_events=2, second_slot=1, second_freeze_frame=11, second_frontier=11, pending_events=1,
                 drop_frames={first_id: 6, second_id: 11}, commit_ack_peers=[second_id], acknowledged_peers=[],
                 second_frozen_value=bytes([(11 * 17 + 1 * 31 + 1) & 255]).hex())
     return value
@@ -341,6 +341,7 @@ class SecondDepartureEvidence(unittest.TestCase):
             (lambda value: last(value).update(second_slot='1'), 'second departure freeze'),
             (lambda value: last(value).update(second_freeze_frame=9), 'second departure freeze'),
             (lambda value: last(value).update(second_freeze_frame=12), 'second departure freeze'),
+            (lambda value: last(value).update(second_frontier=10), 'second departure freeze'),
             (lambda value: last(value).update(second_frozen_value='00'), 'second departure freeze'),
         ]
         for index, (mutate, message) in enumerate(mutations):

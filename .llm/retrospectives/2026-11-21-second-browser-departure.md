@@ -35,6 +35,7 @@
 | 18 | The new hashes and set unions could raise `UnicodeEncodeError` or `TypeError` on malformed evidence, reintroducing the non-`ValueError` escape. | bug | Re-review N2; `_peer_id` validates the UUID, acknowledgement lists are string-checked |
 | 19 | `pending_events >= 1` accepted a second barrier's pending publication, leaving the "no second barrier" wording unenforced. | bug | Re-review N3; require exactly one pending publication on both rows |
 | 20 | The second departing row's UUID was not tied to the survivor roster at that slot, so a row could name a different valid identity. | bug | OpenAI review thread `4650215067`; roster tie and retargeted-second control |
+| 21 | The second freeze was only range-checked, so a freeze above the confirmed frontier at observation passed. | bug | OpenAI review thread `4650238144`; the row now records the frontier at observation and requires the freeze to equal it |
 
 ## Actions Taken
 
@@ -60,6 +61,7 @@
 | 18 | Validate UUIDs before hashing and acknowledgement entries before set union. | `webrtc_drop.py` | non-ASCII and unhashable controls |
 | 19 | Require exactly one pending publication. | `webrtc_drop.py` | two-pending controls |
 | 20 | Require the second departing UUID to match the survivor roster at its slot. | `webrtc_drop.py`, `test_webrtc_drop.py` | retargeted-second control |
+| 21 | Record the confirmed frontier when the second departure is observed and require the freeze to equal it. | `webrtc_drop.gd`, `webrtc_drop.py`, `test_webrtc_drop.py` | live rows show 11/11 on both pins and a frontier-mismatch control |
 
 ## Prune Ledger
 
