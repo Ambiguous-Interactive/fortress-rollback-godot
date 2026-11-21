@@ -427,6 +427,7 @@ async function main() {
       let departedUuid = null;
       let processClosed = null;
       let processHeld = null;
+      let survivorUuids = null;
       let teardown;
       try {
         await boundedRoom(async () => {
@@ -494,7 +495,12 @@ async function main() {
               await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
               const marker = dropRoomAfterDrop ? 'fortressDropComplete' : 'fortressDropPending';
               await Promise.all(pages.slice(0, 2).map(page => page.waitForFunction(
-                name => document.body.dataset[name] === 'true', marker, { timeout: 120000 })));
+                name => document.body.dataset[name] === 'true' || document.body.dataset.fortressWebrtc !== undefined,
+                marker, { timeout: 30000 })));
+              const marked = await Promise.all(pages.slice(0, 2).map(page => page.evaluate(
+                name => document.body.dataset[name] === 'true', marker)));
+              if (marked.some(value => !value))
+                throw new Error(JSON.stringify({ control: 'room_marker_missing', marker, marked }));
               await pages[2].evaluate(() => { window.fortressDropRoomAfter = true; });
               await Promise.all(pages.slice(0, 2).map(page => page.waitForFunction(
                 () => document.body.dataset.fortressRoomFenced === 'true', null, { timeout: 30000 })));
@@ -512,6 +518,10 @@ async function main() {
               departedUuid = await pages[2].evaluate(() => document.body.dataset.fortressUuid);
               if (typeof departedUuid !== 'string' || !departedUuid)
                 throw new Error(JSON.stringify({ control: 'process_identity_missing', departedUuid }));
+              survivorUuids = await Promise.all(pages.slice(0, 2).map(page => page.evaluate(() => document.body.dataset.fortressUuid)));
+              if (survivorUuids.some(uuid => typeof uuid !== 'string' || !uuid || uuid === departedUuid)
+                || new Set(survivorUuids).size !== 2)
+                throw new Error(JSON.stringify({ control: 'process_survivor_identity', departedUuid, survivorUuids }));
               await Promise.all(pages.slice(0, 2).map(page => page.evaluate(value => {
                 window.fortressDepartingUuid = value; window.fortressDropGo = true;
               }, departedUuid)));
@@ -521,9 +531,15 @@ async function main() {
                   teardown: document.body.dataset.fortressTeardownArmed ?? null,
                   go: window.fortressDropGo === true,
                   frame: document.body.dataset.fortressFrame ?? null,
+                  healthy: document.body.dataset.fortressHoldHealthy === 'true',
+                  connected: document.body.dataset.fortressHoldConnected === 'true',
+                  authenticated: document.body.dataset.fortressHoldAuthenticated === 'true',
+                  room: document.body.dataset.fortressHoldRoom ?? '',
+                  errors: Number(document.body.dataset.fortressHoldErrors ?? -1),
                 }));
                 if (processHeld.witness !== null || processHeld.teardown !== null || processHeld.go
-                  || processHeld.frame !== '6')
+                  || processHeld.frame !== '6' || !processHeld.healthy || !processHeld.connected
+                  || !processHeld.authenticated || !processHeld.room || processHeld.errors !== 0)
                   throw new Error(JSON.stringify({ control: 'process_departure_not_held', processHeld }));
                 await contexts[2].close();
                 processClosed = true;
@@ -543,8 +559,10 @@ async function main() {
                 await pages[2].evaluate(() => { window.fortressDropRoomGiveUp = true; });
                 await pages[2].waitForFunction(() => document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 30000 });
                 const results = await Promise.all(pages.map(page => page.evaluate(() => JSON.parse(document.body.dataset.fortressWebrtc))));
+                const ids = results.map(result => result.failure?.uuid);
                 if (!isProcessMissingFailure(results[0], 'survivor') || !isProcessMissingFailure(results[1], 'survivor')
-                  || !isProcessMissingFailure(results[2], 'departing'))
+                  || !isProcessMissingFailure(results[2], 'departing')
+                  || ids[2] !== departedUuid || ids[0] !== survivorUuids[0] || ids[1] !== survivorUuids[1])
                   throw new Error(JSON.stringify({ control: 'wrong_process_missing_boundary', results }));
               }
             } else if (dropClose || dropRelay) await closeDepartingRtc(pages, undefined, dropRelay);
@@ -621,7 +639,7 @@ async function main() {
             throw new Error(JSON.stringify({ control: 'wrong_room_fence_boundary', peers }));
         }
         peers.forEach((peer, index) => { peer.browser = browserPair[index % 2]; peer.display = displays[index]; });
-        records.push({ players: count, peers, departedUuid, processClosed, processHeld });
+        records.push({ players: count, peers, departedUuid, processClosed, processHeld, survivorUuids });
         });
       } catch (error) {
         roomFailures.push(error);

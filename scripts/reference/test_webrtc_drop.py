@@ -662,7 +662,9 @@ def process_evidence():
     value['dropRoom'] = False
     value['records'][0]['departedUuid'] = roster[2]
     value['records'][0]['processClosed'] = True
-    value['records'][0]['processHeld'] = {'witness': None, 'teardown': None, 'go': False, 'frame': '6'}
+    value['records'][0]['processHeld'] = {
+        'witness': None, 'teardown': None, 'go': False, 'frame': '6',
+        'healthy': True, 'connected': True, 'authenticated': True, 'room': 'ROOM-CODE', 'errors': 0}
     value['records'][0]['peers'] = value['records'][0]['peers'][:2]
     for index, peer in enumerate(value['records'][0]['peers']):
         row = peer['result']['records'][0]
@@ -682,6 +684,7 @@ def process_missing_evidence():
     roster = value['records'][0]['peers'][0]['result']['records'][0]['roster']
     value['dropProcessMissing'] = True
     value['records'][0]['departedUuid'] = roster[2]
+    value['records'][0]['survivorUuids'] = [roster[0], roster[1]]
     for index, peer in enumerate(value['records'][0]['peers']):
         expected = 'peer_drop_room_gate' if index == 2 else 'peer_drop_room_fence'
         peer['result'] = {'passed': False, 'failure': {
@@ -735,11 +738,17 @@ class ProcessDeathEvidence(unittest.TestCase):
             (lambda value: value['records'][0].pop('departedUuid'), 'departed identity'),
             (lambda value: value['records'][0].update(processClosed=False), 'did not close'),
             (lambda value: value['records'][0].pop('processClosed'), 'did not close'),
-            (lambda value: value['records'][0].update(processHeld={'witness': '{}', 'teardown': None, 'go': False, 'frame': '6'}), 'still holding'),
-            (lambda value: value['records'][0].update(processHeld={'witness': None, 'teardown': 'true', 'go': False, 'frame': '6'}), 'still holding'),
-            (lambda value: value['records'][0].update(processHeld={'witness': None, 'teardown': None, 'go': True, 'frame': '6'}), 'still holding'),
-            (lambda value: value['records'][0].update(processHeld={'witness': None, 'teardown': None, 'go': False, 'frame': '7'}), 'still holding'),
-            (lambda value: value['records'][0].pop('processHeld'), 'still holding'),
+            (lambda value: value['records'][0].update(processHeld={'witness': '{}', 'teardown': None, 'go': False, 'frame': '6'}), 'not still healthy'),
+            (lambda value: value['records'][0].update(processHeld={'witness': None, 'teardown': 'true', 'go': False, 'frame': '6'}), 'not still healthy'),
+            (lambda value: value['records'][0].update(processHeld={'witness': None, 'teardown': None, 'go': True, 'frame': '6'}), 'not still healthy'),
+            (lambda value: value['records'][0].update(processHeld={'witness': None, 'teardown': None, 'go': False, 'frame': '7'}), 'not still healthy'),
+            (lambda value: value['records'][0].update(processHeld={**value['records'][0]['processHeld'], 'healthy': False}), 'not still healthy'),
+            (lambda value: value['records'][0].update(processHeld={**value['records'][0]['processHeld'], 'connected': False}), 'not still healthy'),
+            (lambda value: value['records'][0].update(processHeld={**value['records'][0]['processHeld'], 'authenticated': False}), 'not still healthy'),
+            (lambda value: value['records'][0].update(processHeld={**value['records'][0]['processHeld'], 'room': ''}), 'not still healthy'),
+            (lambda value: value['records'][0].update(processHeld={**value['records'][0]['processHeld'], 'errors': 1}), 'not still healthy'),
+            (lambda value: value['records'][0].update(processHeld={**value['records'][0]['processHeld'], 'errors': True}), 'not still healthy'),
+            (lambda value: value['records'][0].pop('processHeld'), 'not still healthy'),
             (lambda value: value['records'][0].update(departedUuid='not-a-uuid'), 'departed identity'),
             (lambda value: value['records'][0].update(departedUuid=None), 'departed identity'),
             (lambda value: value['records'][0]['peers'].append(copy.deepcopy(value['records'][0]['peers'][0])), 'expected real exported peers'),
@@ -791,6 +800,11 @@ class ProcessDeathEvidence(unittest.TestCase):
             (lambda value: failure(value, 2).update(hold_ms=-1), 'hold was not released'),
             (lambda value: failure(value, 2).update(hold_ms=True), 'hold was not released'),
             (lambda value: failure(value, 2).update(uuid='00000000-0000-0000-0000-000000000000'), 'outside the fence wait'),
+            (lambda value: value['records'][0].update(survivorUuids=[value['records'][0]['survivorUuids'][0]] * 2), 'survivor identities'),
+            (lambda value: value['records'][0].update(survivorUuids=[value['records'][0]['survivorUuids'][0]]), 'survivor identities'),
+            (lambda value: value['records'][0].pop('survivorUuids'), 'survivor identities'),
+            (lambda value: failure(value, 0).update(uuid=value['records'][0]['survivorUuids'][1]), 'outside the fence wait'),
+            (lambda value: failure(value, 1).update(uuid=value['records'][0]['departedUuid']), 'outside the fence wait'),
             (lambda value: value['records'][0]['peers'][0]['result'].update(passed=True), 'did not fail'),
         ]
         for index, (mutate, message) in enumerate(mutations):
@@ -814,6 +828,8 @@ class RoomAfterDropEvidence(unittest.TestCase):
             (lambda value: survivor(value).update(fence_frame=39), 'terminal fence'),
             (lambda value: survivor(value).update(final_frame=39), 'terminal fence'),
             (lambda value: survivor(value).update(frames_after_fence=1), 'terminal fence'),
+            (lambda value: survivor(value).pop('frames_after_fence'), 'terminal fence'),
+            (lambda value: survivor(value).update(frames_after_fence='0'), 'terminal fence'),
             (lambda value: survivor(value).update(room_fenced=False), 'terminal fence'),
             (lambda value: survivor(value).update(fence_route='mesh'), 'terminal fence'),
             (lambda value: survivor(value).update(fence_error=0), 'terminal fence'),
@@ -855,6 +871,9 @@ class RoomBeforeDropEvidence(unittest.TestCase):
             (lambda value: survivor(value).update(drop_pending_events=0), 'unchanged history'),
             (lambda value: survivor(value).update(drop_events=1), 'unchanged history'),
             (lambda value: survivor(value).update(barrier_open=False), 'unchanged history'),
+            (lambda value: survivor(value).update(frames_after_fence=1), 'unchanged history'),
+            (lambda value: survivor(value).pop('frames_after_fence'), 'unchanged history'),
+            (lambda value: survivor(value).update(frames_after_fence='0'), 'unchanged history'),
             (lambda value: value['records'][0]['peers'][2]['result']['records'][0].update(
                 departure_kind='room_left'), 'pre-commit departing page'),
             (lambda value: value['records'][0]['peers'][2]['result']['records'][0].update(

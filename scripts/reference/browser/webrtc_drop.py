@@ -167,8 +167,11 @@ def _validate_process_evidence(result):
     if result['records'][0].get('processClosed') is not True:
         raise ValueError('process-death witness did not close the departing browser context')
     if (not isinstance(held, dict) or held.get('witness') is not None or held.get('teardown') is not None
-            or held.get('go') is not False or held.get('frame') != '6'):
-        raise ValueError('process-death departing page was not still holding before the close')
+            or held.get('go') is not False or held.get('frame') != '6'
+            or held.get('healthy') is not True or held.get('connected') is not True
+            or held.get('authenticated') is not True or not isinstance(held.get('room'), str) or not held['room']
+            or type(held.get('errors')) is not int or held['errors'] != 0):
+        raise ValueError('process-death departing page was not still healthy before the close')
     if len(peers) != 2:
         raise ValueError('process-death witness must retain exactly two survivors')
     departed_uuid = result['records'][0].get('departedUuid')
@@ -209,8 +212,13 @@ def _validate_process_evidence(result):
 def _validate_process_missing(result):
     peers = result['records'][0]['peers']
     departed_uuid = result['records'][0].get('departedUuid')
+    survivor_uuids = result['records'][0].get('survivorUuids')
     if not isinstance(departed_uuid, str) or not _UUID.fullmatch(departed_uuid):
         raise ValueError('process-death missing-event control has no departing identity')
+    if (not isinstance(survivor_uuids, list) or len(survivor_uuids) != 2
+            or any(not isinstance(uuid, str) or not _UUID.fullmatch(uuid) for uuid in survivor_uuids)
+            or len(set(survivor_uuids)) != 2 or departed_uuid in survivor_uuids):
+        raise ValueError('process-death missing-event control has no survivor identities')
     if len(peers) != 3:
         raise ValueError('process-death missing-event control requires three peers')
     by_index = {}
@@ -229,8 +237,8 @@ def _validate_process_missing(result):
         stage_ok = failure.get('stage') != 'peer_drop_room_fence' if index == 2 else \
             failure.get('stage') == 'peer_drop_room_fence'
         identity = failure.get('uuid')
-        identity_ok = (identity == departed_uuid) if index == 2 else \
-            (isinstance(identity, str) and bool(_UUID.fullmatch(identity)))
+        identity_ok = (identity == departed_uuid) if index == 2 else (
+            index in (0, 1) and identity == survivor_uuids[index])
         if (not isinstance(errors, list) or errors != [expected]
                 or not isinstance(records, list) or records != []
                 or not stage_ok or not identity_ok):
@@ -276,8 +284,8 @@ def _validate_before_drop(result):
                 and roster[row['slot']] == row['uuid']
                 and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 7
                 and type(row.get('fence_frame')) is int and row['fence_frame'] == 7
-                and type(row.get('final_frame')) is int and row['final_frame'] == row['fence_frame'] + row['frames_after_fence']
                 and type(row.get('frames_after_fence')) is int and row['frames_after_fence'] == 0
+                and type(row.get('final_frame')) is int and row['final_frame'] == row['fence_frame'] + row['frames_after_fence']
                 and row.get('room_fenced') is True
                 and row.get('fence_route') == 'restart_required'
                 and type(row.get('fence_error')) is int and row['fence_error'] == 2
@@ -316,8 +324,8 @@ def _validate_after_drop(result, survivors):
     for row in survivors:
         if not (type(row.get('fence_frame')) is int and row['fence_frame'] == row.get('frames_submitted')
                 and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 40
-                and type(row.get('final_frame')) is int and row['final_frame'] == row['fence_frame'] + row['frames_after_fence']
                 and type(row.get('frames_after_fence')) is int and row['frames_after_fence'] == 0
+                and type(row.get('final_frame')) is int and row['final_frame'] == row['fence_frame'] + row['frames_after_fence']
                 and row.get('room_fenced') is True
                 and row.get('fence_route') == 'restart_required'
                 and type(row.get('fence_error')) is int and row['fence_error'] == 2

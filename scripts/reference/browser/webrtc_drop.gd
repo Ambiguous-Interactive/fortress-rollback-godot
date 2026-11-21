@@ -159,7 +159,6 @@ func run(host: Node, count: int) -> bool:
 	elif room_departure:
 		if process_death and host.local_index == 2:
 			if not await _wait_process_hold(host):
-				host.errors.append("peer_drop_room_process_hold_timeout")
 				return false
 		elif process_missing and host.local_index == 2:
 			var outcome: int = await _wait_gate_keepalive(host)
@@ -555,7 +554,21 @@ func _wait_process_hold(host: Node) -> bool:
 	var started_us: int = Time.get_ticks_usec()
 	while Time.get_ticks_usec() - started_us < 120000000:
 		host.clients[0].poll()
+		var connected: bool = host.clients[0].is_connected_to_server()
+		var authenticated: bool = host.clients[0].is_authenticated()
+		var room: String = host.clients[0].get_room_code()
+		var healthy: bool = host.errors.is_empty() and connected and authenticated and not room.is_empty()
+		JavaScriptBridge.eval("document.body.dataset.fortressHoldHealthy = '%s'" % ("true" if healthy else "false"))
+		JavaScriptBridge.eval("document.body.dataset.fortressHoldConnected = '%s'" % ("true" if connected else "false"))
+		JavaScriptBridge.eval("document.body.dataset.fortressHoldAuthenticated = '%s'" % ("true" if authenticated else "false"))
+		JavaScriptBridge.eval("document.body.dataset.fortressHoldRoom = " + JSON.stringify(room))
+		JavaScriptBridge.eval("document.body.dataset.fortressHoldErrors = '%d'" % host.errors.size())
+		if not healthy:
+			if host.errors.is_empty():
+				host.errors.append("peer_drop_room_process_hold_unhealthy")
+			return false
 		await host.get_tree().create_timer(0.002).timeout
+	host.errors.append("peer_drop_room_process_hold_timeout")
 	return false
 
 
@@ -608,7 +621,7 @@ func _run_room_departure(host: Node, count: int, slot: int, uuid: String, steps_
 		host.errors.append("peer_drop_room_leave_%d" % leave_code)
 		return false
 	var started_us: int = Time.get_ticks_usec()
-	while Time.get_ticks_usec() - started_us < 10000000:
+	while Time.get_ticks_usec() - started_us < 30000000:
 		host.clients[0].poll()
 		if host.room_left_seen:
 			break

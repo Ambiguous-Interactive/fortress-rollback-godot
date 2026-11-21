@@ -112,6 +112,30 @@ test('all constructed peer connections must close, including channel-free orphan
   }
 });
 
+// Value: the process-death label must enter the room branch and the pre-close hold, not the ordinary gate.
+test('process death routes the room lifecycle and the dedicated hold flag', () => {
+  class Connection {}
+  global.WebSocket = class { send() {} };
+  global.RTCPeerConnection = Connection;
+  global.window = { RTCPeerConnection: Connection };
+  try {
+    instrument({ endpoint: 'wss://localhost', count: 3, index: 2, faults: false, corrupt: false, defaultFactory: false,
+      dropProcess: true });
+    assert.equal(window.fortressDropProcess, true);
+    assert.equal(window.fortressDropRoom, true);
+    assert.equal(window.fortressDropProcessMissing, false);
+    instrument({ endpoint: 'wss://localhost', count: 3, index: 2, faults: false, corrupt: false, defaultFactory: false,
+      dropProcessMissing: true });
+    assert.equal(window.fortressDropProcess, false);
+    assert.equal(window.fortressDropRoom, true);
+    assert.equal(window.fortressDropProcessMissing, true);
+  } finally {
+    delete global.WebSocket;
+    delete global.window;
+    delete global.RTCPeerConnection;
+  }
+});
+
 // Value: protects=failed-room socket evidence; fails_when=context cleanup precedes capture; why_new=successful teardown tests omit rejection; seam=actual main in VM.
 async function failedRoom(hung = false, pair = ['chromium', 'chromium']) {
   const launches = [];
