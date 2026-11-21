@@ -125,8 +125,6 @@ class CheckFileTest(unittest.TestCase):
         self.assertEqual([f.level for f in findings], ["error"])
 
 
-
-
 class StagedModeTest(unittest.TestCase):
     def setUp(self):
         import tempfile
