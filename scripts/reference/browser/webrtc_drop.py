@@ -148,6 +148,18 @@ def _validate_room_evidence(result, room_departure, room_continue):
     if not _room_departing_row(departed, roster, session):
         raise ValueError('room-departure departing page evidence invalid')
     if room_continue:
+        survivor_slots = sorted(slot for slot in range(3) if slot != departed['slot'])
+        if sorted(row.get('slot') for row in failures) != survivor_slots:
+            raise ValueError('room-departure control does not identify the two survivors')
+        for row in failures:
+            slot = row.get('slot')
+            if (type(slot) is not int or not 0 <= slot < 3
+                    or row.get('uuid') != roster[slot]
+                    or row.get('local_uuid') != row.get('uuid')
+                    or row.get('departed_uuid') != departed['uuid']
+                    or row.get('departed_slot') != departed['slot']
+                    or row.get('frozen_roster') != roster):
+                raise ValueError('room-departure control survivor identity invalid')
         return result
     survivor_rows = [row for row in rows if row is not None and row is not departed]
     if len(survivor_rows) != 2:

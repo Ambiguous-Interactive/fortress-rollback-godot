@@ -530,10 +530,12 @@ def room_evidence(control=False):
                     room_left=True, connected=True, authenticated=True, session_id=session)
     if control:
         for index in range(2):
+            survivor = value['records'][0]['peers'][index]['result']['records'][0]
+            row = dict(survivor)
+            row.update(frames_submitted=8, final_frame=8, frames_after_fence=1, continue_code=0)
             value['records'][0]['peers'][index]['result'] = {
                 'passed': False, 'failure': {'stage': 'peer_drop_room', 'errors': ['peer_drop_room_continued'],
-                    'records': [{'departed': False, 'room_fenced': True, 'fence_frame': 7, 'frames_submitted': 8,
-                                 'final_frame': 8, 'frames_after_fence': 1, 'continue_code': 0}]}}
+                    'records': [row]}}
     return value
 
 
@@ -625,6 +627,11 @@ class RoomDepartureEvidence(unittest.TestCase):
             (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(frames_submitted=7), 'continuation control'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(final_frame=7), 'continuation control'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(room_fenced=False), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(slot=2, uuid=roster[2], local_uuid=roster[2]), 'does not identify'),
+            (lambda value: value['records'][0]['peers'][1]['result']['failure']['records'][0].update(slot=0, uuid=roster[0], local_uuid=roster[0]), 'does not identify'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(departed_uuid=roster[0]), 'survivor identity'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(frozen_roster=[roster[0], roster[1], roster[0]]), 'survivor identity'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(local_uuid=roster[1]), 'survivor identity'),
         ]
         for index, (mutate, message) in enumerate(control_mutations):
             value = copy.deepcopy(control)
