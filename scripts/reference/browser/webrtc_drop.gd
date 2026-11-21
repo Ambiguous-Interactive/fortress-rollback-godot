@@ -150,11 +150,17 @@ func run(host: Node, count: int) -> bool:
 	if peer.step(host.transport_us, predicted).code != S.Code.OK:
 		return false
 	JavaScriptBridge.eval("document.body.dataset.fortressFrame = '7'")
+	if rollback_departure:
+		host.stage = "peer_drop_rollback"
+		if not await host._wait(func() -> bool: return peer.status().pending_rollback_frame == 7, true):
+			host.errors.append("peer_drop_rollback_pending")
+			return false
+		# Publish the armed correction before waiting for the drop, so the
+		# release gate never depends on detection.
+		JavaScriptBridge.eval("document.body.dataset.fortressPendingRollback = '7'")
 	host.stage = "peer_drop_agreement"
 	if not await host._wait(
 		func() -> bool:
-			if rollback_departure:
-				JavaScriptBridge.eval("document.body.dataset.fortressPendingRollback = '%d'" % peer.status().pending_rollback_frame)
 			for row: Dictionary in peer.diagnostics().peers:
 				if row.get("dropped", false):
 					return true
