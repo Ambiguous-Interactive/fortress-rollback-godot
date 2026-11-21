@@ -361,7 +361,13 @@ packet reached both survivors before the barrier observed the departure. The val
 the pending marker captured before the freeze, a drained held outbox and a send that covers it,
 the cut at seven, the certified freeze and the canonical 38-prefix continuation. A cut-six
 record means the held packet did not arrive and is rejected.
-Room departure, process death and foreign proposals remain under
+The `peer-drop-foreign` case has the non-coordinating survivor publish a well-formed prepare for
+the real departed target while the agreement is pending. The coordinator receives the exact bytes
+at the RTC boundary and refuses them because only the survivor that owns the lowest surviving slot
+may propose; its committed cut, frozen value and continuing canonical history are unchanged. The
+validator requires a delivered proposal whose refused cut, digest and coordinator-gate reason match the forged payload,
+no agreement change and no forged cut in the freeze.
+Room departure, process death and the remaining boundary schedules remain under
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 
 ## Downloadable observations

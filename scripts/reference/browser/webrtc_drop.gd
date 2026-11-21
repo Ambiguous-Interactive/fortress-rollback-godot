@@ -10,6 +10,9 @@ const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 var events: Array[Dictionary] = []
 var relay_barriers: Array[String] = []
+var _host: Node = null
+var _foreign_enabled: bool = false
+var _foreign_sent: int = 0
 
 
 func observe_relay(host: Node) -> void:
@@ -37,9 +40,52 @@ func observe_relay(host: Node) -> void:
 func observed(event: Dictionary) -> void:
 	if event.kind in ["peer_drop_pending", "peer_dropped", "peer_drop_unconfirmed"]:
 		events.append(event.duplicate(true))
+	if event.kind == "peer_drop_pending":
+		_publish_foreign()
+
+
+## A non-coordinating survivor publishes a well-formed prepare for the departed
+## target. The coordinator must refuse it because only the lowest surviving slot
+## may propose, and the real agreement must keep its own cut and value.
+func _publish_foreign() -> void:
+	if not _foreign_enabled or _host == null or _foreign_sent > 0:
+		return
+	if _host.player_count != 3 or _host.local_index not in [0, 1]:
+		return
+	var peer: RefCounted = _host.peers[0]
+	# The destination is the only remote peer still in the match; peer ids are
+	# indexed in the session's own remote order, not by browser page index.
+	var destination: int = -1
+	for candidate: int in range(peer.peer_ids().size()):
+		if not peer._drops.is_gone(peer.peer_ids()[candidate].hex_encode()):
+			if destination >= 0:
+				return
+			destination = candidate
+	if destination < 0:
+		return
+	for identity: PackedByteArray in peer.peer_ids():
+		var barrier: Drop.Barrier = peer._drops.barrier(identity.hex_encode())
+		if barrier == null or barrier.state != Drop.PENDING or barrier.role != Drop.Role.FOLLOWER:
+			continue
+		var payload: Dictionary = peer._drops._payload(barrier, Drop.Phase.PREPARE, Drop.Stage.NONE, 0)
+		payload["cut"] = 2
+		payload["cut_digest"] = 999
+		# A few copies cross the real unreliable channel; the coordinator counts
+		# each refused prepare, so a lost copy still leaves a delivered receipt.
+		# A transient queue refusal on one copy is retried by the next copy; only
+		# a batch that cannot queue anything is a harness error.
+		var last_code: int = 0
+		for _copy: int in 3:
+			last_code = peer._drops._publish(peer, destination, payload)
+			if last_code == 0:
+				_foreign_sent += 1
+		if _foreign_sent == 0:
+			_host.errors.append("peer_drop_foreign_publish_%d" % last_code)
 
 
 func run(host: Node, count: int) -> bool:
+	_host = host
+	_foreign_enabled = bool(JavaScriptBridge.eval("window.fortressDropForeign || false"))
 	if JavaScriptBridge.eval("window.fortressDropRelay || false"):
 		observe_relay(host)
 	host.stage = "handshake"
@@ -289,6 +335,11 @@ func run(host: Node, count: int) -> bool:
 		"canonical_comparisons": 38,
 		"active_comparisons": comparisons,
 		"rollback_loads": host.games[0].loads,
+		"foreign_sent": _foreign_sent,
+		"foreign_received": barrier.refused_proposals,
+		"foreign_cut": barrier.refused_cut,
+		"foreign_digest": barrier.refused_digest,
+		"foreign_reason": barrier.refused_reason,
 		"relay_barriers": relay_barriers.duplicate(),
 		"session_id": host.memberships[0].handshake_message().session_id.hex_encode(),
 		"target_generation": barrier.generations[0],

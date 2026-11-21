@@ -24,19 +24,22 @@ def _departing_row(row, sequence, frames):
 
 
 def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False,
-                          missing_history=False, second_departure=False, rollback_departure=False):
-    if second_departure and rollback_departure:
+                          missing_history=False, second_departure=False, rollback_departure=False, foreign_proposal=False):
+    if (second_departure and rollback_departure) or (foreign_proposal and (
+            corrupt or physical_close or lost_answer or relay_only or missing_history or second_departure or rollback_departure)):
         raise ValueError('peer-drop modes are exclusive')
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('peerDrop') is not True
             or result.get('dropCorrupt') is not corrupt or result.get('dropAnswer', False) is not lost_answer
             or result.get('dropRelay', False) is not relay_only or result.get('dropClose', False) is not physical_close
             or result.get('dropMissing', False) is not missing_history
             or result.get('dropSecond', False) is not second_departure or result.get('dropRollback', False) is not rollback_departure
+            or result.get('dropForeign', False) is not foreign_proposal
             or result.get('errors') != []
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2):
         raise ValueError('peer-drop browser run incomplete')
     records = result.get('records')
-    if not isinstance(records, list) or len(records) != 1 or type(records[0].get('players')) is not int or records[0]['players'] != 3 or len(records[0].get('peers', [])) != 3:
+    if (not isinstance(records, list) or len(records) != 1 or type(records[0].get('players')) is not int
+            or records[0]['players'] != 3 or len(records[0].get('peers', [])) != 3):
         raise ValueError('peer-drop requires three real exported peers')
     survivors = []
     for index, peer in enumerate(records[0]['peers']):
@@ -343,4 +346,21 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         if (sorted(row['role'] for row in survivors) != [0, 1]
                 or len({(row['freeze_frame'], row['frozen_value'], row['departing_slot']) for row in survivors}) != 1):
             raise ValueError('peer-drop survivors disagreed')
+        if foreign_proposal:
+            follower = next(row for row in survivors if row['role'] == 0)
+            proposer = next(row for row in survivors if row['role'] == 1)
+            sent = follower.get('foreign_sent')
+            received = proposer.get('foreign_received')
+            cut = proposer.get('foreign_cut')
+            digest = proposer.get('foreign_digest')
+            reason = proposer.get('foreign_reason')
+            if (type(sent) is not int or not 1 <= sent <= 3
+                    or type(received) is not int or not 1 <= received <= sent
+                    or type(cut) is not int or cut != 2
+                    or type(digest) is not int or digest != 999
+                    or type(reason) is not str or reason != 'coordinator'
+                    or type(follower.get('foreign_received')) is not int or follower['foreign_received'] != 0
+                    or type(proposer.get('foreign_sent')) is not int or proposer['foreign_sent'] != 0
+                    or follower.get('freeze_frame') == 2 or proposer.get('freeze_frame') == 2):
+                raise ValueError('peer-drop foreign proposal evidence missing')
     return result

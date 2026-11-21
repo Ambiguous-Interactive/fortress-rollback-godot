@@ -348,7 +348,7 @@ jobs:
         run: |
           if [[ "${{ matrix.part }}" == direct ]]; then
             labels=(clean faults corrupt default mixed-disabled peer-drop peer-drop-corrupt peer-drop-close peer-drop-answer
-                    peer-drop-relay peer-drop-missing peer-drop-second peer-drop-rollback)
+                    peer-drop-relay peer-drop-missing peer-drop-second peer-drop-rollback peer-drop-foreign)
           else labels=(mixed mixed-default mixed-close recording-pressure); fi
           python3 scripts/reference/signalfish_webrtc_probe.py \
             --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \

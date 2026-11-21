@@ -40,7 +40,7 @@ HOST_WAIT_SECONDS = 900.0
 # each line whole on the shared stderr stream.
 PRINT_LOCK = threading.Lock()
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
-          'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-second', 'peer-drop-rollback', 'recording-pressure')
+          'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-second', 'peer-drop-rollback', 'peer-drop-foreign', 'recording-pressure')
 
 
 def validate_engine(engine, expected):
@@ -397,7 +397,7 @@ def main():
                        'peer-drop', 'peer-drop-events', 'peer-drop-corrupt', 'peer-drop-corrupt-events',
                        'peer-drop-close', 'peer-drop-close-events', 'peer-drop-answer', 'peer-drop-answer-events', 'peer-drop-relay', 'peer-drop-relay-events',
                        'peer-drop-missing', 'peer-drop-missing-events', 'peer-drop-second', 'peer-drop-second-events',
-                       'peer-drop-rollback', 'peer-drop-rollback-events')]
+                       'peer-drop-rollback', 'peer-drop-rollback-events', 'peer-drop-foreign', 'peer-drop-foreign-events')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -617,7 +617,8 @@ def main():
                                                                label == 'peer-drop-answer', label == 'peer-drop-relay',
                                                                missing_history=label == 'peer-drop-missing',
                                                                second_departure=label == 'peer-drop-second',
-                                                               rollback_departure=label == 'peer-drop-rollback')
+                                                               rollback_departure=label == 'peer-drop-rollback',
+                                                               foreign_proposal=label == 'peer-drop-foreign')
                             elif label == 'recording-pressure':
                                 result = validate_pressure(json.loads(output), recording_engine)
                             elif label in ('corrupt', 'default'):
@@ -667,6 +668,9 @@ def main():
                         'record is rejected. '
                         'The peer-drop-relay label closes every endpoint RTC path before agreement, requires addressed relay certificate/commit bytes, '
                         'and preserves original canonical history during relay continuation. '
+                        'The peer-drop-foreign label has the non-coordinating survivor publish a well-formed prepare for the real departed '
+                        'target; the coordinator receives it, refuses it because only the lowest surviving slot may propose, keeps its own '
+                        'agreed cut and value, and continues with 38 canonical prefix checks. '
                         'Post-drop simulation corruption must fail the canonical gate. No room departure, process death or complete pinned barrier parity claim. '
                         'All successful browser data channels and peer connections close at teardown. Snapshot restore corruption fails '
                         'at the gameplay canonical prefix comparison. Mixed runs exercise actual relay bytes and direct restoration under '
