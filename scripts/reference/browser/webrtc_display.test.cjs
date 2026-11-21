@@ -7,6 +7,8 @@ const vm = require('node:vm');
 
 async function placement(mutation = '', diagnostics = false) {
   const calls = [];
+  const timeouts = [];
+  let searches = 0;
   const exported = { exports: {} };
   const context = {
     module: exported, process: { env: { FORTRESS_XDOTOOL_EXECUTABLE: '/owned/xdotool', DISPLAY: ':99', XAUTHORITY: '/owned/auth',
@@ -16,7 +18,8 @@ async function placement(mutation = '', diagnostics = false) {
       assert.equal(name, 'node:child_process');
       return { execFileSync(executable, args, options) {
         assert.equal(executable, '/owned/xdotool');
-        assert.equal(options.timeout, 2000);
+        calls.push(Array.from(args));
+        timeouts.push(options.timeout);
         const environment = options.env || context.process.env;
         assert.equal(environment.DISPLAY, ':99');
         assert.equal(environment.XAUTHORITY, '/owned/auth');
@@ -26,8 +29,15 @@ async function placement(mutation = '', diagnostics = false) {
           assert.equal(context.process.env.DEBUG, 'pw:browser', 'parent browser diagnostics remain enabled');
           assert.equal(context.process.env.DEBUG_FILE, '/owned/browser.log');
         }
-        calls.push(Array.from(args));
-        if (args[0] === 'search') return mutation === 'ambiguous' ? '123\n456\n' : '123\n';
+        if (args[0] === 'search') {
+          searches++;
+          assert.equal(options.timeout, searches === 1 ? 2000 : 4000, 'only the retried search widens its bound');
+          if (mutation === 'ambiguous') return '123\n456\n';
+          if (mutation === 'never_appears' || (mutation === 'slow_window' && searches === 1))
+            throw Object.assign(new Error('spawnSync /usr/bin/xdotool ETIMEDOUT'), { code: 'ETIMEDOUT' });
+          return '123\n';
+        }
+        assert.equal(options.timeout, 2000);
         if (args[0] === 'getdisplaygeometry') {
           const screen = { small: '80 1024', screen_missing: '1280', screen_nonnumeric: 'garbage 1024',
             screen_fraction: '1280.5 1024', screen_large: '65536 1024' };
@@ -63,10 +73,15 @@ async function placement(mutation = '', diagnostics = false) {
     vm.runInNewContext(`(${operation.toString()})(title)`, { document, title });
     assert.equal(document.title, 'fortress-owned-unique-owner');
   } };
+  const searchesConducted = () => timeouts.filter((unused, index) => calls[index][0] === 'search');
   const result = exported.exports.placeFirefox(page, 1);
-  if (mutation) {
+  if (mutation === 'slow_window') {
+    assert.equal((await result).x, 80);
+    assert.deepEqual(searchesConducted(), [2000, 4000]);
+  } else if (mutation) {
     await assert.rejects(result, /window identity|display cannot|window placement/);
     if (mutation !== 'position' && !mutation.startsWith('post_')) assert.equal(calls.some(call => call[0] === 'windowmove'), false);
+    if (mutation === 'never_appears') assert.deepEqual(searchesConducted(), [2000, 4000]);
   } else {
     assert.equal((await result).x, 80);
     assert.deepEqual(calls[0], ['search', '--sync', '--onlyvisible', '--name', 'fortress-owned-unique-owner']);
@@ -75,6 +90,8 @@ async function placement(mutation = '', diagnostics = false) {
 
 test('window arrangement identifies only the uniquely titled owned Firefox page', () => placement());
 test('window arrangement isolates Playwright diagnostics from xdotool', () => placement('', true));
+test('window arrangement gives a slow first window one bounded second chance', () => placement('slow_window'));
+test('window arrangement rejects a window that never appears after the bounded retry', () => placement('never_appears'));
 for (const mutation of ['ambiguous', 'small', 'position', 'screen_missing', 'screen_nonnumeric', 'screen_fraction', 'screen_large',
   'width_missing', 'height_missing', 'width_nonnumeric', 'height_nonnumeric', 'width_fraction', 'height_large', 'post_width_nonnumeric', 'post_height_missing',
   'extra_separator', 'missing_separator', 'duplicate_key', 'unknown_key',

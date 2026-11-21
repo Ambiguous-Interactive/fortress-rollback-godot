@@ -8,8 +8,24 @@ async function placeFirefox(page, index) {
   const environment = { ...process.env };
   delete environment.DEBUG;
   delete environment.DEBUG_FILE;
-  const execute = args => execFileSync(process.env.FORTRESS_XDOTOOL_EXECUTABLE, args, { encoding: 'utf8', timeout: 2000, env: environment }).trim();
-  const windows = execute(['search', '--sync', '--onlyvisible', '--name', title]).split('\n');
+  const execute = (args, timeout = 2000) => execFileSync(process.env.FORTRESS_XDOTOOL_EXECUTABLE, args, { encoding: 'utf8', timeout, env: environment }).trim();
+  const search = ['search', '--sync', '--onlyvisible', '--name', title];
+  let found;
+  try {
+    found = execute(search);
+  } catch (error) {
+    // A contended runner can need longer than the per-call bound to composite
+    // the first WebGL window. One explicitly bounded second chance covers that
+    // delay; every other call and an ambiguous result keep the original bound.
+    if (!error || error.code !== 'ETIMEDOUT') throw error;
+    try {
+      found = execute(search, 4000);
+    } catch (retry) {
+      if (!retry || retry.code !== 'ETIMEDOUT') throw retry;
+      throw new Error('owned Firefox window placement failed: window did not appear within 6 s');
+    }
+  }
+  const windows = found.split('\n');
   if (windows.length !== 1 || !/^\d+$/.test(windows[0])) throw new Error('owned Firefox window identity is ambiguous');
   const integer = (value, minimum, maximum) => typeof value === 'string' && /^-?\d+$/.test(value)
     && Number.isSafeInteger(Number(value)) && Number(value) >= minimum && Number(value) <= maximum;
