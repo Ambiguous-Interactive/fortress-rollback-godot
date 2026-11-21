@@ -59,8 +59,8 @@ The useful core is not "be harsh". It is a small set of review moves:
 6. **Watch total size, not only diff size.** A small diff can push a file past
    a healthy boundary. The upstream 1,000-line trigger is a heuristic, not a
    repository cap: this repo enforces 180 source columns and 300-line `.llm`
-   markdown, with `PLAN.md` at 180 lines. File size is an investigation
-   trigger, not a correctness defect.
+   markdown, with `PLAN.md` at 180 lines and `GOAL.md` at 120. File size is an
+   investigation trigger, not a correctness defect.
 7. **Presumptive blockers** (relocated-not-reduced complexity, a new special
    case in a shared path, a near-duplicate canonical helper, a file pushed past
    a healthy size by accretion) are worth blocking only when the changed flow
@@ -105,8 +105,8 @@ Rejected, because the cost exceeds the benefit for this repository:
   rollback library; the relevant untrusted-input boundaries are already
   covered by `networking-transport` and the adversarial review.
 - A blanket 500-line file gate: the repository already enforces 300-line
-  `.llm`, 180-line `PLAN.md` and 180-column source limits. A source-line gate
-  would duplicate review judgment instead of replacing it.
+  `.llm`, 180-line `PLAN.md`, 120-line `GOAL.md` and 180-column source limits.
+  A source-line gate would duplicate review judgment instead of replacing it.
 
 ## 4. Modern practice evidence
 
