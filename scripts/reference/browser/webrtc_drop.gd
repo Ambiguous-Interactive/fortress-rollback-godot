@@ -173,9 +173,11 @@ func run(host: Node, count: int) -> bool:
 		var certificate: Dictionary = barrier.certificates[identity]
 		certificates.append({"peer": identity, "cut": certificate.cut, "digest": "%016x" % int(certificate.digest)})
 	var dropped_frames: Dictionary = {}
+	var dropped_count: int = 0
 	var pending_events: int = 0
 	for event: Dictionary in events:
 		if event.kind == "peer_dropped":
+			dropped_count += 1
 			dropped_frames[event.peer.hex_encode()] = event.frame
 		elif event.kind == "peer_drop_pending":
 			pending_events += 1
@@ -229,7 +231,7 @@ func run(host: Node, count: int) -> bool:
 		row["departure_sequence"] = 2
 		row["frames_submitted"] = 12
 		row["canonical_comparisons"] = 10
-		row["drop_events"] = dropped_frames.size()
+		row["drop_events"] = dropped_count
 		host.records.append(row)
 		return true
 	if second_departure:
@@ -262,9 +264,11 @@ func run(host: Node, count: int) -> bool:
 				return false
 			await host.get_tree().create_timer(0.002).timeout
 		dropped_frames.clear()
+		dropped_count = 0
 		pending_events = 0
 		for event: Dictionary in events:
 			if event.kind == "peer_dropped":
+				dropped_count += 1
 				dropped_frames[event.peer.hex_encode()] = event.frame
 			elif event.kind == "peer_drop_pending":
 				pending_events += 1
@@ -288,10 +292,10 @@ func run(host: Node, count: int) -> bool:
 		if event.kind == "peer_drop_unconfirmed":
 			host.errors.append("peer_drop_unconfirmed")
 			return false
-	if dropped_frames.size() != (2 if second_departure else 1):
+	if dropped_count != (2 if second_departure else 1):
 		host.errors.append("peer_drop_publication")
 		return false
-	row["drop_events"] = dropped_frames.size()
+	row["drop_events"] = dropped_count
 	row["minimum_confirmed"] = peer.status().confirmed_frame
 	row["rollback_loads"] = host.games[0].loads
 	row["direct"] = host._transport_totals()

@@ -31,6 +31,9 @@
 | 14 | A malformed peer-1 payload raised `KeyError`/`TypeError` from the cross-check instead of the validator's `ValueError` contract. | bug | Adversarial finding 6; shape checks and the cross-check after the per-peer loop |
 | 15 | The first departed row could be retargeted to another valid roster slot while the survivors still named the original slot. | bug | OpenAI review thread `4650187826`; slot/UUID tie and negative control |
 | 16 | Integer zero passed the last survivor's `departed: False` expectation because the type guard covered only integer expectations. | bug | OpenAI review thread `4650187829`; bool identity guard and negative control |
+| 17 | Keying publications by peer identity deduplicated a repeated `peer_dropped`, hiding a duplicate that the old counter rejected for every drop label. | bug | Re-review N1; a separate `dropped_count` and an exact `drop_events` check, plus a three-event control |
+| 18 | The new hashes and set unions could raise `UnicodeEncodeError` or `TypeError` on malformed evidence, reintroducing the non-`ValueError` escape. | bug | Re-review N2; `_peer_id` validates the UUID, acknowledgement lists are string-checked |
+| 19 | `pending_events >= 1` accepted a second barrier's pending publication, leaving the "no second barrier" wording unenforced. | bug | Re-review N3; require exactly one pending publication on both rows |
 
 ## Actions Taken
 
@@ -52,6 +55,9 @@
 | 14 | Type-check each peer's `result` and `rtc`, and resolve the second-departure cross-check after the loop. | `webrtc_drop.py` | negative controls for a missing `records`, a null `result` and a null `rtc` |
 | 15 | Tie the first departed row's slot and UUID to the survivors' departing slot. | `webrtc_drop.py`, `test_webrtc_drop.py` | retargeted-row negative control |
 | 16 | Require a real bool for boolean expectations. | `webrtc_drop.py`, `test_webrtc_drop.py` | integer-zero negative control |
+| 17 | Keep a separate publication count and require exactly one or two events. | `webrtc_drop.gd`, `webrtc_drop.py` | three-event negative control |
+| 18 | Validate UUIDs before hashing and acknowledgement entries before set union. | `webrtc_drop.py` | non-ASCII and unhashable controls |
+| 19 | Require exactly one pending publication. | `webrtc_drop.py` | two-pending controls |
 
 ## Prune Ledger
 

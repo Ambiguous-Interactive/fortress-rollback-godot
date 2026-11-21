@@ -284,6 +284,9 @@ class SecondDepartureEvidence(unittest.TestCase):
             row = first(value)
             row['slot'] = 1
             row['uuid'] = row['roster'][1]
+        def non_ascii_first(value):
+            row = first(value)
+            row['uuid'] = row['roster'][2] = 'departed-\u00e9'
         with self.assertRaisesRegex(ValueError, 'first departure evidence'):
             missing_first = copy.deepcopy(original)
             first(missing_first).pop('departure_sequence')
@@ -311,6 +314,7 @@ class SecondDepartureEvidence(unittest.TestCase):
             (lambda value: second(value).update(uuid=first(value)['uuid']), 'second departure evidence'),
             (lambda value: second(value).update(slot=0), 'second departure evidence'),
             (lambda value: last(value).update(drop_events=1), 'agreement or canonical'),
+            (lambda value: last(value).update(drop_events=3), 'agreement or canonical'),
             (lambda value: last(value).update(active_comparisons=29), 'agreement or canonical'),
             (lambda value: last(value).update(canonical_comparisons=0), 'agreement or canonical'),
             (lambda value: last(value).update(frames_submitted=13), 'agreement or canonical'),
@@ -319,8 +323,12 @@ class SecondDepartureEvidence(unittest.TestCase):
             (lambda value: last(value).update(pending_events=0), 'publication frame'),
             (without_second, 'second departure freeze'),
             (lambda value: last(value).update(commit_ack_peers=[], acknowledged_peers=[]), 'first commit unconfirmed'),
+            (lambda value: last(value).update(commit_ack_peers=[['x']]), 'first commit unconfirmed'),
+            (lambda value: last(value).update(pending_events=2), 'publication frame'),
             (lambda value: second(value).update(drop_frames={}), 'publication frame'),
             (lambda value: second(value).update(pending_events=0), 'publication frame'),
+            (lambda value: second(value).update(pending_events=2), 'publication frame'),
+            (non_ascii_first, 'original identities invalid'),
             (lambda value: last(value).update(second_slot=2), 'second departure freeze'),
             (lambda value: last(value).update(second_slot=0), 'second departure freeze'),
             (lambda value: last(value).update(second_slot='1'), 'second departure freeze'),

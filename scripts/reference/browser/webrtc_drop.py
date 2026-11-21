@@ -3,6 +3,15 @@ import re
 import hashlib
 
 
+_UUID = re.compile(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}')
+
+
+def _peer_id(uuid):
+    if not isinstance(uuid, str) or not _UUID.fullmatch(uuid):
+        raise ValueError('peer-drop original identities invalid')
+    return hashlib.sha256(uuid.encode('ascii')).digest()[:8].hex()
+
+
 def _departing_row(row, sequence, frames):
     roster = row.get('roster')
     slot = row.get('slot')
@@ -135,12 +144,13 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         if second_departure:
             roster = row.get('roster')
             slot = row.get('departing_slot')
-            first_id = None
-            if isinstance(roster, list) and type(slot) is int and 0 <= slot < len(roster) and isinstance(roster[slot], str):
-                first_id = hashlib.sha256(roster[slot].encode('ascii')).digest()[:8].hex()
+            if not isinstance(roster, list) or type(slot) is not int or not 0 <= slot < len(roster):
+                raise ValueError('peer-drop publication frame missing')
+            first_id = _peer_id(roster[slot])
             frames = row.get('drop_frames')
-            if (first_id is None or not isinstance(frames, dict) or frames.get(first_id) != row['freeze_frame']
-                    or type(row.get('pending_events')) is not int or row['pending_events'] < 1
+            if (not isinstance(frames, dict) or type(frames.get(first_id)) is not int
+                    or frames[first_id] != row['freeze_frame']
+                    or type(row.get('pending_events')) is not int or row['pending_events'] != 1
                     or not isinstance(row.get('commit_ack_peers'), list) or not isinstance(row.get('acknowledged_peers'), list)):
                 raise ValueError('peer-drop publication frame missing')
         expected_value = bytes([(row['freeze_frame'] * 17 + row['departing_slot'] * 31 + 1) & 255]).hex()
@@ -155,7 +165,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         last = next((row for row in survivors if row.get('departed') is False), None)
         proposer = next((row for row in survivors if row.get('role') == 1), None)
         departed_second = records[0]['peers'][1]['result']['records'][0]
-        second_id = hashlib.sha256(departed_second['uuid'].encode('ascii')).digest()[:8].hex()
+        second_id = _peer_id(departed_second.get('uuid'))
         if last is None or proposer is None:
             raise ValueError('peer-drop second departure survivor missing')
         first_row = records[0]['peers'][2]['result']['records'][0]
@@ -172,12 +182,18 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 or type(second_frame) is not int or not 10 <= second_frame <= 11
                 or second_slot != departed_second.get('slot')
                 or second_slot == last.get('departing_slot')
-                or not isinstance(frames, dict) or frames.get(second_id) != second_frame
+                or not isinstance(frames, dict) or type(frames.get(second_id)) is not int or frames[second_id] != second_frame
                 or last.get('second_frozen_value') != bytes([(second_frame * 17 + second_slot * 31 + 1) & 255]).hex()):
             raise ValueError('peer-drop second departure freeze missing')
-        closed = set(proposer.get('commit_ack_peers', [])) | set(proposer.get('acknowledged_peers', []))
+        acknowledgements = proposer.get('commit_ack_peers')
+        acknowledged = proposer.get('acknowledged_peers')
         participants = proposer.get('participants')
-        if not isinstance(participants, list) or not participants or not all(identity in closed for identity in participants):
+        if (not isinstance(acknowledgements, list) or not isinstance(acknowledged, list)
+                or not isinstance(participants, list) or not participants
+                or any(not isinstance(item, str) for item in acknowledgements + acknowledged + participants)):
+            raise ValueError('peer-drop first commit unconfirmed')
+        closed = set(acknowledgements) | set(acknowledged)
+        if not all(identity in closed for identity in participants):
             raise ValueError('peer-drop first commit unconfirmed')
     if lost_answer:
         lost = []
