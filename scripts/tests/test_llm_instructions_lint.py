@@ -99,6 +99,36 @@ class MetaLintTest(unittest.TestCase):
         ctx.write_bytes(b"\xef\xbb\xbf" + ctx.read_bytes())
         self.assertTrue(any("BOM" in f.message for f in self.errors()))
 
+    def test_missing_final_newline_is_error(self):
+        ctx = self.root / ".llm" / "context.md"
+        ctx.write_bytes(ctx.read_bytes().rstrip(b"\n"))
+        self.assertTrue(
+            any(
+                "exactly one LF" in f.message and "context.md" in f.message
+                for f in self.errors()
+            )
+        )
+
+    def test_double_final_newline_is_error(self):
+        ctx = self.root / ".llm" / "context.md"
+        ctx.write_bytes(ctx.read_bytes() + b"\n")
+        self.assertTrue(
+            any(
+                "exactly one LF" in f.message and "context.md" in f.message
+                for f in self.errors()
+            )
+        )
+
+    def test_non_markdown_harness_file_is_checked(self):
+        sample = self.root / ".llm" / "code-samples" / "demo.gd"
+        sample.parent.mkdir(parents=True)
+        sample.write_bytes(b"extends Node\n")
+        self.assertEqual(self.errors(), [])
+        sample.write_bytes(b"extends Node")
+        self.assertTrue(
+            any("demo.gd" in f.message for f in self.errors())
+        )
+
     def test_broken_relative_link_is_error(self):
         skill = self.root / ".llm" / "skills" / "demo-skill" / "SKILL.md"
         skill.write_text(

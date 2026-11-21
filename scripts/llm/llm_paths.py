@@ -60,6 +60,24 @@ def resolve_root(root: Path | None = None) -> Path:
     return Path(root) if root is not None else REPO_ROOT
 
 
+def encoding_scope_files(root: Path | None = None) -> list[Path]:
+    """Every file the UTF-8/LF/single-final-newline contract applies to.
+
+    The size scope limits authored instructions; the encoding contract also
+    covers non-markdown harness files such as `.llm/code-samples/*.gd`, which
+    are copied into instructions and must survive every checkout unchanged.
+    `.llm/skills/index.md` is generated but still must obey the contract.
+    """
+    base = resolve_root(root)
+    files: set[Path] = set(size_scope_files(base))
+    llm_dir = base / ".llm"
+    if llm_dir.is_dir():
+        for path in sorted(llm_dir.rglob("*")):
+            if path.is_file() and "__pycache__" not in path.parts:
+                files.add(path)
+    return sorted(files)
+
+
 def size_scope_files(root: Path | None = None) -> list[Path]:
     """Every markdown file the 300-line contract applies to.
 

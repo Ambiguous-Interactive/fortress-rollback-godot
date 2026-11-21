@@ -5,7 +5,8 @@ Checks (in order):
 2. context.md: exists, exactly one H1, links the generated index, and does
    not embed generated content.
 3. Skill frontmatter: every `.llm/skills/*/SKILL.md` is a valid Agent Skill.
-4. Encoding contract: UTF-8 without BOM, LF-only, for every scoped file.
+4. Encoding contract: UTF-8 without BOM, LF-only, with exactly one final
+   LF, for every file the harness owns.
 5. Link integrity: every relative markdown link inside `.llm/**` resolves,
    except links into machine-local, never-committed directories.
 
@@ -140,6 +141,23 @@ def check_encoding(scope_files: list[Path], root: Path) -> list[Finding]:
             findings.append(
                 Finding("error", path, f"{rel}: file is not valid UTF-8")
             )
+        if not data.endswith(b"\n"):
+            findings.append(
+                Finding(
+                    "error",
+                    path,
+                    f"{rel}: must end with exactly one LF (found none)",
+                )
+            )
+        elif data.endswith(b"\n\n"):
+            findings.append(
+                Finding(
+                    "error",
+                    path,
+                    f"{rel}: must end with exactly one LF "
+                    f"(found trailing blank lines)",
+                )
+            )
     return findings
 
 
@@ -184,7 +202,7 @@ def check_links(root: Path) -> list[Finding]:
 
 def run_all(root: Path | None = None) -> list[Finding]:
     base = llm_paths.resolve_root(root)
-    scope = llm_paths.size_scope_files(base)
+    scope = llm_paths.encoding_scope_files(base)
     return [
         *check_pointers(base),
         *check_context(base),
