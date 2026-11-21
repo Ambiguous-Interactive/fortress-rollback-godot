@@ -353,10 +353,12 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
             received = proposer.get('foreign_received')
             cut = proposer.get('foreign_cut')
             digest = proposer.get('foreign_digest')
+            reason = proposer.get('foreign_reason')
             if (type(sent) is not int or not 1 <= sent <= 3
                     or type(received) is not int or not 1 <= received <= sent
                     or type(cut) is not int or cut != 2
                     or type(digest) is not int or digest != 999
+                    or type(reason) is not str or reason != 'coordinator'
                     or type(follower.get('foreign_received')) is not int or follower['foreign_received'] != 0
                     or type(proposer.get('foreign_sent')) is not int or proposer['foreign_sent'] != 0
                     or follower.get('freeze_frame') == 2 or proposer.get('freeze_frame') == 2):

@@ -460,7 +460,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                           'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1,
                           'peer-drop': 1, 'peer-drop-corrupt': 1, 'peer-drop-close': 1,
                           'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1,
-                          'peer-drop-second': 1, 'peer-drop-rollback': 1}
+                          'peer-drop-second': 1, 'peer-drop-rollback': 1, 'peer-drop-foreign': 1}
         for label, expected in expected_rooms.items():
             rooms = eval(expression, {'label': label, 'room_count': webrtc_runner.room_count})
             self.assertEqual(rooms, expected, f'{label} must budget its actual room count')

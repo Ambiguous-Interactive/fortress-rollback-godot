@@ -35,6 +35,8 @@ async function placement(mutation = '', diagnostics = false) {
           if (mutation === 'ambiguous') return '123\n456\n';
           if (mutation === 'never_appears' || (mutation === 'slow_window' && searches === 1))
             throw Object.assign(new Error('spawnSync /usr/bin/xdotool ETIMEDOUT'), { code: 'ETIMEDOUT' });
+          if (mutation === 'search_failure')
+            throw Object.assign(new Error('spawnSync /usr/bin/xdotool ENOENT'), { code: 'ENOENT' });
           return '123\n';
         }
         assert.equal(options.timeout, 2000);
@@ -78,6 +80,9 @@ async function placement(mutation = '', diagnostics = false) {
   if (mutation === 'slow_window') {
     assert.equal((await result).x, 80);
     assert.deepEqual(searchesConducted(), [2000, 4000]);
+  } else if (mutation === 'search_failure') {
+    await assert.rejects(result, /ENOENT/);
+    assert.deepEqual(searchesConducted(), [2000], 'a non-timeout failure must not retry');
   } else if (mutation) {
     await assert.rejects(result, /window identity|display cannot|window placement/);
     if (mutation !== 'position' && !mutation.startsWith('post_')) assert.equal(calls.some(call => call[0] === 'windowmove'), false);
@@ -92,6 +97,7 @@ test('window arrangement identifies only the uniquely titled owned Firefox page'
 test('window arrangement isolates Playwright diagnostics from xdotool', () => placement('', true));
 test('window arrangement gives a slow first window one bounded second chance', () => placement('slow_window'));
 test('window arrangement rejects a window that never appears after the bounded retry', () => placement('never_appears'));
+test('window arrangement rethrows a non-timeout search failure without retrying', () => placement('search_failure'));
 for (const mutation of ['ambiguous', 'small', 'position', 'screen_missing', 'screen_nonnumeric', 'screen_fraction', 'screen_large',
   'width_missing', 'height_missing', 'width_nonnumeric', 'height_nonnumeric', 'width_fraction', 'height_large', 'post_width_nonnumeric', 'post_height_missing',
   'extra_separator', 'missing_separator', 'duplicate_key', 'unknown_key',

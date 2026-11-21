@@ -72,12 +72,15 @@ func _publish_foreign() -> void:
 		payload["cut_digest"] = 999
 		# A few copies cross the real unreliable channel; the coordinator counts
 		# each refused prepare, so a lost copy still leaves a delivered receipt.
+		# A transient queue refusal on one copy is retried by the next copy; only
+		# a batch that cannot queue anything is a harness error.
+		var last_code: int = 0
 		for _copy: int in 3:
-			var code: int = peer._drops._publish(peer, destination, payload)
-			if code != 0:
-				_host.errors.append("peer_drop_foreign_publish_%d" % code)
-				return
-			_foreign_sent += 1
+			last_code = peer._drops._publish(peer, destination, payload)
+			if last_code == 0:
+				_foreign_sent += 1
+		if _foreign_sent == 0:
+			_host.errors.append("peer_drop_foreign_publish_%d" % last_code)
 
 
 func run(host: Node, count: int) -> bool:
@@ -336,6 +339,7 @@ func run(host: Node, count: int) -> bool:
 		"foreign_received": barrier.refused_proposals,
 		"foreign_cut": barrier.refused_cut,
 		"foreign_digest": barrier.refused_digest,
+		"foreign_reason": barrier.refused_reason,
 		"relay_barriers": relay_barriers.duplicate(),
 		"session_id": host.memberships[0].handshake_message().session_id.hex_encode(),
 		"target_generation": barrier.generations[0],

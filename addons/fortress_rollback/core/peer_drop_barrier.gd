@@ -129,6 +129,7 @@ class Barrier:
 	var refused_proposals: int = 0
 	var refused_cut: int = -1
 	var refused_digest: int = 0
+	var refused_reason: String = ""
 
 
 var _departed: Dictionary = {}
@@ -339,7 +340,7 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 	if barrier != null:
 		if not _matches_identity(barrier, event):
 			if phase == Phase.PREPARE:
-				_refuse_prepare(barrier, event)
+				_refuse_prepare(barrier, event, "identity")
 			return
 		if barrier.state == PENDING and _participant_lost(barrier):
 			_abort(host, barrier, Abort.PARTICIPANT_LOST)
@@ -354,7 +355,7 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 		if coordinator_only and not host._slots_by_peer[index].has(barrier.coordinator):
 			# Only the survivor that owns the coordinated slot may propose.
 			if phase == Phase.PREPARE:
-				_refuse_prepare(barrier, event)
+				_refuse_prepare(barrier, event, "coordinator")
 			return
 		if (phase == Phase.BACKFILL or phase == Phase.COMMIT) \
 			and int(event.get("participants_digest", 0)) != barrier.roster_digest:
@@ -500,10 +501,11 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 
 ## Count one refused prepare and keep the cut/digest it named, so a witness can
 ## bind its delivery receipt to the exact proposal it published.
-func _refuse_prepare(barrier: Barrier, event: Dictionary) -> void:
+func _refuse_prepare(barrier: Barrier, event: Dictionary, reason: String) -> void:
 	barrier.refused_proposals += 1
 	barrier.refused_cut = int(event.get("cut", -1))
 	barrier.refused_digest = int(event.get("cut_digest", 0))
+	barrier.refused_reason = reason
 
 
 ## The proposer opened the operation and named the frame it proposes.
@@ -518,10 +520,10 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 		return
 	if not _owns_lowest(host, index, barrier.index):
 		# Only the survivor that owns the lowest surviving slot may propose.
-		_refuse_prepare(barrier, event)
+		_refuse_prepare(barrier, event, "coordinator")
 		return
 	if not _matches_identity(barrier, event):
-		_refuse_prepare(barrier, event)
+		_refuse_prepare(barrier, event, "identity")
 		return
 	if int(event.get("participants_digest", 0)) != live_roster_digest(host):
 		# A proposal whose survivor roster this session cannot reproduce never
@@ -529,7 +531,7 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 		# derivation, never trusted as the anchor. The buffered-prepare path is
 		# validated here too, because its roster is read after this survivor
 		# observed the departure itself.
-		_refuse_prepare(barrier, event)
+		_refuse_prepare(barrier, event, "roster")
 		return
 	if int(event.get("stage", 0)) == Stage.HISTORY:
 		if not Transfer.adopt(host, barrier, event):
