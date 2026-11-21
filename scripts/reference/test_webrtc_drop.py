@@ -294,6 +294,7 @@ class SecondDepartureEvidence(unittest.TestCase):
             (lambda value: second(value).update(slot=0), 'second departure freeze'),
             (lambda value: last(value).update(drop_events=1), 'agreement or canonical'),
             (lambda value: last(value).update(active_comparisons=29), 'agreement or canonical'),
+            (lambda value: last(value).update(canonical_comparisons=0), 'agreement or canonical'),
             (lambda value: last(value).update(second_slot=2), 'second departure freeze'),
             (lambda value: last(value).update(second_slot=0), 'second departure freeze'),
             (lambda value: last(value).update(second_slot='1'), 'second departure freeze'),

@@ -109,7 +109,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 raise ValueError('peer-drop relay socket exceeded its bound')
         required = [('players', 3), ('state', 'committed')]
         if second_departure and index == 0:
-            required += [('drop_events', 2), ('active_comparisons', 30)]
+            required += [('drop_events', 2), ('active_comparisons', 30), ('canonical_comparisons', 38)]
         elif second_departure:
             if type(row.get('active_comparisons')) is not int or row['active_comparisons'] < 2:
                 raise ValueError('peer-drop second departure active comparisons missing')
