@@ -18,6 +18,11 @@ from llm import llm_frontmatter
 from llm import llm_paths
 
 
+def collapsed(text: str) -> str:
+    """Normalize Markdown wrapping so phrase checks are layout-independent."""
+    return " ".join(text.split())
+
+
 class RepoStateTest(unittest.TestCase):
     def setUp(self):
         self.root = llm_paths.REPO_ROOT
@@ -74,6 +79,94 @@ class RepoStateTest(unittest.TestCase):
                 f"](./{name}/SKILL.md)", text, f"index missing row for {name}"
             )
         self.assertEqual(text.count("| [`"), len(skill_dirs), "index has extra rows")
+
+    def test_goal_is_present_within_budget_and_single_h1(self):
+        goal = llm_paths.REPO_ROOT / "GOAL.md"
+        self.assertTrue(goal.is_file(), "GOAL.md must exist")
+        data = goal.read_bytes()
+        self.assertFalse(
+            data.startswith(b"\xef\xbb\xbf"), "GOAL.md must not have a BOM"
+        )
+        self.assertNotIn(b"\r\n", data, "GOAL.md must use LF")
+        text = data.decode("utf-8")
+        self.assertEqual(
+            len([ln for ln in text.splitlines() if ln.startswith("# ")]),
+            1,
+            "GOAL.md must have exactly one H1",
+        )
+        self.assertLessEqual(
+            len(text.splitlines()),
+            llm_paths.GOAL_MAX_LINES,
+            "GOAL.md must stay a concise session contract",
+        )
+
+    def test_goal_keeps_the_upstream_contract(self):
+        text = collapsed(
+            (llm_paths.REPO_ROOT / "GOAL.md").read_text(encoding="utf-8")
+        )
+        for phrase in (
+            "Complete all objectives",
+            "fully green state",
+            "all required CI checks pass",
+            "all reviewer feedback is addressed",
+            "Task-based, red-green, data-backed, exploratory, science-driven",
+            "Small, coherent commits",
+            "Structurally simple",
+            "code judo",
+            "zero revisions",
+            "progress/session-NNN",
+            "adversarial sub-agent",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_code_review_keeps_the_structural_pass(self):
+        text = collapsed(
+            (llm_paths.SKILLS_DIR / "code-review" / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+        )
+        for phrase in (
+            "## Structural Pass",
+            "Reduce, do not relocate",
+            "Abstractions must earn their keep",
+            "Presumptive blockers",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_testing_keeps_characterization_before_refactor(self):
+        text = collapsed(
+            (llm_paths.SKILLS_DIR / "testing" / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+        )
+        for phrase in (
+            "## Characterization Before Refactor",
+            "records what the code does",
+            "run it green before the first refactor",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_research_note_cites_the_sources(self):
+        path = (
+            llm_paths.REPO_ROOT
+            / ".llm"
+            / "research"
+            / "goal-and-code-quality-2026.md"
+        )
+        self.assertTrue(path.is_file(), "research note must exist")
+        text = collapsed(path.read_text(encoding="utf-8"))
+        for phrase in (
+            "wallstop/llm-knowledge",
+            "thermo-nuclear-code-quality-review",
+            "Kite-Flying-Plate-Spinning",
+            "DORA",
+            "mutation",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
 
 
 if __name__ == "__main__":

@@ -1,20 +1,23 @@
 # Goal
 
-Advance PLAN.md through a green, reviewed, squash-merged session PR
+Complete all objectives, then open a PR that achieves a fully green state:
+all required CI checks pass on the PR head, all reviewer feedback is addressed,
+and the result is structurally sound.
 
 ## Objective
 
 - Carry forward any in-progress work.
-- Address any [Open Issues](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues), ordered by most-gameplay impacting first.
+- Address open [issues](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues), most gameplay impacting first.
 - Drive any open dependency to green (incorporate) if relevant.
 - Ensure main CI is green; if it is not, RCA the issue and implement a comprehensive fix.
-- See if there were any draft/in-progress PRs from previous sessions and drive those to completion.
-- Drive `PLAN.md` improvements as far forward as possible towards accomplishing the full work for the next major milestone(s). Then, open a PR that achieves a fully green state (the Gate workflow passing on the PR head, all reviewer feedback addressed). Do not explicitly trigger bot reviews. The Gate workflow is the per-push tier; the full matrix qualifies the merge on `main` and nightly owns the remaining axes, so do not wait on them before merging.
-- Aggregate all of one session's work into one PR, do not stack PRs.
-- After all current-head Gate CI is green, scan every PR feedback surface with complete pagination, including resolved/outdated thread state and check annotations.
-- Address all actionable feedback, repeat gates after fixes, and recheck feedback immediately before merge. Follow [.llm/skills/ship-session/SKILL.md](.llm/skills/ship-session/SKILL.md).
-- Merge through the merge queue: `gh pr merge <n> --squash --auto --match-head-commit <scanned-head-sha>` (the head pin refuses to enroll a head that never went through the feedback scan; watch the entry through GraphQL, since `gh pr view --json` has no merge-queue field). The branch ruleset blocks direct merges to `main`; the queue lands the squash commit only when the Gate checks and the qualification summary pass on the grouped candidate. No human review, approval or further confirmation is needed. Adversarial sub-agent reviews, bot reviews and the feedback scan are the review. Verify the merge, fetch, and update local `main` to match `origin/main`.
-- Verify the queue's grouped qualification outcome before completion.
+- Drive any draft or in-progress PR from a previous session to completion.
+- Drive `PLAN.md` improvements as far forward as possible towards the next major milestone(s).
+- Aggregate all of one session's work into one PR; do not stack PRs.
+- Follow [.llm/skills/ship-session/SKILL.md](.llm/skills/ship-session/SKILL.md) for delivery.
+- Merge through the merge queue after the current-head Gate is green and the
+  complete feedback scan is clean. The full matrix qualifies the merge and
+  nightly owns the remaining axes, so do not wait on them before merging.
+  Verify the queue's grouped qualification outcome and update local `main`.
 - Apply [.llm/skills/user-copy/SKILL.md](.llm/skills/user-copy/SKILL.md) to comments, PR titles/descriptions, commit messages and CHANGELOG entries.
 - Set editor and formatter maximum source line lengths to 180, and verify all source files with `make lint-source`.
 - Target a session shorter than two hours; retain precise follow-up issues for unfinished roadmap work.
@@ -23,8 +26,12 @@ Advance PLAN.md through a green, reviewed, squash-merged session PR
 ## Work Style
 
 - **Task-based, red-green, data-backed, exploratory, science-driven.**
-- Commit and push freely. Small, coherent commits.
+- Research modern best practices and relevant SOTA techniques.
+- **Small, coherent commits** — keep behavior changes separate from refactors and tests.
+- Commit and push freely.
 - Address all non-trivial reviewer feedback and CI failures before moving to the next task.
+- Prefer a deterministic check (test, linter, generator) over a rule the agent must remember.
+- Leave touched code better, but do not expand scope into an opportunistic rewrite.
 
 ## Fix Philosophy
 
@@ -33,6 +40,7 @@ Advance PLAN.md through a green, reviewed, squash-merged session PR
 | Production bug | Production code |
 | Test bug | Test code |
 | Fragile / unnecessary check | Remove or rewrite it |
+| Structural problem | The design, not the wording |
 
 - Prefer **data-driven tests** over repeated similar test cases.
 - Add **diagnostics** when an issue is hard to understand without them.
@@ -45,9 +53,20 @@ Every change must be:
 
 - **Robust and reliable** — not fragile or coupled to implementation details.
 - **Complete** — the whole class of problem is addressed, not just the one example.
-- **Non-bloating** — no unnecessary files, tests, or scaffolding.
+- **Structurally simple** — prefer the change that deletes a branch, helper, mode, or layer over one that rearranges the same complexity.
+- **Non-bloating** — no unnecessary files, tests, or scaffolding, and no file grows past its length cap by accretion.
+
+Before landing, review the diff for a "code judo" move: a behavior-preserving
+restructuring that makes the result dramatically simpler. If one exists, take
+it; if not, say why the current shape is the simplest credible one.
 
 Target: consensus among all reviewers that the result needs zero revisions.
+
+## Review
+
+- Run the structural pass in [.llm/skills/code-review/SKILL.md](.llm/skills/code-review/SKILL.md) on every non-trivial change.
+- Run a fresh-context adversarial review for risky changes, per [.llm/skills/adversarial-review/SKILL.md](.llm/skills/adversarial-review/SKILL.md).
+- A finding is not addressed until the fix is pushed and the same check passes.
 
 ## Progress Tracking
 
@@ -58,16 +77,8 @@ Target: consensus among all reviewers that the result needs zero revisions.
 
 ## Sub-agent Loop
 
-1. Use sub-agents for parallel or specialized work; give each implementation
-   sub-agent its own worktree and a fresh context.
-2. After a sub-agent completes, have an **adversarial sub-agent** review it
-   critically (fresh context: the diff plus the relevant spec excerpt, never
-   the author's rationale).
-3. Address actionable findings in **at most one fix round**, then re-review
-   the updated diff once. An in-scope actionable finding blocks merge: fix it
-   before merging or stop the merge; follow-up issues are only for findings
-   outside the accepted scope. Do not loop past the one fix round — repeated
-   review rounds past that point burn tokens without measurably improving
-   the result.
-4. If not using sub-agents, apply the same one-round adversarial review loop
-   on the main thread.
+1. Use sub-agents for parallel or specialized work when required.
+2. After a sub-agent completes, have an **adversarial sub-agent** review it critically.
+3. If recommendations exist, have another sub-agent evaluate and implement them.
+4. Repeat until all sub-agents agree the result is exceptional with zero issues (minor or otherwise).
+5. If not using sub-agents, apply this adversarial review loop on the main thread.

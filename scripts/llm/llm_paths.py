@@ -15,6 +15,7 @@ SOFT_WARN_LINES = 270  # advisory threshold (only shown with --verbose)
 THIN_POINTER_MAX_LINES = 50  # front-end pointer files must stay thin
 PLAN_MAX_LINES = 180  # root PLAN.md is a map, not a log
 PLAN_SOFT_WARN_LINES = 150  # advisory threshold for the plan (only shown with --verbose)
+GOAL_MAX_LINES = 120  # root GOAL.md is a session contract, not a backlog
 
 # --- Skill metadata ----------------------------------------------------------
 CATEGORIES = ("core", "performance", "feature")

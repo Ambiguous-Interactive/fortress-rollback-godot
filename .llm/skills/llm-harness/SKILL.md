@@ -65,6 +65,16 @@ same length checker in hooks and CI.
 - After editing: `make lint-llm`. Rationale and evidence:
   [plan hygiene](../../knowledge/plan-hygiene.md).
 
+## Editing `GOAL.md`
+
+The root goal is the session contract, not a plan or a status log. Keep the
+upstream contract at the top (fully green, feedback addressed), then the
+repository-specific objective, work style, quality bar, review loop and
+progress rules. Procedure lives in skills; the goal links to them. It is
+capped at 120 lines, and `scripts/tests/test_llm_repo_state.py` pins its
+required phrases and budget so a future edit cannot silently drop the upstream
+contract.
+
 ## Tooling Map
 
 | Script | Role |

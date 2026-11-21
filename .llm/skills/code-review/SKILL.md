@@ -49,6 +49,41 @@ quote are unverified and must not be reported.
 6. **Silent failures** — empty catches in sim or transport, error paths that
    swallow a checksum mismatch, fallbacks that mask divergence.
 
+## Structural Pass
+
+Correctness is necessary but not sufficient. For every non-trivial change, look
+for the "code judo" move: a behavior-preserving restructuring that makes the
+result dramatically simpler and more inevitable. Treat structure as a design
+problem, not a style nit.
+
+1. **Reduce, do not relocate.** Count the concepts a reader must hold. If a
+   "cleaner" version leaves that count unchanged, it is not cleaner. Prefer the
+   change that deletes whole branches, helpers, modes, or layers.
+2. **No spaghetti growth.** A new ad-hoc conditional in an unrelated flow, a
+   one-off boolean, or a feature-specific check in a shared path is a missing
+   abstraction. Move it behind a typed model, dispatcher, policy, or owned
+   module.
+3. **Abstractions must earn their keep.** Delete thin wrappers, pass-through
+   helpers, and identity layers. Prefer direct, boring code over magic.
+4. **Respect the boundary.** Put logic in the canonical layer and reuse the
+   existing helper. Do not duplicate a canonical utility or leak feature
+   details through a public API.
+5. **Keep type contracts honest.** Question unnecessary optionality, casts,
+   and silent fallbacks; make the invariant explicit at the boundary.
+6. **Watch total size.** A small diff can push a file past its length cap.
+   Decompose before the cap, not after.
+7. **Keep orchestration atomic.** Partial updates that leave state half-applied
+   are a design smell. Parallelize only when it also simplifies the flow.
+
+Presumptive blockers when a viable alternative is named: a refactor that
+relocates complexity without reducing it, a new special case in a shared flow,
+a near-duplicate canonical helper, a file pushed past its cap by accretion, or
+a wrapper/cast that hides a real invariant. Do not weaken the correctness gates
+for a structural improvement.
+
+Report structural findings with the same evidence bar: quote the code, name
+the simpler move, and state the contract it must preserve.
+
 ## Informational Checklist
 
 Completeness gaps (an 80% implementation where 100% costs little — say so),
@@ -100,6 +135,8 @@ how to cover it, never whether. Triple-proof protocol:
 - [ ] Every finding quotes file:line verbatim
 - [ ] New sim-state fields traced through serialize/restore/checksum/replay
 - [ ] Regression tests written for any broken behavior (before the fix)
+- [ ] Structural pass run; a code-judo move was taken or explicitly ruled out
+- [ ] No new special-case branch in a shared path or near-duplicate helper
 - [ ] Suppression list consulted before reporting nitpicks
 - [ ] For high-risk changes: adversarial pass requested (see
       [adversarial-review](../adversarial-review/SKILL.md))
