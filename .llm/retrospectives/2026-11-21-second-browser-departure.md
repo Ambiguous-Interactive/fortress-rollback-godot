@@ -34,6 +34,7 @@
 | 17 | Keying publications by peer identity deduplicated a repeated `peer_dropped`, hiding a duplicate that the old counter rejected for every drop label. | bug | Re-review N1; a separate `dropped_count` and an exact `drop_events` check, plus a three-event control |
 | 18 | The new hashes and set unions could raise `UnicodeEncodeError` or `TypeError` on malformed evidence, reintroducing the non-`ValueError` escape. | bug | Re-review N2; `_peer_id` validates the UUID, acknowledgement lists are string-checked |
 | 19 | `pending_events >= 1` accepted a second barrier's pending publication, leaving the "no second barrier" wording unenforced. | bug | Re-review N3; require exactly one pending publication on both rows |
+| 20 | The second departing row's UUID was not tied to the survivor roster at that slot, so a row could name a different valid identity. | bug | OpenAI review thread `4650215067`; roster tie and retargeted-second control |
 
 ## Actions Taken
 
@@ -58,6 +59,7 @@
 | 17 | Keep a separate publication count and require exactly one or two events. | `webrtc_drop.gd`, `webrtc_drop.py` | three-event negative control |
 | 18 | Validate UUIDs before hashing and acknowledgement entries before set union. | `webrtc_drop.py` | non-ASCII and unhashable controls |
 | 19 | Require exactly one pending publication. | `webrtc_drop.py` | two-pending controls |
+| 20 | Require the second departing UUID to match the survivor roster at its slot. | `webrtc_drop.py`, `test_webrtc_drop.py` | retargeted-second control |
 
 ## Prune Ledger
 

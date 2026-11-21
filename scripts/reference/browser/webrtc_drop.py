@@ -180,6 +180,8 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         frames = last.get('drop_frames')
         if (type(second_slot) is not int or not 0 <= second_slot < 3
                 or type(second_frame) is not int or not 10 <= second_frame <= 11
+                or not isinstance(roster, list) or len(roster) != 3
+                or departed_second.get('uuid') != roster[second_slot]
                 or second_slot != departed_second.get('slot')
                 or second_slot == last.get('departing_slot')
                 or not isinstance(frames, dict) or type(frames.get(second_id)) is not int or frames[second_id] != second_frame

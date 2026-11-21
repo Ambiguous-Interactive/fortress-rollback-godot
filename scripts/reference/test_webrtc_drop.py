@@ -287,6 +287,12 @@ class SecondDepartureEvidence(unittest.TestCase):
         def non_ascii_first(value):
             row = first(value)
             row['uuid'] = row['roster'][2] = 'departed-\u00e9'
+        def retarget_second(value):
+            row = second(value)
+            row['roster'] = list(row['roster'])
+            row['uuid'] = row['roster'][1] = row['roster'][0]
+            target = last(value)
+            target['drop_frames'][hashlib.sha256(row['uuid'].encode('ascii')).digest()[:8].hex()] = target['second_freeze_frame']
         with self.assertRaisesRegex(ValueError, 'first departure evidence'):
             missing_first = copy.deepcopy(original)
             first(missing_first).pop('departure_sequence')
@@ -329,6 +335,7 @@ class SecondDepartureEvidence(unittest.TestCase):
             (lambda value: second(value).update(pending_events=0), 'publication frame'),
             (lambda value: second(value).update(pending_events=2), 'publication frame'),
             (non_ascii_first, 'original identities invalid'),
+            (retarget_second, 'second departure freeze'),
             (lambda value: last(value).update(second_slot=2), 'second departure freeze'),
             (lambda value: last(value).update(second_slot=0), 'second departure freeze'),
             (lambda value: last(value).update(second_slot='1'), 'second departure freeze'),
