@@ -364,6 +364,10 @@ test('room departure control fails only at the post-fence continuation', () => {
   assert.equal(isRoomContinueFailure({ passed: false,
     failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'], records: [] } }), false);
   assert.equal(isRoomContinueFailure({ passed: false,
+    failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'], records: [row, row] } }), false);
+  assert.equal(isRoomContinueFailure({ passed: false,
+    failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'], records: [null] } }), false);
+  assert.equal(isRoomContinueFailure({ passed: false,
     failure: { stage: 'peer_drop_gameplay', errors: ['peer_drop_room_continued'], records: [row] } }), false);
   for (const value of [null, {}, { passed: true,
     failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'], records: [row] } }])

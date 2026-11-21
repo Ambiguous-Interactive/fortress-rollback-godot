@@ -98,7 +98,8 @@ def _room_survivor_row(row, roster, departed_uuid, departed_slot, session):
 
 
 def _room_continue_row(row):
-    return (row.get('departed') is False and row.get('room_fenced') is True
+    return (isinstance(row, dict)
+            and row.get('departed') is False and row.get('room_fenced') is True
             and type(row.get('fence_frame')) is int and row['fence_frame'] == 7
             and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 8
             and type(row.get('final_frame')) is int and row['final_frame'] == 8
@@ -109,17 +110,19 @@ def _room_continue_row(row):
 def _validate_room_evidence(result, room_departure, room_continue):
     peers = result['records'][0]['peers']
     rows = []
-    for index, peer in enumerate(peers):
+    failures = []
+    for peer in peers:
         _room_physical(peer)
         witness = peer.get('result')
-        if room_continue and index < 2:
+        if room_continue and witness.get('passed') is False:
             failure = witness.get('failure', {})
             control_rows = failure.get('records')
-            if (witness.get('passed') is not False or failure.get('stage') != 'peer_drop_room'
+            if (failure.get('stage') != 'peer_drop_room'
                     or failure.get('errors') != ['peer_drop_room_continued']
                     or not isinstance(control_rows, list) or len(control_rows) != 1
                     or not _room_continue_row(control_rows[0])):
                 raise ValueError('room-departure continuation control did not fail at the fence')
+            failures.append(control_rows[0])
             rows.append(None)
             continue
         if witness.get('passed') is not True:
@@ -128,6 +131,8 @@ def _validate_room_evidence(result, room_departure, room_continue):
         if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
             raise ValueError('room-departure witness record missing')
         rows.append(records[0])
+    if room_continue and len(failures) != 2:
+        raise ValueError('room-departure continuation control did not fail at the fence')
     departed_rows = [row for row in rows if row is not None and row.get('departed') is True]
     if len(departed_rows) != 1:
         raise ValueError('room-departure must name exactly one departing page')

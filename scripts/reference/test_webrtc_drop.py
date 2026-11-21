@@ -610,12 +610,16 @@ class RoomDepartureEvidence(unittest.TestCase):
             with self.subTest(mutation=index), self.assertRaisesRegex(ValueError, message):
                 validate_drop_browser(value, room_departure=True)
         control_mutations = [
-            (lambda value: value['records'][0]['peers'][0]['result'].update(passed=True), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result'].update(passed=True), 'witness record missing'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(stage='peer_drop_gameplay'), 'continuation control'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(errors=[]), 'continuation control'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(errors=['peer_drop_room_continued', 'x']), 'continuation control'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure'].pop('records'), 'continuation control'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(records=[]), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(records=[None]), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(records=['x']), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(
+                records=value['records'][0]['peers'][0]['result']['failure']['records'] * 2), 'continuation control'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(continue_code=1), 'continuation control'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(frames_after_fence=0), 'continuation control'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(frames_submitted=7), 'continuation control'),
@@ -637,6 +641,10 @@ class RoomDepartureEvidence(unittest.TestCase):
         peers = reordered['records'][0]['peers']
         peers.insert(0, peers.pop(2))
         self.assertIs(validate_drop_browser(reordered, room_departure=True), reordered)
+        reordered_control = copy.deepcopy(control)
+        peers = reordered_control['records'][0]['peers']
+        peers.insert(0, peers.pop(2))
+        self.assertIs(validate_drop_browser(reordered_control, room_continue=True), reordered_control)
 
 
 if __name__ == '__main__':

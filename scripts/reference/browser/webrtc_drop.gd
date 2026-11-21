@@ -551,6 +551,7 @@ func _run_room_fence(host: Node, count: int, slot: int, departing_uuid: String, 
 		host.errors.append("peer_drop_room_drop_publication")
 		return false
 	JavaScriptBridge.eval("document.body.dataset.fortressRoomFenced = 'true'")
+	JavaScriptBridge.eval("document.body.dataset.fortressFrame = '%d'" % fence_frame)
 	if continue_after_fence:
 		host._update_transport_clock()
 		var continued: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, fence_frame, PackedByteArray([host._sample(fence_frame, slot)]))]
