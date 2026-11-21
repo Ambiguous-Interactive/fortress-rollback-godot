@@ -14,8 +14,9 @@ valid outcome. Flag only what a senior engineer on this team would change.
 ## The Rule
 
 One candidate per pass: review the whole diff against its base before editing
-anything. Every finding must quote the motivating code. Findings you cannot
-quote are unverified and must not be reported.
+anything. Prefer one intent per diff; a refactor mixed with a behavior change
+is two diffs. Every finding must quote the motivating code. Findings you
+cannot quote are unverified and must not be reported.
 
 ## Pipeline
 
@@ -48,6 +49,46 @@ quote are unverified and must not be reported.
    added to the writer but not the reader corrupts replays silently.
 6. **Silent failures** — empty catches in sim or transport, error paths that
    swallow a checksum mismatch, fallbacks that mask divergence.
+
+## Structural Pass
+
+Correctness is necessary but not sufficient. For every non-trivial change, look
+for the "code judo" move: a behavior-preserving restructuring that makes the
+result dramatically simpler and more inevitable. Treat structure as a design
+problem, not a style nit.
+
+1. **Reduce, do not relocate.** Count the concepts a reader must hold. If a
+   "cleaner" version leaves that count unchanged, it is not cleaner. Prefer the
+   change that deletes whole branches, helpers, modes, or layers.
+2. **No spaghetti growth.** A new ad-hoc conditional in an unrelated flow, a
+   one-off boolean, or a feature-specific check in a shared path is a missing
+   abstraction, unless the branch encodes genuinely different behavior and a
+   helper would not reduce the reader's work. Move it behind a typed model,
+   dispatcher, policy, or owned module.
+3. **Abstractions must earn their keep.** Delete thin wrappers, pass-through
+   helpers, and identity layers. Prefer direct, boring code over magic.
+4. **Respect the boundary.** Put logic in the canonical layer and reuse the
+   existing helper. Do not duplicate a canonical utility or leak feature
+   details through a public API.
+5. **Keep type contracts honest.** Question unnecessary optionality, casts,
+   and silent fallbacks; make the invariant explicit at the boundary.
+6. **Watch total size.** A small diff can push a file past a healthy size.
+   Decompose when the file stops being scannable; length is an investigation
+   trigger, not a correctness defect.
+7. **Keep orchestration atomic.** Partial updates that leave state half-applied
+   are a design smell. Parallelize only when it also simplifies the flow.
+
+Presumptive blockers when a viable alternative is named and the changed flow
+introduces the problem: a refactor that relocates complexity without reducing
+it, a new special case in a shared flow, a near-duplicate canonical helper, a
+file pushed past a healthy size by accretion, or a wrapper/cast that hides a
+real invariant. Route them through the existing classification: a structural
+regression in the changed flow is ASK; a pre-existing or speculative
+simplification is ADVISORY; a recorded decision in `.llm/research/` is not a
+finding. Do not weaken the correctness gates for a structural improvement.
+
+Report structural findings with the same evidence bar: quote the code, name
+the simpler move, and state the contract it must preserve.
 
 ## Informational Checklist
 
@@ -100,6 +141,8 @@ how to cover it, never whether. Triple-proof protocol:
 - [ ] Every finding quotes file:line verbatim
 - [ ] New sim-state fields traced through serialize/restore/checksum/replay
 - [ ] Regression tests written for any broken behavior (before the fix)
+- [ ] Structural pass run; a code-judo move was taken or explicitly ruled out
+- [ ] A new special-case branch in a shared path or near-duplicate helper is flagged only with a named simpler alternative; otherwise it is justified as genuinely different behavior
 - [ ] Suppression list consulted before reporting nitpicks
 - [ ] For high-risk changes: adversarial pass requested (see
       [adversarial-review](../adversarial-review/SKILL.md))
@@ -112,4 +155,5 @@ authenticated MCP first, then authenticated `gh` for missing capabilities.
 - [debugging](../debugging/SKILL.md) — when review finds a live defect
 - [adversarial-review](../adversarial-review/SKILL.md) — fresh-context red team
 - Method evidence: `.llm/research/gstack-practices-2026.md`,
-  `.llm/research/agentic-verification-2026.md`
+  `.llm/research/agentic-verification-2026.md`,
+  `.llm/research/goal-and-code-quality-2026.md`

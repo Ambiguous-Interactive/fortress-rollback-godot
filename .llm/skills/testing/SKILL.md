@@ -71,6 +71,24 @@ only; ★ = smoke/existence. Weak (★) tests never count as coverage of a
 changed path. A test that breaks under a behavior-preserving refactor asserts
 implementation: rewrite it at the owning boundary.
 
+## Characterization Before Refactor
+
+When existing behavior is not already pinned, write a characterization test
+before refactoring. It records what the code does, including observed quirks;
+it is not a specification. Pick the smallest public seam, assert the actual
+output, and add inputs until every reachable branch you will touch is covered.
+Document an unreachable branch with a short reason instead of forcing coverage.
+Then run it green before the first refactor, and keep it green after every step.
+Fix a characterized bug in a separate commit with its own regression test. When
+a change is awkward in the current design, make the change easy (a
+behavior-preserving refactor) first, then make the easy change.
+
+For high-risk changed logic, run a targeted mutation check on the changed
+files: break an operator or return value and require a named test to fail at
+the intended assertion. Scope runs to the diff, never chase a global 100%
+mutation score. A surviving mutant is a missing assertion unless it is
+equivalent; record the equivalence argument instead of adding a test.
+
 ## Coverage Taxonomy
 
 A changed code path is covered only when the applicable buckets have tests:
@@ -153,6 +171,13 @@ A benchmark is a test of a measurement, and it fails like a test.
    unrelated directory — fails the whole run at "evidence identity changed" and
    invalidates every case it already passed. Finish and commit all edits first,
    then start the runs; two sessions in a row paid a full re-run for this.
+9. **Characterize before refactor.** A refactor starts with a green
+   characterization test; keep behavior changes and refactors in separate
+   commits so review can prove which one happened.
+10. **Prove test sensitivity, not test count.** For high-risk logic, a targeted
+    mutation that survives is a missing assertion unless it is equivalent;
+    record the equivalence argument instead of adding a test. Otherwise record
+    the mutant, the intended failure, and the assertion that now kills it.
 
 ## Evidence references
 
@@ -197,4 +222,5 @@ Any test that cannot run headless must justify itself in review.
 
 Related: [determinism](../determinism/SKILL.md),
 [rollback-fundamentals](../rollback-fundamentals/SKILL.md),
-[debugging](../debugging/SKILL.md).
+[debugging](../debugging/SKILL.md), and the
+[goal and code-quality evidence](../../research/goal-and-code-quality-2026.md).

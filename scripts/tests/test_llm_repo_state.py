@@ -18,6 +18,11 @@ from llm import llm_frontmatter
 from llm import llm_paths
 
 
+def collapsed(text: str) -> str:
+    """Normalize Markdown wrapping so phrase checks are layout-independent."""
+    return " ".join(text.split())
+
+
 class RepoStateTest(unittest.TestCase):
     def setUp(self):
         self.root = llm_paths.REPO_ROOT
@@ -74,6 +79,146 @@ class RepoStateTest(unittest.TestCase):
                 f"](./{name}/SKILL.md)", text, f"index missing row for {name}"
             )
         self.assertEqual(text.count("| [`"), len(skill_dirs), "index has extra rows")
+
+    def test_goal_is_present_within_budget_and_single_h1(self):
+        goal = llm_paths.GOAL_PATH
+        self.assertTrue(goal.is_file(), "GOAL.md must exist")
+        data = goal.read_bytes()
+        self.assertFalse(
+            data.startswith(b"\xef\xbb\xbf"), "GOAL.md must not have a BOM"
+        )
+        self.assertNotIn(b"\r\n", data, "GOAL.md must use LF")
+        text = data.decode("utf-8")
+        self.assertEqual(
+            len([ln for ln in text.splitlines() if ln.startswith("# ")]),
+            1,
+            "GOAL.md must have exactly one H1",
+        )
+        self.assertLessEqual(
+            len(text.splitlines()),
+            llm_paths.GOAL_MAX_LINES,
+            "GOAL.md must stay a concise session contract",
+        )
+        for heading in (
+            "## Objective",
+            "## Work Style",
+            "## Fix Philosophy",
+            "## Quality Bar",
+            "## Review",
+            "## Progress Tracking",
+            "## Sub-agent Loop",
+        ):
+            with self.subTest(heading=heading):
+                self.assertIn(heading, text)
+
+    def test_goal_keeps_the_upstream_contract(self):
+        text = collapsed(llm_paths.GOAL_PATH.read_text(encoding="utf-8"))
+        for phrase in (
+            "Complete all objectives",
+            "fully green state",
+            "all required CI checks pass",
+            "all reviewer feedback is addressed",
+            "Task-based, red-green, data-backed, exploratory, science-driven",
+            "Small, coherent commits",
+            "Structurally simple",
+            "code judo",
+            "zero revisions",
+            "progress/session-NNN",
+            "adversarial sub-agent",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_goal_keeps_the_repository_delivery_contract(self):
+        text = collapsed(llm_paths.GOAL_PATH.read_text(encoding="utf-8"))
+        for phrase in (
+            "one PR",
+            "Gate",
+            "merge queue",
+            "feedback scan",
+            "ship-session",
+            "user-copy",
+            "180",
+            "two hours",
+            "worktree",
+            "fresh context",
+            "one fix round",
+            "evidence-backed",
+            "record the review as unavailable",
+            "Non-actionable findings",
+            "main CI is red",
+            "regression test",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_goal_keeps_the_quality_bar(self):
+        text = collapsed(llm_paths.GOAL_PATH.read_text(encoding="utf-8"))
+        for phrase in (
+            "Robust and reliable",
+            "Complete",
+            "Non-bloating",
+            "data-driven",
+            "diagnostics",
+            "sweep",
+            "Simplify aggressively",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_code_review_keeps_the_structural_pass(self):
+        text = collapsed(
+            (llm_paths.SKILLS_DIR / "code-review" / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+        )
+        for phrase in (
+            "## Structural Pass",
+            "Reduce, do not relocate",
+            "No spaghetti growth",
+            "Abstractions must earn their keep",
+            "Respect the boundary",
+            "Keep type contracts honest",
+            "Watch total size",
+            "Keep orchestration atomic",
+            "named simpler alternative",
+            "Presumptive blockers",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_testing_keeps_characterization_before_refactor(self):
+        text = collapsed(
+            (llm_paths.SKILLS_DIR / "testing" / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+        )
+        for phrase in (
+            "## Characterization Before Refactor",
+            "records what the code does",
+            "run it green before the first refactor",
+            "make the change easy",
+            "targeted mutation",
+            "surviving mutant",
+            "unreachable branch",
+            "unless it is equivalent",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_research_note_cites_the_sources(self):
+        path = llm_paths.RESEARCH_DIR / "goal-and-code-quality-2026.md"
+        self.assertTrue(path.is_file(), "research note must exist")
+        text = collapsed(path.read_text(encoding="utf-8"))
+        for phrase in (
+            "https://github.com/wallstop/llm-knowledge/blob/main/prompts/goal.md",
+            "https://github.com/cursor/plugins/blob/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md",
+            "https://github.com/ChrisLucian-HunterIndustries/Kite-Flying-Plate-Spinning",
+            "https://dora.dev/capabilities/working-in-small-batches/",
+            "https://stryker-mutator.io/docs/",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
 
 
 if __name__ == "__main__":

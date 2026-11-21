@@ -31,6 +31,7 @@ until a skill is activated, so keep bodies focused and link to
 
 | Path | Purpose |
 | --- | --- |
+| `GOAL.md` | Session contract: objective, quality bar, review and delivery rules. |
 | `.llm/` | Canonical AI-agent harness (this folder). Source of truth. |
 | `.llm/context.md` | This file. The one document every agent must read. |
 | `.llm/skills/` | Agent Skills (SKILL.md standard), one directory per skill. |
@@ -78,6 +79,10 @@ until a skill is activated, so keep bodies focused and link to
    docs, retrospectives and `progress/` own status and evidence. It is
    capped at 180 lines (see
    [plan hygiene](./knowledge/plan-hygiene.md)).
+9. **Structural quality is part of correctness.** Run the structural pass in
+   [code-review](./skills/code-review/SKILL.md); prefer deleting a layer over
+   polishing it, and encode mechanical rules as checks rather than repeated
+   prose (see [llm-harness](./skills/llm-harness/SKILL.md)).
 
 ## Session delivery and copy
 
