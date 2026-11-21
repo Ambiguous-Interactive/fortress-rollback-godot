@@ -234,8 +234,7 @@ def _validate_process_missing(result):
         records = failure.get('records')
         errors = failure.get('errors')
         expected = 'peer_drop_room_gate' if index == 2 else 'peer_drop_room_fence'
-        stage_ok = failure.get('stage') != 'peer_drop_room_fence' if index == 2 else \
-            failure.get('stage') == 'peer_drop_room_fence'
+        stage_ok = failure.get('stage') == ('handshake' if index == 2 else 'peer_drop_room_fence')
         identity = failure.get('uuid')
         identity_ok = (identity == departed_uuid) if index == 2 else (
             index in (0, 1) and identity == survivor_uuids[index])

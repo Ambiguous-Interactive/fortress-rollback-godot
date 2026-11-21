@@ -279,7 +279,7 @@ function isProcessMissingFailure(witness, role) {
     && (departing ? index === 2 : (index === 0 || index === 1))
     && typeof failure.uuid === 'string' && failure.uuid.length > 0
     && (departing
-      ? Number.isInteger(failure.hold_ms) && failure.hold_ms >= 0 && failure.stage !== 'peer_drop_room_fence'
+      ? Number.isInteger(failure.hold_ms) && failure.hold_ms >= 0 && failure.stage === 'handshake'
       : failure.stage === 'peer_drop_room_fence');
 }
 

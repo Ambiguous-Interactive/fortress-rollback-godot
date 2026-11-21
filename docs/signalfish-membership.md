@@ -160,8 +160,11 @@ connection failure, the seam latches `restart_required`, detaches the SDK mesh
 and refuses every later plan and byte. A killed browser process reaches the
 same fence once the server announces its departure: the `peer-drop-process`
 witness closes the departing page's browser context and reads its identity in
-the Node harness before the close, verifying that the page is still holding
-its connection; the departed page cannot publish a row afterwards. The application must stop the peer and create a new session.
+the Node harness before the close, verifying that the page is still holding a
+healthy, authenticated room connection; the departed page cannot publish a row
+afterwards. A killed OS process is expected to reach the same server path when
+its socket closes, but the witness closes the context and does not separately
+kill the process. The application must stop the peer and create a new session.
 `disconnect_behavior = CONTINUE` in the rollback core is authorized only by
 endpoint silence while every frozen member is still a room member; a room
 event that reaches the seam always fences, even if a coordinated drop already

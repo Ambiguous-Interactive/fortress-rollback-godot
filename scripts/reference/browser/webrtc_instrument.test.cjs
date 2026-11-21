@@ -416,7 +416,7 @@ test('process-death missing-event control fails only at the membership waits', (
     ['uuid', ''], ['uuid', null], ['stage', 'handshake']])
     assert.equal(isProcessMissingFailure({ ...survivor, failure: { ...survivor.failure, [field]: value } }, 'survivor'), false);
   for (const [field, value] of [['local_index', 0], ['local_index', 1], ['uuid', ''],
-    ['hold_ms', -1], ['hold_ms', true], ['stage', 'peer_drop_room_fence']])
+    ['hold_ms', -1], ['hold_ms', true], ['stage', 'peer_drop_room_fence'], ['stage', 'gameplay']])
     assert.equal(isProcessMissingFailure({ ...departing, failure: { ...departing.failure, [field]: value } }, 'departing'), false);
   assert.equal(isProcessMissingFailure({ ...survivor, passed: true }, 'survivor'), false);
   for (const value of [null, {}, { passed: false }])

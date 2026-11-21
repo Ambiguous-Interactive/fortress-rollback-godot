@@ -796,6 +796,7 @@ class ProcessDeathEvidence(unittest.TestCase):
             (lambda value: failure(value, 2).update(errors=['peer_drop_room_fence']), 'outside the fence wait'),
             (lambda value: failure(value, 1).update(errors=['peer_drop_room_gate']), 'outside the fence wait'),
             (lambda value: failure(value, 2).update(stage='peer_drop_room_fence'), 'outside the fence wait'),
+            (lambda value: failure(value, 2).update(stage='gameplay'), 'outside the fence wait'),
             (lambda value: failure(value).update(stage='handshake'), 'outside the fence wait'),
             (lambda value: failure(value, 2).update(hold_ms=-1), 'hold was not released'),
             (lambda value: failure(value, 2).update(hold_ms=True), 'hold was not released'),
