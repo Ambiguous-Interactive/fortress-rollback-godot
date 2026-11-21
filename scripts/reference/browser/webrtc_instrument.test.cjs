@@ -347,16 +347,26 @@ test('drop corruption fails only at an actually compared active post-drop frame'
 
 // Value: the room-fence control must fail for its named post-fence step, not from an unrelated failure.
 test('room departure control fails only at the post-fence continuation', () => {
-  assert.equal(isRoomContinueFailure({ passed: false, failure: {
-    stage: 'peer_drop_room', errors: ['peer_drop_room_continued'],
-  } }), true);
-  for (const failure of [
-    { stage: 'peer_drop_room', errors: [] },
-    { stage: 'peer_drop_room', errors: ['peer_drop_room_continued', 'other'] },
-    { stage: 'peer_drop_gameplay', errors: ['peer_drop_room_continued'] },
-    { stage: 'peer_drop_room', errors: ['peer_drop_room_fence'] },
-  ]) assert.equal(isRoomContinueFailure({ passed: false, failure }), false);
-  for (const value of [null, {}, { passed: true, failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'] } }])
+  const row = { departed: false, room_fenced: true, fence_frame: 7, frames_submitted: 8,
+    final_frame: 8, frames_after_fence: 1, continue_code: 0 };
+  const failure = errors => ({ stage: 'peer_drop_room', errors, records: [row] });
+  assert.equal(isRoomContinueFailure({ passed: false, failure: failure(['peer_drop_room_continued']) }), true);
+  for (const errors of [[], ['peer_drop_room_continued', 'other'], ['peer_drop_room_fence']])
+    assert.equal(isRoomContinueFailure({ passed: false, failure: failure(errors) }), false);
+  for (const [field, value] of [['room_fenced', false], ['frames_submitted', 7], ['final_frame', 7],
+    ['frames_after_fence', 0], ['continue_code', 1]]) {
+    const changed = { ...row, [field]: value };
+    assert.equal(isRoomContinueFailure({ passed: false,
+      failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'], records: [changed] } }), false);
+  }
+  assert.equal(isRoomContinueFailure({ passed: false,
+    failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'] } }), false);
+  assert.equal(isRoomContinueFailure({ passed: false,
+    failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'], records: [] } }), false);
+  assert.equal(isRoomContinueFailure({ passed: false,
+    failure: { stage: 'peer_drop_gameplay', errors: ['peer_drop_room_continued'], records: [row] } }), false);
+  for (const value of [null, {}, { passed: true,
+    failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'], records: [row] } }])
     assert.equal(isRoomContinueFailure(value), false);
 });
 

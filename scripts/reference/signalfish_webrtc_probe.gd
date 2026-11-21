@@ -112,7 +112,7 @@ func _run() -> void:
 			errors.append("teardown_barrier")
 	_cleanup()
 	if not ok or not errors.is_empty():
-		_publish({"passed": false, "failure": {"players": player_count, "stage": stage, "errors": errors, "peer_failures": peer_failures}})
+		_publish({"passed": false, "failure": {"players": player_count, "stage": stage, "errors": errors, "peer_failures": peer_failures, "records": records}})
 		return
 	_publish({"passed": true, "records": records, "binary_receives": received_binary})
 

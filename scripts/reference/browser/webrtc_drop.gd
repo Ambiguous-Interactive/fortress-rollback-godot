@@ -115,6 +115,7 @@ func run(host: Node, count: int) -> bool:
 				target_slot = mini(target_slot, candidate)
 		var roster: PackedStringArray = host.memberships[0].roster()
 		host.transports[0].arm_drop(host.memberships[0].identity(roster[target_slot]), 4, 6, own_slot)
+	var steps_taken: int = 0
 	for frame: int in 7:
 		if not missing_history:
 			if not await host._wait(
@@ -130,6 +131,7 @@ func run(host: Node, count: int) -> bool:
 		var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, frame, PackedByteArray([host._sample(frame, slot)]))]
 		if peer.step(host.transport_us, samples).code != S.Code.OK:
 			return false
+		steps_taken += 1
 		JavaScriptBridge.eval("document.body.dataset.fortressFrame = '%d'" % frame)
 		if frame == 0 and not await host._wait_cleanup("window.fortressFirstDeliveryReady || false"):
 			return false
@@ -159,8 +161,8 @@ func run(host: Node, count: int) -> bool:
 		return false
 	if room_departure:
 		if host.local_index == 2:
-			return await _run_room_departure(host, count, slot, departing_uuid)
-		return await _run_room_fence(host, count, slot, departing_uuid, departing_slot, departing_identity, room_continue)
+			return await _run_room_departure(host, count, slot, departing_uuid, steps_taken)
+		return await _run_room_fence(host, count, slot, departing_uuid, departing_slot, departing_identity, room_continue, steps_taken)
 	var pending_at_detection: int = -1
 	if host.local_index == 2:
 		var submitted: int = 7
@@ -446,7 +448,7 @@ func run(host: Node, count: int) -> bool:
 ## A real room departure ends the frozen membership. The departing page leaves
 ## the room and records the live event; the survivors observe the server event,
 ## latch the adapter fence and never submit another input.
-func _run_room_departure(host: Node, count: int, slot: int, uuid: String) -> bool:
+func _run_room_departure(host: Node, count: int, slot: int, uuid: String, steps_taken: int) -> bool:
 	var room_code: String = host.clients[0].get_room_code()
 	var leave_code: int = host.clients[0].leave_room()
 	if leave_code != 0:
@@ -466,7 +468,7 @@ func _run_room_departure(host: Node, count: int, slot: int, uuid: String) -> boo
 		"departure_sequence": 1,
 		"departure_kind": "room_left",
 		"slot": slot,
-		"frames_submitted": 7,
+		"frames_submitted": steps_taken,
 		"uuid": uuid,
 		"roster": host.memberships[0].roster(),
 		"room_code_before": room_code,
@@ -481,7 +483,7 @@ func _run_room_departure(host: Node, count: int, slot: int, uuid: String) -> boo
 
 
 func _run_room_fence(host: Node, count: int, slot: int, departing_uuid: String, departing_slot: int,
-		departing_identity: PackedByteArray, continue_after_fence: bool) -> bool:
+		departing_identity: PackedByteArray, continue_after_fence: bool, steps_taken: int) -> bool:
 	var peer: RefCounted = host.peers[0]
 	var fence_frame: int = peer.status().current_frame
 	host.stage = "peer_drop_room_fence"
@@ -515,8 +517,9 @@ func _run_room_fence(host: Node, count: int, slot: int, departing_uuid: String, 
 		"slot": slot,
 		"uuid": host.clients[0].get_player_id(),
 		"roster": frozen_roster,
-		"frames_submitted": 7,
+		"frames_submitted": steps_taken,
 		"fence_frame": fence_frame,
+		"final_frame": fence_frame,
 		"frames_after_fence": 0,
 		"room_fenced": true,
 		"fence_route": status.route,
@@ -552,10 +555,16 @@ func _run_room_fence(host: Node, count: int, slot: int, departing_uuid: String, 
 		host._update_transport_clock()
 		var continued: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, fence_frame, PackedByteArray([host._sample(fence_frame, slot)]))]
 		var code: int = peer.step(host.transport_us, continued).code
-		if code == S.Code.OK:
-			row["frames_after_fence"] = 1
-			JavaScriptBridge.eval("document.body.dataset.fortressFrame = '%d'" % (fence_frame + 1))
+		if code != S.Code.OK:
+			host.errors.append("peer_drop_room_continue_step_%d" % code)
+			return false
+		steps_taken += 1
+		var after_frame: int = peer.status().current_frame
+		row["frames_submitted"] = steps_taken
+		row["final_frame"] = after_frame
+		row["frames_after_fence"] = after_frame - fence_frame
 		row["continue_code"] = code
+		JavaScriptBridge.eval("document.body.dataset.fortressFrame = '%d'" % after_frame)
 		host.records.append(row)
 		host.stage = "peer_drop_room"
 		host.errors.append("peer_drop_room_continued")
@@ -564,9 +573,15 @@ func _run_room_fence(host: Node, count: int, slot: int, departing_uuid: String, 
 	while Time.get_ticks_usec() - observed_started < 250000:
 		host.clients[0].poll()
 		if peer.status().current_frame != fence_frame:
+			row["final_frame"] = peer.status().current_frame
+			row["frames_after_fence"] = peer.status().current_frame - fence_frame
+			host.records.append(row)
 			host.errors.append("peer_drop_room_continued")
 			return false
 		await host.get_tree().create_timer(0.002).timeout
+	row["frames_submitted"] = steps_taken
+	row["final_frame"] = peer.status().current_frame
+	row["frames_after_fence"] = peer.status().current_frame - fence_frame
 	host.records.append(row)
 	return true
 

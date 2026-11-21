@@ -57,7 +57,7 @@ gh run view 42570092471 --attempt 4 --json jobs \
 
 | Job | Browser work |
 | --- | --- |
-| SignalFish relay and Chromium WebRTC `direct` | One web export, then the `clean`, `faults`, `corrupt`, `default`, `mixed-disabled` and nine `peer-drop` labels: fourteen labels, eighteen rooms in total |
+| SignalFish relay and Chromium WebRTC `direct` | One web export, then the `clean`, `faults`, `corrupt`, `default`, `mixed-disabled` and eleven `peer-drop` labels: sixteen labels, twenty rooms in total |
 | SignalFish relay and Chromium WebRTC `mixed` | One web export, then the `mixed`, `mixed-default`, `mixed-close` and `recording-pressure` labels: four labels, ten rooms in total |
 | SignalFish relay and Chromium WebRTC `online` | The shipped online example in two browsers, then the native relay and late-event controls |
 | Godot `suites` | The native suites, then the exported representation and protocol probes |
@@ -85,10 +85,10 @@ fully serial run because concurrent windows would stack on one display and
 break the pinned per-peer placement; the planner reproduces the historical
 serial schedule there (`webrtc_runner.label_waves` with `overlap=False`).
 
-The `direct` job's fourteen labels pack into eight waves (`clean` and `faults`
+The `direct` job's sixteen labels pack into nine waves (`clean` and `faults`
 stay exclusive at eight live pages each; `corrupt`, `default` and
-`mixed-disabled` share one wave; the nine `peer-drop` labels share five
-waves, four pairs and the last single). The `mixed` job's four labels keep four waves because every eight-page
+`mixed-disabled` share one wave; the eleven `peer-drop` labels share six
+waves, five pairs and the last single). The `mixed` job's four labels keep four waves because every eight-page
 label excludes every other; its wall shape is unchanged by this change.
 
 Every packed wave member runs under its own cancellation handle (#397). An

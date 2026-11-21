@@ -79,22 +79,31 @@ def _room_survivor_row(row, roster, departed_uuid, departed_slot, session):
             and row['uuid'] != departed_uuid
             and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 7
             and type(row.get('fence_frame')) is int and row['fence_frame'] == 7
+            and type(row.get('final_frame')) is int and row['final_frame'] == row['fence_frame']
             and type(row.get('frames_after_fence')) is int and row['frames_after_fence'] == 0
             and row.get('room_fenced') is True
             and row.get('fence_route') == 'restart_required'
-            and type(row.get('fence_error')) is int and row['fence_error'] != 0
+            and type(row.get('fence_error')) is int and row['fence_error'] == 2
             and type(row.get('fence_lifetime_revision')) is int and row['fence_lifetime_revision'] >= 0
-            and isinstance(row.get('player_left_events'), list)
-            and departed_uuid in row['player_left_events']
-            and all(isinstance(item, str) and _UUID.fullmatch(item) for item in row['player_left_events'])
+            and row.get('player_left_events') == [departed_uuid]
             and row.get('roster') == roster and row.get('frozen_roster') == roster
             and type(row.get('departed_slot')) is int and row['departed_slot'] == departed_slot
             and row.get('departed_uuid') == departed_uuid
             and isinstance(live, list) and sorted(live) == sorted(survivor_uuids)
-            and row.get('drop_events') == 0 and row.get('drop_pending_events') == 0
+            and type(row.get('drop_events')) is int and row['drop_events'] == 0
+            and type(row.get('drop_pending_events')) is int and row['drop_pending_events'] == 0
             and row.get('barrier_open') is False
             and isinstance(row.get('session_id'), str) and re.fullmatch(r'[0-9a-f]{32}', row['session_id'])
             and row.get('session_id') == session)
+
+
+def _room_continue_row(row):
+    return (row.get('departed') is False and row.get('room_fenced') is True
+            and type(row.get('fence_frame')) is int and row['fence_frame'] == 7
+            and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 8
+            and type(row.get('final_frame')) is int and row['final_frame'] == 8
+            and type(row.get('frames_after_fence')) is int and row['frames_after_fence'] == 1
+            and type(row.get('continue_code')) is int and row['continue_code'] == 0)
 
 
 def _validate_room_evidence(result, room_departure, room_continue):
@@ -105,8 +114,11 @@ def _validate_room_evidence(result, room_departure, room_continue):
         witness = peer.get('result')
         if room_continue and index < 2:
             failure = witness.get('failure', {})
+            control_rows = failure.get('records')
             if (witness.get('passed') is not False or failure.get('stage') != 'peer_drop_room'
-                    or failure.get('errors') != ['peer_drop_room_continued']):
+                    or failure.get('errors') != ['peer_drop_room_continued']
+                    or not isinstance(control_rows, list) or len(control_rows) != 1
+                    or not _room_continue_row(control_rows[0])):
                 raise ValueError('room-departure continuation control did not fail at the fence')
             rows.append(None)
             continue
@@ -116,8 +128,11 @@ def _validate_room_evidence(result, room_departure, room_continue):
         if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
             raise ValueError('room-departure witness record missing')
         rows.append(records[0])
-    departed = rows[2]
-    roster = departed.get('roster') if isinstance(departed, dict) else None
+    departed_rows = [row for row in rows if row is not None and row.get('departed') is True]
+    if len(departed_rows) != 1:
+        raise ValueError('room-departure must name exactly one departing page')
+    departed = departed_rows[0]
+    roster = departed.get('roster')
     if (not isinstance(roster, list) or len(roster) != 3
             or any(not isinstance(uuid, str) or not _UUID.fullmatch(uuid) for uuid in roster)
             or roster != sorted(roster) or len(set(roster)) != 3):
@@ -129,13 +144,16 @@ def _validate_room_evidence(result, room_departure, room_continue):
         raise ValueError('room-departure departing page evidence invalid')
     if room_continue:
         return result
+    survivor_rows = [row for row in rows if row is not None and row is not departed]
+    if len(survivor_rows) != 2:
+        raise ValueError('room-departure survivor evidence missing')
     departed_slot, departed_uuid = departed['slot'], departed['uuid']
-    for row in rows[:2]:
+    for row in survivor_rows:
         if not _room_survivor_row(row, roster, departed_uuid, departed_slot, session):
             raise ValueError('room-departure survivor fence invalid')
-    if sorted([departed_slot, rows[0]['slot'], rows[1]['slot']]) != [0, 1, 2]:
+    if sorted([departed_slot] + [row['slot'] for row in survivor_rows]) != [0, 1, 2]:
         raise ValueError('room-departure roster slots changed')
-    if len({(row['fence_frame'], row['departed_slot'], row['departed_uuid']) for row in rows[:2]}) != 1:
+    if len({(row['fence_frame'], row['departed_slot'], row['departed_uuid']) for row in survivor_rows}) != 1:
         raise ValueError('room-departure survivors disagreed on the fence')
     return result
 
@@ -145,9 +163,11 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                            room_departure=False, room_continue=False):
     if (second_departure and rollback_departure) or (room_departure and room_continue) or (
             (room_departure or room_continue) and (
-                corrupt or physical_close or lost_answer or relay_only or missing_history or second_departure or rollback_departure)) or (
+                corrupt or physical_close or lost_answer or relay_only or missing_history or second_departure
+                or rollback_departure or foreign_proposal)) or (
             foreign_proposal and (
-                corrupt or physical_close or lost_answer or relay_only or missing_history or second_departure or rollback_departure)):
+                corrupt or physical_close or lost_answer or relay_only or missing_history or second_departure
+                or rollback_departure or room_departure or room_continue)):
         raise ValueError('peer-drop modes are exclusive')
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('peerDrop') is not True
             or result.get('dropCorrupt') is not corrupt or result.get('dropAnswer', False) is not lost_answer

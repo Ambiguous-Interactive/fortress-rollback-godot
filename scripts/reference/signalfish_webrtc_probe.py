@@ -659,7 +659,7 @@ def main():
                         'Ordinary labels use 2/4/8 peers, 40 submitted frames and 38 corrected canonical prefixes per peer. '
                         'Recording-pressure uses two peers and 257 original frames across queue reuse with repeated synthetic direct/socket buffer refusal, '
                         'post-wrap exact-byte relay retries, real addressed server receipts and decoded original final-state recordings. '
-                        'Peer-drop labels use three peers: one stops protocol service after seven inputs, while two certify a frozen sample '
+                        'Ordinary peer-drop labels use three peers: one stops protocol service after seven inputs, while two certify a frozen sample '
                         'over real WebRTC and continue to 40 inputs with 38 independent canonical prefix checks. Ordinary drop labels retain ICE. '
                         'The peer-drop-close label stops one endpoint and closes every constructed RTC connection and channel before survivors agree, '
                         'then unavailable routes use the bounded relay fallback. Signaling membership remains frozen. '

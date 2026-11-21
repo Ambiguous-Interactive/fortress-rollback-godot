@@ -249,8 +249,12 @@ function isDropCanonicalFailure(witness) {
 
 function isRoomContinueFailure(witness) {
   const failure = witness?.failure;
-  return witness?.passed === false && failure?.stage === 'peer_drop_room' && Array.isArray(failure.errors)
-    && JSON.stringify(failure.errors) === JSON.stringify(['peer_drop_room_continued']);
+  if (!(witness?.passed === false && failure?.stage === 'peer_drop_room' && Array.isArray(failure.errors)
+    && JSON.stringify(failure.errors) === JSON.stringify(['peer_drop_room_continued'])
+    && Array.isArray(failure.records))) return false;
+  return failure.records.some(row => row && row.departed === false && row.room_fenced === true
+    && row.frames_after_fence === 1 && row.final_frame === row.fence_frame + 1
+    && row.continue_code === 0 && row.frames_submitted === row.fence_frame + 1);
 }
 
 function resourcesClosed(requireSockets) {
@@ -441,6 +445,13 @@ async function main() {
               await Promise.all(pages.slice(0, 2).map(page => page.waitForFunction(
                 () => document.body.dataset.fortressRoomFenced === 'true', null, { timeout: 30000 })));
               await pages[2].waitForFunction(() => document.body.dataset.fortressRoomLeft === 'true', null, { timeout: 30000 });
+              if (dropRoom) {
+                const before = await Promise.all(pages.slice(0, 2).map(page => page.evaluate(() => document.body.dataset.fortressFrame)));
+                await new Promise(resolve => setTimeout(resolve, 500));
+                const after = await Promise.all(pages.slice(0, 2).map(page => page.evaluate(() => document.body.dataset.fortressFrame)));
+                if (JSON.stringify(before) !== JSON.stringify(after))
+                  throw new Error(JSON.stringify({ control: 'room_survivor_continued', before, after }));
+              }
             } else if (dropClose || dropRelay) await closeDepartingRtc(pages, undefined, dropRelay);
             else {
               await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));

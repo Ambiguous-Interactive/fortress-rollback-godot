@@ -519,8 +519,8 @@ def room_evidence(control=False):
         for key in list(row):
             if key not in ('players', 'departed', 'slot', 'uuid', 'roster'):
                 del row[key]
-        row.update(frames_submitted=7, fence_frame=7, frames_after_fence=0, room_fenced=True,
-                   fence_route='restart_required', fence_error=19, fence_lifetime_revision=3,
+        row.update(frames_submitted=7, fence_frame=7, final_frame=7, frames_after_fence=0, room_fenced=True,
+                   fence_route='restart_required', fence_error=2, fence_lifetime_revision=3,
                    player_left_events=[departed_uuid], departed_slot=departed_slot,
                    departed_uuid=departed_uuid, frozen_roster=roster,
                    room_roster_after=sorted([roster[0], roster[1]]), local_uuid=roster[index],
@@ -531,7 +531,9 @@ def room_evidence(control=False):
     if control:
         for index in range(2):
             value['records'][0]['peers'][index]['result'] = {
-                'passed': False, 'failure': {'stage': 'peer_drop_room', 'errors': ['peer_drop_room_continued']}}
+                'passed': False, 'failure': {'stage': 'peer_drop_room', 'errors': ['peer_drop_room_continued'],
+                    'records': [{'departed': False, 'room_fenced': True, 'fence_frame': 7, 'frames_submitted': 8,
+                                 'final_frame': 8, 'frames_after_fence': 1, 'continue_code': 0}]}}
     return value
 
 
@@ -551,10 +553,15 @@ class RoomDepartureEvidence(unittest.TestCase):
                 validate_drop_browser(original, room_departure=True, **{mode: True})
         with self.assertRaisesRegex(ValueError, 'exclusive'):
             validate_drop_browser(original, room_departure=True, room_continue=True)
+        with self.assertRaisesRegex(ValueError, 'exclusive'):
+            validate_drop_browser(original, room_departure=True, foreign_proposal=True)
+        with self.assertRaisesRegex(ValueError, 'exclusive'):
+            validate_drop_browser(original, room_continue=True, foreign_proposal=True)
         survivor = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
         second = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
         departed = lambda value: value['records'][0]['peers'][2]['result']['records'][0]
         roster = original['records'][0]['peers'][0]['result']['records'][0]['roster']
+        departed_uuid = roster[2]
         mutations = [
             (lambda value: value.update(dropRoom=False), 'incomplete'),
             (lambda value: value.update(dropRoomContinue=True), 'incomplete'),
@@ -570,13 +577,18 @@ class RoomDepartureEvidence(unittest.TestCase):
             (lambda value: survivor(value).update(room_fenced=False), 'survivor fence'),
             (lambda value: survivor(value).update(fence_route='mesh'), 'survivor fence'),
             (lambda value: survivor(value).update(fence_error=0), 'survivor fence'),
+            (lambda value: survivor(value).update(fence_error=19), 'survivor fence'),
             (lambda value: survivor(value).update(fence_frame=6), 'survivor fence'),
             (lambda value: survivor(value).update(fence_frame=8), 'survivor fence'),
+            (lambda value: survivor(value).update(final_frame=8), 'survivor fence'),
+            (lambda value: survivor(value).update(final_frame=True), 'survivor fence'),
             (lambda value: survivor(value).update(frames_after_fence=1), 'survivor fence'),
             (lambda value: survivor(value).update(frames_submitted=8), 'survivor fence'),
             (lambda value: survivor(value).update(player_left_events=[]), 'survivor fence'),
             (lambda value: survivor(value).update(player_left_events=[roster[0]]), 'survivor fence'),
             (lambda value: survivor(value).update(player_left_events=['not-a-uuid']), 'survivor fence'),
+            (lambda value: survivor(value).update(player_left_events=[departed_uuid, departed_uuid]), 'survivor fence'),
+            (lambda value: survivor(value).update(player_left_events=[roster[0], departed_uuid]), 'survivor fence'),
             (lambda value: survivor(value).update(frozen_roster=[roster[0], roster[1], roster[0]]), 'survivor fence'),
             (lambda value: survivor(value).update(departed_slot=1), 'survivor fence'),
             (lambda value: survivor(value).update(departed_uuid=roster[0]), 'survivor fence'),
@@ -585,7 +597,9 @@ class RoomDepartureEvidence(unittest.TestCase):
             (lambda value: survivor(value).update(local_uuid=roster[2]), 'survivor fence'),
             (lambda value: survivor(value).update(uuid=roster[2]), 'survivor fence'),
             (lambda value: survivor(value).update(drop_events=1), 'survivor fence'),
+            (lambda value: survivor(value).update(drop_events=False), 'survivor fence'),
             (lambda value: survivor(value).update(drop_pending_events=1), 'survivor fence'),
+            (lambda value: survivor(value).update(drop_pending_events=0.0), 'survivor fence'),
             (lambda value: survivor(value).update(barrier_open=True), 'survivor fence'),
             (lambda value: survivor(value).update(session_id='cd' * 16), 'survivor fence'),
             (lambda value: survivor(value).update(slot=2), 'survivor fence'),
@@ -600,18 +614,29 @@ class RoomDepartureEvidence(unittest.TestCase):
             (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(stage='peer_drop_gameplay'), 'continuation control'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(errors=[]), 'continuation control'),
             (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(errors=['peer_drop_room_continued', 'x']), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure'].pop('records'), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(records=[]), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(continue_code=1), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(frames_after_fence=0), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(frames_submitted=7), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(final_frame=7), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure']['records'][0].update(room_fenced=False), 'continuation control'),
         ]
         for index, (mutate, message) in enumerate(control_mutations):
             value = copy.deepcopy(control)
             mutate(value)
             with self.subTest(control=index), self.assertRaisesRegex(ValueError, message):
                 validate_drop_browser(value, room_continue=True)
-        # The survivors may be the other two pages; identity checks follow the
+        # The survivors may be any two pages; identity checks follow the
         # departed row instead of the page index.
         swapped = copy.deepcopy(original)
         swapped['records'][0]['peers'][0], swapped['records'][0]['peers'][1] = (
             swapped['records'][0]['peers'][1], swapped['records'][0]['peers'][0])
         self.assertIs(validate_drop_browser(swapped, room_departure=True), swapped)
+        reordered = copy.deepcopy(original)
+        peers = reordered['records'][0]['peers']
+        peers.insert(0, peers.pop(2))
+        self.assertIs(validate_drop_browser(reordered, room_departure=True), reordered)
 
 
 if __name__ == '__main__':

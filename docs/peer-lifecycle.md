@@ -368,16 +368,19 @@ may propose; its committed cut, frozen value and continuing canonical history ar
 validator requires a delivered proposal whose refused cut, digest and coordinator-gate reason match the forged payload,
 no agreement change and no forged cut in the freeze.
 
-Room departure and process death take the membership fence, not the `CONTINUE`
-drop path. A live roster change (`player_left`, `room_left`, a join, a reconnect
-or a connection failure) ends the frozen membership; the seam latches
+Room departure takes the membership fence, not the `CONTINUE` drop path. A
+live roster change (`player_left`, `room_left`, a join, a reconnect or a
+connection failure) ends the frozen membership; the seam latches
 `restart_required`, detaches the mesh and refuses plans and bytes, and the
-survivors stop instead of opening a barrier. A coordinated drop may commit
-before the room event arrives; its certified freeze stays valid, but the
-changed roster still ends the match because the fixed membership no longer
-holds. The application needs a new session ID and a new frozen roster; the
-departed UUID is never reassigned to a survivor or a later joiner. Endpoint
-silence while the room roster is unchanged remains the only case that
+survivors stop instead of opening a barrier. A killed process reaches the
+same fence once the server announces its departure; the exported witness
+drives the explicit room event, not a killed page. A coordinated drop may
+commit before the room event arrives; its certified freeze stays valid, but
+the changed roster still ends the match because the fixed membership no longer
+holds. The witness does not exercise that ordering. The application needs a
+new session ID and a new frozen roster; the witness checks that no survivor or
+live-roster entry takes the departed slot, and a later joiner requires a new
+session. Endpoint silence while the room roster is unchanged remains the only case that
 `CONTINUE` may resolve. The exported `peer-drop-room` label exercises this on
 Chromium and Firefox for both pinned engines: the departing page leaves the
 room after seven inputs, the survivors observe `player_left`, latch
