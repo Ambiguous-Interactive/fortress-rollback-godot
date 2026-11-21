@@ -6,6 +6,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import re
 import signal
 import struct
 import sys
@@ -459,7 +460,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                           'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1,
                           'peer-drop': 1, 'peer-drop-corrupt': 1, 'peer-drop-close': 1,
                           'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1,
-                          'peer-drop-second': 1}
+                          'peer-drop-second': 1, 'peer-drop-rollback': 1}
         for label, expected in expected_rooms.items():
             rooms = eval(expression, {'label': label, 'room_count': webrtc_runner.room_count})
             self.assertEqual(rooms, expected, f'{label} must budget its actual room count')
@@ -501,8 +502,17 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
             text = (ROOT / '.github/workflows' / name).read_text()
             line = next((line for line in text.splitlines() if line.strip().startswith('labels=(')), None)
             self.assertIsNotNone(line, f'{name} must name its direct labels')
-            labels = line.split('labels=(', 1)[1].split(')', 1)[0].split()
+            start = text.index(line) + line.index('labels=(') + len('labels=(')
+            labels = text[start:text.index(')', start)].split()
             self.assertEqual(sorted(labels), expected, f'{name} must run every direct label')
+
+    def test_browser_launcher_routes_every_peer_drop_label(self):
+        source = (ROOT / 'scripts/reference/browser/webrtc.cjs').read_text()
+        start = source.index('const peerDrop = [')
+        end = source.index('].includes(process.argv[4])', start)
+        labels = set(re.findall(r"'([^']+)'", source[start:end]))
+        self.assertEqual(labels, {label for label in probe.LABELS if label.startswith('peer-drop')},
+                         'a peer-drop label missing from the launcher runs as an ordinary room set')
 
     def test_label_waves_hold_the_hosted_page_budget_and_serial_pairs_repeat_history(self):
         serial = webrtc_runner.label_waves(['clean', 'faults'], overlap=False)
@@ -510,10 +520,10 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         direct = webrtc_runner.label_waves(['clean', 'faults', 'corrupt', 'default', 'mixed-disabled',
                                             'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
                                             'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing',
-                                            'peer-drop-second'], overlap=True)
+                                            'peer-drop-second', 'peer-drop-rollback'], overlap=True)
         self.assertEqual(direct, [['clean'], ['faults'], ['corrupt', 'default', 'mixed-disabled'],
                                   ['peer-drop', 'peer-drop-corrupt'], ['peer-drop-close', 'peer-drop-answer'],
-                                  ['peer-drop-relay', 'peer-drop-missing'], ['peer-drop-second']])
+                                  ['peer-drop-relay', 'peer-drop-missing'], ['peer-drop-second', 'peer-drop-rollback']])
         mixed = webrtc_runner.label_waves(['mixed', 'mixed-default', 'mixed-close', 'recording-pressure'], overlap=True)
         self.assertEqual(mixed, [['mixed'], ['mixed-default'], ['mixed-close'], ['recording-pressure']])
         for plan in (direct, mixed, serial):

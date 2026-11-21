@@ -6,21 +6,23 @@ import unittest
 from browser.webrtc_drop import validate_drop_browser
 
 
-def evidence(corrupt=False):
+def evidence(corrupt=False, freeze=6):
     peers = []
     roster = [f'00000000-0000-0000-0000-{index:012x}' for index in range(3)]
     for index in range(3):
         row = {'players': 3, 'departed': index == 2, 'frames_submitted': 7 if index == 2 else 40, 'slot': index, 'uuid': roster[index], 'roster': roster}
+        if index == 2:
+            row['departure_sequence'] = 1
         if index < 2:
             row.update(state='committed', drop_events=1, canonical_comparisons=38, active_comparisons=30,
-                       prediction_gap=2, freeze_frame=6, departing_slot=2, minimum_confirmed=38, rollback_loads=1,
-                       frozen_value=bytes([(6 * 17 + 2 * 31 + 1) & 255]).hex(),
+                       prediction_gap=7 - freeze, freeze_frame=freeze, departing_slot=2, minimum_confirmed=38, rollback_loads=1,
+                       frozen_value=bytes([(freeze * 17 + 2 * 31 + 1) & 255]).hex(),
                        role=1 - index, certified=index == 1, certificates=1 - index)
         if index < 2:
             other_id = hashlib.sha256(roster[1 - index].encode('ascii')).digest()[:8].hex()
             digest = ((0x14650fb0739d0383 ^ int(row['frozen_value'], 16)) * 1099511628211) & 0x3fffffffffffffff
             row.update(participants=[other_id], digest=f'{digest:016x}',
-                       certificate_rows=[{'peer': other_id, 'cut': 6, 'digest': f'{digest:016x}'}] if index == 0 else [])
+                       certificate_rows=[{'peer': other_id, 'cut': freeze, 'digest': f'{digest:016x}'}] if index == 0 else [])
         result = {'passed': True, 'records': [row]}
         if corrupt and index < 2:
             result = {'passed': False, 'failure': {'stage': 'peer_drop_gameplay', 'errors': ['peer_drop_canonical_8']}}
@@ -379,6 +381,59 @@ class LostAnswerEvidence(unittest.TestCase):
         value['records'][0]['peers'][0]['rtc']['answerLoss'] = value['records'][0]['peers'][1]['rtc']['answerLoss']
         with self.assertRaisesRegex(ValueError, 'lost answer'):
             validate_drop_browser(value, lost_answer=True)
+
+
+class RollbackDepartureEvidence(unittest.TestCase):
+    def test_rollback_departure_requires_a_pending_correction_at_the_held_cut(self):
+        original = evidence(freeze=7)
+        original['dropRollback'] = True
+        original['records'][0]['peers'][2]['result']['records'][0].update(
+            frames_submitted=8, held_packets=1, sent_packets=1)
+        for peer in original['records'][0]['peers'][:2]:
+            peer['result']['records'][0].update(pending_at_detection=7)
+        self.assertIs(validate_drop_browser(original, rollback_departure=True), original)
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            validate_drop_browser(original)
+        cut_six = evidence(freeze=6)
+        cut_six['dropRollback'] = True
+        cut_six['records'][0]['peers'][2]['result']['records'][0].update(
+            frames_submitted=8, held_packets=1, sent_packets=1)
+        for peer in cut_six['records'][0]['peers'][:2]:
+            peer['result']['records'][0].update(pending_at_detection=7)
+        with self.assertRaisesRegex(ValueError, 'frozen boundary'):
+            validate_drop_browser(cut_six, rollback_departure=True)
+        both = copy.deepcopy(original)
+        both['dropSecond'] = True
+        with self.assertRaisesRegex(ValueError, 'exclusive'):
+            validate_drop_browser(both, second_departure=True, rollback_departure=True)
+        survivor = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
+        disrupted = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
+        departed = lambda value: value['records'][0]['peers'][2]['result']['records'][0]
+        mutations = [
+            (lambda value: value.update(dropRollback=False), 'incomplete'),
+            (lambda value: value.update(dropRollback=1), 'incomplete'),
+            (lambda value: departed(value).update(frames_submitted=7), 'departure or continued input'),
+            (lambda value: departed(value).update(departure_sequence=2), 'departure or continued input'),
+            (lambda value: departed(value).update(departure_sequence=99), 'departure or continued input missing'),
+            (lambda value: departed(value).update(held_packets=0), 'held packet'),
+            (lambda value: departed(value).update(sent_packets=0), 'held packet'),
+            (lambda value: departed(value).update(held_packets=2, sent_packets=1), 'held packet'),
+            (lambda value: departed(value).update(sent_packets=21), 'held packet'),
+            (lambda value: survivor(value).update(pending_at_detection=6), 'rollback correction'),
+            (lambda value: survivor(value).update(pending_at_detection=8), 'rollback correction'),
+            (lambda value: survivor(value).update(pending_at_detection=True), 'rollback correction'),
+            (lambda value: survivor(value).update(pending_at_detection=7.0), 'rollback correction'),
+            (lambda value: survivor(value).update(freeze_frame=6), 'frozen boundary'),
+            (lambda value: survivor(value).update(prediction_gap=1), 'frozen boundary'),
+            (lambda value: disrupted(value).update(pending_at_detection=6), 'rollback correction'),
+            (lambda value: survivor(value).update(rollback_loads=0), 'frozen boundary'),
+            (lambda value: survivor(value).update(prediction_gap=-1), 'frozen boundary'),
+        ]
+        for index, (mutate, message) in enumerate(mutations):
+            value = copy.deepcopy(original)
+            mutate(value)
+            with self.subTest(mutation=index), self.assertRaisesRegex(ValueError, message):
+                validate_drop_browser(value, rollback_departure=True)
 
 
 if __name__ == '__main__':

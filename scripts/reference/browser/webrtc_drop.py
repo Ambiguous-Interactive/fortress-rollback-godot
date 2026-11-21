@@ -23,12 +23,16 @@ def _departing_row(row, sequence, frames):
             and isinstance(roster, list) and len(roster) == 3 and roster[slot] == row['uuid'])
 
 
-def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False, missing_history=False, second_departure=False):
+def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False,
+                          missing_history=False, second_departure=False, rollback_departure=False):
+    if second_departure and rollback_departure:
+        raise ValueError('peer-drop modes are exclusive')
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('peerDrop') is not True
             or result.get('dropCorrupt') is not corrupt or result.get('dropAnswer', False) is not lost_answer
             or result.get('dropRelay', False) is not relay_only or result.get('dropClose', False) is not physical_close
             or result.get('dropMissing', False) is not missing_history
-            or result.get('dropSecond', False) is not second_departure or result.get('errors') != []
+            or result.get('dropSecond', False) is not second_departure or result.get('dropRollback', False) is not rollback_departure
+            or result.get('errors') != []
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2):
         raise ValueError('peer-drop browser run incomplete')
     records = result.get('records')
@@ -80,10 +84,14 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 raise ValueError('peer-drop first departure evidence missing')
             continue
         if not second_departure:
-            if (row.get('departed') is not (index == 2) or type(row.get('frames_submitted')) is not int
-                    or row['frames_submitted'] != (7 if index == 2 else 40)):
-                raise ValueError('peer-drop departure or continued input missing')
             if index == 2:
+                if not _departing_row(row, 1, 8 if rollback_departure else 7):
+                    raise ValueError('peer-drop departure or continued input missing')
+                if rollback_departure and (type(row.get('held_packets')) is not int or row['held_packets'] < 1
+                                           or type(row.get('sent_packets')) is not int or row['sent_packets'] < 1
+                                           or row['sent_packets'] < row['held_packets']
+                                           or row['sent_packets'] > rtc['sent']):
+                    raise ValueError('peer-drop rollback held packet was not sent')
                 if physical_close or relay_only:
                     departure = rtc.get('departure', {})
                     for field, expected in [('frame', 6), ('channels_created', 6), ('channels_closed', 6)]:
@@ -95,6 +103,9 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                             or departure['connections_closed'] != departure['connections_created']):
                         raise ValueError('peer-drop physical departure incomplete')
                 continue
+            if (row.get('departed') is not False or type(row.get('frames_submitted')) is not int
+                    or row['frames_submitted'] != 40):
+                raise ValueError('peer-drop departure or continued input missing')
         elif index == 1:
             if (not _departing_row(row, 2, 12)
                     or type(row.get('canonical_comparisons')) is not int or row['canonical_comparisons'] != 10
@@ -135,12 +146,18 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 raise ValueError('peer-drop agreement or canonical history incomplete')
         minimum_confirmed = 10 if second_departure and index == 1 else 38
         if (type(row.get('slot')) is not int or not 0 <= row['slot'] < 3
-                or type(row.get('freeze_frame')) is not int or not 0 <= row['freeze_frame'] <= 6
+                or type(row.get('freeze_frame')) is not int
+                or (row['freeze_frame'] != 7 if rollback_departure else not 0 <= row['freeze_frame'] <= 6)
                 or type(row.get('departing_slot')) is not int or not 0 <= row['departing_slot'] < 3
                 or type(row.get('minimum_confirmed')) is not int or row['minimum_confirmed'] < minimum_confirmed
                 or type(row.get('rollback_loads')) is not int or row['rollback_loads'] < 1
-                or type(row.get('prediction_gap')) is not int or row['prediction_gap'] < 1):
+                or type(row.get('prediction_gap')) is not int
+                or (row['prediction_gap'] != 0 if rollback_departure else row['prediction_gap'] < 1)):
             raise ValueError('peer-drop frozen boundary or confirmation invalid')
+        if rollback_departure and (type(row.get('pending_at_detection')) is not int or row['pending_at_detection'] != 7
+                                   or type(row.get('freeze_frame')) is not int or row['freeze_frame'] != 7
+                                   or row['pending_at_detection'] < row['freeze_frame']):
+            raise ValueError('peer-drop rollback correction was not pending at the agreed cut')
         if second_departure:
             roster = row.get('roster')
             slot = row.get('departing_slot')
