@@ -6,6 +6,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import re
 import signal
 import struct
 import sys
@@ -504,6 +505,14 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
             start = text.index(line) + line.index('labels=(') + len('labels=(')
             labels = text[start:text.index(')', start)].split()
             self.assertEqual(sorted(labels), expected, f'{name} must run every direct label')
+
+    def test_browser_launcher_routes_every_peer_drop_label(self):
+        source = (ROOT / 'scripts/reference/browser/webrtc.cjs').read_text()
+        start = source.index('const peerDrop = [')
+        end = source.index('].includes(process.argv[4])', start)
+        labels = set(re.findall(r"'([^']+)'", source[start:end]))
+        self.assertEqual(labels, {label for label in probe.LABELS if label.startswith('peer-drop')},
+                         'a peer-drop label missing from the launcher runs as an ordinary room set')
 
     def test_label_waves_hold_the_hosted_page_budget_and_serial_pairs_repeat_history(self):
         serial = webrtc_runner.label_waves(['clean', 'faults'], overlap=False)

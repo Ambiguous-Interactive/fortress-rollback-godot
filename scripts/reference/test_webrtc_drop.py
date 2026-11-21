@@ -382,12 +382,12 @@ class LostAnswerEvidence(unittest.TestCase):
 
 
 class RollbackDepartureEvidence(unittest.TestCase):
-    def test_rollback_departure_requires_a_pending_correction_above_the_cut(self):
+    def test_rollback_departure_requires_a_pending_correction_at_or_above_the_cut(self):
         original = evidence()
         original['dropRollback'] = True
         original['records'][0]['peers'][2]['result']['records'][0]['frames_submitted'] = 8
         for peer in original['records'][0]['peers'][:2]:
-            peer['result']['records'][0].update(pending_at_detection=7, rollback_loads=2)
+            peer['result']['records'][0].update(pending_at_detection=7)
         self.assertIs(validate_drop_browser(original, rollback_departure=True), original)
         at_cut = evidence(freeze=7)
         at_cut['dropRollback'] = True

@@ -108,6 +108,8 @@ func run(host: Node, count: int) -> bool:
 	if host.local_index == 2:
 		var submitted: int = 7
 		if rollback_departure:
+			# Step first and hold the packet: its receipts must end at frame six so
+			# both survivors still predict frame seven before the departure lands.
 			host._update_transport_clock()
 			var closing: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, 7, PackedByteArray([host._sample(7, slot)]))]
 			if peer.step(host.transport_us, closing).code != S.Code.OK:
