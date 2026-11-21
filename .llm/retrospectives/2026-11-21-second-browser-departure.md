@@ -29,6 +29,8 @@
 | 12 | The label exercises one second-departure frame (12 inputs); the earliest post-commit and last-tick departures are unrepresented. | coverage | Adversarial finding 4; recorded as a named gap in #166 |
 | 13 | The last survivor's `frames_submitted` and `departed` were not validated in second mode, so `frames_submitted: 0` or `departed: 'yes'` passed. | bug | Adversarial finding 5; required fields and negative controls |
 | 14 | A malformed peer-1 payload raised `KeyError`/`TypeError` from the cross-check instead of the validator's `ValueError` contract. | bug | Adversarial finding 6; shape checks and the cross-check after the per-peer loop |
+| 15 | The first departed row could be retargeted to another valid roster slot while the survivors still named the original slot. | bug | OpenAI review thread `4650187826`; slot/UUID tie and negative control |
+| 16 | Integer zero passed the last survivor's `departed: False` expectation because the type guard covered only integer expectations. | bug | OpenAI review thread `4650187829`; bool identity guard and negative control |
 
 ## Actions Taken
 
@@ -48,6 +50,8 @@
 | 12 | Keep the single schedule as an explicit gap instead of claiming boundary coverage. | #166 comment | named follow-up |
 | 13 | Require the survivor's 40 submitted frames and `departed: False`. | `webrtc_drop.py` | negative controls |
 | 14 | Type-check each peer's `result` and `rtc`, and resolve the second-departure cross-check after the loop. | `webrtc_drop.py` | negative controls for a missing `records`, a null `result` and a null `rtc` |
+| 15 | Tie the first departed row's slot and UUID to the survivors' departing slot. | `webrtc_drop.py`, `test_webrtc_drop.py` | retargeted-row negative control |
+| 16 | Require a real bool for boolean expectations. | `webrtc_drop.py`, `test_webrtc_drop.py` | integer-zero negative control |
 
 ## Prune Ledger
 
