@@ -121,7 +121,8 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         else:
             required += [('drop_events', 1), ('canonical_comparisons', 38), ('active_comparisons', 30)]
         for field, expected in required:
-            if row.get(field) != expected or (type(expected) is int and type(row.get(field)) is not int):
+            if (row.get(field) != expected or (type(expected) is int and type(row.get(field)) is not int)
+                    or (type(expected) is bool and type(row.get(field)) is not bool)):
                 raise ValueError('peer-drop agreement or canonical history incomplete')
         minimum_confirmed = 10 if second_departure and index == 1 else 38
         if (type(row.get('slot')) is not int or not 0 <= row['slot'] < 3
@@ -157,6 +158,13 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         second_id = hashlib.sha256(departed_second['uuid'].encode('ascii')).digest()[:8].hex()
         if last is None or proposer is None:
             raise ValueError('peer-drop second departure survivor missing')
+        first_row = records[0]['peers'][2]['result']['records'][0]
+        roster = last.get('roster')
+        first_slot = last.get('departing_slot')
+        if (not isinstance(roster, list) or type(first_slot) is not int or not 0 <= first_slot < len(roster)
+                or first_row.get('slot') != first_slot or first_row.get('uuid') != roster[first_slot]
+                or proposer.get('departing_slot') != first_slot):
+            raise ValueError('peer-drop first departure identity missing')
         second_slot = last.get('second_slot')
         second_frame = last.get('second_freeze_frame')
         frames = last.get('drop_frames')

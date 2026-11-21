@@ -280,6 +280,10 @@ class SecondDepartureEvidence(unittest.TestCase):
             row = last(value)
             first_id = hashlib.sha256(row['roster'][2].encode('ascii')).digest()[:8].hex()
             row['drop_frames'] = {first_id: 6}
+        def retarget_first(value):
+            row = first(value)
+            row['slot'] = 1
+            row['uuid'] = row['roster'][1]
         with self.assertRaisesRegex(ValueError, 'first departure evidence'):
             missing_first = copy.deepcopy(original)
             first(missing_first).pop('departure_sequence')
@@ -301,6 +305,8 @@ class SecondDepartureEvidence(unittest.TestCase):
             (lambda value: first(value).pop('uuid'), 'first departure evidence'),
             (lambda value: first(value).update(slot=0), 'first departure evidence'),
             (lambda value: first(value).update(roster=['00'] * 3), 'first departure evidence'),
+            (retarget_first, 'first departure identity'),
+            (lambda value: last(value).update(departed=0), 'agreement or canonical'),
             (lambda value: second(value).pop('uuid'), 'second departure evidence'),
             (lambda value: second(value).update(uuid=first(value)['uuid']), 'second departure evidence'),
             (lambda value: second(value).update(slot=0), 'second departure evidence'),
