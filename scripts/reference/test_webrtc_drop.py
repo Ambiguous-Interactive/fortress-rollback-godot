@@ -49,6 +49,9 @@ class PeerDropEvidence(unittest.TestCase):
             lambda value: value['records'][0]['peers'][0]['rtc']['teardown'].update(websockets_created=0),
             lambda value: value['records'][0]['peers'][0]['rtc']['teardown'].pop('websockets'),
             lambda value: value['records'][0]['peers'][0]['rtc']['teardown'].pop('websockets_created'),
+            lambda value: value['records'][0]['peers'][1].update(result=None),
+            lambda value: value['records'][0]['peers'][1]['result'].pop('records'),
+            lambda value: value['records'][0]['peers'][1].update(rtc=None),
         ]
         for field, replacement in [('drop_events', 2), ('canonical_comparisons', 0), ('active_comparisons', 0),
                                    ('freeze_frame', -1), ('frozen_value', '00'), ('minimum_confirmed', 0),
@@ -243,6 +246,109 @@ class MissingHistoryEvidence(unittest.TestCase):
             value['dropMissing'] = replacement
             with self.subTest(flag=replacement), self.assertRaisesRegex(ValueError, 'incomplete'):
                 validate_drop_browser(value, missing_history=True)
+
+
+def second_evidence():
+    value = evidence()
+    value['dropSecond'] = True
+    roster = value['records'][0]['peers'][0]['result']['records'][0]['roster']
+    first_id = hashlib.sha256(roster[2].encode('ascii')).digest()[:8].hex()
+    second_id = hashlib.sha256(roster[1].encode('ascii')).digest()[:8].hex()
+    first = value['records'][0]['peers'][2]['result']['records'][0]
+    first['departure_sequence'] = 1
+    second = value['records'][0]['peers'][1]['result']['records'][0]
+    second.update(departed=True, departure_sequence=2, frames_submitted=12, canonical_comparisons=10,
+                  active_comparisons=2, minimum_confirmed=10, drop_events=1, pending_events=1,
+                  drop_frames={first_id: 6}, commit_ack_peers=[], acknowledged_peers=[second_id])
+    last = value['records'][0]['peers'][0]['result']['records'][0]
+    last.update(drop_events=2, second_slot=1, second_freeze_frame=11, second_frontier=11, pending_events=1,
+                drop_frames={first_id: 6, second_id: 11}, commit_ack_peers=[second_id], acknowledged_peers=[],
+                second_frozen_value=bytes([(11 * 17 + 1 * 31 + 1) & 255]).hex())
+    return value
+
+
+class SecondDepartureEvidence(unittest.TestCase):
+    def test_second_browser_departure_requires_two_publications_and_the_last_frontier(self):
+        original = second_evidence()
+        self.assertIs(validate_drop_browser(original, second_departure=True), original)
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            validate_drop_browser(original)
+        second = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
+        last = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
+        first = lambda value: value['records'][0]['peers'][2]['result']['records'][0]
+        def without_second(value):
+            row = last(value)
+            first_id = hashlib.sha256(row['roster'][2].encode('ascii')).digest()[:8].hex()
+            row['drop_frames'] = {first_id: 6}
+        def retarget_first(value):
+            row = first(value)
+            row['slot'] = 1
+            row['uuid'] = row['roster'][1]
+        def non_ascii_first(value):
+            row = first(value)
+            row['uuid'] = row['roster'][2] = 'departed-\u00e9'
+        def retarget_second(value):
+            row = second(value)
+            row['roster'] = list(row['roster'])
+            row['uuid'] = row['roster'][1] = row['roster'][0]
+            target = last(value)
+            target['drop_frames'][hashlib.sha256(row['uuid'].encode('ascii')).digest()[:8].hex()] = target['second_freeze_frame']
+        with self.assertRaisesRegex(ValueError, 'first departure evidence'):
+            missing_first = copy.deepcopy(original)
+            first(missing_first).pop('departure_sequence')
+            validate_drop_browser(missing_first, second_departure=True)
+        mutations = [
+            (lambda value: value.update(dropSecond=False), 'incomplete'),
+            (lambda value: second(value).update(departed=False), 'second departure evidence'),
+            (lambda value: second(value).update(departure_sequence=1), 'second departure evidence'),
+            (lambda value: second(value).update(frames_submitted=40), 'second departure evidence'),
+            (lambda value: second(value).update(canonical_comparisons=11), 'second departure evidence'),
+            (lambda value: second(value).update(drop_events=2), 'second departure evidence'),
+            (lambda value: second(value).update(drop_events=True), 'second departure evidence'),
+            (lambda value: second(value).update(active_comparisons=1), 'active comparisons'),
+            (lambda value: second(value).update(minimum_confirmed=9), 'confirmation'),
+            (lambda value: first(value).update(departure_sequence=2), 'first departure evidence'),
+            (lambda value: first(value).update(departure_sequence=True), 'first departure evidence'),
+            (lambda value: first(value).update(frames_submitted=40), 'first departure evidence'),
+            (lambda value: first(value).update(uuid=second(value)['uuid']), 'first departure evidence'),
+            (lambda value: first(value).pop('uuid'), 'first departure evidence'),
+            (lambda value: first(value).update(slot=0), 'first departure evidence'),
+            (lambda value: first(value).update(roster=['00'] * 3), 'first departure evidence'),
+            (retarget_first, 'first departure identity'),
+            (lambda value: last(value).update(departed=0), 'agreement or canonical'),
+            (lambda value: second(value).pop('uuid'), 'second departure evidence'),
+            (lambda value: second(value).update(uuid=first(value)['uuid']), 'second departure evidence'),
+            (lambda value: second(value).update(slot=0), 'second departure evidence'),
+            (lambda value: last(value).update(drop_events=1), 'agreement or canonical'),
+            (lambda value: last(value).update(drop_events=3), 'agreement or canonical'),
+            (lambda value: last(value).update(active_comparisons=29), 'agreement or canonical'),
+            (lambda value: last(value).update(canonical_comparisons=0), 'agreement or canonical'),
+            (lambda value: last(value).update(frames_submitted=13), 'agreement or canonical'),
+            (lambda value: last(value).update(departed='yes'), 'agreement or canonical'),
+            (lambda value: last(value).update(drop_frames={}), 'publication frame'),
+            (lambda value: last(value).update(pending_events=0), 'publication frame'),
+            (without_second, 'second departure freeze'),
+            (lambda value: last(value).update(commit_ack_peers=[], acknowledged_peers=[]), 'first commit unconfirmed'),
+            (lambda value: last(value).update(commit_ack_peers=[['x']]), 'first commit unconfirmed'),
+            (lambda value: last(value).update(pending_events=2), 'publication frame'),
+            (lambda value: second(value).update(drop_frames={}), 'publication frame'),
+            (lambda value: second(value).update(pending_events=0), 'publication frame'),
+            (lambda value: second(value).update(pending_events=2), 'publication frame'),
+            (non_ascii_first, 'original identities invalid'),
+            (retarget_second, 'second departure freeze'),
+            (lambda value: last(value).update(second_slot=2), 'second departure freeze'),
+            (lambda value: last(value).update(second_slot=0), 'second departure freeze'),
+            (lambda value: last(value).update(second_slot='1'), 'second departure freeze'),
+            (lambda value: last(value).update(second_freeze_frame=9), 'second departure freeze'),
+            (lambda value: last(value).update(second_freeze_frame=12), 'second departure freeze'),
+            (lambda value: last(value).update(second_frontier=10), 'second departure freeze'),
+            (lambda value: last(value).update(second_frozen_value='00'), 'second departure freeze'),
+        ]
+        for index, (mutate, message) in enumerate(mutations):
+            value = copy.deepcopy(original)
+            mutate(value)
+            with self.subTest(mutation=index), self.assertRaisesRegex(ValueError, message):
+                validate_drop_browser(value, second_departure=True)
 
 
 class LostAnswerEvidence(unittest.TestCase):

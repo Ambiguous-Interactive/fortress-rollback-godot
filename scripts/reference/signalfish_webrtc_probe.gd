@@ -58,6 +58,7 @@ var recording_pressure: bool = false
 var pressure_service_turn: int = 0
 var mixed: Mixed = Mixed.new()
 var drop_enabled: bool = false
+var second_departure: bool = false
 var drop_witness: DropWitness = DropWitness.new()
 # The last service round moved bytes, sent bytes or still holds queued work.
 var _service_had_work: bool = false
@@ -66,6 +67,7 @@ func _ready() -> void:
 	recording_pressure = JavaScriptBridge.eval("window.fortressRecordingPressure || false")
 	frame_count = 257 if recording_pressure else 40
 	drop_enabled = JavaScriptBridge.eval("window.fortressPeerDrop || false")
+	second_departure = JavaScriptBridge.eval("window.fortressDropSecond || false")
 	mixed_enabled = JavaScriptBridge.eval("window.fortressMixed || false")
 	endpoint = JavaScriptBridge.eval("window.fortressEndpoint")
 	player_count = int(JavaScriptBridge.eval("window.fortressPlayers"))
@@ -82,8 +84,11 @@ func _run() -> void:
 	var control: bool = JavaScriptBridge.eval("window.fortressCorrupt || window.fortressDefaultFactory || window.fortressDropCorrupt || false")
 	if ok or control:
 		JavaScriptBridge.eval("document.body.dataset.fortressGameplayDone = 'true'")
+		# The departing pages stop servicing their endpoint so the survivor's
+		# disconnect timer sees the loss; they still wait for the shared teardown.
+		var departing: bool = drop_enabled and (local_index == 2 or (second_departure and local_index == 1))
 		if ok:
-			ok = await _wait(func() -> bool: return JavaScriptBridge.eval("window.fortressTeardownArmed || false"), not (drop_enabled and local_index == 2))
+			ok = await _wait(func() -> bool: return JavaScriptBridge.eval("window.fortressTeardownArmed || false"), not departing)
 			ok = ok and _healthy(true)
 		elif not await _wait_cleanup("window.fortressTeardownArmed || false"):
 			errors.append("teardown_barrier")

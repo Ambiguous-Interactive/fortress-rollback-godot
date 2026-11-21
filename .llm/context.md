@@ -83,6 +83,9 @@ until a skill is activated, so keep bodies focused and link to
    [code-review](./skills/code-review/SKILL.md); prefer deleting a layer over
    polishing it, and encode mechanical rules as checks rather than repeated
    prose (see [llm-harness](./skills/llm-harness/SKILL.md)).
+10. **Never weaken the check that judges a change.** A change may not modify
+    the test, lint rule, gate or fixture that proves it; fix the check
+    separately, with evidence.
 
 ## Session delivery and copy
 

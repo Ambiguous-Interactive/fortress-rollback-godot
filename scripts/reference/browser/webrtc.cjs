@@ -54,7 +54,7 @@ async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly
 
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault,
   disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false, dropClose = false,
-  dropAnswer = false, dropRelay = false, dropMissing = false, recordingPressure = false }) {
+  dropAnswer = false, dropRelay = false, dropMissing = false, dropSecond = false, recordingPressure = false }) {
   window.fortressRecordingPressure = recordingPressure;
   window.fortressEndpoint = endpoint;
   window.fortressPlayers = count;
@@ -68,6 +68,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   window.fortressPhysicalClose = physicalClose;
   window.fortressPeerDrop = peerDrop;
   window.fortressDropMissing = dropMissing;
+  window.fortressDropSecond = dropSecond;
   window.fortressDropCorrupt = dropCorrupt;
   window.fortressDropClose = dropClose || dropRelay;
   window.fortressDropRelay = dropRelay;
@@ -307,8 +308,9 @@ async function main() {
   const faults = process.argv[4] === 'faults';
   const corrupt = process.argv[4] === 'corrupt';
   const defaultFactory = process.argv[4] === 'default';
-  const peerDrop = ['peer-drop', 'peer-drop-corrupt', 'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing'].includes(process.argv[4]);
+  const peerDrop = ['peer-drop', 'peer-drop-corrupt', 'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-second'].includes(process.argv[4]);
   const dropMissing = process.argv[4] === 'peer-drop-missing';
+  const dropSecond = process.argv[4] === 'peer-drop-second';
   const dropCorrupt = process.argv[4] === 'peer-drop-corrupt';
   const dropClose = process.argv[4] === 'peer-drop-close';
   const dropAnswer = process.argv[4] === 'peer-drop-answer';
@@ -385,7 +387,7 @@ async function main() {
           });
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
             faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop,
-            dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, recordingPressure });
+            dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, dropSecond, recordingPressure });
           await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
         }
         await pages[0].waitForFunction(() => document.body.dataset.fortressRoom !== undefined, null, { timeout: 60000 });
@@ -397,6 +399,10 @@ async function main() {
           if (peerDrop) {
             const uuid = await pages[2].evaluate(() => document.body.dataset.fortressUuid);
             await Promise.all(pages.map(page => page.evaluate(value => { window.fortressDepartingUuid = value; }, uuid)));
+            if (dropSecond) {
+              const second = await pages[1].evaluate(() => document.body.dataset.fortressUuid);
+              await Promise.all(pages.map(page => page.evaluate(value => { window.fortressSecondUuid = value; }, second)));
+            }
           }
           await Promise.all(pages.map(page => page.evaluate(() => { window.fortressFirstStepReady = true; })));
           await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressFrame === '0' || document.body.dataset.fortressGameplayDone === 'true'
@@ -483,8 +489,8 @@ async function main() {
     console.log(JSON.stringify({ passed: true, browser: browserPair.join('/'),
       browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })),
       version: browsers[0].version(), browser_instances: 2, firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
-      faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, recordingPressure,
-      records, errors }));
+      faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose,
+      dropAnswer, dropRelay, dropMissing, dropSecond, recordingPressure, records, errors }));
   } catch (error) {
     failures.push(error);
     try {

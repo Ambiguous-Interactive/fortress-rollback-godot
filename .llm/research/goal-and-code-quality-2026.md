@@ -27,6 +27,12 @@ scan, 180-column source limit, two-hour session target). The goal is a session
 contract, not a second plan or backlog. Budget: 120 lines, enforced by the
 length linter and a repository-state test.
 
+The 2026-11-21 update adds the evidence contract that the upstream "green"
+sentence implies but does not spell out: a written spec and acceptance check,
+a red step explained before it is made green, the command and output quoted,
+and a prohibition on weakening the check that judges the change. The goal is
+still a contract, not a procedure; the procedure lives in the skills.
+
 The upstream loop says "repeat until all sub-agents agree". This repo caps the
 loop at one fix round. Fresh-context separation, not repeated rounds, is the
 measured active ingredient: repeated self-review in the same session did not
@@ -86,6 +92,8 @@ Adopted, because each closes a real gap or reinforces an existing gate:
 | Practice | Why it is useful here | Where it landed |
 | --- | --- | --- |
 | Characterization tests before refactoring | Records current behavior, including quirks, so a behavior-preserving refactor has a safety net | `skills/testing` |
+| Live baseline check | Start from the current CI, issues and PRs instead of a stale plan | `GOAL.md` objective |
+| End-to-end acceptance | A unit seam can pass while the real path is broken | `GOAL.md` work style |
 | Make the change easy, then make the easy change | Names the preparatory-refactoring move already implicit in the review discipline | `skills/testing` characterization section |
 | Small safe commits; refactor and behavior separate | Keeps each diff provable and reversible; matches Google's small-CL guidance | `GOAL.md` work style |
 | Extract determinism | A repeated mechanical rule belongs in a test, linter or generator, not prose | `GOAL.md` work style + `context.md` rule |
@@ -104,6 +112,8 @@ Rejected, because the cost exceeds the benefit for this repository:
 - Wholesale OWASP/IoT checklists: useful for a web service, not a GDScript
   rollback library; the relevant untrusted-input boundaries are already
   covered by `networking-transport` and the adversarial review.
+- The full 12-item checklist: the skills already own the procedure, and a
+  checklist in the goal would duplicate them and compete for attention.
 - A blanket 500-line file gate: the repository already enforces 300-line
   `.llm`, 180-line `PLAN.md`, 120-line `GOAL.md` and 180-column source limits.
   A source-line gate would duplicate review judgment instead of replacing it.
@@ -121,6 +131,13 @@ Rejected, because the cost exceeds the benefit for this repository:
 | Fresh-context review | The repo's existing evidence note records that fresh-context review beats same-session self-review; the Claude Code team also runs a fresh subagent review before PRs ([agentic verification](./agentic-verification-2026.md), [Claude Code review](https://claude.dev/blog/solving-code-review-at-anthropic/)). | Keep adversarial review for risky changes; do not replace it with repeated self-review. |
 | Property-based testing | Seeded properties plus shrinking find unknown unknowns while remaining reproducible ([fast-check](https://fast-check.dev/docs/introduction/why-property-based), [Antithesis](https://antithesis.com/docs/resources/property_based_testing)). | Existing determinism/metamorphic tests remain the right tool; no new framework needed. |
 | Definition of done | Outcome-oriented done separates output quality from impact ([Scrum.org](https://www.scrum.org/resources/blog/delivering-not-finish-line-outcome-and-impact)). | The goal names the outcome (green, reviewed, merged) before the task list. |
+| TDD inside the agent loop | A five-batch comparison found no clear quality advantage for TDD and 3-8x the tokens; up-front design was the stronger predictor ([Fowler](https://martinfowler.com/articles/exploring-gen-ai/tdd-in-the-agent-loop.html)). TDD-Bench requires tests that fail before the fix and pass after it ([arXiv:2412.02883](https://arxiv.org/abs/2412.02883)). | Keep red-green as evidence (fail for the stated reason, prove it), not as a ritual; require design before code. |
+| Verification evidence | Claude Code's guidance is to give the agent a check it can run and ask for the command and output, not a claim ([best practices](https://code.claude.com/docs/en/best-practices)). Anthropic's team reports E2E, property and differential tests as the highest-value verifiers ([verification](https://claude.dev/blog/how-the-claude-code-team-thinks-about-verification/)). | `GOAL.md` requires a quoted acceptance check, a real-path check, and data-driven checks. |
+| Deterministic instructions | Claude Code separates non-deterministic instructions (the model decides) from deterministic ones (hooks, deny rules, CI) and moves zero-exception rules to the latter ([best practices](https://code.claude.com/docs/en/best-practices)). | Prefer a check over prose; "extract determinism" when the same correction recurs. |
+| Review convergence | Anthropic caps review rounds, re-reviews only the diff after the first passes, flags the class of bug, and forbids repeating posted findings ([code review](https://claude.dev/blog/solving-code-review-at-anthropic/)). | `GOAL.md` caps at one fix round and re-reviews only the new diff; later findings are advisory unless correctness, security or structural. |
+| Changes cannot modify their own checks | Anthropic reads review config from the base branch, never from the PR, and reports that a change which can modify the check that judges it is broken ([verification](https://claude.dev/blog/how-the-claude-code-team-thinks-about-verification/)). | `GOAL.md` forbids weakening the test, lint rule, gate or fixture that judges the change; fix the check separately. |
+| Reviewer noise | A reviewer asked to find problems will always find something; Anthropic measures noise by how authors respond and drops style/cleanup findings ([code review](https://claude.dev/blog/solving-code-review-at-anthropic/)). | A finding must name a defect or a simpler alternative; zero revisions means no unresolved actionable finding, not an empty list. |
+| E2E and property checks | E2E is hard to fool because the whole feature works or it does not; property and differential tests find edge cases the author's examples miss ([verification](https://claude.dev/blog/how-the-claude-code-team-thinks-about-verification/)). | Prefer property/differential/table-driven checks; run the real path where observable. |
 
 ## 5. Decisions
 
@@ -130,6 +147,11 @@ Rejected, because the cost exceeds the benefit for this repository:
 | Structural pass in the existing review skill | Thermo-nuclear sources + addyosmani PR #304 | No new overlapping skill; `code-review` gains a "code judo" section |
 | Characterization before refactor | Kite + legacy-code practice | `testing` gains a short section and a rule |
 | Mechanical rules become checks | Kite "Extract Determinism", existing harness design | The goal cap is enforced by `check_llm_file_lengths`; required phrases and skill sections are pinned by `test_llm_repo_state` |
+| Evidence contract added | Verification guidance + test-gaming evidence | `GOAL.md` opens with done/evidence; `test_llm_repo_state` pins the evidence phrases |
+| Red-green kept, ritual rejected | Fowler TDD comparison + TDD-Bench | Goal says "evidence, not theater"; design first; triple proof stays in `testing` |
+| No self-modifying checks | Anthropic verification | Goal forbids weakening the check that judges the change |
+| Review convergence | Anthropic code review | One fix round; diff-only re-review; later findings advisory unless correctness/security/structural |
+| Phrase contract split by kind | Existing repository-state test | New evidence test; upstream/delivery/quality tests unchanged |
 | No wholesale Kite/OWASP/RACN adoption | Scope and maintenance cost | Keep the harness small; add only evidence-backed practices |
 
 ## 6. Open questions
@@ -137,9 +159,12 @@ Rejected, because the cost exceeds the benefit for this repository:
 - Measure the structural pass against a seeded defect corpus, using the method
   in [agentic-verification-2026](./agentic-verification-2026.md) §8. Detection
   per class and false-positive count are the dependent variables.
-- The goal cap is enforced by `check_llm_file_lengths`; keep the phrase
-  contract in the repository-state test. If the phrase list grows too broad,
-  split it by contract (upstream, delivery, quality) rather than weakening it.
-- Revisit the 120-line goal budget after a few sessions; the linter and test
-  make the budget explicit, so changing it is a visible decision rather than
-  drift.
+- The phrase contract is split into four tests by contract (upstream, delivery,
+  quality, evidence). Add a phrase only with a named failure it prevents; do
+  not weaken a test to make room.
+- Track the evidence contract in real sessions: count sessions where the red
+  step was quoted and explained, where a check was weakened, and where review
+  ran past one round. A clause that does not change behavior is a candidate for
+  deletion.
+- Revisit the 120-line goal budget after the evidence contract has run for a
+  few sessions; the linter and test make the budget a visible decision.
