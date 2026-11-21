@@ -526,6 +526,8 @@ async function main() {
                 window.fortressDepartingUuid = value; window.fortressDropGo = true;
               }, departedUuid)));
               if (dropProcess) {
+                await pages[2].waitForFunction(() => document.body.dataset.fortressHoldHealthy !== undefined,
+                  null, { timeout: 5000 });
                 processHeld = await pages[2].evaluate(() => ({
                   witness: document.body.dataset.fortressWebrtc ?? null,
                   teardown: document.body.dataset.fortressTeardownArmed ?? null,
