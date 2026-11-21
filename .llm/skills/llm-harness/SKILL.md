@@ -17,8 +17,8 @@ to the [Agent Skills](https://agentskills.io) `SKILL.md` standard.
 
 1. **Length caps**: 300 lines hard limit for scoped markdown (soft warning at
    270; "at limit" = critical); 180 lines for root `PLAN.md` (soft warning at
-   150); 50 lines for pointer files. Enforced by
-   `scripts/llm/check_llm_file_lengths.py`.
+   150); 120 lines for root `GOAL.md` (soft warning at 100); 50 lines for
+   pointer files. Enforced by `scripts/llm/check_llm_file_lengths.py`.
 2. **Generated files are never hand-edited**: `.llm/skills/index.md`,
    `.claude/skills/*/SKILL.md`, `.agents/skills/*/SKILL.md`. CI regenerates
    and fails on drift.
@@ -71,9 +71,9 @@ The root goal is the session contract, not a plan or a status log. Keep the
 upstream contract at the top (fully green, feedback addressed), then the
 repository-specific objective, work style, quality bar, review loop and
 progress rules. Procedure lives in skills; the goal links to them. It is
-capped at 120 lines, and `scripts/tests/test_llm_repo_state.py` pins its
-required phrases and budget so a future edit cannot silently drop the upstream
-contract.
+capped at 120 lines by `scripts/llm/check_llm_file_lengths.py`, and
+`scripts/tests/test_llm_repo_state.py` pins the upstream and delivery phrases
+so a future edit cannot silently drop the contract.
 
 ## Tooling Map
 

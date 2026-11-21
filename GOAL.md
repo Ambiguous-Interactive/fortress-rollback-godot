@@ -27,7 +27,7 @@ and the result is structurally sound.
 
 - **Task-based, red-green, data-backed, exploratory, science-driven.**
 - Research modern best practices and relevant SOTA techniques.
-- **Small, coherent commits** — keep behavior changes separate from refactors and tests.
+- **Small, coherent commits** — keep behavior changes and refactors in separate commits; ship the regression test with its fix.
 - Commit and push freely.
 - Address all non-trivial reviewer feedback and CI failures before moving to the next task.
 - Prefer a deterministic check (test, linter, generator) over a rule the agent must remember.
@@ -54,7 +54,7 @@ Every change must be:
 - **Robust and reliable** — not fragile or coupled to implementation details.
 - **Complete** — the whole class of problem is addressed, not just the one example.
 - **Structurally simple** — prefer the change that deletes a branch, helper, mode, or layer over one that rearranges the same complexity.
-- **Non-bloating** — no unnecessary files, tests, or scaffolding, and no file grows past its length cap by accretion.
+- **Non-bloating** — no unnecessary files, tests, or scaffolding, and no file grows past its length cap or healthy size by accretion.
 
 Before landing, review the diff for a "code judo" move: a behavior-preserving
 restructuring that makes the result dramatically simpler. If one exists, take
@@ -66,7 +66,8 @@ Target: consensus among all reviewers that the result needs zero revisions.
 
 - Run the structural pass in [.llm/skills/code-review/SKILL.md](.llm/skills/code-review/SKILL.md) on every non-trivial change.
 - Run a fresh-context adversarial review for risky changes, per [.llm/skills/adversarial-review/SKILL.md](.llm/skills/adversarial-review/SKILL.md).
-- A finding is not addressed until the fix is pushed and the same check passes.
+- Do not explicitly trigger bot reviews. The adversarial review and complete feedback scan are the review; no human approval is needed.
+- A finding is addressed by a pushed fix with a green check, or by a recorded, reproducible evidence-backed reason it is not a defect.
 
 ## Progress Tracking
 
@@ -77,8 +78,15 @@ Target: consensus among all reviewers that the result needs zero revisions.
 
 ## Sub-agent Loop
 
-1. Use sub-agents for parallel or specialized work when required.
-2. After a sub-agent completes, have an **adversarial sub-agent** review it critically.
-3. If recommendations exist, have another sub-agent evaluate and implement them.
-4. Repeat until all sub-agents agree the result is exceptional with zero issues (minor or otherwise).
-5. If not using sub-agents, apply this adversarial review loop on the main thread.
+1. Use sub-agents for parallel or specialized work; give each implementation
+   sub-agent its own worktree and a fresh context.
+2. After a sub-agent completes, have an **adversarial sub-agent** review it
+   critically (fresh context: the diff plus the relevant spec excerpt, never
+   the author's rationale).
+3. Address actionable findings in **at most one fix round**, then re-review the
+   updated diff once. An in-scope actionable finding blocks merge: fix it or
+   record reproducible evidence that it is not a defect. Do not loop past the
+   one fix round; repeated rounds past that point burn tokens without
+   measurably improving the result.
+4. If not using sub-agents, apply the same one-round adversarial review loop on
+   the main thread.

@@ -78,7 +78,9 @@ before refactoring. It records what the code does, including observed quirks;
 it is not a specification. Pick the smallest public seam, assert the actual
 output, add inputs until every branch you will touch is covered, and run it
 green before the first refactor. Keep it green after every step. Fix a
-characterized bug in a separate commit with its own regression test.
+characterized bug in a separate commit with its own regression test. When a
+change is awkward in the current design, make the change easy (a
+behavior-preserving refactor) first, then make the easy change.
 
 For high-risk changed logic, run a targeted mutation check on the changed
 files: break an operator or return value and require a named test to fail at
@@ -217,4 +219,5 @@ Any test that cannot run headless must justify itself in review.
 
 Related: [determinism](../determinism/SKILL.md),
 [rollback-fundamentals](../rollback-fundamentals/SKILL.md),
-[debugging](../debugging/SKILL.md).
+[debugging](../debugging/SKILL.md), and the
+[goal and code-quality evidence](../../research/goal-and-code-quality-2026.md).

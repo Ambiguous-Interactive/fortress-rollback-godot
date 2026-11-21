@@ -5,8 +5,9 @@ Three-tier ladder (mirrors the unity-helpers design):
 - == MAX_LINES       -> critical (at the boundary; fails with --fail-on-critical)
 - >  SOFT_WARN_LINES -> warning (only shown with --verbose)
 
-Root `PLAN.md` is checked separately against `PLAN_MAX_LINES`: it is a
-navigation map, not a status log, so it gets the tighter cap.
+Root `PLAN.md` is checked separately against `PLAN_MAX_LINES` (a navigation
+map, not a status log) and `GOAL.md` against `GOAL_MAX_LINES` (a session
+contract, not a backlog).
 
 Usage:
     python3 scripts/llm/check_llm_file_lengths.py [--verbose]
@@ -92,6 +93,19 @@ def check_plan(path: Path | None = None, verbose: bool = False) -> list[Finding]
     )
 
 
+def check_goal(path: Path | None = None, verbose: bool = False) -> list[Finding]:
+    """Check root GOAL.md against its dedicated session-contract cap."""
+    goal_path = Path(path) if path is not None else llm_paths.GOAL_PATH
+    if not goal_path.is_file():
+        return [Finding("error", goal_path, f"{goal_path}: file does not exist")]
+    return check_file(
+        goal_path,
+        verbose=verbose,
+        max_lines=llm_paths.GOAL_MAX_LINES,
+        soft_warn_lines=llm_paths.GOAL_SOFT_WARN_LINES,
+    )
+
+
 def check_paths(paths: list[Path], verbose: bool = False) -> list[Finding]:
     findings: list[Finding] = []
     for path in paths:
@@ -110,6 +124,7 @@ def check_scope(
     base = llm_paths.resolve_root(root)
     findings = check_paths(llm_paths.size_scope_files(base), verbose=verbose)
     findings.extend(check_plan(base / "PLAN.md", verbose=verbose))
+    findings.extend(check_goal(base / "GOAL.md", verbose=verbose))
     return findings
 
 
@@ -168,6 +183,8 @@ def main(argv: list[str] | None = None) -> int:
         findings = check_paths(in_scope, verbose=args.verbose)
         if Path("PLAN.md") in staged:
             findings.extend(check_plan(base / "PLAN.md", verbose=args.verbose))
+        if Path("GOAL.md") in staged:
+            findings.extend(check_goal(base / "GOAL.md", verbose=args.verbose))
     else:
         explicit: list[Path] = []
         directories: list[Path] = []
@@ -180,19 +197,28 @@ def main(argv: list[str] | None = None) -> int:
                 explicit.append(path)
         if args.paths:
             plan_paths: list[Path] = []
+            goal_paths: list[Path] = []
             others: list[Path] = []
             for path in explicit:
-                if path.resolve() == llm_paths.PLAN_PATH.resolve():
+                resolved = path.resolve()
+                if resolved == llm_paths.PLAN_PATH.resolve():
                     plan_paths.append(path)
+                elif resolved == llm_paths.GOAL_PATH.resolve():
+                    goal_paths.append(path)
                 else:
                     others.append(path)
             for directory in directories:
                 plan_path = directory / "PLAN.md"
                 if plan_path.is_file() or directory.resolve() == llm_paths.REPO_ROOT:
                     plan_paths.append(plan_path)
+                goal_path = directory / "GOAL.md"
+                if goal_path.is_file() or directory.resolve() == llm_paths.REPO_ROOT:
+                    goal_paths.append(goal_path)
             findings = check_paths(others, verbose=args.verbose)
             for plan_path in dict.fromkeys(plan_paths):
                 findings.extend(check_plan(plan_path, verbose=args.verbose))
+            for goal_path in dict.fromkeys(goal_paths):
+                findings.extend(check_goal(goal_path, verbose=args.verbose))
         else:
             findings = check_scope(verbose=args.verbose)
 

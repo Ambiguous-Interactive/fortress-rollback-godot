@@ -39,8 +39,9 @@ def make_min_repo(root: Path) -> None:
         pointer = root / rel
         pointer.parent.mkdir(parents=True, exist_ok=True)
         pointer.write_text(f"# Pointer\n\nSee [context]({link}).\n", encoding="utf-8")
-    # The root plan is part of the whole-scope length check.
+    # The root plan and goal are part of the whole-scope length check.
     (root / "PLAN.md").write_text("# Plan\n", encoding="utf-8")
+    (root / "GOAL.md").write_text("# Goal\n", encoding="utf-8")
 
 
 class MetaLintTest(unittest.TestCase):
