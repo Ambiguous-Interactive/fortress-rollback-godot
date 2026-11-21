@@ -105,6 +105,8 @@ func run(host: Node, count: int) -> bool:
 	var second_identity: PackedByteArray = host.memberships[0].identity(second_uuid) if not second_uuid.is_empty() else PackedByteArray()
 	var missing_history: bool = bool(JavaScriptBridge.eval("window.fortressDropMissing || false"))
 	var rollback_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropRollback || false"))
+	var room_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropRoom || false"))
+	var room_continue: bool = bool(JavaScriptBridge.eval("window.fortressDropRoomContinue || false"))
 	if missing_history and host.local_index == 2:
 		var own_slot: int = host.memberships[0].slot(host.clients[0].get_player_id())
 		var target_slot: int = 2147483647
@@ -146,11 +148,19 @@ func run(host: Node, count: int) -> bool:
 		):
 			host.errors.append("physical_departure_wait_timeout")
 			return false
+	elif room_departure:
+		if not await host._wait_passive(func() -> bool: return JavaScriptBridge.eval("window.fortressDropGo || false"), 4000000):
+			host.errors.append("peer_drop_room_gate")
+			return false
 	elif not await host._wait(
 		func() -> bool: return JavaScriptBridge.eval("window.fortressDropGo || false"),
 		not (rollback_departure and host.local_index == 2)
 	):
 		return false
+	if room_departure:
+		if host.local_index == 2:
+			return await _run_room_departure(host, count, slot, departing_uuid)
+		return await _run_room_fence(host, count, slot, departing_uuid, departing_slot, departing_identity, room_continue)
 	var pending_at_detection: int = -1
 	if host.local_index == 2:
 		var submitted: int = 7
@@ -429,6 +439,134 @@ func run(host: Node, count: int) -> bool:
 	row["minimum_confirmed"] = peer.status().confirmed_frame
 	row["rollback_loads"] = host.games[0].loads
 	row["direct"] = host._transport_totals()
+	host.records.append(row)
+	return true
+
+
+## A real room departure ends the frozen membership. The departing page leaves
+## the room and records the live event; the survivors observe the server event,
+## latch the adapter fence and never submit another input.
+func _run_room_departure(host: Node, count: int, slot: int, uuid: String) -> bool:
+	var room_code: String = host.clients[0].get_room_code()
+	var leave_code: int = host.clients[0].leave_room()
+	if leave_code != 0:
+		host.errors.append("peer_drop_room_leave_%d" % leave_code)
+		return false
+	for _attempt: int in 3000:
+		host.clients[0].poll()
+		if host.room_left_seen:
+			break
+		await host.get_tree().create_timer(0.002).timeout
+	if not host.room_left_seen:
+		host.errors.append("peer_drop_room_left_missing")
+		return false
+	host.records.append({
+		"players": count,
+		"departed": true,
+		"departure_sequence": 1,
+		"departure_kind": "room_left",
+		"slot": slot,
+		"frames_submitted": 7,
+		"uuid": uuid,
+		"roster": host.memberships[0].roster(),
+		"room_code_before": room_code,
+		"room_code_after": host.clients[0].get_room_code(),
+		"room_left": true,
+		"connected": host.clients[0].is_connected_to_server(),
+		"authenticated": host.clients[0].is_authenticated(),
+		"session_id": host.memberships[0].handshake_message().session_id.hex_encode(),
+	})
+	JavaScriptBridge.eval("document.body.dataset.fortressRoomLeft = 'true'")
+	return true
+
+
+func _run_room_fence(host: Node, count: int, slot: int, departing_uuid: String, departing_slot: int,
+		departing_identity: PackedByteArray, continue_after_fence: bool) -> bool:
+	var peer: RefCounted = host.peers[0]
+	var fence_frame: int = peer.status().current_frame
+	host.stage = "peer_drop_room_fence"
+	var fenced: bool = false
+	for _attempt: int in 3000:
+		host.clients[0].poll()
+		if host.room_player_left.has(departing_uuid) and host.adapters[0].status().route == "restart_required":
+			fenced = true
+			break
+		await host.get_tree().create_timer(0.002).timeout
+	print("ROOM_FENCE ", host.local_index, " departing=", departing_uuid, " events=", host.room_player_left, " route=", host.adapters[0].status().route)
+	if not fenced:
+		host.errors.append("peer_drop_room_fence")
+		return false
+	var status: Dictionary = host.adapters[0].status()
+	var frozen_roster: PackedStringArray = host.memberships[0].roster()
+	var room_roster_after: PackedStringArray = PackedStringArray()
+	for player: RefCounted in host.clients[0].get_players():
+		room_roster_after.append(player.id)
+	var drop_events: int = 0
+	var pending_events: int = 0
+	for event: Dictionary in events:
+		if event.kind == "peer_dropped":
+			drop_events += 1
+		elif event.kind == "peer_drop_pending":
+			pending_events += 1
+	var barrier_open: bool = peer._drops.barrier(departing_identity.hex_encode()) != null
+	var row: Dictionary = {
+		"players": count,
+		"departed": false,
+		"slot": slot,
+		"uuid": host.clients[0].get_player_id(),
+		"roster": frozen_roster,
+		"frames_submitted": 7,
+		"fence_frame": fence_frame,
+		"frames_after_fence": 0,
+		"room_fenced": true,
+		"fence_route": status.route,
+		"fence_error": int(status.error),
+		"fence_lifetime_revision": int(status.lifetime_revision),
+		"player_left_events": host.room_player_left.duplicate(),
+		"departed_slot": departing_slot,
+		"departed_uuid": departing_uuid,
+		"frozen_roster": frozen_roster,
+		"room_roster_after": room_roster_after,
+		"local_uuid": host.clients[0].get_player_id(),
+		"session_id": host.memberships[0].handshake_message().session_id.hex_encode(),
+		"drop_events": drop_events,
+		"drop_pending_events": pending_events,
+		"barrier_open": barrier_open,
+		"direct": host._transport_totals(),
+		"mixed": host.mixed.report() if host.mixed_enabled else {},
+	}
+	if fence_frame != 7 or status.route != "restart_required" or departing_slot < 0 \
+		or departing_slot >= frozen_roster.size() or slot == departing_slot \
+		or frozen_roster[departing_slot] != departing_uuid:
+		host.errors.append("peer_drop_room_fence")
+		return false
+	if room_roster_after.size() != count - 1 or room_roster_after.has(departing_uuid) \
+		or host.clients[0].get_player_id() == departing_uuid:
+		host.errors.append("peer_drop_room_identity")
+		return false
+	if drop_events != 0 or pending_events != 0 or barrier_open:
+		host.errors.append("peer_drop_room_drop_publication")
+		return false
+	JavaScriptBridge.eval("document.body.dataset.fortressRoomFenced = 'true'")
+	if continue_after_fence:
+		host._update_transport_clock()
+		var continued: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, fence_frame, PackedByteArray([host._sample(fence_frame, slot)]))]
+		var code: int = peer.step(host.transport_us, continued).code
+		if code == S.Code.OK:
+			row["frames_after_fence"] = 1
+			JavaScriptBridge.eval("document.body.dataset.fortressFrame = '%d'" % (fence_frame + 1))
+		row["continue_code"] = code
+		host.records.append(row)
+		host.stage = "peer_drop_room"
+		host.errors.append("peer_drop_room_continued")
+		return false
+	var observed_started: int = Time.get_ticks_usec()
+	while Time.get_ticks_usec() - observed_started < 250000:
+		host.clients[0].poll()
+		if peer.status().current_frame != fence_frame:
+			host.errors.append("peer_drop_room_continued")
+			return false
+		await host.get_tree().create_timer(0.002).timeout
 	host.records.append(row)
 	return true
 

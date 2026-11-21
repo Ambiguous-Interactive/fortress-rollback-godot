@@ -151,6 +151,38 @@ failure and reconnect latch `restart_required`. A late plan cannot clear this
 fence. Stop the old peer and create a new session; reconnect alone is no proof
 that rollback history or membership remains recoverable.
 
+### Room departure and process death end the session
+
+The frozen roster is the membership lifetime. A live room-roster change is not
+an endpoint-silence drop: when the server announces a departure
+(`player_left`), a voluntary exit (`room_left`), a join, a reconnect or a
+connection failure, the seam latches `restart_required`, detaches the SDK mesh
+and refuses every later plan and byte. Destroying the browser process reaches
+the same path once the server notices the closed socket; the explicit room
+event and the eventual roster update are the same lifetime change. The
+application must stop the peer and create a new session. `disconnect_behavior
+= CONTINUE` in the rollback core is authorized only by endpoint silence while
+every frozen member is still a room member; a room event that reaches the seam
+always fences, even if a coordinated drop already committed. A committed
+freeze keeps its certified history, but the changed membership still ends the
+match.
+
+The slot mapping never moves. The departed UUID remains at its original slot
+in the frozen roster, is absent from the live room roster, and is never
+reassigned to a survivor or a later joiner. A player that reconnects or
+rejoins needs a new session ID and a new frozen roster; the old session's
+`restart_required` fence is final and a reconnected identity cannot revive it.
+`player_joined` and `player_reconnected` latch the same fence, so a new
+occupant cannot enter the old agreement under a reused slot.
+
+The exported `peer-drop-room` label proves the fence end to end: three pages
+play seven inputs in a real room, one leaves the room, both survivors observe
+`player_left`, latch `restart_required`, keep the frozen roster and slot,
+publish no drop and submit no further input. The
+`peer-drop-room-continue` control deliberately advances a survivor after the
+fence and fails with `peer_drop_room_continued`, so the no-continuation check
+is live rather than assumed.
+
 Synchronous SDK callbacks cannot replace an ended lifetime while attach, plan
 conversion or mesh teardown returns. Teardown marks the mesh released before calling
 the SDK, and refuses nested plan acceptance or replacement attach until it returns.

@@ -1,7 +1,7 @@
 // Value: constructor tracking charges orphan connections that never create a data channel.
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { instrument, isDropCanonicalFailure, resourcesClosed, closeDepartingRtc } = require('./webrtc.cjs');
+const { instrument, isDropCanonicalFailure, isRoomContinueFailure, resourcesClosed, closeDepartingRtc } = require('./webrtc.cjs');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
@@ -343,6 +343,21 @@ test('drop corruption fails only at an actually compared active post-drop frame'
   }
   for (const value of [null, {}, { passed: false, failure: { stage: 'peer_drop_gameplay', errors: ['peer_drop_unconfirmed'] } }])
     assert.equal(isDropCanonicalFailure(value), false);
+});
+
+// Value: the room-fence control must fail for its named post-fence step, not from an unrelated failure.
+test('room departure control fails only at the post-fence continuation', () => {
+  assert.equal(isRoomContinueFailure({ passed: false, failure: {
+    stage: 'peer_drop_room', errors: ['peer_drop_room_continued'],
+  } }), true);
+  for (const failure of [
+    { stage: 'peer_drop_room', errors: [] },
+    { stage: 'peer_drop_room', errors: ['peer_drop_room_continued', 'other'] },
+    { stage: 'peer_drop_gameplay', errors: ['peer_drop_room_continued'] },
+    { stage: 'peer_drop_room', errors: ['peer_drop_room_fence'] },
+  ]) assert.equal(isRoomContinueFailure({ passed: false, failure }), false);
+  for (const value of [null, {}, { passed: true, failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'] } }])
+    assert.equal(isRoomContinueFailure(value), false);
 });
 
 // Value: actual browser teardown waits for signaling closure before contexts can hide leaked sockets.

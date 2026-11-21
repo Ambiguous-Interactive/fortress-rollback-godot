@@ -23,10 +23,131 @@ def _departing_row(row, sequence, frames):
             and isinstance(roster, list) and len(roster) == 3 and roster[slot] == row['uuid'])
 
 
+def _room_physical(peer):
+    rtc = peer.get('rtc')
+    if not isinstance(rtc, dict) or any(type(rtc.get(field)) is not int or rtc[field] < 1 for field in ('sent', 'received')):
+        raise ValueError('room-departure physical packet evidence missing')
+    witness = peer.get('result')
+    if not isinstance(witness, dict):
+        raise ValueError('room-departure gameplay result missing')
+    channels = rtc.get('channels')
+    if not isinstance(channels, list) or len(channels) != 6:
+        raise ValueError('room-departure channel inventory incomplete')
+    if any(type(channel.get('id')) is not int for channel in channels):
+        raise ValueError('room-departure channel identity is not an integer')
+    if any(sum(channel.get('id') == channel_id for channel in channels) != 2 for channel_id in (1, 2, 3)):
+        raise ValueError('room-departure channel IDs incomplete')
+    for channel in channels:
+        if channel.get('id') != 3: continue
+        if (channel.get('ordered') is not False or channel.get('negotiated') is not True
+                or type(channel.get('maxPacketLifeTime')) is not int or channel['maxPacketLifeTime'] != 1
+                or channel.get('maxRetransmits', False) is not None
+                or any(type(channel.get(field)) is not int or channel[field] < 1 for field in ('sent', 'received'))):
+            raise ValueError('room-departure unreliable physical delivery missing')
+    teardown = rtc.get('teardown', {})
+    if (type(teardown.get('channels')) is not int or teardown['channels'] != 6 or type(teardown.get('connections_created')) is not int
+            or teardown['connections_created'] < 2 or type(teardown.get('connections')) is not int
+            or teardown['connections'] != teardown['connections_created']
+            or type(teardown.get('websockets_created')) is not int or teardown['websockets_created'] < 1
+            or type(teardown.get('websockets')) is not int or teardown['websockets'] != teardown['websockets_created']):
+        raise ValueError('room-departure browser resources survived teardown')
+    return rtc, witness
+
+
+def _room_departing_row(row, roster, session):
+    return (row.get('departed') is True
+            and type(row.get('departure_sequence')) is int and row['departure_sequence'] == 1
+            and row.get('departure_kind') == 'room_left'
+            and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 7
+            and isinstance(row.get('uuid'), str) and row['uuid'] in roster
+            and type(row.get('slot')) is int and 0 <= row['slot'] < 3 and roster[row['slot']] == row['uuid']
+            and row.get('roster') == roster
+            and isinstance(row.get('room_code_before'), str) and row['room_code_before']
+            and row.get('room_code_after') == ''
+            and row.get('room_left') is True
+            and row.get('connected') is True and row.get('authenticated') is True
+            and row.get('session_id') == session)
+
+
+def _room_survivor_row(row, roster, departed_uuid, departed_slot, session):
+    live = row.get('room_roster_after')
+    survivor_uuids = [uuid for slot, uuid in enumerate(roster) if slot != departed_slot]
+    return (row.get('departed') is False
+            and type(row.get('slot')) is int and 0 <= row['slot'] < 3
+            and isinstance(row.get('uuid'), str) and row.get('uuid') == row.get('local_uuid')
+            and row['uuid'] in roster and roster[row['slot']] == row['uuid']
+            and row['uuid'] != departed_uuid
+            and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 7
+            and type(row.get('fence_frame')) is int and row['fence_frame'] == 7
+            and type(row.get('frames_after_fence')) is int and row['frames_after_fence'] == 0
+            and row.get('room_fenced') is True
+            and row.get('fence_route') == 'restart_required'
+            and type(row.get('fence_error')) is int and row['fence_error'] != 0
+            and type(row.get('fence_lifetime_revision')) is int and row['fence_lifetime_revision'] >= 0
+            and isinstance(row.get('player_left_events'), list)
+            and departed_uuid in row['player_left_events']
+            and all(isinstance(item, str) and _UUID.fullmatch(item) for item in row['player_left_events'])
+            and row.get('roster') == roster and row.get('frozen_roster') == roster
+            and type(row.get('departed_slot')) is int and row['departed_slot'] == departed_slot
+            and row.get('departed_uuid') == departed_uuid
+            and isinstance(live, list) and sorted(live) == sorted(survivor_uuids)
+            and row.get('drop_events') == 0 and row.get('drop_pending_events') == 0
+            and row.get('barrier_open') is False
+            and isinstance(row.get('session_id'), str) and re.fullmatch(r'[0-9a-f]{32}', row['session_id'])
+            and row.get('session_id') == session)
+
+
+def _validate_room_evidence(result, room_departure, room_continue):
+    peers = result['records'][0]['peers']
+    rows = []
+    for index, peer in enumerate(peers):
+        _room_physical(peer)
+        witness = peer.get('result')
+        if room_continue and index < 2:
+            failure = witness.get('failure', {})
+            if (witness.get('passed') is not False or failure.get('stage') != 'peer_drop_room'
+                    or failure.get('errors') != ['peer_drop_room_continued']):
+                raise ValueError('room-departure continuation control did not fail at the fence')
+            rows.append(None)
+            continue
+        if witness.get('passed') is not True:
+            raise ValueError('room-departure witness did not complete')
+        records = witness.get('records')
+        if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
+            raise ValueError('room-departure witness record missing')
+        rows.append(records[0])
+    departed = rows[2]
+    roster = departed.get('roster') if isinstance(departed, dict) else None
+    if (not isinstance(roster, list) or len(roster) != 3
+            or any(not isinstance(uuid, str) or not _UUID.fullmatch(uuid) for uuid in roster)
+            or roster != sorted(roster) or len(set(roster)) != 3):
+        raise ValueError('room-departure frozen roster invalid')
+    session = departed.get('session_id')
+    if not isinstance(session, str) or not re.fullmatch(r'[0-9a-f]{32}', session):
+        raise ValueError('room-departure session identity invalid')
+    if not _room_departing_row(departed, roster, session):
+        raise ValueError('room-departure departing page evidence invalid')
+    if room_continue:
+        return result
+    departed_slot, departed_uuid = departed['slot'], departed['uuid']
+    for row in rows[:2]:
+        if not _room_survivor_row(row, roster, departed_uuid, departed_slot, session):
+            raise ValueError('room-departure survivor fence invalid')
+    if sorted([departed_slot, rows[0]['slot'], rows[1]['slot']]) != [0, 1, 2]:
+        raise ValueError('room-departure roster slots changed')
+    if len({(row['fence_frame'], row['departed_slot'], row['departed_uuid']) for row in rows[:2]}) != 1:
+        raise ValueError('room-departure survivors disagreed on the fence')
+    return result
+
+
 def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False,
-                          missing_history=False, second_departure=False, rollback_departure=False, foreign_proposal=False):
-    if (second_departure and rollback_departure) or (foreign_proposal and (
-            corrupt or physical_close or lost_answer or relay_only or missing_history or second_departure or rollback_departure)):
+                           missing_history=False, second_departure=False, rollback_departure=False, foreign_proposal=False,
+                           room_departure=False, room_continue=False):
+    if (second_departure and rollback_departure) or (room_departure and room_continue) or (
+            (room_departure or room_continue) and (
+                corrupt or physical_close or lost_answer or relay_only or missing_history or second_departure or rollback_departure)) or (
+            foreign_proposal and (
+                corrupt or physical_close or lost_answer or relay_only or missing_history or second_departure or rollback_departure)):
         raise ValueError('peer-drop modes are exclusive')
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('peerDrop') is not True
             or result.get('dropCorrupt') is not corrupt or result.get('dropAnswer', False) is not lost_answer
@@ -34,6 +155,8 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
             or result.get('dropMissing', False) is not missing_history
             or result.get('dropSecond', False) is not second_departure or result.get('dropRollback', False) is not rollback_departure
             or result.get('dropForeign', False) is not foreign_proposal
+            or result.get('dropRoom', False) is not room_departure
+            or result.get('dropRoomContinue', False) is not room_continue
             or result.get('errors') != []
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2):
         raise ValueError('peer-drop browser run incomplete')
@@ -41,6 +164,8 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
     if (not isinstance(records, list) or len(records) != 1 or type(records[0].get('players')) is not int
             or records[0]['players'] != 3 or len(records[0].get('peers', [])) != 3):
         raise ValueError('peer-drop requires three real exported peers')
+    if room_departure or room_continue:
+        return _validate_room_evidence(result, room_departure, room_continue)
     survivors = []
     for index, peer in enumerate(records[0]['peers']):
         rtc = peer.get('rtc')

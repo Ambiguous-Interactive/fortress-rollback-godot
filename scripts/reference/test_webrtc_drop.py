@@ -507,5 +507,112 @@ class ForeignProposalEvidence(unittest.TestCase):
             validate_drop_browser(empty, foreign_proposal=True)
 
 
+def room_evidence(control=False):
+    value = evidence()
+    value['dropRoom'] = not control
+    value['dropRoomContinue'] = control
+    roster = value['records'][0]['peers'][0]['result']['records'][0]['roster']
+    departed_uuid, departed_slot = roster[2], 2
+    session = 'ab' * 16
+    for index in range(2):
+        row = value['records'][0]['peers'][index]['result']['records'][0]
+        for key in list(row):
+            if key not in ('players', 'departed', 'slot', 'uuid', 'roster'):
+                del row[key]
+        row.update(frames_submitted=7, fence_frame=7, frames_after_fence=0, room_fenced=True,
+                   fence_route='restart_required', fence_error=19, fence_lifetime_revision=3,
+                   player_left_events=[departed_uuid], departed_slot=departed_slot,
+                   departed_uuid=departed_uuid, frozen_roster=roster,
+                   room_roster_after=sorted([roster[0], roster[1]]), local_uuid=roster[index],
+                   session_id=session, drop_events=0, drop_pending_events=0, barrier_open=False)
+    departed = value['records'][0]['peers'][2]['result']['records'][0]
+    departed.update(departure_kind='room_left', room_code_before='ROOM-CODE', room_code_after='',
+                    room_left=True, connected=True, authenticated=True, session_id=session)
+    if control:
+        for index in range(2):
+            value['records'][0]['peers'][index]['result'] = {
+                'passed': False, 'failure': {'stage': 'peer_drop_room', 'errors': ['peer_drop_room_continued']}}
+    return value
+
+
+class RoomDepartureEvidence(unittest.TestCase):
+    def test_room_departure_fences_survivors_and_keeps_the_frozen_identity(self):
+        original = room_evidence()
+        self.assertIs(validate_drop_browser(original, room_departure=True), original)
+        control = room_evidence(control=True)
+        self.assertIs(validate_drop_browser(control, room_continue=True), control)
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            validate_drop_browser(original)
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            validate_drop_browser(control, room_departure=True)
+        for mode in ('corrupt', 'physical_close', 'lost_answer', 'relay_only', 'missing_history',
+                     'second_departure', 'rollback_departure'):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, 'exclusive'):
+                validate_drop_browser(original, room_departure=True, **{mode: True})
+        with self.assertRaisesRegex(ValueError, 'exclusive'):
+            validate_drop_browser(original, room_departure=True, room_continue=True)
+        survivor = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
+        second = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
+        departed = lambda value: value['records'][0]['peers'][2]['result']['records'][0]
+        roster = original['records'][0]['peers'][0]['result']['records'][0]['roster']
+        mutations = [
+            (lambda value: value.update(dropRoom=False), 'incomplete'),
+            (lambda value: value.update(dropRoomContinue=True), 'incomplete'),
+            (lambda value: departed(value).update(frames_submitted=8), 'departing page'),
+            (lambda value: departed(value).update(departure_sequence=2), 'departing page'),
+            (lambda value: departed(value).update(departure_kind='close'), 'departing page'),
+            (lambda value: departed(value).update(room_left=False), 'departing page'),
+            (lambda value: departed(value).update(room_code_after='ROOM-CODE'), 'departing page'),
+            (lambda value: departed(value).update(connected=False), 'departing page'),
+            (lambda value: departed(value).update(session_id='not-hex'), 'session identity'),
+            (lambda value: departed(value).update(roster=list(reversed(roster))), 'frozen roster'),
+            (lambda value: departed(value).update(uuid=roster[1]), 'departing page'),
+            (lambda value: survivor(value).update(room_fenced=False), 'survivor fence'),
+            (lambda value: survivor(value).update(fence_route='mesh'), 'survivor fence'),
+            (lambda value: survivor(value).update(fence_error=0), 'survivor fence'),
+            (lambda value: survivor(value).update(fence_frame=6), 'survivor fence'),
+            (lambda value: survivor(value).update(fence_frame=8), 'survivor fence'),
+            (lambda value: survivor(value).update(frames_after_fence=1), 'survivor fence'),
+            (lambda value: survivor(value).update(frames_submitted=8), 'survivor fence'),
+            (lambda value: survivor(value).update(player_left_events=[]), 'survivor fence'),
+            (lambda value: survivor(value).update(player_left_events=[roster[0]]), 'survivor fence'),
+            (lambda value: survivor(value).update(player_left_events=['not-a-uuid']), 'survivor fence'),
+            (lambda value: survivor(value).update(frozen_roster=[roster[0], roster[1], roster[0]]), 'survivor fence'),
+            (lambda value: survivor(value).update(departed_slot=1), 'survivor fence'),
+            (lambda value: survivor(value).update(departed_uuid=roster[0]), 'survivor fence'),
+            (lambda value: survivor(value).update(room_roster_after=roster), 'survivor fence'),
+            (lambda value: survivor(value).update(room_roster_after=[]), 'survivor fence'),
+            (lambda value: survivor(value).update(local_uuid=roster[2]), 'survivor fence'),
+            (lambda value: survivor(value).update(uuid=roster[2]), 'survivor fence'),
+            (lambda value: survivor(value).update(drop_events=1), 'survivor fence'),
+            (lambda value: survivor(value).update(drop_pending_events=1), 'survivor fence'),
+            (lambda value: survivor(value).update(barrier_open=True), 'survivor fence'),
+            (lambda value: survivor(value).update(session_id='cd' * 16), 'survivor fence'),
+            (lambda value: survivor(value).update(slot=2), 'survivor fence'),
+        ]
+        for index, (mutate, message) in enumerate(mutations):
+            value = copy.deepcopy(original)
+            mutate(value)
+            with self.subTest(mutation=index), self.assertRaisesRegex(ValueError, message):
+                validate_drop_browser(value, room_departure=True)
+        control_mutations = [
+            (lambda value: value['records'][0]['peers'][0]['result'].update(passed=True), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(stage='peer_drop_gameplay'), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(errors=[]), 'continuation control'),
+            (lambda value: value['records'][0]['peers'][0]['result']['failure'].update(errors=['peer_drop_room_continued', 'x']), 'continuation control'),
+        ]
+        for index, (mutate, message) in enumerate(control_mutations):
+            value = copy.deepcopy(control)
+            mutate(value)
+            with self.subTest(control=index), self.assertRaisesRegex(ValueError, message):
+                validate_drop_browser(value, room_continue=True)
+        # The survivors may be the other two pages; identity checks follow the
+        # departed row instead of the page index.
+        swapped = copy.deepcopy(original)
+        swapped['records'][0]['peers'][0], swapped['records'][0]['peers'][1] = (
+            swapped['records'][0]['peers'][1], swapped['records'][0]['peers'][0])
+        self.assertIs(validate_drop_browser(swapped, room_departure=True), swapped)
+
+
 if __name__ == '__main__':
     unittest.main()
