@@ -515,6 +515,18 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         self.assertEqual(labels, {label for label in probe.LABELS if label.startswith('peer-drop')},
                          'a peer-drop label missing from the launcher runs as an ordinary room set')
 
+    def test_direct_job_counts_documented_in_jobs_md_match_runner_tables(self):
+        direct = [label for label in probe.LABELS
+                  if label not in ('mixed', 'mixed-default', 'mixed-close', 'recording-pressure')]
+        rooms = sum(webrtc_runner.room_count(label) for label in direct)
+        waves = webrtc_runner.label_waves(direct, overlap=True)
+        peer_drop = [label for label in direct if label.startswith('peer-drop')]
+        peer_waves = [wave for wave in waves if any(label.startswith('peer-drop') for label in wave)]
+        text = (ROOT / 'docs/reference/jobs.md').read_text()
+        self.assertIn(f'{len(direct)} labels, {rooms} rooms in total', text)
+        self.assertIn(f"The `direct` job's {len(direct)} labels pack into {len(waves)} waves", text)
+        self.assertIn(f'the {len(peer_drop)} `peer-drop` labels share {len(peer_waves)}', text)
+
     def test_label_waves_hold_the_hosted_page_budget_and_serial_pairs_repeat_history(self):
         serial = webrtc_runner.label_waves(['clean', 'faults'], overlap=False)
         self.assertEqual(serial, [['clean'], ['faults']], 'a headed pair keeps the historical serial run')
