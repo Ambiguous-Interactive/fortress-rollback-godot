@@ -61,6 +61,8 @@ var drop_enabled: bool = false
 var room_departure: bool = false
 var room_player_left: Array[String] = []
 var room_left_seen: bool = false
+var pending_seen: bool = false
+var process_missing: bool = false
 var second_departure: bool = false
 var drop_witness: DropWitness = DropWitness.new()
 # The last service round moved bytes, sent bytes or still holds queued work.
@@ -71,6 +73,7 @@ func _ready() -> void:
 	frame_count = 257 if recording_pressure else 40
 	drop_enabled = JavaScriptBridge.eval("window.fortressPeerDrop || false")
 	room_departure = JavaScriptBridge.eval("window.fortressDropRoom || false")
+	process_missing = JavaScriptBridge.eval("window.fortressDropProcessMissing || false")
 	second_departure = JavaScriptBridge.eval("window.fortressDropSecond || false")
 	mixed_enabled = JavaScriptBridge.eval("window.fortressMixed || false")
 	endpoint = JavaScriptBridge.eval("window.fortressEndpoint")
@@ -112,7 +115,8 @@ func _run() -> void:
 			errors.append("teardown_barrier")
 	_cleanup()
 	if not ok or not errors.is_empty():
-		_publish({"passed": false, "failure": {"players": player_count, "stage": stage, "errors": errors, "peer_failures": peer_failures, "records": records}})
+		_publish({"passed": false, "failure": {"players": player_count, "stage": stage, "local_index": local_index,
+			"errors": errors, "peer_failures": peer_failures, "records": records}})
 		return
 	_publish({"passed": true, "records": records, "binary_receives": received_binary})
 
@@ -380,9 +384,12 @@ func _observe_client(client: SDK) -> void:
 	for signal_name: String in MEMBERSHIP_SIGNALS:
 		client.connect(signal_name, func(_first: Variant = null, _second: Variant = null) -> void:
 			if membership_frozen:
-				if room_departure and signal_name == "player_left" and _first is String and local_index != 2:
-					room_player_left.append(_first)
-					return
+				if room_departure and signal_name == "player_left" and _first is String:
+					if local_index != 2:
+						room_player_left.append(_first)
+						return
+					if process_missing:
+						return
 				_record_failure(signal_name))
 
 

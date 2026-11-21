@@ -1,0 +1,55 @@
+# Retrospective: 2026-11-21 process death and post-drop room fence
+
+## Work Under Review
+
+- Scope: the `peer-drop-process` and `peer-drop-room-after-drop` exported
+  witnesses; the `peer-drop-process-missing` and `peer-drop-room-before-drop`
+  controls; the Node, GDScript and Python evidence paths; runner, workflow,
+  owned-log and probe-limit wiring; docs, CHANGELOG and PLAN.
+- Trigger: #436, the remaining orderings from the coordinated-drop live
+  witness.
+- Evidence base: exported Chromium and headed Firefox runs on 4.3 and 4.7.2,
+  `peer-drop` and `peer-drop-room` regressions, `make gate`,
+  `make test-reference`, `make test-oracle`, `make lint-source`, the Node and
+  Python unit suites, the current-head Gate and the feedback scan.
+
+## Findings
+
+| # | Finding | Type | Evidence |
+| --- | --- | --- | --- |
+| 1 | A process death is a server-announced membership event like an explicit leave, but the departing page cannot publish evidence after its context closes. Read the UUID in the Node harness before the close and collect only the two survivor rows; a departed row would prove the harness had not actually killed the page. | design | `webrtc.cjs` `evidencePages = pages.slice(0, 2)`; real rows `fence_frame: 7`, `player_left_events: [departed]`, no third row |
+| 2 | A post-drop room event must keep the normal drop row intact and add the fence fields; the follower is committed with `certified: false` because only the coordinator carries the certificate. Requiring `certified` on both survivors failed the follower before it published `fortressDropComplete`. | bug | first `peer-drop-room-after-drop` run: survivor 1 `peer_drop_room_after_drop_uncertified`; final rows `freeze_frame: 6`, `frozen_value: 67`, 38 canonical prefixes, fence at 40 |
+| 3 | Browser `SceneTree` timers are frame-bound, so `3000 x 2 ms` is about 50 s at 60 Hz, not 6 s. The missing-event control outlived the Node deadline until the fence wait used a wall-clock ten-second bound. | bug | first control run timed out the Node's 30 s wait; final control passes in 15 s |
+| 4 | Withholding the room event is not just "do nothing": when the departing page stops polling, the server announces its closed socket at the 4 s gate timeout and manufactures the `player_left` the control exists to withhold. The departing page must keep polling its signaling client and the Node must release it only after both survivor fence waits fail. | design | first two control runs both fenced; `_wait_gate_keepalive` + `fortressDropRoomGiveUp` |
+| 5 | A room event before the drop commit must park the survivors before the barrier can commit: service the peer until `peer_drop_pending`, then poll only the signaling client. The final rows record `barrier_state: pending`, `barrier_certified: false`, `barrier_value: ''`, `freeze_frame: -1`, 6 unchanged canonical prefixes and no drop event. | design | `_run_pending_room_fence`; real `peer-drop-room-before-drop` rows |
+| 6 | The process-death identity must come from the harness, not a survivor. The Python validator requires `departedUuid` on the run record, a UUID, and that it matches the frozen roster slot; a missing or forged field is rejected before any survivor row is trusted. | review | `_validate_process_evidence`; mutation tests |
+| 7 | A control that reports `peer_drop_room_gate` is not a fence failure. Classify the two survivor waits and the departing gate separately by `local_index`, and require empty control records so an unrelated failure cannot pass as the withheld event. | review | `_validate_process_missing`; 11 mutations |
+| 8 | The room-departure docs and probe limits still claimed process death and the post-drop ordering were not witnessed. Leaving that text after adding the labels would make the limits lie in the other direction. | process | `docs/peer-lifecycle.md`, `docs/signalfish-membership.md`, probe `limits` |
+
+## Actions Taken
+
+| # | Action | Where it landed | Verified by |
+| --- | --- | --- | --- |
+| 1 | Add the process-death witness and close the departing context after the Node reads its identity. | `webrtc.cjs`, `webrtc_drop.gd`, `webrtc_drop.py` | live Chromium/Firefox on 4.3 and 4.7.2 |
+| 2 | Add the post-drop room witness with the certified freeze, frozen value, 38-prefix canonical history and terminal fence in one survivor row. | `webrtc_drop.gd`, `webrtc_drop.py` | survivor rows `freeze_frame: 6`, `frozen_value: 67`, `canonical_comparisons: 38`, `fence_frame: 40` |
+| 3 | Add the withheld-event and pre-commit-order controls. | `webrtc.cjs`, `webrtc_drop.gd`, `webrtc_drop.py` | live 4.3/4.7.2 Chromium and Firefox, Python mutation tables |
+| 4 | Replace iteration-count fence waits with wall-clock bounds and state the ten-second server-notice window. | `webrtc_drop.gd`, probe `limits`, docs | missing control passes in 15 s |
+| 5 | Wire every label through `LABELS`, `PEAK_PLAYERS`, `ROOM_COUNTS`, owned logs and both workflow label lists. | probe, runner, workflows | `test_signalfish_webrtc_probe` 40 tests; documented counts 20 labels/24 rooms/11 waves |
+| 6 | Extend the Node and Python controls and tests. | `webrtc_instrument.test.cjs`, `test_webrtc_drop.py` | Node 207 tests; Python 40 tests |
+| 7 | Update the limits and lifetime docs and record the timer/keepalive facts. | docs, `.llm/knowledge/transport-tooling.md` | docs review, `make lint-llm` |
+
+## Prune Ledger
+
+- Retired / merged / fixed at source: the docs and probe limits no longer say
+  process death and the drop-then-room ordering are unwitnessed; PLAN's
+  coordinated-drop row now names the live drop, room and process fence. #436
+  is closed by this session.
+- Verify-on-touch: `make gate`, `make test-reference`, `make test-oracle`,
+  `make lint-source`, the new labels on both pins and both browsers, and the
+  `peer-drop`/`peer-drop-room` regressions.
+
+## Outcome
+
+- State: `findings-acted`
+- Follow-ups: #166 keeps the pinned-source comparison and remaining boundary
+  schedules; #188 keeps unequal confirmation frontiers.

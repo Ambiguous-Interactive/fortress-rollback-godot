@@ -41,7 +41,8 @@ HOST_WAIT_SECONDS = 900.0
 PRINT_LOCK = threading.Lock()
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
           'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-second', 'peer-drop-rollback', 'peer-drop-foreign',
-          'peer-drop-room', 'peer-drop-room-continue', 'recording-pressure')
+          'peer-drop-room', 'peer-drop-room-continue', 'peer-drop-process', 'peer-drop-process-missing',
+          'peer-drop-room-after-drop', 'peer-drop-room-before-drop', 'recording-pressure')
 
 
 def validate_engine(engine, expected):
@@ -399,7 +400,10 @@ def main():
                        'peer-drop-close', 'peer-drop-close-events', 'peer-drop-answer', 'peer-drop-answer-events', 'peer-drop-relay', 'peer-drop-relay-events',
                        'peer-drop-missing', 'peer-drop-missing-events', 'peer-drop-second', 'peer-drop-second-events',
                        'peer-drop-rollback', 'peer-drop-rollback-events', 'peer-drop-foreign', 'peer-drop-foreign-events',
-                       'peer-drop-room', 'peer-drop-room-events', 'peer-drop-room-continue', 'peer-drop-room-continue-events')]
+                       'peer-drop-room', 'peer-drop-room-events', 'peer-drop-room-continue', 'peer-drop-room-continue-events',
+                       'peer-drop-process', 'peer-drop-process-events', 'peer-drop-process-missing', 'peer-drop-process-missing-events',
+                       'peer-drop-room-after-drop', 'peer-drop-room-after-drop-events',
+                       'peer-drop-room-before-drop', 'peer-drop-room-before-drop-events')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -622,7 +626,11 @@ def main():
                                                                rollback_departure=label == 'peer-drop-rollback',
                                                                foreign_proposal=label == 'peer-drop-foreign',
                                                                room_departure=label == 'peer-drop-room',
-                                                               room_continue=label == 'peer-drop-room-continue')
+                                                               room_continue=label == 'peer-drop-room-continue',
+                                                               process_death=label == 'peer-drop-process',
+                                                               process_missing=label == 'peer-drop-process-missing',
+                                                               room_after_drop=label == 'peer-drop-room-after-drop',
+                                                               room_before_drop=label == 'peer-drop-room-before-drop')
                             elif label == 'recording-pressure':
                                 result = validate_pressure(json.loads(output), recording_engine)
                             elif label in ('corrupt', 'default'):
@@ -633,7 +641,7 @@ def main():
                         with PRINT_LOCK:
                             print(f'{version} {label} passed in {time.monotonic() - started:.0f}s', file=sys.stderr, flush=True)
                         control = label if label in ('corrupt', 'default', 'mixed-disabled', 'peer-drop-corrupt',
-                                                      'peer-drop-room-continue') else None
+                                                      'peer-drop-room-continue', 'peer-drop-process-missing') else None
                         return {'engine': actual, 'faults': faults, 'control': control,
                                 'command': browser_command, 'result': result}
 
@@ -680,8 +688,19 @@ def main():
                         'The peer-drop-room label has one page leave the live room after seven inputs; both survivors observe player_left, '
                         'latch restart_required, keep the frozen roster and departed slot, publish no drop and submit no further input. '
                         'The peer-drop-room-continue control steps a survivor after the fence and must fail validation with '
-                        'peer_drop_room_continued. A killed browser process is not separately driven here; the server shares one '
-                        'departure path for explicit leaves and socket disconnects, so the same player_left fence is expected but not measured. '
+                        'peer_drop_room_continued. '
+                        'The peer-drop-process label closes the departing page browser context after seven inputs instead of calling '
+                        'leave_room; the server announces the closed socket, exactly one player_left names the departure and both '
+                        'survivors latch the same fence while the departing page publishes no row. The Node harness reads the '
+                        'departing identity before the close. The server-notice window is bounded by the witness fence wait: the '
+                        'local server notices a closed socket in milliseconds, and the witness fails with peer_drop_room_fence after '
+                        'ten seconds without an event. The peer-drop-process-missing control withholds the room event and must fail '
+                        'both survivor fence waits with peer_drop_room_fence while the departing page fails its gate wait. '
+                        'The peer-drop-room-after-drop label certifies a coordinated drop, continues to 40 inputs with 38 canonical '
+                        'prefix checks, then leaves the room; the survivors record the committed cut and frozen value, the canonical '
+                        'history and the terminal fence together. The peer-drop-room-before-drop control delivers the room event while '
+                        'the barrier is pending; both survivors fence with the pre-drop canonical history unchanged, no certified '
+                        'value and exactly one pending publication. '
                         'Post-drop simulation corruption must fail the canonical gate. No complete pinned barrier parity claim. '
                         'All successful browser data channels and peer connections close at teardown. Snapshot restore corruption fails '
                         'at the gameplay canonical prefix comparison. Mixed runs exercise actual relay bytes and direct restoration under '

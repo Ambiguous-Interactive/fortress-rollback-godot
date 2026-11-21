@@ -1,7 +1,7 @@
 // Value: constructor tracking charges orphan connections that never create a data channel.
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { instrument, isDropCanonicalFailure, isRoomContinueFailure, resourcesClosed, closeDepartingRtc } = require('./webrtc.cjs');
+const { instrument, isDropCanonicalFailure, isRoomContinueFailure, isProcessMissingFailure, resourcesClosed, closeDepartingRtc } = require('./webrtc.cjs');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
@@ -372,6 +372,27 @@ test('room departure control fails only at the post-fence continuation', () => {
   for (const value of [null, {}, { passed: true,
     failure: { stage: 'peer_drop_room', errors: ['peer_drop_room_continued'], records: [row] } }])
     assert.equal(isRoomContinueFailure(value), false);
+});
+
+// Value: the missing-event control must fail at the bounded fence/gate wait, not from an unrelated error.
+test('process-death missing-event control fails only at the membership waits', () => {
+  const survivor = { passed: false, failure: { stage: 'peer_drop_room_fence',
+    errors: ['peer_drop_room_fence'], local_index: 0, records: [] } };
+  const departing = { passed: false, failure: { stage: 'handshake',
+    errors: ['peer_drop_room_gate'], local_index: 2, records: [] } };
+  assert.equal(isProcessMissingFailure(survivor, 'survivor'), true);
+  assert.equal(isProcessMissingFailure(departing, 'departing'), true);
+  for (const [value, role] of [[survivor, 'departing'], [departing, 'survivor']])
+    assert.equal(isProcessMissingFailure(value, role), false);
+  for (const errors of [[], ['peer_drop_room_fence', 'x'], ['peer_drop_room_gate']])
+    assert.equal(isProcessMissingFailure({ ...survivor, failure: { ...survivor.failure, errors } }, 'survivor'), false);
+  for (const records of [undefined, [{}]])
+    assert.equal(isProcessMissingFailure({ ...survivor, failure: { ...survivor.failure, records } }, 'survivor'), false);
+  assert.equal(isProcessMissingFailure({ ...survivor, passed: true }, 'survivor'), false);
+  assert.equal(isProcessMissingFailure({ ...departing,
+    failure: { ...departing.failure, stage: 'peer_drop_room_fence' } }, 'departing'), false);
+  for (const value of [null, {}, { passed: false }])
+    assert.equal(isProcessMissingFailure(value, 'survivor'), false);
 });
 
 // Value: actual browser teardown waits for signaling closure before contexts can hide leaked sockets.

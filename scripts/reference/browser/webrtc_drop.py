@@ -107,6 +107,225 @@ def _room_continue_row(row):
             and type(row.get('continue_code')) is int and row['continue_code'] == 0)
 
 
+def _room_departing_kind(row, roster, session, kind):
+    return (row.get('departed') is True
+            and type(row.get('departure_sequence')) is int and row['departure_sequence'] == 1
+            and row.get('departure_kind') == kind
+            and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 7
+            and isinstance(row.get('uuid'), str) and row['uuid'] in roster
+            and type(row.get('slot')) is int and 0 <= row['slot'] < 3 and roster[row['slot']] == row['uuid']
+            and row.get('roster') == roster
+            and isinstance(row.get('room_code_before'), str) and row['room_code_before']
+            and row.get('room_code_after') == ''
+            and row.get('room_left') is True
+            and row.get('connected') is True and row.get('authenticated') is True
+            and row.get('session_id') == session)
+
+
+def _roster_and_session(departed):
+    roster = departed.get('roster')
+    if (not isinstance(roster, list) or len(roster) != 3
+            or any(not isinstance(uuid, str) or not _UUID.fullmatch(uuid) for uuid in roster)
+            or roster != sorted(roster) or len(set(roster)) != 3):
+        raise ValueError('room-departure frozen roster invalid')
+    session = departed.get('session_id')
+    if not isinstance(session, str) or not re.fullmatch(r'[0-9a-f]{32}', session):
+        raise ValueError('room-departure session identity invalid')
+    return roster, session
+
+
+def _process_survivor_row(row, roster, departed_uuid, departed_slot, session):
+    live = row.get('room_roster_after')
+    survivors = [uuid for slot, uuid in enumerate(roster) if slot != departed_slot]
+    return (row.get('departed') is False
+            and type(row.get('slot')) is int and 0 <= row['slot'] < 3
+            and isinstance(row.get('uuid'), str) and row.get('uuid') == row.get('local_uuid')
+            and row['uuid'] in roster and roster[row['slot']] == row['uuid']
+            and row['uuid'] != departed_uuid
+            and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 7
+            and type(row.get('fence_frame')) is int and row['fence_frame'] == 7
+            and type(row.get('final_frame')) is int and row['final_frame'] == 7
+            and type(row.get('frames_after_fence')) is int and row['frames_after_fence'] == 0
+            and row.get('room_fenced') is True
+            and row.get('fence_route') == 'restart_required'
+            and type(row.get('fence_error')) is int and row['fence_error'] == 2
+            and type(row.get('fence_lifetime_revision')) is int and row['fence_lifetime_revision'] >= 0
+            and row.get('player_left_events') == [departed_uuid]
+            and row.get('roster') == roster and row.get('frozen_roster') == roster
+            and type(row.get('departed_slot')) is int and row['departed_slot'] == departed_slot
+            and row.get('departed_uuid') == departed_uuid
+            and isinstance(live, list) and sorted(live) == sorted(survivors)
+            and type(row.get('drop_events')) is int and row['drop_events'] == 0
+            and type(row.get('drop_pending_events')) is int and row['drop_pending_events'] == 0
+            and row.get('barrier_open') is False
+            and row.get('session_id') == session)
+
+
+def _validate_process_evidence(result):
+    peers = result['records'][0]['peers']
+    if result['records'][0].get('processClosed') is not True:
+        raise ValueError('process-death witness did not close the departing browser context')
+    if len(peers) != 2:
+        raise ValueError('process-death witness must retain exactly two survivors')
+    departed_uuid = result['records'][0].get('departedUuid')
+    if not isinstance(departed_uuid, str) or not _UUID.fullmatch(departed_uuid):
+        raise ValueError('process-death departed identity is missing from the Node harness')
+    rows = []
+    for peer in peers:
+        _room_physical(peer)
+        witness = peer.get('result')
+        if not isinstance(witness, dict) or witness.get('passed') is not True:
+            raise ValueError('process-death survivor witness did not complete')
+        records = witness.get('records')
+        if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
+            raise ValueError('process-death survivor record missing')
+        rows.append(records[0])
+    departed_rows = [row for row in rows if row.get('departed') is True]
+    if departed_rows:
+        raise ValueError('process-death departed page published a row')
+    roster = rows[0].get('roster')
+    session = rows[0].get('session_id') if rows else None
+    if (not isinstance(roster, list) or len(roster) != 3
+            or any(not isinstance(uuid, str) or not _UUID.fullmatch(uuid) for uuid in roster)
+            or roster != sorted(roster) or len(set(roster)) != 3):
+        raise ValueError('process-death frozen roster invalid')
+    if departed_uuid not in roster:
+        raise ValueError('process-death departed identity left the frozen roster')
+    departed_slot = roster.index(departed_uuid)
+    if not isinstance(session, str) or not re.fullmatch(r'[0-9a-f]{32}', session):
+        raise ValueError('process-death session identity invalid')
+    for row in rows:
+        if not _process_survivor_row(row, roster, departed_uuid, departed_slot, session):
+            raise ValueError('process-death survivor fence invalid')
+    if sorted(slot for slot in range(3) if slot != departed_slot) != sorted(row.get('slot') for row in rows):
+        raise ValueError('process-death survivor slots changed')
+    return result
+
+
+def _validate_process_missing(result):
+    peers = result['records'][0]['peers']
+    if len(peers) != 3:
+        raise ValueError('process-death missing-event control requires three peers')
+    by_index = {}
+    for peer in peers:
+        _room_physical(peer)
+        witness = peer.get('result')
+        if not isinstance(witness, dict) or witness.get('passed') is not False:
+            raise ValueError('process-death missing-event control did not fail')
+        failure = witness.get('failure', {})
+        index = failure.get('local_index')
+        if type(index) is not int or index not in (0, 1, 2) or index in by_index:
+            raise ValueError('process-death missing-event failure identity invalid')
+        records = failure.get('records')
+        errors = failure.get('errors')
+        expected = 'peer_drop_room_gate' if index == 2 else 'peer_drop_room_fence'
+        if (not isinstance(errors, list) or errors != [expected]
+                or not isinstance(records, list) or records != []):
+            raise ValueError('process-death missing-event control failed outside the fence wait')
+        by_index[index] = failure
+    if set(by_index) != {0, 1, 2}:
+        raise ValueError('process-death missing-event control did not exercise every peer')
+    return result
+
+
+def _validate_before_drop(result):
+    peers = result['records'][0]['peers']
+    if len(peers) != 3:
+        raise ValueError('pre-commit room event requires three real exported peers')
+    rows = []
+    for peer in peers:
+        _room_physical(peer)
+        witness = peer.get('result')
+        if not isinstance(witness, dict) or witness.get('passed') is not True:
+            raise ValueError('pre-commit room witness did not complete')
+        records = witness.get('records')
+        if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
+            raise ValueError('pre-commit room witness record missing')
+        rows.append(records[0])
+    departed_rows = [row for row in rows if row.get('departed') is True]
+    if len(departed_rows) != 1:
+        raise ValueError('pre-commit room event must name exactly one departing page')
+    departed = departed_rows[0]
+    roster, session = _roster_and_session(departed)
+    if not _room_departing_kind(departed, roster, session, 'room_left_before_drop'):
+        raise ValueError('pre-commit departing page evidence invalid')
+    survivors = [row for row in rows if row is not departed]
+    if len(survivors) != 2:
+        raise ValueError('pre-commit survivor evidence missing')
+    departed_slot, departed_uuid = departed['slot'], departed['uuid']
+    live = sorted(uuid for slot, uuid in enumerate(roster) if slot != departed_slot)
+    for row in survivors:
+        if not (row.get('departed') is False
+                and type(row.get('slot')) is int and 0 <= row['slot'] < 3
+                and row.get('uuid') == row.get('local_uuid') and row['uuid'] in roster
+                and roster[row['slot']] == row['uuid']
+                and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 7
+                and type(row.get('fence_frame')) is int and row['fence_frame'] == 7
+                and type(row.get('final_frame')) is int and row['final_frame'] == 7
+                and type(row.get('frames_after_fence')) is int and row['frames_after_fence'] == 0
+                and row.get('room_fenced') is True
+                and row.get('fence_route') == 'restart_required'
+                and type(row.get('fence_error')) is int and row['fence_error'] == 2
+                and row.get('player_left_events') == [departed_uuid]
+                and row.get('frozen_roster') == roster
+                and type(row.get('departed_slot')) is int and row['departed_slot'] == departed_slot
+                and row.get('departed_uuid') == departed_uuid
+                and isinstance(row.get('room_roster_after'), list)
+                and sorted(row['room_roster_after']) == live
+                and type(row.get('drop_events')) is int and row['drop_events'] == 0
+                and type(row.get('drop_pending_events')) is int and row['drop_pending_events'] == 1
+                and row.get('barrier_open') is True
+                and row.get('barrier_state') == 'pending'
+                and row.get('barrier_certified') is False
+                and row.get('barrier_value') == ''
+                and type(row.get('freeze_frame')) is int and row['freeze_frame'] == -1
+                and type(row.get('canonical_comparisons')) is int and row['canonical_comparisons'] == 6
+                and row.get('canonical_unchanged') is True
+                and row.get('session_id') == session):
+            raise ValueError('pre-commit survivor fence or unchanged history invalid')
+    if sorted([departed_slot] + [row['slot'] for row in survivors]) != [0, 1, 2]:
+        raise ValueError('pre-commit roster slots changed')
+    if len({row['fence_frame'] for row in survivors}) != 1:
+        raise ValueError('pre-commit survivors disagreed on the fence')
+    return result
+
+
+def _validate_after_drop(result, survivors):
+    peers = result['records'][0]['peers']
+    departed = peers[2]['result']['records'][0]
+    roster, session = _roster_and_session(departed)
+    if not _room_departing_kind(departed, roster, session, 'room_left_after_drop'):
+        raise ValueError('post-drop departing page evidence invalid')
+    departed_slot, departed_uuid = departed['slot'], departed['uuid']
+    live = sorted(uuid for slot, uuid in enumerate(roster) if slot != departed_slot)
+    for row in survivors:
+        if not (type(row.get('fence_frame')) is int and row['fence_frame'] == row.get('frames_submitted')
+                and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 40
+                and type(row.get('final_frame')) is int and row['final_frame'] == row['fence_frame']
+                and type(row.get('frames_after_fence')) is int and row['frames_after_fence'] == 0
+                and row.get('room_fenced') is True
+                and row.get('fence_route') == 'restart_required'
+                and type(row.get('fence_error')) is int and row['fence_error'] == 2
+                and row.get('player_left_events') == [departed_uuid]
+                and row.get('frozen_roster') == roster
+                and type(row.get('departed_slot')) is int and row['departed_slot'] == departed_slot
+                and row.get('departed_uuid') == departed_uuid
+                and row.get('local_uuid') == row.get('uuid')
+                and isinstance(row.get('room_roster_after'), list)
+                and sorted(row['room_roster_after']) == live
+                and type(row.get('drop_events')) is int and row['drop_events'] == 1
+                and row.get('barrier_committed') is True
+                and row.get('barrier_open') is True
+                and type(row.get('fence_history_comparisons')) is int and row['fence_history_comparisons'] == 38
+                and row.get('session_id') == session):
+            raise ValueError('post-drop certified freeze or terminal fence invalid')
+    if sorted([departed_slot] + [row['slot'] for row in survivors]) != [0, 1, 2]:
+        raise ValueError('post-drop roster slots changed')
+    if len({(row['fence_frame'], row['departed_slot'], row['departed_uuid']) for row in survivors}) != 1:
+        raise ValueError('post-drop survivors disagreed on the fence')
+    return result
+
+
 def _validate_room_evidence(result, room_departure, room_continue):
     peers = result['records'][0]['peers']
     rows = []
@@ -177,7 +396,14 @@ def _validate_room_evidence(result, room_departure, room_continue):
 
 def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False,
                            missing_history=False, second_departure=False, rollback_departure=False, foreign_proposal=False,
-                           room_departure=False, room_continue=False):
+                           room_departure=False, room_continue=False, process_death=False, process_missing=False,
+                           room_after_drop=False, room_before_drop=False):
+    new_modes = [process_death, process_missing, room_after_drop, room_before_drop]
+    if any(new_modes) and (
+            sum(bool(mode) for mode in new_modes) != 1
+            or corrupt or physical_close or lost_answer or relay_only or missing_history
+            or second_departure or rollback_departure or foreign_proposal or room_departure or room_continue):
+        raise ValueError('peer-drop modes are exclusive')
     if (second_departure and rollback_departure) or (room_departure and room_continue) or (
             (room_departure or room_continue) and (
                 corrupt or physical_close or lost_answer or relay_only or missing_history or second_departure
@@ -194,13 +420,24 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
             or result.get('dropForeign', False) is not foreign_proposal
             or result.get('dropRoom', False) is not room_departure
             or result.get('dropRoomContinue', False) is not room_continue
+            or result.get('dropProcess', False) is not process_death
+            or result.get('dropProcessMissing', False) is not process_missing
+            or result.get('dropRoomAfterDrop', False) is not room_after_drop
+            or result.get('dropRoomBeforeDrop', False) is not room_before_drop
             or result.get('errors') != []
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2):
         raise ValueError('peer-drop browser run incomplete')
     records = result.get('records')
+    expected_peers = 2 if process_death else 3
     if (not isinstance(records, list) or len(records) != 1 or type(records[0].get('players')) is not int
-            or records[0]['players'] != 3 or len(records[0].get('peers', [])) != 3):
-        raise ValueError('peer-drop requires three real exported peers')
+            or records[0]['players'] != 3 or len(records[0].get('peers', [])) != expected_peers):
+        raise ValueError('peer-drop requires the expected real exported peers')
+    if process_death:
+        return _validate_process_evidence(result)
+    if process_missing:
+        return _validate_process_missing(result)
+    if room_before_drop:
+        return _validate_before_drop(result)
     if room_departure or room_continue:
         return _validate_room_evidence(result, room_departure, room_continue)
     survivors = []
@@ -525,4 +762,6 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                     or type(proposer.get('foreign_sent')) is not int or proposer['foreign_sent'] != 0
                     or follower.get('freeze_frame') == 2 or proposer.get('freeze_frame') == 2):
                 raise ValueError('peer-drop foreign proposal evidence missing')
+        if room_after_drop:
+            _validate_after_drop(result, survivors)
     return result

@@ -185,7 +185,8 @@ jobs:
           if [[ "${{ matrix.part }}" == direct ]]; then
             labels=(clean faults corrupt default mixed-disabled peer-drop peer-drop-corrupt peer-drop-close peer-drop-answer
                     peer-drop-relay peer-drop-missing peer-drop-second peer-drop-rollback peer-drop-foreign
-                    peer-drop-room peer-drop-room-continue)
+                    peer-drop-room peer-drop-room-continue peer-drop-process peer-drop-process-missing
+                    peer-drop-room-after-drop peer-drop-room-before-drop)
           else labels=(mixed mixed-default mixed-close recording-pressure); fi
           xvfb-run -a python3 scripts/reference/signalfish_webrtc_probe.py \
             --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \
