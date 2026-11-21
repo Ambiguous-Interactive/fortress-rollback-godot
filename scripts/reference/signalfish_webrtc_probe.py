@@ -40,7 +40,7 @@ HOST_WAIT_SECONDS = 900.0
 # each line whole on the shared stderr stream.
 PRINT_LOCK = threading.Lock()
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
-          'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-second', 'recording-pressure')
+          'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-second', 'peer-drop-rollback', 'recording-pressure')
 
 
 def validate_engine(engine, expected):
@@ -396,7 +396,8 @@ def main():
                        'mixed-disabled-events', 'mixed-close', 'mixed-close-events',
                        'peer-drop', 'peer-drop-events', 'peer-drop-corrupt', 'peer-drop-corrupt-events',
                        'peer-drop-close', 'peer-drop-close-events', 'peer-drop-answer', 'peer-drop-answer-events', 'peer-drop-relay', 'peer-drop-relay-events',
-                       'peer-drop-missing', 'peer-drop-missing-events', 'peer-drop-second', 'peer-drop-second-events')]
+                       'peer-drop-missing', 'peer-drop-missing-events', 'peer-drop-second', 'peer-drop-second-events',
+                       'peer-drop-rollback', 'peer-drop-rollback-events')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -615,7 +616,8 @@ def main():
                                 result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt', label == 'peer-drop-close',
                                                                label == 'peer-drop-answer', label == 'peer-drop-relay',
                                                                missing_history=label == 'peer-drop-missing',
-                                                               second_departure=label == 'peer-drop-second')
+                                                               second_departure=label == 'peer-drop-second',
+                                                               rollback_departure=label == 'peer-drop-rollback')
                             elif label == 'recording-pressure':
                                 result = validate_pressure(json.loads(output), recording_engine)
                             elif label in ('corrupt', 'default'):
@@ -659,6 +661,9 @@ def main():
                         'the complete survivor transfers the missing rows into the recipient before certification. '
                         'The peer-drop-second label departs a second page after twelve inputs; the single survivor freezes that slot '
                         'on its own confirmed frontier, then continues to 40 inputs with 38 canonical prefix checks. '
+                        'The peer-drop-rollback label makes both survivors predict frame seven before the departing page submits it, '
+                        'so a real pending correction stays at or above the agreed cut, applies the certified frozen value after commit, '
+                        'and continues with 38 canonical prefix checks. '
                         'The peer-drop-relay label closes every endpoint RTC path before agreement, requires addressed relay certificate/commit bytes, '
                         'and preserves original canonical history during relay continuation. '
                         'Post-drop simulation corruption must fail the canonical gate. No room departure, process death or complete pinned barrier parity claim. '

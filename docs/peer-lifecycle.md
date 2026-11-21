@@ -354,7 +354,12 @@ barrier opens. It continues to 40 inputs. The validator requires both published 
 the first pending publication, both departing identities, the first operation's commit
 acknowledgement, a second freeze equal to the confirmed frontier at observation, and 30 active
 plus 38 canonical prefix comparisons.
-Room departure, process death, rollback-time departure and foreign proposals remain under
+The `peer-drop-rollback` case makes both survivors predict frame seven before the departing
+page submits its eighth input. Both survivors hold a real actual-input correction pending at
+frame seven when the departure is observed; the agreed cut settles at six or seven with
+confirmation timing. The validator requires the pending frame at or above the cut, the
+certified freeze and the canonical 38-prefix continuation.
+Room departure, process death and foreign proposals remain under
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 
 ## Downloadable observations

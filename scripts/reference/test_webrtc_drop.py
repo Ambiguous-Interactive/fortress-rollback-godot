@@ -6,21 +6,21 @@ import unittest
 from browser.webrtc_drop import validate_drop_browser
 
 
-def evidence(corrupt=False):
+def evidence(corrupt=False, freeze=6):
     peers = []
     roster = [f'00000000-0000-0000-0000-{index:012x}' for index in range(3)]
     for index in range(3):
         row = {'players': 3, 'departed': index == 2, 'frames_submitted': 7 if index == 2 else 40, 'slot': index, 'uuid': roster[index], 'roster': roster}
         if index < 2:
             row.update(state='committed', drop_events=1, canonical_comparisons=38, active_comparisons=30,
-                       prediction_gap=2, freeze_frame=6, departing_slot=2, minimum_confirmed=38, rollback_loads=1,
-                       frozen_value=bytes([(6 * 17 + 2 * 31 + 1) & 255]).hex(),
+                       prediction_gap=2, freeze_frame=freeze, departing_slot=2, minimum_confirmed=38, rollback_loads=1,
+                       frozen_value=bytes([(freeze * 17 + 2 * 31 + 1) & 255]).hex(),
                        role=1 - index, certified=index == 1, certificates=1 - index)
         if index < 2:
             other_id = hashlib.sha256(roster[1 - index].encode('ascii')).digest()[:8].hex()
             digest = ((0x14650fb0739d0383 ^ int(row['frozen_value'], 16)) * 1099511628211) & 0x3fffffffffffffff
             row.update(participants=[other_id], digest=f'{digest:016x}',
-                       certificate_rows=[{'peer': other_id, 'cut': 6, 'digest': f'{digest:016x}'}] if index == 0 else [])
+                       certificate_rows=[{'peer': other_id, 'cut': freeze, 'digest': f'{digest:016x}'}] if index == 0 else [])
         result = {'passed': True, 'records': [row]}
         if corrupt and index < 2:
             result = {'passed': False, 'failure': {'stage': 'peer_drop_gameplay', 'errors': ['peer_drop_canonical_8']}}
@@ -379,6 +379,44 @@ class LostAnswerEvidence(unittest.TestCase):
         value['records'][0]['peers'][0]['rtc']['answerLoss'] = value['records'][0]['peers'][1]['rtc']['answerLoss']
         with self.assertRaisesRegex(ValueError, 'lost answer'):
             validate_drop_browser(value, lost_answer=True)
+
+
+class RollbackDepartureEvidence(unittest.TestCase):
+    def test_rollback_departure_requires_a_pending_correction_above_the_cut(self):
+        original = evidence()
+        original['dropRollback'] = True
+        original['records'][0]['peers'][2]['result']['records'][0]['frames_submitted'] = 8
+        for peer in original['records'][0]['peers'][:2]:
+            peer['result']['records'][0].update(pending_at_detection=7, rollback_loads=2)
+        self.assertIs(validate_drop_browser(original, rollback_departure=True), original)
+        at_cut = evidence(freeze=7)
+        at_cut['dropRollback'] = True
+        at_cut['records'][0]['peers'][2]['result']['records'][0]['frames_submitted'] = 8
+        for peer in at_cut['records'][0]['peers'][:2]:
+            peer['result']['records'][0].update(pending_at_detection=7, prediction_gap=0)
+        self.assertIs(validate_drop_browser(at_cut, rollback_departure=True), at_cut)
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            validate_drop_browser(original)
+        survivor = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
+        disrupted = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
+        mutations = [
+            (lambda value: value.update(dropRollback=False), 'incomplete'),
+            (lambda value: value.update(dropRollback=1), 'incomplete'),
+            (lambda value: value['records'][0]['peers'][2]['result']['records'][0].update(frames_submitted=7), 'departure or continued input'),
+            (lambda value: survivor(value).update(pending_at_detection=6), 'rollback correction'),
+            (lambda value: survivor(value).update(pending_at_detection=8), 'rollback correction'),
+            (lambda value: survivor(value).update(pending_at_detection=True), 'rollback correction'),
+            (lambda value: survivor(value).update(pending_at_detection=7.0), 'rollback correction'),
+            (lambda value: survivor(value).update(freeze_frame=5), 'rollback correction'),
+            (lambda value: disrupted(value).update(pending_at_detection=6), 'rollback correction'),
+            (lambda value: survivor(value).update(rollback_loads=0), 'frozen boundary'),
+            (lambda value: survivor(value).update(prediction_gap=-1), 'frozen boundary'),
+        ]
+        for index, (mutate, message) in enumerate(mutations):
+            value = copy.deepcopy(original)
+            mutate(value)
+            with self.subTest(mutation=index), self.assertRaisesRegex(ValueError, message):
+                validate_drop_browser(value, rollback_departure=True)
 
 
 if __name__ == '__main__':

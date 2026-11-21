@@ -1,6 +1,8 @@
 extends RefCounted
 
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
+const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
+const Direct = preload("res://addons/fortress_rollback/transport/signalfish_webrtc.gd")
 const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Drop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
 const Envelope = preload("res://addons/fortress_rollback/transport/signalfish_relay_envelope.gd")
@@ -56,6 +58,7 @@ func run(host: Node, count: int) -> bool:
 	var second_uuid: String = JavaScriptBridge.eval("window.fortressSecondUuid || ''")
 	var second_identity: PackedByteArray = host.memberships[0].identity(second_uuid) if not second_uuid.is_empty() else PackedByteArray()
 	var missing_history: bool = bool(JavaScriptBridge.eval("window.fortressDropMissing || false"))
+	var rollback_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropRollback || false"))
 	if missing_history and host.local_index == 2:
 		var own_slot: int = host.memberships[0].slot(host.clients[0].get_player_id())
 		var target_slot: int = 2147483647
@@ -97,9 +100,33 @@ func run(host: Node, count: int) -> bool:
 		):
 			host.errors.append("physical_departure_wait_timeout")
 			return false
-	elif not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressDropGo || false"), true):
+	elif not await host._wait(
+		func() -> bool: return JavaScriptBridge.eval("window.fortressDropGo || false"),
+		not (rollback_departure and host.local_index == 2)
+	):
 		return false
 	if host.local_index == 2:
+		var submitted: int = 7
+		if rollback_departure:
+			host._update_transport_clock()
+			var closing: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, 7, PackedByteArray([host._sample(7, slot)]))]
+			if peer.step(host.transport_us, closing).code != S.Code.OK:
+				return false
+			var held: Array[Peer.Packet] = peer.drain_outbox()
+			JavaScriptBridge.eval("document.body.dataset.fortressFrame = '7'")
+			JavaScriptBridge.eval("document.body.dataset.fortressDropPrepared = '7'")
+			if not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressDropSend || false")):
+				return false
+			if not held.is_empty() and host.transports[0].enqueue_batch(held) != 0:
+				return false
+			var sent: Direct.Result = host.transports[0].poll(host.transport_us, host._next_token)
+			if sent.code != 0:
+				host.errors.append("peer_drop_rollback_send_%d" % sent.code)
+				return false
+			JavaScriptBridge.eval("document.body.dataset.fortressDropSubmitted = '7'")
+			if not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressDropRelease || false")):
+				return false
+			submitted = 8
 		var missing_inputs: Dictionary = {}
 		if host.transports[0].has_method("drop_report"):
 			missing_inputs = host.transports[0].drop_report()
@@ -109,7 +136,7 @@ func run(host: Node, count: int) -> bool:
 				"departed": true,
 				"departure_sequence": 1,
 				"slot": slot,
-				"frames_submitted": 7,
+				"frames_submitted": submitted,
 				"uuid": host.clients[0].get_player_id(),
 				"roster": host.memberships[0].roster(),
 				"missing_inputs": missing_inputs,
@@ -124,6 +151,8 @@ func run(host: Node, count: int) -> bool:
 	host.stage = "peer_drop_agreement"
 	if not await host._wait(
 		func() -> bool:
+			if rollback_departure:
+				JavaScriptBridge.eval("document.body.dataset.fortressPendingRollback = '%d'" % peer.status().pending_rollback_frame)
 			for row: Dictionary in peer.diagnostics().peers:
 				if row.get("dropped", false):
 					return true
@@ -131,14 +160,18 @@ func run(host: Node, count: int) -> bool:
 		true
 	):
 		return false
+	var pending_at_detection: int = peer.status().pending_rollback_frame
 	var barrier: Drop.Barrier = peer._drops.barrier(departing_identity.hex_encode())
 	if barrier == null or barrier.state != Drop.COMMITTED or barrier.value != PackedByteArray([host._sample(barrier.cut, departing_slot)]):
 		host.errors.append("peer_drop_certificate")
 		return false
 	var cut: int = barrier.cut
+	if rollback_departure and (pending_at_detection < 0 or pending_at_detection < cut):
+		host.errors.append("peer_drop_rollback_pending")
+		return false
 	var cuts: Dictionary = {departing_slot: cut}
 	var prediction_gap: int = peer.status().current_frame - cut - 1
-	if prediction_gap < 1:
+	if prediction_gap < (0 if rollback_departure else 1):
 		return false
 	if JavaScriptBridge.eval("window.fortressDropCorrupt || false"):
 		host.games[0].corrupt_continuation = true
@@ -193,6 +226,7 @@ func run(host: Node, count: int) -> bool:
 		"departing_slot": departing_slot,
 		"frames_submitted": 40,
 		"prediction_gap": prediction_gap,
+		"pending_at_detection": pending_at_detection,
 		"freeze_frame": cut,
 		"frozen_value": barrier.value.hex_encode(),
 		"state": barrier.state,

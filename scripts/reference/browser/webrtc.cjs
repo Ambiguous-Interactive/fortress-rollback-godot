@@ -54,7 +54,7 @@ async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly
 
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault,
   disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false, dropClose = false,
-  dropAnswer = false, dropRelay = false, dropMissing = false, dropSecond = false, recordingPressure = false }) {
+  dropAnswer = false, dropRelay = false, dropMissing = false, dropSecond = false, dropRollback = false, recordingPressure = false }) {
   window.fortressRecordingPressure = recordingPressure;
   window.fortressEndpoint = endpoint;
   window.fortressPlayers = count;
@@ -69,6 +69,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   window.fortressPeerDrop = peerDrop;
   window.fortressDropMissing = dropMissing;
   window.fortressDropSecond = dropSecond;
+  window.fortressDropRollback = dropRollback;
   window.fortressDropCorrupt = dropCorrupt;
   window.fortressDropClose = dropClose || dropRelay;
   window.fortressDropRelay = dropRelay;
@@ -308,9 +309,11 @@ async function main() {
   const faults = process.argv[4] === 'faults';
   const corrupt = process.argv[4] === 'corrupt';
   const defaultFactory = process.argv[4] === 'default';
-  const peerDrop = ['peer-drop', 'peer-drop-corrupt', 'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-second'].includes(process.argv[4]);
+  const peerDrop = ['peer-drop', 'peer-drop-corrupt', 'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay',
+    'peer-drop-missing', 'peer-drop-second', 'peer-drop-rollback'].includes(process.argv[4]);
   const dropMissing = process.argv[4] === 'peer-drop-missing';
   const dropSecond = process.argv[4] === 'peer-drop-second';
+  const dropRollback = process.argv[4] === 'peer-drop-rollback';
   const dropCorrupt = process.argv[4] === 'peer-drop-corrupt';
   const dropClose = process.argv[4] === 'peer-drop-close';
   const dropAnswer = process.argv[4] === 'peer-drop-answer';
@@ -387,7 +390,7 @@ async function main() {
           });
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
             faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop,
-            dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, dropSecond, recordingPressure });
+            dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, dropSecond, dropRollback, recordingPressure });
           await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
         }
         await pages[0].waitForFunction(() => document.body.dataset.fortressRoom !== undefined, null, { timeout: 60000 });
@@ -415,7 +418,19 @@ async function main() {
             if (dropClose || dropRelay) await closeDepartingRtc(pages, undefined, dropRelay);
             else {
               await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
-              await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
+              if (dropRollback) {
+                await pages[2].evaluate(() => { window.fortressDropGo = true; });
+                await pages[2].waitForFunction(() => document.body.dataset.fortressFrame === '7'
+                  && document.body.dataset.fortressDropPrepared === '7', null, { timeout: 30000 });
+                await Promise.all(pages.slice(0, 2).map(page => page.evaluate(() => { window.fortressDropGo = true; })));
+                await Promise.all(pages.slice(0, 2).map(page => page.waitForFunction(() => document.body.dataset.fortressFrame === '7',
+                  null, { timeout: 30000 })));
+                await pages[2].evaluate(() => { window.fortressDropSend = true; });
+                await pages[2].waitForFunction(() => document.body.dataset.fortressDropSubmitted === '7', null, { timeout: 30000 });
+                await Promise.all(pages.slice(0, 2).map(page => page.waitForFunction(
+                  () => document.body.dataset.fortressPendingRollback === '7', null, { timeout: 30000 })));
+                await pages[2].evaluate(() => { window.fortressDropRelease = true; });
+              } else await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
             }
           }
           await waitGameplay(pages, undefined, undefined, recordingPressure ? 256 : 39);
@@ -490,7 +505,7 @@ async function main() {
       browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })),
       version: browsers[0].version(), browser_instances: 2, firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
       faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose,
-      dropAnswer, dropRelay, dropMissing, dropSecond, recordingPressure, records, errors }));
+      dropAnswer, dropRelay, dropMissing, dropSecond, dropRollback, recordingPressure, records, errors }));
   } catch (error) {
     failures.push(error);
     try {
