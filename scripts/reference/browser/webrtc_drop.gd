@@ -105,8 +105,11 @@ func run(host: Node, count: int) -> bool:
 		not (rollback_departure and host.local_index == 2)
 	):
 		return false
+	var pending_at_detection: int = -1
 	if host.local_index == 2:
 		var submitted: int = 7
+		var held_packets: int = 0
+		var sent_packets: int = 0
 		if rollback_departure:
 			# Step first and hold the packet: its receipts must end at frame six so
 			# both survivors still predict frame seven before the departure lands.
@@ -115,16 +118,28 @@ func run(host: Node, count: int) -> bool:
 			if peer.step(host.transport_us, closing).code != S.Code.OK:
 				return false
 			var held: Array[Peer.Packet] = peer.drain_outbox()
+			if held.is_empty():
+				host.errors.append("peer_drop_rollback_empty")
+				return false
+			held_packets = held.size()
 			JavaScriptBridge.eval("document.body.dataset.fortressFrame = '7'")
 			JavaScriptBridge.eval("document.body.dataset.fortressDropPrepared = '7'")
 			if not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressDropSend || false")):
 				return false
-			if not held.is_empty() and host.transports[0].enqueue_batch(held) != 0:
+			if host.transports[0].enqueue_batch(held) != 0:
+				host.errors.append("peer_drop_rollback_enqueue")
 				return false
+			host._update_transport_clock()
 			var sent: Direct.Result = host.transports[0].poll(host.transport_us, host._next_token)
 			if sent.code != 0:
 				host.errors.append("peer_drop_rollback_send_%d" % sent.code)
 				return false
+			if sent.sent < 1:
+				host.errors.append("peer_drop_rollback_unsent")
+				return false
+			host.sent_packets += sent.sent
+			host.received_packets += sent.received
+			sent_packets = sent.sent
 			JavaScriptBridge.eval("document.body.dataset.fortressDropSubmitted = '7'")
 			if not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressDropRelease || false")):
 				return false
@@ -139,6 +154,8 @@ func run(host: Node, count: int) -> bool:
 				"departure_sequence": 1,
 				"slot": slot,
 				"frames_submitted": submitted,
+				"held_packets": held_packets,
+				"sent_packets": sent_packets,
 				"uuid": host.clients[0].get_player_id(),
 				"roster": host.memberships[0].roster(),
 				"missing_inputs": missing_inputs,
@@ -155,6 +172,9 @@ func run(host: Node, count: int) -> bool:
 		if not await host._wait(func() -> bool: return peer.status().pending_rollback_frame == 7, true):
 			host.errors.append("peer_drop_rollback_pending")
 			return false
+		# Capture the correction before the drop wait: the freeze must not be
+		# able to manufacture the pending marker the validator trusts.
+		pending_at_detection = peer.status().pending_rollback_frame
 		# Publish the armed correction before waiting for the drop, so the
 		# release gate never depends on detection.
 		JavaScriptBridge.eval("document.body.dataset.fortressPendingRollback = '7'")
@@ -168,18 +188,19 @@ func run(host: Node, count: int) -> bool:
 		true
 	):
 		return false
-	var pending_at_detection: int = peer.status().pending_rollback_frame
+	if not rollback_departure:
+		pending_at_detection = peer.status().pending_rollback_frame
 	var barrier: Drop.Barrier = peer._drops.barrier(departing_identity.hex_encode())
 	if barrier == null or barrier.state != Drop.COMMITTED or barrier.value != PackedByteArray([host._sample(barrier.cut, departing_slot)]):
 		host.errors.append("peer_drop_certificate")
 		return false
 	var cut: int = barrier.cut
-	if rollback_departure and (pending_at_detection < 0 or pending_at_detection < cut):
+	if rollback_departure and (pending_at_detection != 7 or cut != 7):
 		host.errors.append("peer_drop_rollback_pending")
 		return false
 	var cuts: Dictionary = {departing_slot: cut}
 	var prediction_gap: int = peer.status().current_frame - cut - 1
-	if prediction_gap < (0 if rollback_departure else 1):
+	if (rollback_departure and prediction_gap != 0) or (not rollback_departure and prediction_gap < 1):
 		return false
 	if JavaScriptBridge.eval("window.fortressDropCorrupt || false"):
 		host.games[0].corrupt_continuation = true

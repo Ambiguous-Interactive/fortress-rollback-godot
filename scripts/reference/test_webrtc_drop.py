@@ -11,9 +11,11 @@ def evidence(corrupt=False, freeze=6):
     roster = [f'00000000-0000-0000-0000-{index:012x}' for index in range(3)]
     for index in range(3):
         row = {'players': 3, 'departed': index == 2, 'frames_submitted': 7 if index == 2 else 40, 'slot': index, 'uuid': roster[index], 'roster': roster}
+        if index == 2:
+            row['departure_sequence'] = 1
         if index < 2:
             row.update(state='committed', drop_events=1, canonical_comparisons=38, active_comparisons=30,
-                       prediction_gap=2, freeze_frame=freeze, departing_slot=2, minimum_confirmed=38, rollback_loads=1,
+                       prediction_gap=7 - freeze, freeze_frame=freeze, departing_slot=2, minimum_confirmed=38, rollback_loads=1,
                        frozen_value=bytes([(freeze * 17 + 2 * 31 + 1) & 255]).hex(),
                        role=1 - index, certified=index == 1, certificates=1 - index)
         if index < 2:
@@ -382,32 +384,45 @@ class LostAnswerEvidence(unittest.TestCase):
 
 
 class RollbackDepartureEvidence(unittest.TestCase):
-    def test_rollback_departure_requires_a_pending_correction_at_or_above_the_cut(self):
-        original = evidence()
+    def test_rollback_departure_requires_a_pending_correction_at_the_held_cut(self):
+        original = evidence(freeze=7)
         original['dropRollback'] = True
-        original['records'][0]['peers'][2]['result']['records'][0]['frames_submitted'] = 8
+        original['records'][0]['peers'][2]['result']['records'][0].update(
+            frames_submitted=8, held_packets=1, sent_packets=1)
         for peer in original['records'][0]['peers'][:2]:
             peer['result']['records'][0].update(pending_at_detection=7)
         self.assertIs(validate_drop_browser(original, rollback_departure=True), original)
-        at_cut = evidence(freeze=7)
-        at_cut['dropRollback'] = True
-        at_cut['records'][0]['peers'][2]['result']['records'][0]['frames_submitted'] = 8
-        for peer in at_cut['records'][0]['peers'][:2]:
-            peer['result']['records'][0].update(pending_at_detection=7, prediction_gap=0)
-        self.assertIs(validate_drop_browser(at_cut, rollback_departure=True), at_cut)
         with self.assertRaisesRegex(ValueError, 'incomplete'):
             validate_drop_browser(original)
+        cut_six = evidence(freeze=6)
+        cut_six['dropRollback'] = True
+        cut_six['records'][0]['peers'][2]['result']['records'][0].update(
+            frames_submitted=8, held_packets=1, sent_packets=1)
+        for peer in cut_six['records'][0]['peers'][:2]:
+            peer['result']['records'][0].update(pending_at_detection=7)
+        with self.assertRaisesRegex(ValueError, 'frozen boundary'):
+            validate_drop_browser(cut_six, rollback_departure=True)
+        both = copy.deepcopy(original)
+        both['dropSecond'] = True
+        with self.assertRaisesRegex(ValueError, 'exclusive'):
+            validate_drop_browser(both, second_departure=True, rollback_departure=True)
         survivor = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
         disrupted = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
+        departed = lambda value: value['records'][0]['peers'][2]['result']['records'][0]
         mutations = [
             (lambda value: value.update(dropRollback=False), 'incomplete'),
             (lambda value: value.update(dropRollback=1), 'incomplete'),
-            (lambda value: value['records'][0]['peers'][2]['result']['records'][0].update(frames_submitted=7), 'departure or continued input'),
+            (lambda value: departed(value).update(frames_submitted=7), 'departure or continued input'),
+            (lambda value: departed(value).update(departure_sequence=2), 'departure or continued input'),
+            (lambda value: departed(value).update(departure_sequence=99), 'departure or continued input missing'),
+            (lambda value: departed(value).update(held_packets=0), 'held packet'),
+            (lambda value: departed(value).update(sent_packets=0), 'held packet'),
             (lambda value: survivor(value).update(pending_at_detection=6), 'rollback correction'),
             (lambda value: survivor(value).update(pending_at_detection=8), 'rollback correction'),
             (lambda value: survivor(value).update(pending_at_detection=True), 'rollback correction'),
             (lambda value: survivor(value).update(pending_at_detection=7.0), 'rollback correction'),
-            (lambda value: survivor(value).update(freeze_frame=5), 'rollback correction'),
+            (lambda value: survivor(value).update(freeze_frame=6), 'frozen boundary'),
+            (lambda value: survivor(value).update(prediction_gap=1), 'frozen boundary'),
             (lambda value: disrupted(value).update(pending_at_detection=6), 'rollback correction'),
             (lambda value: survivor(value).update(rollback_loads=0), 'frozen boundary'),
             (lambda value: survivor(value).update(prediction_gap=-1), 'frozen boundary'),
