@@ -43,7 +43,12 @@
 - Retired / merged / fixed at source: the docs and probe limits no longer say
   process death and the drop-then-room ordering are unwitnessed; PLAN's
   coordinated-drop row now names the live drop, room and process fence. #436
-  is closed by this session.
+  is closed by this session. The shared `_wait_membership_fence` and
+  `_live_roster` helpers carry the mechanical fence work, and the Node
+  `evidencePages` selection keeps the process-death path on the same teardown
+  and collection code instead of a second launcher. The three row builders stay
+  separate because each row is the evidence contract for a different ordering;
+  a shared builder would hide which fields that witness promises.
 - Verify-on-touch: `make gate`, `make test-reference`, `make test-oracle`,
   `make lint-source`, the new labels on both pins and both browsers, and the
   `peer-drop`/`peer-drop-room` regressions.
