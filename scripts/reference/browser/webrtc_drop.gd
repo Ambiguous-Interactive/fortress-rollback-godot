@@ -130,8 +130,12 @@ func run(host: Node, count: int) -> bool:
 			# The selected donor sends the retained history. Drop its first
 			# chunk so the recipient must retry before it installs the rows.
 			# The lost-history control withholds every chunk until the barrier
-			# expires, so the recipient can never install the interval.
-			host.transports[0].arm_history_drop(LOST_HISTORY_DROP_COUNT if history_lost else 1)
+			# expires, so the recipient can never install the interval. Arm
+			# every owned transport; a page with more than one local client
+			# must not leave the donor link unarmed.
+			for transport: Variant in host.transports:
+				if transport.has_method("arm_history_drop"):
+					transport.arm_history_drop(LOST_HISTORY_DROP_COUNT if history_lost else 1)
 	var steps_taken: int = 0
 	for frame: int in 7:
 		if not missing_history:
@@ -501,6 +505,7 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 	# The terminal path must keep servicing each survivor's own barrier timeout
 	# after a peer stops or a real transport reports backpressure; the ordinary
 	# service batch treats both as fatal for a label that expects continuation.
+	var reason: String = ""
 	var started_us: int = Time.get_ticks_usec()
 	while Time.get_ticks_usec() - started_us < 15000000:
 		host._update_transport_clock()
@@ -515,6 +520,8 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 				host.transports[index].enqueue_batch(packets)
 			host.transports[index].poll(host.transport_us, host._next_token)
 			for event: Dictionary in host.peers[index].drain_events():
+				if String(event.get("kind", "")) == "peer_drop_unconfirmed":
+					reason = String(event.get("reason", ""))
 				host.drop_witness.observed(event)
 		if peer.status().lifecycle == S.Lifecycle.TERMINATED:
 			break
@@ -526,13 +533,12 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 		return false
 	var pending_events: int = 0
 	var drop_events: int = 0
-	var reason: String = ""
 	for event: Dictionary in events:
 		if event.kind == "peer_drop_pending":
 			pending_events += 1
 		elif event.kind == "peer_dropped":
 			drop_events += 1
-		elif event.kind == "peer_drop_unconfirmed":
+		elif event.kind == "peer_drop_unconfirmed" and reason.is_empty():
 			reason = String(event.get("reason", ""))
 	if drop_events != 0 or pending_events != 1 or reason != "timeout":
 		host.errors.append("peer_drop_history_lost_outcome")
