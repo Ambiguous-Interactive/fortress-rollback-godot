@@ -178,12 +178,27 @@ async function run(root, endpoint, route, players) {
     await Promise.all(pages.map(async (page, index) => {
       for (const key of INPUTS[index][1]) await page.keyboard.down(key);
     }));
-    phase = 'prediction stall';
+    phase = 'warmup';
     await command(pages[0], 'start');
-    await Promise.all(pages.map(page => wait(page, route => window.fortressNative.state === 'playing'
-      && window.fortressNative.stalls > 0 && window.fortressNative.prediction >= 12
-      && window.fortressNativeWire.status().held[route] > 0, route, 45000)));
+    await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
+      && window.fortressNative.confirmed >= frame, GATE_FRAME, 45000)));
+    phase = 'prediction stall';
+    // Arming on each local frame can strand a slower peer before its own
+    // gate. Let every endpoint confirm the warmup while routes are open.
+    const armed = await Promise.all(pages.map(page => page.evaluate(() => {
+      const { frame, stalls, confirmed } = window.fortressNative;
+      window.fortressNativeWire.arm();
+      return { frame, stalls, confirmed };
+    })));
+    await Promise.all(pages.map((page, index) => wait(page, threshold => window.fortressNative.state === 'failed'
+      || (window.fortressNative.state === 'playing' && window.fortressNative.stalls > threshold.stalls
+        && window.fortressNative.prediction >= threshold.frame && window.fortressNativeWire.status().held[threshold.route] > 0),
+    { route, stalls: armed[index].stalls, frame: GATE_FRAME }, 45000)));
     const stalled = await observe();
+    for (const [index, peer] of stalled.entries()) {
+      assert.equal(peer.state, 'playing', peer.message);
+      assert.ok(armed[index].frame < HISTORY_FRAMES, 'gate must affect the compared history');
+    }
     await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.release())));
     phase = 'corrected history';
     await Promise.all(pages.map((page, index) => wait(page, target => window.fortressNative.state === 'playing'
@@ -229,7 +244,7 @@ async function run(root, endpoint, route, players) {
       return window.fortressNative.state === 'offline' && sockets.every(state => state === WebSocket.CLOSED)
         && rtc.every(([, state]) => state === 'closed');
     })));
-    result = { passed: true, route, players, compared_frames: HISTORY_FRAMES, stalled, peers, terminal, after };
+    result = { passed: true, route, players, compared_frames: HISTORY_FRAMES, armed, stalled, peers, terminal, after };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map(page => page.evaluate(() => ({

@@ -73,10 +73,7 @@ class ObservedLobby:
 		turns += 1
 		if state == "playing":
 			var frame: int = game_match.status().current_frame
-			if frame == GATE_FRAME:
-				JavaScriptBridge.eval("window.fortressNativeWire.arm()")
-			# Alternate the actual canvas input after the gate starts. A peer
-			# predicting the last delivered row must then correct its game state.
+			# Variations after the warmup force correction when delivery is held.
 			if frame >= GATE_FRAME and frame % 2 == 0:
 				buttons = 0
 		super.tick(now_us, buttons)
