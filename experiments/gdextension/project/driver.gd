@@ -33,12 +33,15 @@ func _ready() -> void:
 
 
 func _send() -> void:
-	if http.request(endpoint, ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(report)) != OK:
+	var request_error := http.request(endpoint, ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(report))
+	if request_error != OK:
+		push_error("Witness HTTP request failed to start: %d" % request_error)
 		get_tree().quit(1)
 
 
 func _reply(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+		push_error("Witness HTTP response failed: result %d, status %d" % [result, code])
 		get_tree().quit(1)
 		return
 	var cmd: Dictionary = JSON.parse_string(body.get_string_from_utf8())
@@ -53,10 +56,12 @@ func _reply(result: int, code: int, _headers: PackedStringArray, body: PackedByt
 		slot = int(cmd.slot)
 		control = cmd.control
 		if not session.start(slot):
+			push_error("Witness failed to start the native session for slot %d" % slot)
 			get_tree().quit(1)
 			return
 	for packet: String in cmd.packets:
 		if not session.receive(packet.hex_decode()):
+			push_error("Witness rejected an upstream datagram at frame %d" % game.frame)
 			get_tree().quit(1)
 			return
 	var input := PackedByteArray()
