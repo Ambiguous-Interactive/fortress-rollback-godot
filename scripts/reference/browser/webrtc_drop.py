@@ -416,10 +416,90 @@ def _validate_room_evidence(result, room_departure, room_continue):
     return result
 
 
+def _lost_history_row(row, role, slot):
+    roster = row.get('roster')
+    return (row.get('departed') is False
+            and type(row.get('slot')) is int and row['slot'] == slot
+            and isinstance(row.get('uuid'), str)
+            and isinstance(roster, list) and len(roster) == 3 and roster[slot] == row['uuid']
+            and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 8
+            and type(row.get('prediction_gap')) is int and row['prediction_gap'] >= 0
+            and row.get('state') == 'failed' and row.get('failed') is True
+            and row.get('failure_reason') == 'timeout'
+            and row.get('lifecycle') == 'terminated'
+            and type(row.get('freeze_frame')) is int and row['freeze_frame'] == -1
+            and row.get('frozen_value') == ''
+            and type(row.get('role')) is int and row['role'] == role
+            and row.get('certified') is False
+            and type(row.get('certificates')) is int and row['certificates'] == 0
+            and type(row.get('drop_events')) is int and row['drop_events'] == 0
+            and row.get('drop_frames') == {}
+            and type(row.get('pending_events')) is int and row['pending_events'] == 1
+            and type(row.get('history_first')) is int and row['history_first'] == 4
+            and type(row.get('history_cut')) is int and row['history_cut'] == 6
+            and row.get('history_installed') is False
+            and type(row.get('history_dropped')) is int and type(row.get('history_resends')) is int
+            and type(row.get('history_drop_chunk')) is int and type(row.get('history_drop_operation')) is int
+            and type(row.get('history_drop_count')) is int
+            and type(row.get('minimum_confirmed')) is int and 0 <= row['minimum_confirmed'] <= 6
+            and type(row.get('canonical_comparisons')) is int and row['canonical_comparisons'] == 0
+            and type(row.get('active_comparisons')) is int and row['active_comparisons'] == 0
+            and type(row.get('rollback_loads')) is int
+            and isinstance(row.get('session_id'), str) and re.fullmatch(r'[0-9a-f]{32}', row['session_id'])
+            and type(row.get('target_generation')) is int
+            and type(row.get('operation')) is int
+            and type(row.get('coordinator')) is int and type(row.get('coordinator_generation')) is int
+            and isinstance(row.get('target_set_digest'), str) and re.fullmatch(r'[0-9a-f]{16}', row['target_set_digest']))
+
+
+def _validate_lost_history(result, survivors):
+    departed = result['records'][0]['peers'][2]['result']['records'][0]
+    report = departed.get('missing_inputs')
+    if (not isinstance(report, dict) or set(report) != {'dropped', 'from', 'through', 'frames', 'overlaps', 'slot', 'unsupported'}
+            or report.get('dropped') != 3
+            or report.get('from') != 4 or report.get('through') != 6
+            or report.get('frames') != [4, 5, 6] or report.get('overlaps') != 0
+            or report.get('unsupported') != 0 or report.get('slot') != departed.get('slot')):
+        raise ValueError('peer-drop lost-history withholding evidence missing')
+    if len(survivors) != 2:
+        raise ValueError('peer-drop lost-history survivor rows missing')
+    proposer = next((row for row in survivors if row.get('role') == 1), None)
+    follower = next((row for row in survivors if row.get('role') == 0), None)
+    if proposer is None or follower is None or proposer is follower:
+        raise ValueError('peer-drop lost-history roles missing')
+    slots = (proposer.get('slot'), follower.get('slot'))
+    if any(type(slot) is not int for slot in slots) or slots[0] >= slots[1]:
+        raise ValueError('peer-drop lost-history coordinator differs from lowest surviving slot')
+    if not _lost_history_row(proposer, 1, slots[0]) or not _lost_history_row(follower, 0, slots[1]):
+        raise ValueError('peer-drop lost-history terminal row incomplete')
+    if type(proposer.get('minimum_confirmed')) is not int or proposer['minimum_confirmed'] > 3:
+        raise ValueError('peer-drop lost-history confirmation frontier differs')
+    if proposer.get('history_donor') != follower.get('slot') or follower.get('history_donor') != follower.get('slot'):
+        raise ValueError('peer-drop lost-history donor identity differs')
+    if (type(proposer.get('history_resends')) is not int or proposer['history_resends'] != 0
+            or type(follower.get('history_resends')) is not int or follower['history_resends'] != 0):
+        raise ValueError('peer-drop lost-history kept a donor resend')
+    if type(proposer.get('history_dropped')) is not int or proposer['history_dropped'] != 0:
+        raise ValueError('peer-drop lost-history recipient withheld donor bytes')
+    if (type(follower.get('history_dropped')) is not int or follower['history_dropped'] < 1
+            or type(follower.get('history_drop_chunk')) is not int or follower['history_drop_chunk'] != 0
+            or type(follower.get('history_drop_count')) is not int or follower['history_drop_count'] < 1
+            or type(follower.get('history_drop_operation')) is not int
+            or type(follower.get('operation')) is not int
+            or follower['history_drop_operation'] != follower['operation']
+            or proposer.get('operation') != follower['operation']):
+        raise ValueError('peer-drop lost-history donation evidence missing')
+    if proposer.get('session_id') != follower.get('session_id'):
+        raise ValueError('peer-drop lost-history session identity differs')
+    return result
+
+
 def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False,
-                           missing_history=False, second_departure=False, rollback_departure=False, foreign_proposal=False,
-                           room_departure=False, room_continue=False, process_death=False, process_missing=False,
-                           room_after_drop=False, room_before_drop=False):
+                           missing_history=False, history_lost=False, second_departure=False, rollback_departure=False,
+                           foreign_proposal=False, room_departure=False, room_continue=False, process_death=False,
+                           process_missing=False, room_after_drop=False, room_before_drop=False):
+    if history_lost and not missing_history:
+        raise ValueError('peer-drop lost-history mode requires the withholding schedule')
     new_modes = [process_death, process_missing, room_after_drop, room_before_drop]
     if any(new_modes) and (
             sum(bool(mode) for mode in new_modes) != 1
@@ -438,6 +518,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
             or result.get('dropCorrupt') is not corrupt or result.get('dropAnswer', False) is not lost_answer
             or result.get('dropRelay', False) is not relay_only or result.get('dropClose', False) is not physical_close
             or result.get('dropMissing', False) is not missing_history
+            or result.get('dropHistoryLost', False) is not history_lost
             or result.get('dropSecond', False) is not second_departure or result.get('dropRollback', False) is not rollback_departure
             or result.get('dropForeign', False) is not foreign_proposal
             or result.get('dropRoom', False) is not room_departure
@@ -503,6 +584,11 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         if witness.get('passed') is not True or not isinstance(rows, list) or len(rows) != 1:
             raise ValueError('peer-drop gameplay result missing')
         row = rows[0]
+        if history_lost and index < 2:
+            # The terminal rows never commit or freeze; the lost-history
+            # branch below owns their agreement and donor-evidence fields.
+            survivors.append(row)
+            continue
         if second_departure and index == 2:
             if not _departing_row(row, 1, 7):
                 raise ValueError('peer-drop first departure evidence missing')
@@ -673,6 +759,8 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         for row in all_rows:
             if row.get('roster') != roster or type(row.get('slot')) is not int or row['slot'] != roster.index(row['uuid']):
                 raise ValueError('peer-drop frozen roster changed')
+        if history_lost:
+            return _validate_lost_history(result, survivors)
         if missing_history:
             departed = records[0]['peers'][2]['result']['records'][0]
             report = departed.get('missing_inputs')

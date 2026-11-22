@@ -58,6 +58,7 @@ var recording_pressure: bool = false
 var pressure_service_turn: int = 0
 var mixed: Mixed = Mixed.new()
 var drop_enabled: bool = false
+var history_lost: bool = false
 var room_departure: bool = false
 var room_player_left: Array[String] = []
 var room_left_seen: bool = false
@@ -74,6 +75,7 @@ func _ready() -> void:
 	recording_pressure = JavaScriptBridge.eval("window.fortressRecordingPressure || false")
 	frame_count = 257 if recording_pressure else 40
 	drop_enabled = JavaScriptBridge.eval("window.fortressPeerDrop || false")
+	history_lost = JavaScriptBridge.eval("window.fortressDropHistoryLost || false")
 	room_departure = JavaScriptBridge.eval("window.fortressDropRoom || false")
 	process_missing = JavaScriptBridge.eval("window.fortressDropProcessMissing || false")
 	second_departure = JavaScriptBridge.eval("window.fortressDropSecond || false")
@@ -91,14 +93,17 @@ func _run() -> void:
 	if not clients.is_empty():
 		local_uuid = clients[0].get_player_id()
 	if ok: ok = await _play(player_count)
-	if not room_departure:
+	if not room_departure and not history_lost:
 		ok = ok and _healthy(true)
 	var control: bool = JavaScriptBridge.eval("window.fortressCorrupt || window.fortressDefaultFactory || window.fortressDropCorrupt || window.fortressDropRoomContinue || false")
-	if room_departure:
+	if room_departure or history_lost:
 		if ok or control:
 			JavaScriptBridge.eval("document.body.dataset.fortressGameplayDone = 'true'")
-			# The fence is the room witness's terminal state; the generic
-			# lifetime checks would reject the deliberate departure.
+			# The fence and the lost-history expiry are terminal states; the
+			# generic lifetime checks would reject the deliberate termination.
+			# Membership changes during the shared teardown are expected once
+			# the terminal witness has already published its own rows.
+			tearing_down = history_lost
 			if ok and not await _wait_room_teardown():
 				ok = false
 	elif ok or control:

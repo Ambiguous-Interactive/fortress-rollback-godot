@@ -226,6 +226,26 @@ def missing_evidence():
     return value
 
 
+def lost_evidence():
+    value = missing_evidence()
+    value['dropHistoryLost'] = True
+    proposer = value['records'][0]['peers'][0]['result']['records'][0]
+    follower = value['records'][0]['peers'][1]['result']['records'][0]
+    terminal = {'state': 'failed', 'failed': True, 'failure_reason': 'timeout', 'lifecycle': 'terminated',
+                'freeze_frame': -1, 'frozen_value': '', 'certified': False, 'certificates': 0,
+                'drop_events': 0, 'drop_frames': {}, 'pending_events': 1, 'frames_submitted': 8, 'prediction_gap': 4,
+                'canonical_comparisons': 0, 'active_comparisons': 0, 'session_id': 'ab' * 16,
+                'target_generation': 0, 'coordinator': 0, 'coordinator_generation': 0,
+                'target_set_digest': '00' * 8}
+    proposer.update(terminal, history_installed=False, history_dropped=0, history_resends=0,
+                    history_drop_chunk=-1, history_drop_operation=-1, history_drop_count=0,
+                    minimum_confirmed=3)
+    follower.update(terminal, history_installed=False, history_dropped=5, history_resends=0,
+                    history_drop_chunk=0, history_drop_operation=9, history_drop_count=1,
+                    minimum_confirmed=2)
+    return value
+
+
 class MissingHistoryEvidence(unittest.TestCase):
     def test_live_missing_history_requires_withholding_and_transfer(self):
         original = missing_evidence()
@@ -267,6 +287,67 @@ class MissingHistoryEvidence(unittest.TestCase):
             value['dropMissing'] = replacement
             with self.subTest(flag=replacement), self.assertRaisesRegex(ValueError, 'incomplete'):
                 validate_drop_browser(value, missing_history=True)
+
+
+class LostHistoryEvidence(unittest.TestCase):
+    def test_live_lost_donor_history_never_freezes_or_continues(self):
+        original = lost_evidence()
+        self.assertIs(validate_drop_browser(original, missing_history=True, history_lost=True), original)
+        proposer = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
+        follower = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
+        mutations = [
+            lambda value: proposer(value).update(state='committed'),
+            lambda value: proposer(value).update(freeze_frame=6),
+            lambda value: proposer(value).update(freeze_frame=True),
+            lambda value: proposer(value).update(frozen_value='01'),
+            lambda value: proposer(value).update(certified=True),
+            lambda value: proposer(value).update(certificates=1),
+            lambda value: proposer(value).update(drop_events=1),
+            lambda value: proposer(value).update(drop_frames={'00' * 8: 6}),
+            lambda value: proposer(value).update(pending_events=2),
+            lambda value: proposer(value).update(frames_submitted=7),
+            lambda value: proposer(value).update(minimum_confirmed=6),
+            lambda value: proposer(value).update(prediction_gap=-1),
+            lambda value: follower(value).update(minimum_confirmed=7),
+            lambda value: proposer(value).update(history_installed=True),
+            lambda value: follower(value).update(history_installed=True),
+            lambda value: proposer(value).update(history_first=5),
+            lambda value: follower(value).update(history_cut=7),
+            lambda value: proposer(value).update(history_dropped=1),
+            lambda value: follower(value).update(history_dropped=0),
+            lambda value: follower(value).update(history_dropped=True),
+            lambda value: follower(value).pop('history_dropped'),
+            lambda value: proposer(value).update(history_resends=1),
+            lambda value: follower(value).update(history_resends=1),
+            lambda value: follower(value).update(history_drop_chunk=1),
+            lambda value: follower(value).update(history_drop_count=0),
+            lambda value: follower(value).update(history_drop_operation=8),
+            lambda value: follower(value).update(operation=8),
+            lambda value: proposer(value).update(operation=8),
+            lambda value: proposer(value).update(lifecycle='running'),
+            lambda value: proposer(value).update(failure_reason='missing_history'),
+            lambda value: follower(value).update(failure_reason='missing_history'),
+            lambda value: proposer(value).update(session_id='ab' * 15),
+            lambda value: follower(value).update(session_id='cd' * 16),
+            lambda value: proposer(value).update(history_donor=0),
+            lambda value: proposer(value).update(role=0),
+            lambda value: proposer(value).update(history_drop_chunk=True),
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(dropped=2),
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(frames=[5, 6]),
+        ]
+        for mutation in mutations:
+            value = copy.deepcopy(original)
+            mutation(value)
+            with self.subTest(mutation=mutations.index(mutation)), \
+                    self.assertRaisesRegex(ValueError, 'lost-history|withholding|incomplete|requires'):
+                validate_drop_browser(value, missing_history=True, history_lost=True)
+        for replacement in (False, 1, None):
+            value = copy.deepcopy(original)
+            value['dropHistoryLost'] = replacement
+            with self.subTest(flag=replacement), self.assertRaisesRegex(ValueError, 'incomplete'):
+                validate_drop_browser(value, missing_history=True, history_lost=True)
+        with self.assertRaisesRegex(ValueError, 'requires'):
+            validate_drop_browser(original, history_lost=True)
 
 
 def second_evidence():
