@@ -260,19 +260,21 @@ class DropDirect:
 				or decoded.message.phase != Drop.Phase.BACKFILL or decoded.message.stage != Drop.Stage.HISTORY:
 				kept.append(packet)
 				continue
-			if _history_dropped > 0 and int(decoded.message.chunk_index) == 0:
-				# The donor restarted its journal after the withheld chunk, so the
-				# receiver cannot have installed the interval before this round.
-				_history_resends += 1
-			if _history_remaining <= 0:
-				kept.append(packet)
+			if _history_remaining > 0:
+				_history_remaining -= 1
+				_history_dropped += 1
+				_history_drop_chunk = int(decoded.message.chunk_index)
+				_history_drop_operation = int(decoded.message.operation)
+				_history_drop_count = int(decoded.message.chunk_count)
+				_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
 				continue
-			_history_remaining -= 1
-			_history_dropped += 1
-			_history_drop_chunk = int(decoded.message.chunk_index)
-			_history_drop_operation = int(decoded.message.operation)
-			_history_drop_count = int(decoded.message.chunk_count)
-			_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
+			if _history_dropped > 0 and int(decoded.message.chunk_index) == 0 \
+				and int(decoded.message.operation) == _history_drop_operation:
+				# The donor restarted the same operation's journal after the
+				# withheld chunk, so the receiver cannot have installed the
+				# interval before this retry.
+				_history_resends += 1
+			kept.append(packet)
 		_pending = kept
 
 	func _withhold_missing_inputs() -> void:

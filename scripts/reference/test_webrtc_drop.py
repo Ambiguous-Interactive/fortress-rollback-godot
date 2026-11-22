@@ -253,6 +253,9 @@ class MissingHistoryEvidence(unittest.TestCase):
             lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_drop_count=0),
             lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_drop_operation=8),
             lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_drop_operation=True),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].pop('history_resends'),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(operation=8),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(operation=8),
         ]
         for mutation in mutations:
             value = copy.deepcopy(original)

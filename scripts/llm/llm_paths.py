@@ -52,8 +52,12 @@ STUB_ROOTS = (".claude/skills", ".agents/skills")
 
 # Text files the encoding contract can inspect. Suffix filtering keeps editor
 # and OS artifacts (`.DS_Store`, `notes.md.bak`) out of the harness contract.
+# Mirrors the text suffixes in scripts/check_source_line_lengths.py.
 ENCODING_SUFFIXES = (
-    ".gd", ".json", ".md", ".mdc", ".py", ".sh", ".toml", ".txt", ".yaml", ".yml",
+    ".bash", ".c", ".cfg", ".cjs", ".cpp", ".cs", ".css", ".gd", ".gdextension",
+    ".gdshader", ".godot", ".h", ".hpp", ".html", ".ini", ".js", ".json", ".jsx",
+    ".md", ".mdc", ".mjs", ".py", ".rs", ".scss", ".sh", ".sql", ".svg", ".toml",
+    ".tres", ".ts", ".tscn", ".tsx", ".txt", ".xml", ".yaml", ".yml",
 )
 
 # Machine-local, never-committed directories (see .gitignore). Links into them
@@ -88,7 +92,11 @@ def encoding_scope_files(root: Path | None = None) -> list[Path]:
         path = base / name
         if path.is_file():
             files.add(path)
-    return sorted(files)
+    return sorted(
+        path
+        for path in files
+        if "__pycache__" not in path.relative_to(base).parts
+    )
 
 
 def size_scope_files(root: Path | None = None) -> list[Path]:

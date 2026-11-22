@@ -138,12 +138,31 @@ class MetaLintTest(unittest.TestCase):
                     self.assertTrue(any("demo.gd" in f.message for f in findings))
 
     def test_invalid_utf8_is_named_instead_of_crashing(self):
-        ctx = self.root / ".llm" / "context.md"
-        ctx.write_bytes(b"# Broken \xff\n")
-        findings = self.errors()
-        self.assertTrue(
-            any("not valid UTF-8" in f.message and "context.md" in f.message for f in findings)
-        )
+        for rel in (".llm/context.md", "AGENTS.md", ".llm/skills/demo-skill/SKILL.md"):
+            with self.subTest(rel=rel):
+                path = self.root / rel
+                original = path.read_bytes()
+                path.write_bytes(b"# Broken \xff\n")
+                findings = self.errors()
+                self.assertTrue(
+                    any("not valid UTF-8" in f.message and Path(rel).name in f.message for f in findings),
+                    findings,
+                )
+                path.write_bytes(original)
+
+    def test_other_text_suffixes_are_checked(self):
+        for name in ("demo.cfg", "demo.gdshader"):
+            with self.subTest(name=name):
+                path = self.root / ".llm" / "code-samples" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"x")
+                self.assertTrue(any(name in f.message for f in self.errors()), self.errors())
+
+    def test_pycache_directory_inside_llm_is_outside_the_contract(self):
+        path = self.root / ".llm" / "__pycache__" / "x.md"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"x")
+        self.assertEqual(self.errors(), [])
 
     def test_plan_and_goal_final_newline_are_checked(self):
         for name in ("PLAN.md", "GOAL.md"):
