@@ -206,10 +206,13 @@ func _join() -> void:
 
 
 func _connect_room(code: String) -> void:
-	var native: bool = backend_choice.selected != 0
+	var server: String = endpoint.text.strip_edges()
+	var now_us: int = Time.get_ticks_usec()
+	if backend_choice.selected == 0:
+		controller.connect_room(server, player_name.text, code, now_us)
+		return
 	var route: String = "relay" if backend_choice.selected == 2 else "mesh"
-	controller.connect_room(endpoint.text.strip_edges(), player_name.text, code, Time.get_ticks_usec(), "native" if native else "legacy",
-		int(room_size.value) if native else 2, route)
+	controller.connect_native_room(server, player_name.text, code, now_us, int(room_size.value), route)
 
 
 func _ready_player() -> void:

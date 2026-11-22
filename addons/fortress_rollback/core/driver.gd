@@ -165,17 +165,9 @@ func step_local(now_us: int, local_inputs: Array[PackedByteArray]) -> StepResult
 	if _native_backend != null:
 		var before_native: int = _native_backend.status().current_frame
 		if _is_stepping:
-			return _result(Types.Code.BUSY, before_native, _native_backend.status())
+			return _result(Types.Code.BUSY, before_native)
 		_is_stepping = true
-		var code_native: int = _native_backend.step(now_us, local_inputs)
-		var result_native: StepResult = _result(code_native, before_native, _native_backend.status())
-		step_completed.emit(result_native.code, result_native.frame_before, result_native.frame_after)
-		var status_native: Types.Status = _native_backend.status()
-		result_native.reason = status_native.reason
-		result_native.failure_frame = status_native.failure_frame
-		result_native.failure_kind = status_native.failure_kind
-		_is_stepping = false
-		return result_native
+		return _finish(_native_backend.step(now_us, local_inputs), before_native)
 	var before: int = _session.status().current_frame if _session != null else 0
 	if _is_stepping:
 		return _result(Types.Code.BUSY, before)
@@ -444,7 +436,7 @@ func _consume_requests(advance: Types.Result, before: int) -> StepResult:
 func _result(code: int, before: int, completed_status: Types.Status = null) -> StepResult:
 	var status: Types.Status = completed_status
 	if status == null:
-		status = _session.status() if _session != null else Types.Status.new()
+		status = self.status()
 	var result: StepResult = StepResult.new(code, before, status.current_frame)
 	# A stopped session keeps its own cause, so a client can tell a desync from a plain stop.
 	result.reason = status.reason
@@ -457,12 +449,14 @@ func _finish(code: int, before: int, completed_status: Types.Status = null) -> S
 	var result: StepResult = _result(code, before, completed_status)
 	# An externally opened expert batch owns its events until completion.
 	if code != Types.Code.BUSY:
-		result.events = _session.drain_events()
-		_session._begin_driver_notification()
+		if _session != null:
+			result.events = _session.drain_events()
+			_session._begin_driver_notification()
 		step_completed.emit(result.code, result.frame_before, result.frame_after)
-		_session._end_driver_notification()
+		if _session != null:
+			_session._end_driver_notification()
 		# A handler may cancel future work after this operation already completed.
-		var status: Types.Status = _session.status()
+		var status: Types.Status = self.status()
 		result.reason = status.reason
 		result.failure_frame = status.failure_frame
 		result.failure_kind = status.failure_kind

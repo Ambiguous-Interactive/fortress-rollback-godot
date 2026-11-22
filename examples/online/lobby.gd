@@ -37,7 +37,15 @@ var _is_servicing: bool = false
 var _callbacks: Callbacks
 
 
-func connect_room(endpoint: String, player_name: String, room: String, now_us: int, backend_choice: String = "legacy", slots: int = 2, route: String = "mesh") -> Error:
+func connect_room(endpoint: String, player_name: String, room: String, now_us: int) -> Error:
+	return _connect_selected(endpoint, player_name, room, now_us, "legacy", 2, "mesh")
+
+
+func connect_native_room(endpoint: String, player_name: String, room: String, now_us: int, slots: int, route: String) -> Error:
+	return _connect_selected(endpoint, player_name, room, now_us, "native", slots, route)
+
+
+func _connect_selected(endpoint: String, player_name: String, room: String, now_us: int, backend_choice: String, slots: int, route: String) -> Error:
 	if _is_busy():
 		return ERR_BUSY
 	_is_servicing = true
@@ -52,8 +60,7 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 	if now_us < 0 or not (endpoint.begins_with("ws://") or endpoint.begins_with("wss://")) or player_name.strip_edges().is_empty():
 		message = "Enter a ws:// or wss:// endpoint and a player name."
 		return ERR_INVALID_PARAMETER
-	var supported: bool = backend_choice in ["legacy", "native"] and slots >= 2 and slots <= 8 and route in ["mesh", "relay"]
-	if not supported or (backend_choice == "legacy" and (slots != 2 or route != "mesh")):
+	if slots < 2 or slots > 8 or route not in ["mesh", "relay"]:
 		message = "Choose a supported backend, room size and transport."
 		return ERR_INVALID_PARAMETER
 	if backend_choice == "native" and not Match.Driver.Native.available():
