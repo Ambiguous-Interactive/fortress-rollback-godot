@@ -572,14 +572,24 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 	if drop_events != 0 or pending_events != 1 or reason != "timeout":
 		host.errors.append("peer_drop_history_lost_outcome")
 		return false
-	# Observe one bounded window after the terminal decision. A local-frontier
-	# fallback would advance the frame here; the witness records the delta.
+	# Observe one bounded window after the terminal decision. Exercise the
+	# forward and poll paths, not only the SDK: a regression that let a
+	# terminated peer advance must change the frame here.
 	var terminated_frame: int = peer.status().current_frame
+	var attempted: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, terminated_frame, PackedByteArray([host._sample(terminated_frame, slot)]))]
+	var post_terminal: Driver.StepResult = peer.step(host.transport_us, attempted)
+	if post_terminal.code == S.Code.OK or peer.status().current_frame != terminated_frame:
+		host.errors.append("peer_drop_history_lost_continued_%d" % post_terminal.code)
+		return false
 	var settled_us: int = Time.get_ticks_usec()
 	while Time.get_ticks_usec() - settled_us < LOST_HISTORY_SETTLE_US:
 		for index: int in range(host.clients.size()):
 			host.clients[index].poll()
 			host.meshes[index].poll()
+		var polled: int = peer.poll(host.transport_us, host._poll_tokens(peer))
+		if polled == I.Code.OK and peer.status().current_frame != terminated_frame:
+			host.errors.append("peer_drop_history_lost_settle_%d" % polled)
+			return false
 		await host.get_tree().create_timer(0.002).timeout
 	var final_frame: int = peer.status().current_frame
 	var confirmed_prefix: int = barrier.upper
@@ -617,6 +627,7 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 			"frames_submitted": steps_taken + 1,
 			"final_frame": final_frame,
 			"frames_after_terminal": final_frame - terminated_frame,
+			"post_terminal_code": post_terminal.code,
 			"barrier_cut": barrier.cut,
 			"prediction_gap": final_frame - barrier.cut - 1,
 			"freeze_frame": frozen_frame,

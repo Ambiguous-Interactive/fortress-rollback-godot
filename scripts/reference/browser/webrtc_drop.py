@@ -426,6 +426,7 @@ def _lost_history_row(row, role, slot, departing_slot, first, through):
             and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 8
             and type(row.get('final_frame')) is int and row['final_frame'] == 8
             and type(row.get('frames_after_terminal')) is int and row['frames_after_terminal'] == 0
+            and type(row.get('post_terminal_code')) is int and row['post_terminal_code'] > 0
             and type(row.get('barrier_cut')) is int and 0 <= row['barrier_cut'] <= through
             and type(row.get('prediction_gap')) is int
             and row['prediction_gap'] == row['final_frame'] - row['barrier_cut'] - 1

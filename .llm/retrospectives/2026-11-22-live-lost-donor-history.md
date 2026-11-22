@@ -32,7 +32,7 @@
 | # | Action | Where it landed | Verified by |
 | --- | --- | --- | --- |
 | 1 | Arm every owned transport with a count beyond every retry round; require two full rounds and record the journal count. | `webrtc_drop.gd`, `webrtc_drop.py` | four live cells report 65-67 drops against one chunk; mutations reject one drop |
-| 2 | Service peers directly in the terminal path, tolerate backpressure and terminal remote closure, count sent/received, and observe 250 ms after termination. | `webrtc_drop.gd` | four live cells report `frames_after_terminal: 0` and terminal codes 0 |
+| 2 | Service peers directly in the terminal path, tolerate backpressure and terminal remote closure, count sent/received, exercise a post-terminal step and poll, and observe 250 ms after termination. | `webrtc_drop.gd` | four live cells report `frames_after_terminal: 0`, `post_terminal_code: 19` and terminal flow codes 0 |
 | 3 | Read the authoritative frozen frame, compare the pre-cut confirmed prefix with reconstructed inputs and record the real comparison count. | `webrtc_drop.gd` | live rows compare 2-3 frames; mutations reject a changed prefix, a frozen slot and a continuation |
 | 4 | Bind both rows to the departed slot, participants, coordinator, generation and digest. | `webrtc_drop.py` | table-driven mutations reject each wrong or missing field |
 | 5 | Remove the resend claim from the lost-history validator and docs; keep the runtime counter as diagnostics. | `webrtc_drop.py`, `docs/peer-lifecycle.md` | validator mutations no longer rely on it; docs name two full rounds |
