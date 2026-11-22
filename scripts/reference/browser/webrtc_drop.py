@@ -423,6 +423,8 @@ def _lost_history_row(row, role, slot, departing_slot, first, through):
             and isinstance(row.get('uuid'), str)
             and isinstance(roster, list) and len(roster) == 3 and roster[slot] == row['uuid']
             and type(row.get('departing_slot')) is int and row['departing_slot'] == departing_slot
+            and isinstance(row.get('target_slots'), list) and all(type(slot) is int for slot in row['target_slots'])
+            and departing_slot in row['target_slots']
             and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 8
             and type(row.get('final_frame')) is int and row['final_frame'] == 8
             and type(row.get('frames_after_terminal')) is int and row['frames_after_terminal'] == 0
@@ -489,7 +491,8 @@ def _validate_lost_history(result, survivors):
     if (proposer.get('coordinator') != slots[0] or follower.get('coordinator') != slots[0]
             or proposer.get('coordinator_generation') != follower.get('coordinator_generation')
             or proposer.get('target_generation') != follower.get('target_generation')
-            or proposer.get('target_set_digest') != follower.get('target_set_digest')):
+            or proposer.get('target_set_digest') != follower.get('target_set_digest')
+            or proposer.get('target_slots') != follower.get('target_slots')):
         raise ValueError('peer-drop lost-history operation identity differs')
     if (type(proposer.get('history_donor')) is not int or proposer['history_donor'] != follower['slot']
             or type(follower.get('history_donor')) is not int or follower['history_donor'] != follower['slot']):

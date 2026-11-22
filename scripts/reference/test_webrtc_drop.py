@@ -238,7 +238,7 @@ def lost_evidence():
                 'confirmed_prefix': 3, 'canonical_comparisons': 3, 'terminal_peer_code': 0,
                 'terminal_transport_code': 0, 'session_id': 'ab' * 16,
                 'target_generation': 0, 'coordinator': 0, 'coordinator_generation': 0,
-                'target_set_digest': '00' * 8}
+                'target_set_digest': '00' * 8, 'target_slots': [2]}
     proposer.update(terminal, history_installed=False, history_dropped=0, history_resends=0,
                     history_drop_chunk=-1, history_drop_operation=-1, history_drop_count=0,
                     minimum_confirmed=3)
@@ -320,6 +320,10 @@ class LostHistoryEvidence(unittest.TestCase):
             lambda value: follower(value).update(minimum_confirmed=7),
             lambda value: proposer(value).update(departing_slot=0),
             lambda value: follower(value).pop('departing_slot'),
+            lambda value: proposer(value).update(target_slots=[]),
+            lambda value: proposer(value).update(target_slots=[0]),
+            lambda value: follower(value).update(target_slots=[2, 0]),
+            lambda value: follower(value).update(target_slots=[2.0]),
             lambda value: proposer(value).update(participants=[]),
             lambda value: follower(value).update(participants=[]),
             lambda value: proposer(value).update(coordinator=2),

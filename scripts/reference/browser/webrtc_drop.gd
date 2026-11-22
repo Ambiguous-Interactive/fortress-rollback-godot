@@ -600,9 +600,15 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 			return false
 		comparisons += 1
 	# Read the authoritative freeze state; a frozen slot must fail the control,
-	# not be masked by a constant row field.
+	# not be masked by a constant row field. The departed slot must be part of
+	# the target set, or the no-freeze evidence would not cover it.
+	if not barrier.slots.has(departing_slot):
+		host.errors.append("peer_drop_history_lost_target")
+		return false
+	var targets: Array[int] = []
 	var frozen_frame: int = -1
 	for target: int in barrier.slots:
+		targets.append(target)
 		var observed_freeze: int = peer._core.frozen_frame(target)
 		if observed_freeze >= 0:
 			host.errors.append("peer_drop_history_lost_frozen_%d" % observed_freeze)
@@ -623,6 +629,7 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 			"uuid": host.clients[0].get_player_id(),
 			"roster": host.memberships[0].roster(),
 			"participants": barrier.participants,
+			"target_slots": targets,
 			"departing_slot": departing_slot,
 			"frames_submitted": steps_taken + 1,
 			"final_frame": final_frame,
