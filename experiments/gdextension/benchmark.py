@@ -27,7 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", choices=["4.3", "4.7.2"])
     parser.add_argument("--editor", type=Path)
-    parser.add_argument("--rust-peer-dir", type=Path, default=CACHE / "target/gdextension/release")
+    parser.add_argument("--rust-peer-dir", type=Path, default=CACHE / "target/gdextension/reference/release")
     args = parser.parse_args()
     version = args.version
     arch = {"aarch64": "arm64", "x86_64": "x86_64"}[platform.machine()]

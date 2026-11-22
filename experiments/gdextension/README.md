@@ -57,7 +57,7 @@ To repeat one exported run or isolate a control:
 ```sh
 python3 experiments/gdextension/qualify.py \
   --export .cache/native-experiment/4.3/linux/witness \
-  --peer .cache/reference/target/gdextension/release/reference-peer --slot 1
+  --peer .cache/reference/target/gdextension/reference/release/reference-peer --slot 1
 ```
 
 Add `--control restore` or `--control encoding` to inject a defect. A single control run exits unsuccessfully.

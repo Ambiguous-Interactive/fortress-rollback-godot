@@ -47,10 +47,17 @@ jobs:
           avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
           "$sdkmanager" "system-images;android-35;google_apis;x86_64" "emulator" "platform-tools"
           echo no | "$avdmanager" create avd -n witness -k "system-images;android-35;google_apis;x86_64"
-          nohup "$ANDROID_HOME/emulator/emulator" -avd witness -no-window -no-audio -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 </dev/null &
+          emulator="$ANDROID_HOME/emulator/emulator"
+          "$emulator" -accel-check
+          nohup "$emulator" -avd witness -no-window -no-audio -no-snapshot -gpu swiftshader > "$RUNNER_TEMP/emulator.log" 2>&1 </dev/null &
+          emulator_pid=$!
+          trap 'if [[ $? != 0 ]]; then cat "$RUNNER_TEMP/emulator.log"; fi' EXIT
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-          timeout 120 adb wait-for-device
+          timeout 180 bash -c 'while kill -0 "$1" 2>/dev/null; do
+            if adb devices | grep -Eq "^emulator-[0-9]+[[:space:]]+device"; then exit 0; fi
+            sleep 2
+          done; exit 1' _ "$emulator_pid"
           timeout 300 bash -c 'until adb shell getprop sys.boot_completed | tr -d "\r" | grep -qx 1; do sleep 2; done'
           adb shell input keyevent 82
       - name: Boot an iOS simulator
