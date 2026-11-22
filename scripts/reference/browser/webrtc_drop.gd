@@ -409,6 +409,7 @@ func run(host: Node, count: int) -> bool:
 		"commit_cut": int(commit.get("cut", -1)),
 		"commit_digest": "%016x" % int(commit.get("digest", 0)),
 		"commit_slot": int(commit.get("slot", -1)),
+		"commit_retry_slot": int(commit.get("retry_slot", -1)),
 		"commit_first": str(commit.get("first", "")),
 		"commit_retry": str(commit.get("retry", "")),
 		"commit_delay_us": int(commit.get("delay_us", -1)),

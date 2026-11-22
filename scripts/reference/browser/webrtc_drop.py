@@ -544,6 +544,7 @@ def _validate_commit_loss(survivors):
             or type(proposer.get('commit_cut')) is not int or proposer['commit_cut'] != proposer.get('freeze_frame')
             or proposer.get('commit_digest') != proposer.get('digest')
             or type(proposer.get('commit_slot')) is not int or proposer['commit_slot'] != follower.get('slot')
+            or type(proposer.get('commit_retry_slot')) is not int or proposer['commit_retry_slot'] != follower.get('slot')
             or type(proposer.get('commit_delay_us')) is not int
             or not MIN_COMMIT_RETRY_DELAY_US <= proposer['commit_delay_us'] <= 4000000
             or type(first) is not str or not re.fullmatch(r'[0-9a-f]{202,2048}', first) or len(first) % 2
@@ -559,7 +560,8 @@ def _validate_commit_loss(survivors):
     if (follower.get('commit_dropped') != 0 or follower.get('commit_resends') != 0
             or follower.get('commit_first') != '' or follower.get('commit_retry') != ''
             or follower.get('commit_operation') != -1 or follower.get('commit_cut') != -1
-            or follower.get('commit_slot') != -1 or follower.get('commit_delay_us') != -1):
+            or follower.get('commit_slot') != -1 or follower.get('commit_retry_slot') != -1
+            or follower.get('commit_delay_us') != -1):
         raise ValueError('peer-drop lost-commit follower withheld bytes')
     return survivors
 

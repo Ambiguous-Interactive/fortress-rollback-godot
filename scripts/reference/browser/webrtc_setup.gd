@@ -223,6 +223,7 @@ class DropDirect:
 	var _commit_retry: String = ""
 	var _commit_dropped_us: int = -1
 	var _commit_retry_us: int = -1
+	var _commit_retry_slot: int = -1
 
 	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int, slot: int) -> void:
 		_drop_identity = identity.duplicate()
@@ -275,6 +276,7 @@ class DropDirect:
 			"cut": _commit_cut,
 			"digest": _commit_digest,
 			"slot": _commit_slot,
+			"retry_slot": _commit_retry_slot,
 			"first": _commit_first,
 			"retry": _commit_retry,
 			"delay_us": _commit_retry_us - _commit_dropped_us if _commit_retry_us >= 0 and _commit_dropped_us >= 0 else -1,
@@ -315,6 +317,7 @@ class DropDirect:
 				if _commit_retry.is_empty():
 					_commit_retry = packet.bytes.hex_encode()
 					_commit_retry_us = now_us
+					_commit_retry_slot = destination_slot
 			kept.append(packet)
 		_pending = kept
 

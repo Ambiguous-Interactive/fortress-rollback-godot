@@ -259,10 +259,10 @@ def commit_evidence():
     proposer.update(operation=operation, commit_dropped=1, commit_resends=1, commit_operation=operation,
                     commit_cut=proposer['freeze_frame'], commit_digest=proposer['digest'],
                     commit_slot=follower['slot'], commit_first=payload, commit_retry=payload,
-                    commit_delay_us=50000, acknowledged_peers=[hashlib.sha256(follower['uuid'].encode('ascii')).digest()[:8].hex()],
+                    commit_retry_slot=follower['slot'], commit_delay_us=50000, acknowledged_peers=[hashlib.sha256(follower['uuid'].encode('ascii')).digest()[:8].hex()],
                     commit_ack_peers=[])
     follower.update(operation=operation, commit_dropped=0, commit_resends=0, commit_operation=-1,
-                    commit_cut=-1, commit_digest='0000000000000000', commit_slot=-1,
+                    commit_cut=-1, commit_digest='0000000000000000', commit_slot=-1, commit_retry_slot=-1,
                     commit_first='', commit_retry='', commit_delay_us=-1,
                     acknowledged_peers=[], commit_ack_peers=[])
     return value
@@ -289,6 +289,8 @@ class CommitLossEvidence(unittest.TestCase):
             lambda value: proposer(value).update(commit_digest='00' * 8),
             lambda value: proposer(value).update(commit_slot=proposer(value)['slot']),
             lambda value: proposer(value).update(commit_slot=True),
+            lambda value: proposer(value).update(commit_retry_slot=proposer(value)['slot']),
+            lambda value: proposer(value).update(commit_retry_slot=True),
             lambda value: proposer(value).update(commit_delay_us=39999),
             lambda value: proposer(value).update(commit_delay_us=4000001),
             lambda value: proposer(value).update(commit_delay_us=True),
@@ -305,6 +307,7 @@ class CommitLossEvidence(unittest.TestCase):
             lambda value: follower(value).update(commit_dropped=1),
             lambda value: follower(value).update(commit_resends=1),
             lambda value: follower(value).update(commit_first=payload),
+            lambda value: follower(value).update(commit_retry_slot=0),
             lambda value: follower(value).update(commit_delay_us=50000),
         ]
         for mutation in mutations:
