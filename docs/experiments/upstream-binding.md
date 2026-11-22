@@ -20,11 +20,12 @@ The Linux ARM64 shared library measured approximately 2.56 MB and the Web side m
 Compressed addon archives measured about 0.79 MB for Linux and 1.13 MB for Linux editor plus Web.
 Hosted runs passed the same exported match and both failure controls on Linux x86-64, Windows x86-64, and Apple Silicon macOS on both Godot pins.
 The macOS addon contains ARM64 and x86-64 slices. Hosted Web passed on Chromium, Firefox, and WebKit on both pins.
-Android 4.3 passed on an x86-64 emulator. The signed APKs include ARM64 and x86-64 libraries.
-The Android 4.7.2 job installed and started the APK, then stopped reporting after the first HTTP request.
+Android passed on the x86-64 emulator on both pins. The signed APKs include ARM64 and x86-64 libraries.
+Godot 4.7.2 initially logged a Vulkan presentation error and stopped advancing after the first HTTP request.
+Setting the mobile renderer explicitly to Compatibility allowed both Android jobs to complete.
 The iOS addon contains ARM64 device and simulator slices. The stock Godot simulator archive contains x86-64 objects, so the current CI build
 compiles an ARM64 engine from each pinned revision and supplies that simulator library to the exported Xcode project.
-[Hosted qualification and artifacts](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/44999235188)
+[Hosted qualification and artifacts](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45000317676)
 
 ## Performance
 
