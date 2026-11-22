@@ -27,6 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", choices=["4.3", "4.7.2"])
     parser.add_argument("--editor", type=Path)
+    parser.add_argument("--rust-peer-dir", type=Path, default=CACHE / "target/gdextension/release")
     args = parser.parse_args()
     version = args.version
     arch = {"aarch64": "arm64", "x86_64": "x86_64"}[platform.machine()]
@@ -47,7 +48,7 @@ def main():
             expected = struct.pack("<I", 256) + b"".join(struct.pack("<I", (i+1)*32896) for i in range(players))
             trace = None
             for backend in ["rust", "native", "port"]:
-                command = ([CACHE / "target/gdextension/release/sync-bench", str(players)] if backend == "rust" else
+                command = ([args.rust_peer_dir / "sync-bench", str(players)] if backend == "rust" else
                            base + ["--script", "res://bench.gd", "--", backend, str(players)])
                 times, copies, rollback_times = [], [], []
                 for _ in range(2):

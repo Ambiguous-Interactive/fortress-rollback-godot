@@ -85,7 +85,8 @@ def main():
         with zipfile.ZipFile(CACHE / f"downloads/Godot_v{version}-stable_export_templates.tpz") as templates:
             custom.write_bytes(templates.read("templates/" + template))
         options = [f'custom_template/{mode}="{custom.as_posix()}"' for mode in ("debug", "release")]
-        options.append(f'binary_format/architecture="{arch}"')
+        export_arch = "universal" if args.target == "macos" else arch
+        options.append(f'binary_format/architecture="{export_arch}"')
         if args.target == "web":
             options += ["variant/extensions_support=true", "variant/thread_support=false"]
         if args.target in ("ios", "android"):

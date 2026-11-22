@@ -55,7 +55,9 @@ def main():
     env = dict(os.environ, CARGO_TARGET_DIR=str(native))
     cargo = ["cargo", "build", "--manifest-path", HERE / "Cargo.toml", "--locked", "--release"]
     subprocess.run(cargo + ["--lib"], env=env, check=True)
-    subprocess.run(cargo + ["--no-default-features", "--features", "peer", "--bins"], env=env, check=True)
+    # Both feature sets can emit a cdylib with the same filename, particularly on Windows.
+    peer_target = native / "reference"
+    subprocess.run(cargo + ["--no-default-features", "--features", "peer", "--bins", "--target-dir", peer_target], env=env, check=True)
     if target == "web":
         subprocess.run(["bash", HERE / "build_web.sh"], env=dict(env, RUSTUP_TOOLCHAIN="nightly-2026-02-01"), check=True)
     if target == "android":
@@ -78,7 +80,7 @@ def main():
     outputs = {"linux": "witness", "windows": "witness.exe", "macos": "witness.app", "android": "witness.apk",
                "web": "index.html", "ios": "build/Build/Products/Release-iphonesimulator/witness.app"}
     opts = ["--device", target] if target in ("android", "ios") else []
-    peer = native / "release" / ("reference-peer.exe" if HOST == "windows" else "reference-peer")
+    peer = peer_target / "release" / ("reference-peer.exe" if HOST == "windows" else "reference-peer")
     variants = [(engine, ["--engine", engine, "--browser", "default"]) for engine in ("chromium", "firefox", "webkit")] if target == "web" else [(target, opts)]
     receipts = {}
     for label, extra in variants:
@@ -93,7 +95,7 @@ def main():
     partial.replace(directory / "qualification.json")
     print(json.dumps(receipts))
     if target == "linux":
-        measurements = subprocess.check_output([sys.executable, HERE / "benchmark.py", version, "--editor", binary], text=True, env=env)
+        measurements = subprocess.check_output([sys.executable, HERE / "benchmark.py", version, "--editor", binary, "--rust-peer-dir", peer.parent], text=True, env=env)
         (directory / "benchmark.json").write_text(json.dumps([json.loads(line) for line in measurements.splitlines()], indent=2) + "\n")
 
 
