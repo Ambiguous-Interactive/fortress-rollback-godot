@@ -416,14 +416,19 @@ def _validate_room_evidence(result, room_departure, room_continue):
     return result
 
 
-def _lost_history_row(row, role, slot):
+def _lost_history_row(row, role, slot, departing_slot, first, through):
     roster = row.get('roster')
     return (row.get('departed') is False
             and type(row.get('slot')) is int and row['slot'] == slot
             and isinstance(row.get('uuid'), str)
             and isinstance(roster, list) and len(roster) == 3 and roster[slot] == row['uuid']
+            and type(row.get('departing_slot')) is int and row['departing_slot'] == departing_slot
             and type(row.get('frames_submitted')) is int and row['frames_submitted'] == 8
-            and type(row.get('prediction_gap')) is int and row['prediction_gap'] >= 0
+            and type(row.get('final_frame')) is int and row['final_frame'] == 8
+            and type(row.get('frames_after_terminal')) is int and row['frames_after_terminal'] == 0
+            and type(row.get('barrier_cut')) is int and 0 <= row['barrier_cut'] <= through
+            and type(row.get('prediction_gap')) is int
+            and row['prediction_gap'] == row['final_frame'] - row['barrier_cut'] - 1
             and row.get('state') == 'failed' and row.get('failed') is True
             and row.get('failure_reason') == 'timeout'
             and row.get('lifecycle') == 'terminated'
@@ -432,18 +437,21 @@ def _lost_history_row(row, role, slot):
             and type(row.get('role')) is int and row['role'] == role
             and row.get('certified') is False
             and type(row.get('certificates')) is int and row['certificates'] == 0
+            and type(row.get('terminal_peer_code')) is int and row['terminal_peer_code'] in (0, 7)
+            and type(row.get('terminal_transport_code')) is int and row['terminal_transport_code'] in (0, 9, 12)
             and type(row.get('drop_events')) is int and row['drop_events'] == 0
             and row.get('drop_frames') == {}
             and type(row.get('pending_events')) is int and row['pending_events'] == 1
-            and type(row.get('history_first')) is int and row['history_first'] == 4
-            and type(row.get('history_cut')) is int and row['history_cut'] == 6
+            and type(row.get('history_first')) is int and row['history_first'] == first
+            and type(row.get('history_cut')) is int and row['history_cut'] == through
             and row.get('history_installed') is False
             and type(row.get('history_dropped')) is int and type(row.get('history_resends')) is int
             and type(row.get('history_drop_chunk')) is int and type(row.get('history_drop_operation')) is int
             and type(row.get('history_drop_count')) is int
-            and type(row.get('minimum_confirmed')) is int and 0 <= row['minimum_confirmed'] <= 6
-            and type(row.get('canonical_comparisons')) is int and row['canonical_comparisons'] == 0
-            and type(row.get('active_comparisons')) is int and row['active_comparisons'] == 0
+            and type(row.get('minimum_confirmed')) is int and 0 <= row['minimum_confirmed'] <= through
+            and type(row.get('confirmed_prefix')) is int and 0 <= row['confirmed_prefix'] <= first - 1
+            and type(row.get('canonical_comparisons')) is int
+            and row['canonical_comparisons'] == row['confirmed_prefix']
             and type(row.get('rollback_loads')) is int
             and isinstance(row.get('session_id'), str) and re.fullmatch(r'[0-9a-f]{32}', row['session_id'])
             and type(row.get('target_generation')) is int
@@ -470,20 +478,29 @@ def _validate_lost_history(result, survivors):
     slots = (proposer.get('slot'), follower.get('slot'))
     if any(type(slot) is not int for slot in slots) or slots[0] >= slots[1]:
         raise ValueError('peer-drop lost-history coordinator differs from lowest surviving slot')
-    if not _lost_history_row(proposer, 1, slots[0]) or not _lost_history_row(follower, 0, slots[1]):
+    if not _lost_history_row(proposer, 1, slots[0], report['slot'], report['from'], report['through']) \
+            or not _lost_history_row(follower, 0, slots[1], report['slot'], report['from'], report['through']):
         raise ValueError('peer-drop lost-history terminal row incomplete')
-    if type(proposer.get('minimum_confirmed')) is not int or proposer['minimum_confirmed'] > 3:
-        raise ValueError('peer-drop lost-history confirmation frontier differs')
-    if proposer.get('history_donor') != follower.get('slot') or follower.get('history_donor') != follower.get('slot'):
+    other_id = hashlib.sha256(follower['uuid'].encode('ascii')).digest()[:8].hex()
+    other = hashlib.sha256(proposer['uuid'].encode('ascii')).digest()[:8].hex()
+    if proposer.get('participants') != [other_id] or follower.get('participants') != [other]:
+        raise ValueError('peer-drop lost-history certificate participant differs from original survivor')
+    if (proposer.get('coordinator') != slots[0] or follower.get('coordinator') != slots[0]
+            or proposer.get('coordinator_generation') != follower.get('coordinator_generation')
+            or proposer.get('target_generation') != follower.get('target_generation')
+            or proposer.get('target_set_digest') != follower.get('target_set_digest')):
+        raise ValueError('peer-drop lost-history operation identity differs')
+    if (type(proposer.get('history_donor')) is not int or proposer['history_donor'] != follower['slot']
+            or type(follower.get('history_donor')) is not int or follower['history_donor'] != follower['slot']):
         raise ValueError('peer-drop lost-history donor identity differs')
-    if (type(proposer.get('history_resends')) is not int or proposer['history_resends'] != 0
-            or type(follower.get('history_resends')) is not int or follower['history_resends'] != 0):
-        raise ValueError('peer-drop lost-history kept a donor resend')
-    if type(proposer.get('history_dropped')) is not int or proposer['history_dropped'] != 0:
+    if (type(proposer.get('history_dropped')) is not int or proposer['history_dropped'] != 0
+            or type(proposer.get('history_drop_count')) is not int or proposer['history_drop_count'] != 0
+            or type(proposer.get('history_drop_chunk')) is not int or proposer['history_drop_chunk'] != -1):
         raise ValueError('peer-drop lost-history recipient withheld donor bytes')
-    if (type(follower.get('history_dropped')) is not int or follower['history_dropped'] < 1
+    if (type(follower.get('history_dropped')) is not int or follower['history_dropped'] < 2
             or type(follower.get('history_drop_chunk')) is not int or follower['history_drop_chunk'] != 0
             or type(follower.get('history_drop_count')) is not int or follower['history_drop_count'] < 1
+            or follower['history_dropped'] < 2 * follower['history_drop_count']
             or type(follower.get('history_drop_operation')) is not int
             or type(follower.get('operation')) is not int
             or follower['history_drop_operation'] != follower['operation']

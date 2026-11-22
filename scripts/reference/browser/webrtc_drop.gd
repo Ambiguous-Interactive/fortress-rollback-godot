@@ -8,9 +8,14 @@ const Drop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
 const Envelope = preload("res://addons/fortress_rollback/transport/signalfish_relay_envelope.gd")
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
+const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
+const DirectTypes = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_types.gd")
 ## Larger than every resend round inside the live barrier timeout, so the
 ## lost-history control never lets a chunk through after the arm runs out.
 const LOST_HISTORY_DROP_COUNT: int = 10000
+## The post-termination observation window: a local-frontier fallback must not
+## advance a frame after the survivor already reported the terminal outcome.
+const LOST_HISTORY_SETTLE_US: int = 250000
 var events: Array[Dictionary] = []
 var relay_barriers: Array[String] = []
 var _host: Node = null
@@ -506,6 +511,8 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 	# after a peer stops or a real transport reports backpressure; the ordinary
 	# service batch treats both as fatal for a label that expects continuation.
 	var reason: String = ""
+	var terminal_peer_code: int = I.Code.OK
+	var terminal_transport_code: int = 0
 	var started_us: int = Time.get_ticks_usec()
 	while Time.get_ticks_usec() - started_us < 15000000:
 		host._update_transport_clock()
@@ -514,11 +521,33 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 			host.meshes[index].poll()
 			if host.peers[index].status().lifecycle == S.Lifecycle.TERMINATED:
 				continue
-			host.peers[index].poll(host.transport_us, host._poll_tokens(host.peers[index]))
+			terminal_peer_code = host.peers[index].poll(host.transport_us, host._poll_tokens(host.peers[index]))
+			if terminal_peer_code not in [I.Code.OK, I.Code.BACKPRESSURE]:
+				host.errors.append("peer_drop_history_lost_peer_%d" % terminal_peer_code)
+				return false
+			if host.peers[index].status().lifecycle == S.Lifecycle.TERMINATED:
+				# The poll that timed the barrier out also closed the local
+				# links; do not read them as a transport failure.
+				for event: Dictionary in host.peers[index].drain_events():
+					if String(event.get("kind", "")) == "peer_drop_unconfirmed":
+						reason = String(event.get("reason", ""))
+					host.drop_witness.observed(event)
+				continue
 			var packets: Array = host.peers[index].drain_outbox()
 			if not packets.is_empty():
-				host.transports[index].enqueue_batch(packets)
-			host.transports[index].poll(host.transport_us, host._next_token)
+				var enqueued: int = host.transports[index].enqueue_batch(packets)
+				if enqueued != 0:
+					host.errors.append("peer_drop_history_lost_enqueue_%d" % enqueued)
+					return false
+			var sent: Direct.Result = host.transports[index].poll(host.transport_us, host._next_token)
+			terminal_transport_code = sent.code
+			if terminal_transport_code not in [0, DirectTypes.Code.BACKPRESSURE, DirectTypes.Code.PEER_FAILURE]:
+				# The other survivor may close its link after its own timeout;
+				# that terminal wind-down is expected here.
+				host.errors.append("peer_drop_history_lost_transport_%d" % terminal_transport_code)
+				return false
+			host.sent_packets += sent.sent
+			host.received_packets += sent.received
 			for event: Dictionary in host.peers[index].drain_events():
 				if String(event.get("kind", "")) == "peer_drop_unconfirmed":
 					reason = String(event.get("reason", ""))
@@ -543,7 +572,39 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 	if drop_events != 0 or pending_events != 1 or reason != "timeout":
 		host.errors.append("peer_drop_history_lost_outcome")
 		return false
-	var history: Dictionary = host.transports[0].history_report() if host.transports[0].has_method("history_report") else {}
+	# Observe one bounded window after the terminal decision. A local-frontier
+	# fallback would advance the frame here; the witness records the delta.
+	var terminated_frame: int = peer.status().current_frame
+	var settled_us: int = Time.get_ticks_usec()
+	while Time.get_ticks_usec() - settled_us < LOST_HISTORY_SETTLE_US:
+		for index: int in range(host.clients.size()):
+			host.clients[index].poll()
+			host.meshes[index].poll()
+		await host.get_tree().create_timer(0.002).timeout
+	var final_frame: int = peer.status().current_frame
+	var confirmed_prefix: int = barrier.upper
+	var comparisons: int = 0
+	for frame: int in range(1, confirmed_prefix + 1):
+		if host.games[0].history.get(frame) != expected(host, frame, count, {}):
+			host.errors.append("peer_drop_history_lost_canonical_%d" % frame)
+			return false
+		comparisons += 1
+	# Read the authoritative freeze state; a frozen slot must fail the control,
+	# not be masked by a constant row field.
+	var frozen_frame: int = -1
+	for target: int in barrier.slots:
+		var observed_freeze: int = peer._core.frozen_frame(target)
+		if observed_freeze >= 0:
+			host.errors.append("peer_drop_history_lost_frozen_%d" % observed_freeze)
+			return false
+		if target == departing_slot:
+			frozen_frame = observed_freeze
+	var history: Dictionary = {}
+	for transport: Variant in host.transports:
+		if transport.has_method("history_report"):
+			var report: Dictionary = transport.history_report()
+			if int(report.get("dropped", 0)) > int(history.get("dropped", 0)):
+				history = report
 	host.records.append(
 		{
 			"players": count,
@@ -554,8 +615,11 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 			"participants": barrier.participants,
 			"departing_slot": departing_slot,
 			"frames_submitted": steps_taken + 1,
-			"prediction_gap": peer.status().current_frame - barrier.cut - 1,
-			"freeze_frame": -1,
+			"final_frame": final_frame,
+			"frames_after_terminal": final_frame - terminated_frame,
+			"barrier_cut": barrier.cut,
+			"prediction_gap": final_frame - barrier.cut - 1,
+			"freeze_frame": frozen_frame,
 			"frozen_value": "",
 			"state": barrier.state,
 			"failed": true,
@@ -564,6 +628,8 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 			"role": barrier.role,
 			"certified": barrier.certified,
 			"certificates": barrier.certificates.size(),
+			"terminal_peer_code": terminal_peer_code,
+			"terminal_transport_code": terminal_transport_code,
 			"drop_events": 0,
 			"drop_frames": {},
 			"pending_events": pending_events,
@@ -577,8 +643,8 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 			"history_drop_operation": int(history.get("operation", -1)),
 			"history_drop_count": int(history.get("count", 0)),
 			"minimum_confirmed": peer.status().confirmed_frame,
-			"canonical_comparisons": 0,
-			"active_comparisons": 0,
+			"confirmed_prefix": confirmed_prefix,
+			"canonical_comparisons": comparisons,
 			"rollback_loads": host.games[0].loads,
 			"session_id": host.memberships[0].handshake_message().session_id.hex_encode(),
 			"target_generation": barrier.generations[0],

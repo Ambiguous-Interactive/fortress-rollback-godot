@@ -313,8 +313,8 @@ donor interval, the installed transfer, chunk zero, a later chunk-zero resend
 and the continuing canonical history. The `peer-drop-missing-lost` cell withholds
 every donor chunk on that same real link for the whole retry window. The barrier
 expires, both survivors terminate with `timeout`, no slot is frozen, the
-recipient never installs the interval and its confirmation stays at or below the
-last original row before the withheld range. Full pinned-source
+recipient never installs the interval, and each survivor compares its pre-cut
+confirmed prefix with independently reconstructed original inputs. Full pinned-source
 trace comparison and the expanded live fault matrix remain in
 [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
@@ -357,9 +357,10 @@ withholds its first retained-history chunk, so it resends chunk zero before the 
 The validator requires exactly frames four through six (no overlapping packet range),
 the donor identity, the installed interval, chunk zero, a later chunk-zero resend and the agreed cut.
 The `peer-drop-missing-lost` control withholds every donor chunk until the barrier expires. It requires
-a failed barrier, `timeout` on both survivors, no `peer_dropped` event, no frozen value, no installed
-interval, a donor drop count with zero kept resends, and a recipient confirmation no higher than the
-last row before the withheld range. A committed, frozen or continued receipt fails the control.
+a failed barrier, `timeout` on both survivors, no `peer_dropped` event, no frozen slot, no installed
+interval, at least two full donor retry rounds, an unchanged pre-cut confirmed prefix against the
+independently reconstructed original inputs, and no frame advance after the terminal decision.
+A committed, frozen or continued receipt fails the control.
 The `peer-drop-second` case departs one page after seven inputs and a second page after twelve.
 The remaining survivor certifies the first cut, then observes the second departure and
 freezes that slot on its own confirmed frontier; this is a one-member freeze and no second
