@@ -11,7 +11,7 @@ const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["asymmetric_direct", "asymmetric_relay", "early_validation", "native_relay_plan"])
+	return PackedStringArray(["asymmetric_direct", "asymmetric_relay", "early_validation", "native_relay_plan", "native_ingress_pressure"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -21,6 +21,10 @@ func run_case(name: String, context: RefCounted) -> void:
 		return
 	if name == "native_relay_plan":
 		_native_relay_plan(context)
+		context.finish()
+		return
+	if name == "native_ingress_pressure":
+		_native_ingress_pressure(context)
 		context.finish()
 		return
 	var helper: RefCounted = Example.new()
@@ -233,3 +237,71 @@ class StartupMatch:
 	# The fixture exercises transport startup without executing native gameplay.
 	func tick(_now_us: int, _buttons: int) -> void:
 		pass
+
+
+# Value: protects=native receive retry ownership; fails_when=a full native queue drops a valid datagram; seam=online match and binary relay receiver
+func _native_ingress_pressure(context: RefCounted) -> void:
+	var client: LobbyClient = LobbyClient.new()
+	var mesh: LobbyMesh = LobbyMesh.new()
+	var game: Match = Match.new()
+	var incarnation: PackedByteArray = PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8])
+	context.equal(game.freeze(client, mesh, PackedStringArray([Example.U, Example.V]), incarnation), OK, "freeze room")
+	var backend: Match.Driver.Native = Match.Driver.Native.new()
+	var ingress: NativeIngress = NativeIngress.new()
+	backend._native = ingress
+	game.driver._native_backend = backend
+	game._native_identity = game.membership.handshake_message().session_id
+	var plan: MembershipFixture.Plan = MembershipFixture.Plan.new()
+	plan.data.topology = "relay"
+	plan.data.transport = "relay"
+	plan.data.peers.clear()
+	client.session_plan.emit(plan)
+	var config: RelayFixture.SDKConfig = RelayFixture.SDKConfig.new()
+	config.max_buffered_bytes = 4096
+	config.max_outbound_frame_bytes = 4096
+	context.equal(game.start_transport(client, mesh, config, RelayFixture.Info.new(), 0), OK, "native relay ready")
+
+	var payload: PackedByteArray = PackedByteArray([91, 72])
+	var invalid: PackedByteArray = _native_envelope(game, PackedByteArray([0]))
+	var valid: PackedByteArray = _native_envelope(game, payload)
+	client.game_data_binary_received.emit(Example.V, 1, invalid)
+	client.game_data_binary_received.emit(Example.V, 1, valid)
+	var pressure: Match.Relay.Result = game.relay.poll(0)
+	context.equal(pressure.code, Match.Relay.Code.BACKPRESSURE, "valid datagram surfaces recoverable pressure")
+	context.equal(pressure.peer_code, Match.Inputs.Code.BACKPRESSURE, "match forwards native pressure")
+	context.equal(pressure.received, 0, "neither malformed nor refused datagram counted as accepted")
+	context.equal(game.relay.status().received_packets, 1, "malformed datagram dropped and exact valid datagram retained")
+	context.equal(game.relay.status().received_bytes, valid.size(), "retained bytes accounted for")
+	context.equal(ingress.accepted.size(), 0, "full native queue does not accept")
+	context.equal(game.driver.receive_native(2, payload), false, "boolean receive API still refuses capacity")
+
+	ingress.full = false
+	var retry: Match.Relay.Result = game.relay.poll(1)
+	context.equal(retry.code, Match.Relay.Code.OK, "pressure clears on retry")
+	context.equal(retry.received, 1, "exact retained datagram accepted once")
+	context.equal(ingress.accepted, [payload], "native ingress receives original bytes after capacity frees")
+	context.equal(game.relay.status().received_bytes, 0, "retry releases retained bytes")
+	context.equal(game.relay.poll(2).received, 0, "no duplicate retry after acceptance")
+	game.detach()
+	mesh.free()
+	client.free()
+
+
+func _native_envelope(game: Match, payload: PackedByteArray) -> PackedByteArray:
+	var identity: PackedByteArray = game.membership.handshake_message().session_id
+	return Match.Relay.Envelope.encode(identity, Example.V, Example.U, identity + payload)
+
+
+class NativeIngress:
+	extends RefCounted
+
+	var full: bool = true
+	var accepted: Array[PackedByteArray] = []
+
+	func receive_from_result(endpoint: int, bytes: PackedByteArray) -> int:
+		if endpoint != 2 or bytes.size() != 2:
+			return Match.Driver.Native.ReceiveCode.REJECTED
+		if full:
+			return Match.Driver.Native.ReceiveCode.FULL
+		accepted.append(bytes)
+		return Match.Driver.Native.ReceiveCode.ACCEPTED

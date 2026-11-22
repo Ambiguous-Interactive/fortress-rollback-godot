@@ -227,9 +227,13 @@ func _receive_native(uuid: String, bytes: PackedByteArray) -> int:
 		return Inputs.Code.WRONG_SOURCE
 	if bytes.size() <= NATIVE_TAG_BYTES or bytes.slice(0, NATIVE_TAG_BYTES) != _native_identity:
 		return Inputs.Code.WRONG_CONNECTION
-	if not driver.receive_native(slot + 1, bytes.slice(NATIVE_TAG_BYTES)):
-		return Inputs.Code.WRONG_CONNECTION
-	return Inputs.Code.OK
+	match driver.receive_native_result(slot + 1, bytes.slice(NATIVE_TAG_BYTES)):
+		Driver.Native.ReceiveCode.ACCEPTED:
+			return Inputs.Code.OK
+		Driver.Native.ReceiveCode.FULL:
+			return Inputs.Code.BACKPRESSURE
+		_:
+			return Inputs.Code.WRONG_CONNECTION
 
 
 func _tick_native(now_us: int, buttons: int) -> void:

@@ -1,4 +1,7 @@
-use crate::{peer::Peer, Game};
+use crate::{
+    peer::{Peer, ReceiveCode},
+    Game,
+};
 use fortress_rollback::{FortressRequest, InputStatus, PlayerHandle, SessionBuilder};
 use godot::prelude::*;
 
@@ -58,12 +61,17 @@ impl FortressNativeSession {
 
     #[func]
     fn receive_from(&mut self, endpoint: i64, packet: PackedByteArray) -> bool {
+        self.receive_from_result(endpoint, packet) == ReceiveCode::Accepted as i32
+    }
+
+    #[func]
+    fn receive_from_result(&mut self, endpoint: i64, packet: PackedByteArray) -> i32 {
         let Ok(endpoint) = i32::try_from(endpoint) else {
-            return false;
+            return ReceiveCode::Rejected as i32;
         };
-        self.peer
-            .as_mut()
-            .is_some_and(|peer| peer.receive_from(endpoint, packet.as_slice()))
+        self.peer.as_mut().map_or(ReceiveCode::Rejected, |peer| {
+            peer.receive_from(endpoint, packet.as_slice())
+        }) as i32
     }
 
     #[func]

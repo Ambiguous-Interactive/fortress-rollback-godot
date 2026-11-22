@@ -29,20 +29,27 @@ fn rejects_invalid_rosters_and_bounds_ingress() {
         .drain()
         .pop()
         .expect("upstream starts synchronization");
-    for endpoint in [i32::MIN, 0, 1, 9, i32::MAX] {
-        assert!(!local.receive_from(endpoint, &hello));
+    for _ in 0..MAX_PACKETS {
+        assert_eq!(local.receive_from(8, &hello), ReceiveCode::Accepted);
     }
-    assert!(!local.receive_from(8, &hello[..hello.len() - 1]));
     let mut trailing = hello.clone();
     trailing.push(0);
-    assert!(!local.receive_from(8, &trailing));
-    assert!(!local.receive_from(8, &[0; MAX_PACKET_BYTES + 1]));
-    for _ in 0..MAX_PACKETS {
-        assert!(local.receive_from(8, &hello));
+    for (endpoint, packet) in [
+        (i32::MIN, hello.as_slice()),
+        (0, hello.as_slice()),
+        (1, hello.as_slice()),
+        (9, hello.as_slice()),
+        (i32::MAX, hello.as_slice()),
+        (8, &hello[..hello.len() - 1]),
+        (8, trailing.as_slice()),
+        (8, &[0; MAX_PACKET_BYTES + 1]),
+    ] {
+        assert_eq!(local.receive_from(endpoint, packet), ReceiveCode::Rejected);
     }
-    assert!(!local.receive_from(8, &hello));
+    assert_eq!(local.receive_from(8, &hello), ReceiveCode::Full);
+    assert_eq!(local.socket.0.borrow().incoming.len(), MAX_PACKETS);
     assert_eq!(local.step(&[9; 4], |_| panic!("still synchronizing")), 1);
-    assert!(local.receive_from(8, &hello));
+    assert_eq!(local.receive_from(8, &hello), ReceiveCode::Accepted);
 }
 
 #[derive(Default)]
@@ -88,7 +95,10 @@ fn transfer(peers: &mut [Peer]) {
         for (endpoint, packet) in peers[sender].drain() {
             let recipient = usize::from(endpoint) - 1;
             assert_ne!(recipient, sender);
-            assert!(peers[recipient].receive_from(sender as i32 + 1, &packet));
+            assert_eq!(
+                peers[recipient].receive_from(sender as i32 + 1, &packet),
+                ReceiveCode::Accepted
+            );
         }
     }
 }
@@ -162,7 +172,10 @@ fn native_desync_halts_before_dispatch_and_preserves_the_first_cause() {
             assert_eq!(peer.confirmed_frame(), confirmed);
             assert!(!peer.is_running());
             assert!(peer.drain().is_empty());
-            assert!(!peer.receive_from(2 - index as i32, &[]));
+            assert_eq!(
+                peer.receive_from(2 - index as i32, &[]),
+                ReceiveCode::Rejected
+            );
             assert_eq!(peer.step(&[], |_| panic!("terminal callback")), -1);
             assert_eq!(peer.terminal_reason(), "desync");
             return;
@@ -212,7 +225,7 @@ fn check_timeout_policy(abort_on_event: bool) {
     assert!(peers[0].is_running());
 
     for (_, packet) in in_flight {
-        assert!(peers[0].receive_from(2, &packet));
+        assert_eq!(peers[0].receive_from(2, &packet), ReceiveCode::Accepted);
     }
     run_frame(&mut peers[0], &mut games[0], &[0]);
     assert_eq!(peers[0].interrupted_endpoints().count(), 0);

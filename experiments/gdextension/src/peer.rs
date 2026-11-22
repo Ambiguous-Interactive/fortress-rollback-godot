@@ -12,6 +12,15 @@ const MAX_PACKET_BYTES: usize = 8192;
 const INPUT_BYTES: usize = 4;
 type Datagram = (u16, Vec<u8>);
 
+// These values are mirrored by FortressNativeDriver.ReceiveCode.
+#[derive(Debug, PartialEq, Eq)]
+#[repr(i32)]
+pub(crate) enum ReceiveCode {
+    Accepted = 0,
+    Rejected = 1,
+    Full = 2,
+}
+
 #[derive(Default)]
 struct Packets {
     incoming: Vec<(u16, Message)>,
@@ -109,25 +118,26 @@ impl Peer {
         })
     }
 
-    pub(crate) fn receive_from(&mut self, endpoint: i32, bytes: &[u8]) -> bool {
+    pub(crate) fn receive_from(&mut self, endpoint: i32, bytes: &[u8]) -> ReceiveCode {
         if !self.terminal.is_empty()
             || !(1..=MAX_PLAYERS).contains(&endpoint)
             || self.remote_endpoints & (1 << endpoint) == 0
             || bytes.len() > MAX_PACKET_BYTES
         {
-            return false;
+            return ReceiveCode::Rejected;
+        }
+        let Ok((message, used)) = codec::decode_message(bytes) else {
+            return ReceiveCode::Rejected;
+        };
+        if used != bytes.len() {
+            return ReceiveCode::Rejected;
         }
         let mut packets = self.socket.0.borrow_mut();
         if packets.incoming.len() >= MAX_PACKETS {
-            return false;
+            return ReceiveCode::Full;
         }
-        match codec::decode_message(bytes) {
-            Ok((message, used)) if used == bytes.len() => {
-                packets.incoming.push((endpoint as u16, message));
-                true
-            }
-            _ => false,
-        }
+        packets.incoming.push((endpoint as u16, message));
+        ReceiveCode::Accepted
     }
 
     pub(crate) fn drain(&mut self) -> Vec<Datagram> {

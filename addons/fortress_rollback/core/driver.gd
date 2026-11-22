@@ -103,7 +103,14 @@ func uses_native_backend() -> bool:
 
 
 func receive_native(endpoint: int, bytes: PackedByteArray) -> bool:
-	return _native_backend != null and not _is_stepping and _native_backend.receive(endpoint, bytes)
+	return receive_native_result(endpoint, bytes) == Native.ReceiveCode.ACCEPTED
+
+
+## A full queue leaves the valid datagram with the caller for retry after step_local().
+func receive_native_result(endpoint: int, bytes: PackedByteArray) -> int:
+	if _native_backend == null or _is_stepping:
+		return Native.ReceiveCode.REJECTED
+	return _native_backend.receive_result(endpoint, bytes)
 
 
 func drain_native_packets() -> Array[Dictionary]:

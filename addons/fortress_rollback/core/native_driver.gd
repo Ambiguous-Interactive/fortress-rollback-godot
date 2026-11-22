@@ -4,6 +4,9 @@ extends RefCounted
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
 const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
+# Mirrors the native binding receive codes.
+enum ReceiveCode { ACCEPTED, REJECTED, FULL }
+
 const INPUT_BYTES: int = 4
 const WIRE_PROFILE: String = "fortress-native-d124c890-v1-u32"
 
@@ -25,7 +28,8 @@ var _last_now: int = -1
 
 ## Requires the separately installed native addon.
 static func available() -> bool:
-	return ClassDB.class_exists(&"FortressNativeSession") and ClassDB.class_has_method(&"FortressNativeSession", &"wire_profile")
+	return ClassDB.class_exists(&"FortressNativeSession") and ClassDB.class_has_method(&"FortressNativeSession", &"wire_profile") \
+		and ClassDB.class_has_method(&"FortressNativeSession", &"receive_from_result")
 
 
 func configure(endpoints: PackedInt32Array, game: RefCounted, snapshot_limit: int, save_succeeded: Callable) -> int:
@@ -98,8 +102,10 @@ func _step(now_us: int, samples: Array[PackedByteArray]) -> int:
 	return Types.Code.PREDICTION_STALL
 
 
-func receive(endpoint: int, bytes: PackedByteArray) -> bool:
-	return _native != null and not _busy and _status.lifecycle == Types.Lifecycle.RUNNING and _native.call("receive_from", endpoint, bytes)
+func receive_result(endpoint: int, bytes: PackedByteArray) -> int:
+	if _native == null or _busy or _status.lifecycle != Types.Lifecycle.RUNNING:
+		return ReceiveCode.REJECTED
+	return _native.call("receive_from_result", endpoint, bytes)
 
 
 func drain_packets() -> Array[Dictionary]:
