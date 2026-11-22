@@ -512,6 +512,10 @@ func run(host: Node, count: int) -> bool:
 	row["minimum_confirmed"] = peer.status().confirmed_frame
 	row["rollback_loads"] = host.games[0].loads
 	row["direct"] = host._transport_totals()
+	# The final confirmation wait services transport, so a late acknowledgement
+	# must reach the row even though the row was built before that wait.
+	row["commit_ack_peers"] = barrier.commit_acks.keys()
+	row["acknowledged_peers"] = barrier.acknowledged.keys()
 	if room_after_drop:
 		if not await _finish_after_drop(host, row, count, departing_uuid, departing_slot, departing_identity, cuts):
 			return false

@@ -245,8 +245,10 @@ class DropDirect:
 	func poll(now_us: int, next_token_factory: Callable = Callable()) -> DirectTypes.Result:
 		_withhold_missing_inputs()
 		_withhold_history()
-		_withhold_commit(now_us)
-		return super.poll(now_us, next_token_factory)
+		var retries: Array[Dictionary] = _withhold_commit(now_us)
+		var result: DirectTypes.Result = super.poll(now_us, next_token_factory)
+		_record_sent_commit_retries(retries, result.sent, now_us)
+		return result
 
 	func drop_report() -> Dictionary:
 		var frames: Array[int] = []
@@ -283,10 +285,12 @@ class DropDirect:
 		}
 
 	## Withhold the first COMMIT published on this link. A later COMMIT of the
-	## same operation is a retry, so its exact bytes must match the withheld one.
-	func _withhold_commit(now_us: int) -> void:
+	## same operation is a retry candidate; it counts only once the poll actually
+	## hands it to the channel.
+	func _withhold_commit(now_us: int) -> Array[Dictionary]:
+		var retries: Array[Dictionary] = []
 		if _membership == null or (_commit_remaining <= 0 and _commit_dropped == 0):
-			return
+			return retries
 		var limits: T.Limits = T.Limits.new()
 		limits.player_count = _membership.roster().size()
 		limits.max_packet_bytes = 65536
@@ -313,13 +317,22 @@ class DropDirect:
 				_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
 				continue
 			if int(decoded.message.operation) == _commit_operation:
-				_commit_resends += 1
-				if _commit_retry.is_empty():
-					_commit_retry = packet.bytes.hex_encode()
-					_commit_retry_us = now_us
-					_commit_retry_slot = destination_slot
+				retries.append({"index": kept.size(), "bytes": packet.bytes.hex_encode(), "slot": destination_slot})
 			kept.append(packet)
 		_pending = kept
+		return retries
+
+	## Count a retry only after the poll sent its queue position. A refused packet
+	## stays queued, so a later poll counts it once at its actual send time.
+	func _record_sent_commit_retries(retries: Array[Dictionary], sent: int, now_us: int) -> void:
+		for retry: Dictionary in retries:
+			if int(retry["index"]) >= sent:
+				break
+			_commit_resends += 1
+			if _commit_retry.is_empty():
+				_commit_retry = str(retry["bytes"])
+				_commit_retry_us = now_us
+				_commit_retry_slot = int(retry["slot"])
 
 	func _withhold_history() -> void:
 		if _membership == null or (_history_remaining <= 0 and _history_dropped == 0):

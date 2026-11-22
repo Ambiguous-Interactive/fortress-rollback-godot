@@ -257,7 +257,7 @@ def commit_packet(proposer, roster_digest='0000000000000001'):
     body += proposer['operation'].to_bytes(4, 'little')
     body += int(proposer['target_set_digest'], 16).to_bytes(8, 'little')
     body += proposer['freeze_frame'].to_bytes(4, 'little', signed=True)
-    body += (0).to_bytes(8, 'little')
+    body += (0).to_bytes(4, 'little') + (6).to_bytes(4, 'little')
     body += int(proposer['digest'], 16).to_bytes(8, 'little')
     body += (0).to_bytes(4, 'little')
     body += b'\x00\x00'
@@ -268,7 +268,7 @@ def commit_packet(proposer, roster_digest='0000000000000001'):
     assert len(body) == 65
     header = b'FRGP\x03\x00\x0c\x00' + bytes.fromhex(proposer['session_id'])
     header += hashlib.sha256(proposer['uuid'].encode('ascii')).digest()[:8]
-    header += b'\x00' * 8 + len(body).to_bytes(4, 'little')
+    header += b'\x01' + b'\x00' * 7 + len(body).to_bytes(4, 'little')
     return (header + bytes(body)).hex()
 
 
@@ -282,7 +282,8 @@ def commit_evidence():
                     target_generation=0, target_set_digest='00' * 8, departing_slot=2,
                     roster_digest='0000000000000001')
     follower.update(operation=operation, session_id='ab' * 16, coordinator=0, coordinator_generation=0,
-                    target_generation=0, target_set_digest='00' * 8, departing_slot=2)
+                    target_generation=0, target_set_digest='00' * 8, departing_slot=2,
+                    roster_digest='0000000000000001')
     payload = commit_packet(proposer)
     proposer.update(commit_dropped=1, commit_resends=1, commit_operation=operation,
                     commit_cut=proposer['freeze_frame'], commit_digest=proposer['digest'],
@@ -305,6 +306,12 @@ class CommitLossEvidence(unittest.TestCase):
         payload = proposer(original)['commit_first']
         other = hashlib.sha256(follower(original)['uuid'].encode('ascii')).digest()[:8].hex()
         corrupt = payload[:-2] + ('00' if payload[-2:] != '00' else '01')
+
+        def changed(offset, value):
+            data = bytearray.fromhex(payload)
+            data[offset:offset + len(value)] = value
+            return data.hex()
+
         mutations = [
             lambda value: proposer(value).update(commit_dropped=0),
             lambda value: proposer(value).update(commit_dropped=2),
@@ -325,6 +332,11 @@ class CommitLossEvidence(unittest.TestCase):
             lambda value: proposer(value).update(commit_delay_us=39999),
             lambda value: proposer(value).update(commit_delay_us=4000001),
             lambda value: proposer(value).update(commit_delay_us=True),
+            lambda value: proposer(value).update(coordinator=True),
+            lambda value: proposer(value).update(coordinator_generation=1.0),
+            lambda value: proposer(value).update(target_generation=1.0),
+            lambda value: proposer(value).update(target_set_digest=0),
+            lambda value: proposer(value).update(session_id='ab'),
             lambda value: proposer(value).update(commit_first=payload[:-2]),
             lambda value: proposer(value).update(commit_first=payload + '00'),
             lambda value: proposer(value).update(commit_first='f' * 201),
@@ -332,6 +344,18 @@ class CommitLossEvidence(unittest.TestCase):
             lambda value: proposer(value).update(commit_first='00' * 109, commit_retry='00' * 109),
             lambda value: proposer(value).update(commit_first=corrupt, commit_retry=corrupt),
             lambda value: proposer(value).update(commit_first='00000000' + payload[8:], commit_retry='00000000' + payload[8:]),
+            lambda value: proposer(value).update(commit_first=changed(46, b'\x01'), commit_retry=changed(46, b'\x01')),
+            lambda value: proposer(value).update(commit_first=changed(47, b'\x01'), commit_retry=changed(47, b'\x01')),
+            lambda value: proposer(value).update(commit_first=changed(68, (-1).to_bytes(4, 'little', signed=True)),
+                                                 commit_retry=changed(68, (-1).to_bytes(4, 'little', signed=True))),
+            lambda value: proposer(value).update(commit_first=changed(72, (-1).to_bytes(4, 'little', signed=True)),
+                                                 commit_retry=changed(72, (-1).to_bytes(4, 'little', signed=True))),
+            lambda value: proposer(value).update(commit_first=changed(84, (1).to_bytes(2, 'little')),
+                                                 commit_retry=changed(84, (1).to_bytes(2, 'little'))),
+            lambda value: proposer(value).update(commit_first=changed(86, (65).to_bytes(2, 'little')),
+                                                 commit_retry=changed(86, (65).to_bytes(2, 'little'))),
+            lambda value: proposer(value).update(commit_first=changed(88, b'\x02'), commit_retry=changed(88, b'\x02')),
+            lambda value: proposer(value).update(commit_first=changed(89, b'\x01'), commit_retry=changed(89, b'\x01')),
             lambda value: proposer(value).update(commit_retry=payload[:-2]),
             lambda value: proposer(value).update(commit_retry=True),
             lambda value: proposer(value).pop('commit_first'),
@@ -354,12 +378,22 @@ class CommitLossEvidence(unittest.TestCase):
             lambda value: follower(value).update(commit_digest=''),
             lambda value: follower(value).update(acknowledged_peers=['x']),
             lambda value: follower(value).update(commit_ack_peers=['x']),
+            lambda value: follower(value).update(operation=8),
+            lambda value: follower(value).update(roster_digest='0000000000000002'),
+            lambda value: follower(value).update(session_id='cd' * 16),
+            lambda value: follower(value).update(coordinator=1),
+            lambda value: follower(value).update(target_set_digest='0000000000000009'),
+            lambda value: follower(value).update(target_generation=1),
+            lambda value: follower(value).update(departing_slot=1),
         ]
         for mutation in mutations:
             value = copy.deepcopy(original)
             mutation(value)
-            with self.subTest(mutation=mutations.index(mutation)), self.assertRaisesRegex(ValueError, 'lost-commit'):
+            with self.subTest(mutation=mutations.index(mutation)), self.assertRaises(ValueError):
                 validate_drop_browser(value, commit_loss=True)
+        high = copy.deepcopy(original)
+        proposer(high)['commit_resends'] = 1000
+        self.assertIs(validate_drop_browser(high, commit_loss=True), high)
         for replacement in (False, 1, None):
             value = copy.deepcopy(original)
             value['dropCommit'] = replacement
