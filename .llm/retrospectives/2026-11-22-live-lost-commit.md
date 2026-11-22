@@ -18,10 +18,11 @@
 
 | # | Finding | Type | Evidence |
 | --- | --- | --- | --- |
-| 1 | The transport-clock delay between the withheld COMMIT and its retry can read below 50 ms because the drop is stamped at the poll after publication while the retry is stamped at publication. A validator floor of exactly `RETRY_US` rejects a correct retry. | bug | first 4.3 cell: `commit_delay_us: 48565`; final four cells: 46.4-49.4 ms |
+| 1 | The transport-clock delay between the withheld COMMIT and its retry can read below 50 ms because the drop is stamped at the poll after publication while the retry is stamped at publication. A validator floor of exactly `RETRY_US` rejects a correct retry. | bug | first 4.3 cell: `commit_delay_us: 48565`; final four cells: 48.9-60.6 ms |
 | 2 | The witness must arm every survivor, not a page index. Join order decides which page owns the lowest surviving slot, and the coordinator was page/slot 1 or 0 depending on the browser pair. | design | 4.7.2 Chromium coordinator slot 1; Firefox coordinator slot 0 |
-| 3 | A dropped-packet count is not evidence of a COMMIT retry. The receipt must keep the exact withheld and retried bytes, the phase-derived operation/cut/digest, the destination slot, the observation delay and the follower acknowledgement. | review | the validator mutation table rejects a changed retry, an immediate duplicate, wrong identity and a follower-side drop |
-| 4 | A candidate cap of 8 retries was below the protocol's own 4 s / 50 ms window. The cap must be derived from the barrier window so a slow runner does not fail a correct retry sequence. | design | `MAX_COMMIT_RETRIES = 80` derived from 4 s / `RETRY_US` |
+| 3 | A dropped-packet count and a hex-length check are not evidence of a COMMIT retry. The receipt must keep the exact withheld and retried bytes, and the validator must decode those bytes rather than trust separately reported metadata. | review | adversarial round 1: an equal pair of 120 zero bytes passed; the hardened validator rejects it at the header |
+| 4 | A proposer can never legitimately populate `commit_ack_peers` (that map is written only for a follower), so accepting the acknowledgement from either list let an impossible field satisfy the receipt. | review | adversarial round 1: moving the follower identity from `acknowledged_peers` to `commit_ack_peers` passed; it is now rejected |
+| 5 | A candidate cap of 8 retries was below the protocol's own 4 s / 50 ms window, and the proposer retries a committed operation until every survivor acknowledges with no 4 s cap at all. Any upper bound would reject a correct run whose acknowledgment is repeatedly lost. | design | the final validator requires at least one retry and sets no upper cap |
 
 ## Actions Taken
 
@@ -29,13 +30,18 @@
 | --- | --- | --- | --- |
 | 1 | Lower the observed-delay floor to 40 ms with a named constant and a comment that states the sampling allowance. | `webrtc_drop.py` | the 4.3 and Firefox cells pass; a 39,999 us receipt mutation fails |
 | 2 | Arm every owned transport; drop only `Phase.COMMIT`; record the destination slot from the real queued packet. | `webrtc_setup.gd`, `webrtc_drop.gd` | four live cells cover both coordinator slots |
-| 3 | Record exact withheld/retry hex, operation, cut, digest, destination and delay; require byte equality plus the follower acknowledgement. | `webrtc_setup.gd`, `webrtc_drop.gd`, `webrtc_drop.py` | four live cells; 30 receipt mutations and spacer controls reject the intended shapes |
-| 4 | Cap retries at the barrier window's own 80 intervals. | `webrtc_drop.py` | 81-retry mutation fails |
+| 3 | Record exact withheld/retry hex, operation, cut, digest, destination and delay; require byte equality and the follower acknowledgement. | `webrtc_setup.gd`, `webrtc_drop.gd`, `webrtc_drop.py` | four live cells; the receipt mutations and spacer controls reject the intended shapes |
+| 4 | Decode the captured packet again in the validator and bind header, session, sender, coordinator, operation, target list, cut, value digest and roster digest to the row. | `webrtc_drop.py`, `test_webrtc_drop.py` | a real live packet passes; 120 zero bytes, a changed trailing byte and a changed magic fail |
+| 5 | Accept the acknowledgement only from the proposer's `acknowledged_peers` and require `commit_ack_peers` empty; type-check every follower sentinel and the operation comparison. | `webrtc_drop.py`, `test_webrtc_drop.py` | the move-to-impossible-field, follower bool/float and operation-type mutations fail |
+| 6 | Remove the retry-count ceiling; require at least one retry and leave the upper bound to the witness deadline. | `webrtc_drop.py` | a one-retry receipt passes; a zero-retry receipt fails |
 
 ## Prune Ledger
 
 - Retired: the claim that a dropped COMMIT count alone witnesses a retry. The
-  row now binds the phase identity and exact bytes.
+  row now binds the phase identity and exact bytes, and the validator decodes
+  the captured packet instead of trusting the metadata beside it.
+- Retired: accepting the proposer acknowledgement from either list. Only
+  `acknowledged_peers` can exist on a proposer.
 - Retired: the exact-50 ms observation floor. The protocol interval still
   bounds retry ownership; the witness allows one poll sample.
 - Verify-on-touch: `make gate`, `make test-reference`, the live

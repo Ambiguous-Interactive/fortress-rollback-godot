@@ -429,6 +429,7 @@ func run(host: Node, count: int) -> bool:
 		"coordinator": barrier.coordinator,
 		"coordinator_generation": barrier.coordinator_generation,
 		"target_set_digest": "%016x" % barrier.target_set_digest,
+		"roster_digest": "%016x" % barrier.roster_digest,
 		"direct": host._transport_totals(),
 		"mixed": host.mixed.report() if host.mixed_enabled else {}
 	}

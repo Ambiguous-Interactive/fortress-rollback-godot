@@ -85,10 +85,10 @@ fully serial run because concurrent windows would stack on one display and
 break the pinned per-peer placement; the planner reproduces the historical
 serial schedule there (`webrtc_runner.label_waves` with `overlap=False`).
 
-The `direct` job's 22 labels pack into 12 waves (`clean` and `faults`
-stay exclusive at eight live pages each; `corrupt`, `default` and
-`mixed-disabled` share one wave; the 17 `peer-drop` labels share 9
-waves, eight pairs and one singleton). The `mixed` job's four labels keep four waves because every eight-page
+The `direct` job's 22 labels pack into 12 waves. `clean` and `faults` stay
+exclusive at eight live pages each, `corrupt`, `default` and `mixed-disabled`
+share one wave, and the 17 `peer-drop` labels share 9 waves (eight pairs and one
+singleton). The `mixed` job's four labels keep four waves because every eight-page
 label excludes every other; its wall shape is unchanged by this change.
 
 Every packed wave member runs under its own cancellation handle (#397). An
