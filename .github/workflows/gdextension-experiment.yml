@@ -46,7 +46,10 @@ jobs:
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
           "$sdkmanager" "system-images;android-35;google_apis;x86_64" "emulator" "platform-tools"
-          echo no | "$avdmanager" create avd -n witness -k "system-images;android-35;google_apis;x86_64"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | "$avdmanager" create avd -n witness -p "$ANDROID_AVD_HOME/witness.avd" -k "system-images;android-35;google_apis;x86_64"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx witness
           emulator="$ANDROID_HOME/emulator/emulator"
           "$emulator" -accel-check
           nohup "$emulator" -avd witness -no-window -no-audio -no-snapshot -gpu swiftshader > "$RUNNER_TEMP/emulator.log" 2>&1 </dev/null &
