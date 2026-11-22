@@ -42,7 +42,11 @@ impl FortressNativeSession {
         if self.peer.is_some() || self.sync.is_some() {
             return false;
         }
-        self.peer = Peer::start(endpoints);
+        self.peer = if legacy {
+            Peer::start_legacy(endpoints)
+        } else {
+            Peer::start(endpoints)
+        };
         self.legacy_peer = self.peer.is_some() && legacy;
         self.peer.is_some()
     }

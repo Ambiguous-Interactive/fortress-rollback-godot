@@ -173,6 +173,11 @@ fn native_desync_halts_before_dispatch_and_preserves_the_first_cause() {
 
 #[test]
 fn reports_interruption_resume_and_disconnect_using_protocol_clock() {
+    check_timeout_policy(true);
+    check_timeout_policy(false);
+}
+
+fn check_timeout_policy(abort_on_event: bool) {
     let time_ms = Arc::new(AtomicU64::new(0));
     let now = Instant::now();
     let builder = || {
@@ -196,12 +201,14 @@ fn reports_interruption_resume_and_disconnect_using_protocol_clock() {
         }
     }
     assert!(peers.iter().all(Peer::is_running));
+    peers[0].abort_on_event = abort_on_event;
 
     let in_flight = peers[1].drain();
     assert!(!in_flight.is_empty());
     time_ms.store(600, Ordering::Relaxed);
     run_frame(&mut peers[0], &mut games[0], &[0]);
-    assert_eq!(peers[0].interrupted_endpoints().collect::<Vec<_>>(), [2]);
+    let interrupted = peers[0].interrupted_endpoints().collect::<Vec<_>>();
+    assert_eq!(interrupted, if abort_on_event { vec![2] } else { vec![] });
     assert!(peers[0].is_running());
 
     for (_, packet) in in_flight {
@@ -212,6 +219,12 @@ fn reports_interruption_resume_and_disconnect_using_protocol_clock() {
 
     time_ms.store(2700, Ordering::Relaxed);
     let frame = peers[0].current_frame();
+    if !abort_on_event {
+        assert!(peers[0].step(&[0; 4], |requests| games[0].dispatch(requests)) >= 0);
+        assert_eq!(peers[0].terminal_reason(), "");
+        assert!(peers[0].is_running());
+        return;
+    }
     assert_eq!(peers[0].step(&[0; 4], |_| panic!("terminal callback")), -1);
     assert_eq!(peers[0].terminal_reason(), "disconnected");
     assert_eq!(peers[0].current_frame(), frame);

@@ -50,11 +50,18 @@ pub(crate) struct Peer {
     terminal: &'static str,
     current_frame: i32,
     confirmed_frame: i32,
+    abort_on_event: bool,
 }
 
 impl Peer {
     pub(crate) fn start(endpoints: &[i32]) -> Option<Self> {
         Self::build(endpoints, SessionBuilder::new())
+    }
+
+    pub(crate) fn start_legacy(endpoints: &[i32]) -> Option<Self> {
+        let mut peer = Self::start(endpoints)?;
+        peer.abort_on_event = false;
+        Some(peer)
     }
 
     fn build(endpoints: &[i32], builder: SessionBuilder<Game>) -> Option<Self> {
@@ -98,6 +105,7 @@ impl Peer {
             remote_endpoints,
             interrupted: 0,
             terminal: "",
+            abort_on_event: true,
         })
     }
 
@@ -204,6 +212,14 @@ impl Peer {
     }
 
     fn read_events(&mut self) -> bool {
+        // The original raw binding leaves upstream disconnect policy in charge.
+        if !self.abort_on_event {
+            let failed = self.socket.0.borrow().encode_failed;
+            if failed {
+                self.fail("packet_encode");
+            }
+            return !failed;
+        }
         let mut terminal = "";
         for event in self.session.events() {
             match event {
