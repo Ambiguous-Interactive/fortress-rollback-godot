@@ -18,9 +18,13 @@ Removing the editor library before startup gave diagnostic exit 23. Restoring it
 
 The Linux ARM64 shared library measured approximately 2.56 MB and the Web side module 1.22 MB, excluding Godot.
 Compressed addon archives measured about 0.79 MB for Linux and 1.13 MB for Linux editor plus Web.
-Both engine pins also produced Windows x86-64 release exports and signed Android release APKs in this Linux environment.
-The APK contained the Rust shared library under both arm64-v8a and x86_64. Builds for Windows and Android still need on-platform match receipts.
-The Rust binding type-checked for ARM64 macOS, iOS device and iOS simulator. Apple linking, export and runtime qualification require an Apple toolchain.
+Hosted runs passed the same exported match and both failure controls on Linux x86-64, Windows x86-64, and Apple Silicon macOS on both Godot pins.
+The macOS addon contains ARM64 and x86-64 slices. Hosted Web passed on Chromium, Firefox, and WebKit on both pins.
+Android 4.3 passed on an x86-64 emulator. The signed APKs include ARM64 and x86-64 libraries.
+The Android 4.7.2 job installed and started the APK, then stopped reporting after the first HTTP request.
+The iOS addon contains ARM64 device and simulator slices. The stock Godot simulator archive contains x86-64 objects, so the current CI build
+compiles an ARM64 engine from each pinned revision and supplies that simulator library to the exported Xcode project.
+[Hosted qualification and artifacts](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/44999235188)
 
 ## Performance
 
