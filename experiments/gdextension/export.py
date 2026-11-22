@@ -1,6 +1,7 @@
 """Install a binary addon in a fresh project and run an actual release export."""
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -140,6 +141,11 @@ def main():
             if proc.returncode or errors:
                 raise RuntimeError(proc.stdout + proc.stderr)
         if args.target == "ios":
+            engine = Path(os.environ["FORTRESS_IOS_SIMULATOR_LIB"])
+            destination = staged / "witness.xcframework/ios-arm64_x86_64-simulator/libgodot.a"
+            if not destination.is_file():
+                raise RuntimeError(f"Godot export did not write its simulator engine library at {destination}")
+            shutil.copyfile(engine, destination)
             subprocess.run(["xcodebuild", "-project", staged / artifact, "-scheme", "witness",
                             "-configuration", "Release", "-sdk", "iphonesimulator", "-destination", "generic/platform=iOS Simulator",
                             "-derivedDataPath", staged / "build", "CODE_SIGNING_ALLOWED=NO", "build"], check=True, timeout=900)
