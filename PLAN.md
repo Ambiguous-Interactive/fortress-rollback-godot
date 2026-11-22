@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Build a correctness-first, GDScript-native reimplementation of Fortress
-Rollback for browser Godot games using SignalFish. Priority order is
+Expose upstream Fortress Rollback to Godot games through GDScript, including
+browser games using SignalFish. Priority order is
 **correctness → simple client interface → measured performance**.
 An optimization cannot weaken a correctness gate or obscure the client contract.
 
@@ -23,17 +23,17 @@ Past work stays in git history, CHANGELOG and `.llm/retrospectives/`.
 
 | Decision | Contract |
 | --- | --- |
-| Runtime | Pure GDScript; no Rust, C#, GDExtension or compiled addon dependency |
+| Runtime | The pinned Rust crate via GDExtension is the intended primary backend. The GDScript port remains the production backend during migration. |
 | Engine floor | Godot 4.3; test the minimum and current stable release |
 | First supported browser tier | 2–8 players; test every count in deterministic simulation |
 | Real-browser scale points | 2, 4 and 8 peers, including mixed browsers |
 | Browser transports | WebRTC plus SignalFish binary relay and fallback |
 | Compatibility | Behavioral parity for supported features against a pinned upstream |
-| Wire compatibility | Rust/Godot mixed sessions are outside the committed scope |
+| Wire compatibility | The native backend uses the upstream protocol. Qualify mixed Rust/Godot sessions for the supported input schema and configuration. |
 | Default API | Small save/load/simulate driver plus explicit expert request API |
 | Feature delivery | Fixed-membership P2P first, then staged advanced parity |
 | Verification | Rust oracle, independent invariants, properties and bounded formal checks |
-| Development tools | Rust and formal tools permitted; excluded from the shipped addon |
+| Distribution | Build native addon binaries in CI. Godot projects install prebuilt packages. Keep development and formal verification tools out of addon archives. |
 | Upstream notifications | Weekly/manual workflow updating a deduplicated GitHub issue |
 | Scene integration | Explicit state capture; automatic node replication is outside scope |
 | Simulation ownership | The game owns deterministic simulation and complete serialization; the library supplies orchestration, validation and sync-test tooling |
@@ -60,6 +60,21 @@ Past work stays in git history, CHANGELOG and `.llm/retrospectives/`.
 - Frame/time domains, typed signatures and ownership: [ADR](docs/contracts.md),
   [local sessions](docs/session.md), [protocol](docs/protocol.md),
   [fixed peers](docs/peer-session.md), [handshake](docs/handshake.md).
+
+## Native backend adoption
+
+The [binding experiment](docs/experiments/upstream-binding.md) establishes
+mixed-peer rollback and exported package feasibility for a two-player witness.
+[Issue #444](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/444)
+owns the transition. The upstream crate will own the rollback engine and wire protocol.
+Godot retains game callbacks, the driver, and transport integration.
+
+The [migration contract](docs/native-backend-migration.md) records the native
+API, input schemas and migration paths. Qualify the driver, live transports
+and prebuilt packages before switching the default. Remove each superseded GDScript
+runtime path when its replacement passes acceptance. Retain the end-to-end
+tests for supported behavior. The epics below track the existing port until
+their acceptance criteria are met or explicitly superseded.
 
 ## Milestone map
 
@@ -91,6 +106,7 @@ already implemented but awaiting closure evidence still belongs to its issue.
 
 | Track | Remaining outcome | Issues |
 | --- | --- | --- |
+| Native backend | Qualify the driver, live transports and packages, then retire covered runtime paths | [#444](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/444) |
 | Coordinated drop | Live drop, room, process and commit/acknowledgement loss witnessed; pinned-source comparison and remaining schedules | [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48), [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166), [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188) |
 | Replay and recording | Asymmetric and long recordings, received browser replay downloads, final replay acceptance | [#45](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/45), [#256](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/256), [#290](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/290) |
 | Spectators | Live relay/startup qualification, exported host/viewer recovery, redundant hosts | [#47](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/47), [#131](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/131), [#245](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245), [#49](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/49) |

@@ -30,6 +30,8 @@ See [`.llm/context.md`](./.llm/context.md) for the full operating manual.
 [GitHub operations](./.llm/skills/github-operations/SKILL.md) use authenticated
 MCP first and authenticated `gh` CLI for capability gaps.
 
+See the [upstream Rust binding experiment](docs/experiments/upstream-binding.md) for exported mixed-peer tests and a comparison with the GDScript port.
+
 ## Quick Start
 
 Run the [offline example](./docs/offline-example.md) with Godot 4.3 or newer:
