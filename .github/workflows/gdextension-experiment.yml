@@ -74,15 +74,15 @@ jobs:
         if: matrix.target == 'ios'
         run: |
           case "${{ matrix.version }}" in
-            4.3) rev=77dcf97d82cbfe4e4615475fa52ca03da645dbd8; renderer_flags=() ;;
-            4.7.2) rev=ed1daf0bf001b61586d9930840f2f1394092c079; renderer_flags=(metal=no) ;;
+            4.3) rev=77dcf97d82cbfe4e4615475fa52ca03da645dbd8; extra_flags=(cxxflags=-Wno-module-import-in-extern-c) ;;
+            4.7.2) rev=ed1daf0bf001b61586d9930840f2f1394092c079; extra_flags=(metal=no) ;;
           esac
           python -m pip install SCons==4.10.1
           engine="$RUNNER_TEMP/godot-ios"
           git init "$engine"
           git -C "$engine" fetch --depth 1 https://github.com/godotengine/godot.git "$rev"
           git -C "$engine" checkout --detach FETCH_HEAD
-          scons -C "$engine" -j3 platform=ios target=template_release arch=arm64 ios_simulator=yes vulkan=no "${renderer_flags[@]}"
+          scons -C "$engine" -j3 platform=ios target=template_release arch=arm64 ios_simulator=yes vulkan=no "${extra_flags[@]}"
           lib="$engine/bin/libgodot.ios.template_release.arm64.simulator.a"
           test "$(lipo -archs "$lib")" = arm64
           echo "FORTRESS_IOS_SIMULATOR_LIB=$lib" >> "$GITHUB_ENV"
