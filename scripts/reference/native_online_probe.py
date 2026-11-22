@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Export the installed native online example and qualify live SignalFish rooms."""
-import argparse
 import json
 import os
 from pathlib import Path
@@ -17,6 +16,8 @@ from browser.webrtc_runner import run_browser
 from fetch import ROOT, digest, load_manifest
 from godot_smoke import run
 from online_install import create_project, install_sdk, server_config
+from receipt_arguments import ReceiptParser
+from run import begin_results
 from signalfish_probe import inventory
 
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -26,6 +27,7 @@ CELLS = tuple(f'{route}:{count}' for route in ('mesh', 'relay') for count in (2,
 BROWSER = ROOT / 'scripts/reference/browser'
 EXTENSION = 'addons/fortress_native/fortress.gdextension'
 TEMPLATE = 'web_dlink_nothreads_release.zip'
+REPORT = 'native-online.json'
 
 
 def install_extension(project, archive):
@@ -106,7 +108,7 @@ def play_cells(cells, export, environment, server_source, server_binary, output)
 def main():
     manifest = load_manifest()
     versions = (manifest['godot']['minimum'], manifest['godot']['current_stable'])
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt=REPORT)
     parser.add_argument('--version', choices=versions, default=versions[-1])
     parser.add_argument('--cell', action='append', choices=CELLS)
     parser.add_argument('--cache', type=Path, default=ROOT / '.cache/reference')
@@ -114,9 +116,10 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     output, cache, addon = args.output.resolve(), args.cache.resolve(), args.addon.resolve()
-    output.mkdir(parents=True, exist_ok=True)
-    receipt = output / 'native-online.json'
-    receipt.unlink(missing_ok=True)
+    logs = [cell.replace(':', '-') + '.log' for cell in CELLS]
+    logs += ['mesh-server.log', 'relay-server.log', 'import.log', 'export.log', 'version.log', 'tls.log']
+    begin_results(output, REPORT, logs)
+    receipt = output / REPORT
     environment = os.environ.copy()
     for variable in ('FORTRESS_PLAYWRIGHT_PACKAGE', 'FORTRESS_CHROMIUM_EXECUTABLE'):
         if not environment.get(variable):

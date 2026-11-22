@@ -197,6 +197,7 @@ async function run(root, endpoint, route, players) {
     for (const peer of peers) {
       const before = stalled[peer.index];
       assert.equal(peer.movement_errors, 0, 'game must respond to every observed input');
+      assert.equal(peer.game_frame, peer.frame, 'driver and game frame must agree');
       assert.ok(peer.saves > 0 && peer.advances > peer.frame && peer.restores > before.restores, 'save, load and re-advance must run');
       assert.ok(before.frame > GATE_FRAME && before.confirmed < before.frame - 1, 'gate must force prediction beyond confirmation');
       assert.ok(before.wire.holding && before.wire.held[route] > 0, 'native bytes must be held on the selected physical route');
@@ -205,6 +206,7 @@ async function run(root, endpoint, route, players) {
       if (route === 'mesh') assert.equal(peer.wire.rtc.filter(([id, state]) => id === 3 && state === 'open').length, players - 1);
       else assert.deepEqual(peer.wire.rtc, [], 'initial relay must avoid WebRTC channel creation');
     }
+    await Promise.all(pages.map(page => page.evaluate(() => { window.fortressNativeCapture = false; })));
     phase = 'departure';
     const departing = pages.at(-1);
     const survivors = pages.slice(0, -1);
