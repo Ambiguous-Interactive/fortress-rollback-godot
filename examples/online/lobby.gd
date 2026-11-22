@@ -3,10 +3,22 @@ extends RefCounted
 
 const Callbacks = preload("res://examples/online/callbacks.gd")
 const Match = preload("res://examples/online/match.gd")
+const Simulation = preload("res://examples/offline/simulation.gd")
 const Multiplayer = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_multiplayer_peer.gd")
 const SDK_PATH: String = "res://addons/signal_fish/signal_fish_client.gd"
 const CONFIG_PATH: String = "res://addons/signal_fish/signal_fish_config.gd"
 const MESH_PATH: String = "res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd"
+const SDK_SOCKET_PATH: String = "res://addons/signal_fish/transport/sf_websocket_transport.gd"
+# The optional SDK transport creates and connects the socket in one call.
+# Load this subclass only when the project installs the SDK.
+const NATIVE_TRANSPORT_SOURCE: String = """
+extends "%s"
+
+func _make_peer() -> SFWebSocketPeerAdapterScript:
+	var socket: WebSocketPeer = WebSocketPeer.new()
+	socket.inbound_buffer_size = 1048576
+	return SFWebSocketPeerAdapterScript.new(socket)
+"""
 
 var game_match: Match = Match.new()
 var client: Node
@@ -16,6 +28,10 @@ var message: String = "Install the optional SignalFish SDK, then create or join 
 var all_ready: bool = false
 var is_creator: bool = false
 var has_readied: bool = false
+var player_count: int = 2
+var backend: String = "legacy"
+var _native_name: String = ""
+var _requested_route: String = "mesh"
 var _config: RefCounted
 var _info: RefCounted
 var _sdk: Script
@@ -33,28 +49,55 @@ var _callbacks: Callbacks
 
 
 func connect_room(endpoint: String, player_name: String, room: String, now_us: int) -> Error:
+	return _connect_selected(endpoint, player_name, room, now_us, "legacy", 2, "mesh")
+
+
+func connect_native_room(endpoint: String, player_name: String, room: String, now_us: int, slots: int, route: String) -> Error:
+	return _connect_selected(endpoint, player_name, room, now_us, "native", slots, route)
+
+
+func _connect_selected(endpoint: String, player_name: String, room: String, now_us: int, backend_choice: String, slots: int, route: String) -> Error:
 	if _is_busy():
 		return ERR_BUSY
 	_is_servicing = true
-	var code: Error = _connect_room(endpoint, player_name, room, now_us)
+	var code: Error = _connect_room(endpoint, player_name, room, now_us, backend_choice, slots, route)
 	_is_servicing = false
 	return code
 
 
-func _connect_room(endpoint: String, player_name: String, room: String, now_us: int) -> Error:
+func _connect_room(endpoint: String, player_name: String, room: String, now_us: int, backend_choice: String, slots: int, route: String) -> Error:
 	if client != null:
 		return ERR_ALREADY_IN_USE
 	if now_us < 0 or not (endpoint.begins_with("ws://") or endpoint.begins_with("wss://")) or player_name.strip_edges().is_empty():
 		message = "Enter a ws:// or wss:// endpoint and a player name."
 		return ERR_INVALID_PARAMETER
+	if slots < 2 or slots > 8 or route not in ["mesh", "relay"]:
+		message = "Choose a supported backend, room size and transport."
+		return ERR_INVALID_PARAMETER
+	if backend_choice == "native" and not Match.Driver.Native.available():
+		message = "Install the native addon to use upstream Fortress Rollback."
+		return ERR_UNAVAILABLE
 	for path: String in [SDK_PATH, CONFIG_PATH, MESH_PATH]:
 		if not ResourceLoader.exists(path):
 			message = "SignalFish SDK is missing. See docs/online-example.md for installation."
 			return ERR_UNAVAILABLE
+	var native_transport: RefCounted
+	if backend_choice == "native":
+		if not ResourceLoader.exists(SDK_SOCKET_PATH):
+			message = "The SignalFish SDK is missing its WebSocket transport."
+			return ERR_UNAVAILABLE
+		var transport_script: GDScript = GDScript.new()
+		transport_script.source_code = NATIVE_TRANSPORT_SOURCE % SDK_SOCKET_PATH
+		if transport_script.reload() != OK:
+			message = "The SignalFish SDK could not configure the native WebSocket transport."
+			return ERR_UNAVAILABLE
+		native_transport = transport_script.new()
 	_sdk = load(SDK_PATH)
 	var config_script: Script = load(CONFIG_PATH)
 	var mesh_script: Script = load(MESH_PATH)
 	client = _sdk.new()
+	if native_transport != null:
+		client.set("transport", native_transport)
 	mesh = mesh_script.new()
 	_config = config_script.new()
 	_config.set("app_id", "fortress-live-webrtc")
@@ -62,9 +105,15 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 	_config.set("protocol_version", 3)
 	_config.set("supported_transports", PackedStringArray(["relay", "webrtc"]))
 	_config.set("supported_topologies", PackedStringArray(["relay", "mesh"]))
+	if route == "relay":
+		_config.set("supported_transports", PackedStringArray(["relay"]))
+		_config.set("supported_topologies", PackedStringArray(["relay"]))
 	_config.set("game_data_format", "message_pack")
 	_config.set("decode_msgpack_payloads", false)
 	_config.set("auto_poll", false)
+	if backend_choice == "native":
+		# The relay broadcasts each addressed datagram to every room member.
+		_config.set("max_inbound_packets_per_poll", 256)
 	mesh.set("multiplayer_peer_factory", Multiplayer.create)
 	var connection_script: Script = load("res://addons/fortress_rollback/transport/signalfish_webrtc_connection.gd")
 	mesh.set("peer_connection_factory", Callable(connection_script, "create"))
@@ -73,6 +122,13 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 	_room = room.strip_edges()
 	is_creator = _room.is_empty()
 	game_match = Match.new()
+	backend = backend_choice
+	player_count = slots
+	_requested_route = route
+	_native_name = ""
+	if backend == "native":
+		_native_name = "%s-%d-%s" % [Match.Driver.Native.WIRE_PROFILE, slots, route]
+		game_match.game = Simulation.new(slots, Match.Driver.Native.INPUT_BYTES)
 	_cleanup_pending = false
 	all_ready = false
 	has_readied = false
@@ -122,18 +178,20 @@ func _ready() -> Error:
 		return ERR_UNAVAILABLE
 	var revision: int = _connection_revision
 	var players: Array = client.call("get_players")
-	if revision != _connection_revision or players.size() != 2:
+	if revision != _connection_revision or players.size() != player_count:
 		return ERR_UNAVAILABLE
 	var roster: PackedStringArray = PackedStringArray()
 	for player: RefCounted in players:
 		roster.append(player.get("id"))
 	# Host entropy belongs to the transport lifetime, never to simulation state.
 	var incarnation: PackedByteArray = Crypto.new().generate_random_bytes(8)
-	var frozen: Error = game_match.freeze(client, mesh, roster, incarnation)
+	var frozen: Error = game_match.freeze(client, mesh, roster, incarnation) if _native_name.is_empty() else (
+		game_match.freeze_native(client, mesh, roster, incarnation, _native_name)
+	)
 	if revision != _connection_revision:
 		return ERR_UNAVAILABLE
 	if frozen != OK:
-		_fail("Could not freeze the two-player room (%d)." % frozen)
+		_fail("Could not freeze the room (%d)." % frozen)
 		return frozen
 	if state == "failed":
 		return ERR_UNAVAILABLE
@@ -146,7 +204,7 @@ func _ready() -> Error:
 	if state == "failed":
 		return ERR_UNAVAILABLE
 	has_readied = true
-	message = "Ready. The room creator can start when both players are ready."
+	message = "Ready. The room creator can start when all players are ready."
 	return OK
 
 
@@ -216,10 +274,10 @@ func _tick(now_us: int, buttons: int) -> void:
 			return
 	if state == "connecting" and authenticated and _info != null:
 		var params: RefCounted = _sdk.JoinRoomParams.new()
-		params.set("game_name", "fortress-online-integer")
+		params.set("game_name", "fortress-online-integer" if _native_name.is_empty() else _native_name)
 		params.set("player_name", _name)
 		params.set("room_code", _room)
-		params.set("max_players", 2)
+		params.set("max_players", player_count)
 		params.set("supports_authority", false)
 		state = "joining"
 		var code: Error = client.call("join_room", params)
@@ -238,38 +296,53 @@ func _tick(now_us: int, buttons: int) -> void:
 			return
 		if route in ["blocked", "restart_required"]:
 			_fail("Room membership or transport lifetime changed.")
-		elif route in ["relay", "relay_required"] and not game_match.has_started:
-			_fail("This example needs an initial WebRTC mesh plan with standby relay.")
-		elif route == "mesh" and not game_match.has_started:
-			if state == "lobby":
-				state = "starting"
-				_deadline = now_us + 30000000
-			var transport: Object = mesh.call("get_multiplayer_peer")
-			if revision != _connection_revision:
-				return
-			if transport != null:
-				transport.call("poll")
-				if revision != _connection_revision or state == "failed":
-					return
-				var peers: Dictionary = transport.call("get_peers")
-				if revision != _connection_revision:
-					return
-				if peers.size() == 1 and peers.values()[0].get("connected", false):
-					var started: Error = game_match.start_transport(client, mesh, _config, _info, now_us - _epoch)
-					if revision != _connection_revision:
-						return
-					if started != OK:
-						_fail("Transport setup failed (%d)." % started)
-					elif state != "failed":
-						state = "playing"
-						message = "Move with WASD or arrow keys. Leave to start a fresh room."
+		elif not game_match.has_started and route in ["mesh", "relay", "relay_required"]:
+			_maybe_start_transport(route, now_us, revision)
+		if revision != _connection_revision:
+			return
 		if state == "starting" and now_us >= _deadline:
-			_fail("WebRTC connection timed out. Check your endpoint and ICE configuration.")
+			_fail("Transport connection timed out. Check your endpoint and ICE configuration.")
 	if state == "playing":
 		game_match.tick(now_us - _epoch, buttons)
 		if not game_match.failure.is_empty():
 			_fail(game_match.failure)
 		_finish_cleanup()
+
+
+func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:
+	var relay_fallback: bool = backend == "native" and _requested_route == "relay" and route == "relay_required"
+	if route != _requested_route and not relay_fallback:
+		_fail("The server did not select the room's requested transport.")
+		return
+	if state == "lobby":
+		state = "starting"
+		_deadline = now_us + 30000000
+	if route == "mesh" and not _mesh_ready(revision):
+		return
+	var started: Error = game_match.start_transport(client, mesh, _config, _info, now_us - _epoch)
+	if revision != _connection_revision:
+		return
+	if started != OK:
+		_fail("Transport setup failed (%d)." % started)
+	elif state != "failed":
+		state = "playing"
+		message = "Move with WASD or arrow keys. Leave to start a fresh room."
+
+
+func _mesh_ready(revision: int) -> bool:
+	var transport: Object = mesh.call("get_multiplayer_peer")
+	if revision != _connection_revision or transport == null:
+		return false
+	transport.call("poll")
+	if revision != _connection_revision or state == "failed":
+		return false
+	var peers: Dictionary = transport.call("get_peers")
+	if revision != _connection_revision or peers.size() != player_count - 1:
+		return false
+	for peer: Dictionary in peers.values():
+		if not peer.get("connected", false):
+			return false
+	return true
 
 
 func disconnect_room() -> void:
@@ -324,15 +397,18 @@ func _on_info(info: RefCounted) -> void:
 		_info = info
 
 
-func _on_room(_info_value: RefCounted) -> void:
+func _on_room(info_value: RefCounted) -> void:
 	if state == "failed" or _closing:
 		return
 	if _joined:
 		_fail("Room baseline changed.")
 		return
+	if not _native_name.is_empty() and (info_value == null or info_value.get("game_name") != _native_name):
+		_fail("This room uses a different backend, input schema, player count or transport.")
+		return
 	_joined = true
 	state = "lobby"
-	message = "Share the room code. Both players press Ready, then the creator presses Start."
+	message = "Share the room code. Each player presses Ready, then the creator presses Start."
 
 
 func _on_lobby(_value: int, _players: PackedStringArray, ready_value: bool) -> void:

@@ -56,15 +56,17 @@ def create_project(project, source=ROOT):
     (project / 'export_presets.cfg').write_text(PRESET, encoding='utf-8')
 
 
-def server_config(source, port):
+def server_config(source, port, *, max_players=2, route='mesh'):
     if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError('server port must be between 1 and 65535')
     config = json.loads((source / 'config.example.json').read_text(encoding='utf-8'))
     config['port'] = port
-    config['session'].update(default_topology='mesh', enable_webrtc=True, enable_direct=False, enable_ice_pregather=False, ice_servers=[])
+    if type(max_players) is not int or not 2 <= max_players <= 8 or route not in ('mesh', 'relay'):
+        raise ValueError('choose 2–8 players and mesh or relay')
+    config['session'].update(default_topology=route, enable_webrtc=route == 'mesh', enable_direct=False, enable_ice_pregather=False, ice_servers=[])
     config['turn'].update(enabled=False, urls=[], stun_urls=[])
     config['security']['allowed_apps'][0].update(app_id='fortress-live-webrtc', app_name='Local WebRTC rollback example',
-                                                max_players_per_room=2, rate_limit_per_minute=100000)
+                                                max_players_per_room=max_players, rate_limit_per_minute=100000)
     return config
 
 
@@ -75,11 +77,13 @@ def main():
     target.add_argument('--server-source', type=Path, help='print local server configuration for the pinned source')
     parser.add_argument('--sdk', type=Path, help='add the extracted SDK to an existing project')
     parser.add_argument('--port', type=int, default=8080)
+    parser.add_argument('--max-players', type=int, choices=range(2, 9), default=2)
+    parser.add_argument('--route', choices=('mesh', 'relay'), default='mesh', help='initial topology for the local server')
     args = parser.parse_args()
     if args.server_source:
         if args.sdk:
             parser.error('--sdk requires --project')
-        print(json.dumps(server_config(args.server_source, args.port), indent=2))
+        print(json.dumps(server_config(args.server_source, args.port, max_players=args.max_players, route=args.route), indent=2))
     elif args.sdk:
         if not (args.project / 'project.godot').is_file():
             raise ValueError('install the example project before adding the SDK')

@@ -139,7 +139,17 @@ jobs:
           else
             python experiments/gdextension/platform_test.py "${{ matrix.version }}" "${{ matrix.target }}"
           fi
+      - name: Qualify the playable native SignalFish rooms
+        if: matrix.target == 'web'
+        run: |
+          python scripts/reference/fetch.py
+          server_source=".cache/reference/$(jq -r .sources.server.root docs/reference/pins.json)"
+          python scripts/reference/signalfish_build_server.py --cargo "$(rustup which cargo)" --source "$server_source" --output .cache/native-online-server
+          export FORTRESS_CHROMIUM_EXECUTABLE="$(node -p 'require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE).chromium.executablePath()')"
+          output=".cache/native-experiment/${{ matrix.version }}/web"
+          python scripts/reference/native_online_probe.py --version "${{ matrix.version }}" --addon "$output/addon.zip" --output "$output/native-online"
       - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !cancelled() }}
         with:
           name: fortress-${{ matrix.version }}-${{ matrix.target }}
           include-hidden-files: true
@@ -148,3 +158,5 @@ jobs:
             .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/qualification.json
             .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/benchmark.json
             .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/prediction-stall.json
+            .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-online/*.json
+            .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-online/*.log

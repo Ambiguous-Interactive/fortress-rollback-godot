@@ -84,6 +84,9 @@ Reject before polling clocks, retaining samples or changing composed controller 
 Validate callback checksum width before encoding diagnostics; a typed `SaveResult`
 does not constrain its contained byte array.
 Check callback argument counts at configuration before replacing an active game.
+Preserve overridable method signatures, including optional arguments. Give a new
+call shape its own method and share the implementation. Compile a suite that
+loads the existing subclasses before starting a browser witness.
 Method existence alone does not prove a two-argument invocation is valid; accept
 additional optional parameters. Reject incompatible reflected built-in parameter types,
 but preserve valid Object/RefCounted/Variant views. Compare named script annotations with

@@ -5,6 +5,8 @@ optional SDK's `SFWebRTCMesh.get_multiplayer_peer()` byte interface. It uses the
 same frozen [membership](signalfish-membership.md), peer handshake and simulation
 engine as [binary relay](signalfish-relay.md).
 
+The adapter also accepts [a receiver callback](signalfish-fallback.md#use-a-different-rollback-backend).
+
 ## Configure and service direct delivery
 
 Install the pinned SignalFish SDK separately. Configure membership and attach

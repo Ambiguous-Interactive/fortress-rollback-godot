@@ -4,13 +4,20 @@ extends RefCounted
 const U = preload("res://tests/unit/test_signalfish_fallback.gd")
 const F = U.F
 const M = U.M
+const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["send_failure", "receive_failure", "latched_failure", "busy_control", "failed_configuration", "healthy_configuration"])
+	return PackedStringArray(["send_failure", "receive_failure", "latched_failure", "busy_control", "failed_configuration", "healthy_configuration",
+		"opaque_overlap", "opaque_lifetime"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
+	if name in ["opaque_overlap", "opaque_lifetime"]:
+		for stop_on: String in (["direct", "relay"] if name == "opaque_lifetime" else [""]):
+			_opaque(context, stop_on)
+		context.finish()
+		return
 	if name in ["failed_configuration", "healthy_configuration"]:
 		_configuration(context, name == "failed_configuration")
 		context.finish()
@@ -74,6 +81,59 @@ func _configuration(context: RefCounted, failed: bool) -> void:
 	context.equal(candidate.poll(1).code, expected, "poll preserves configuration disposition")
 	context.equal(fixture.client.sent.size(), 0 if failed else 1, "only healthy composition publishes relay traffic")
 	candidate.detach()
+	U.new().destroy(fixture)
+
+
+# Value: protects=opaque attribution, retry and lifetime; fails_when=raw callbacks bypass transport gates or mutate a queued head; seam=production adapters
+func _opaque(context: RefCounted, stop_on: String) -> void:
+	var fixture: Dictionary = U.new().build(context)
+	var seen: Array[Array] = []
+	var receive: Callable = func(sender: String, bytes: PackedByteArray) -> int:
+		seen.append([sender, bytes.duplicate()])
+		if not stop_on.is_empty():
+			fixture.client.room_left.emit()
+			return I.Code.OK
+		bytes[0] = 99
+		return I.Code.BACKPRESSURE if seen.size() <= 2 else I.Code.OK
+	fixture.fallback.detach()
+	fixture.direct.detach()
+	fixture.relay.detach()
+	context.equal(fixture.direct.configure_packet_receiver(fixture.mesh, fixture.membership, fixture.adapter, Callable()),
+		F.Code.INVALID_ARGUMENT, "packet receiver is required")
+	context.equal(fixture.direct.configure_packet_receiver(fixture.mesh, fixture.membership, fixture.adapter, receive),
+		F.Code.OK, "direct accepts an opaque receiver")
+	var options: U.Relay.Options = U.Relay.Options.new()
+	options.max_packet_bytes = 512
+	context.equal(fixture.relay.configure_packet_receiver(fixture.client, fixture.config, fixture.info, fixture.membership, fixture.adapter, receive, options),
+		F.Code.OK, "relay accepts an opaque receiver")
+	var other: Callable = func(_sender: String, _bytes: PackedByteArray) -> int: return I.Code.OK
+	context.equal(fixture.fallback.configure_packet_receiver(fixture.direct, fixture.relay, fixture.membership, fixture.adapter, other),
+		F.Code.WRONG_STATE, "composition requires the same opaque receiver")
+	context.equal(fixture.fallback.configure_packet_receiver(fixture.direct, fixture.relay, fixture.membership, fixture.adapter, receive),
+		F.Code.OK, "compose two routes to the same opaque receiver")
+	var direct: PackedByteArray = PackedByteArray([41, 42])
+	var relay: PackedByteArray = PackedByteArray([51, 52])
+	var session: PackedByteArray = fixture.membership.handshake_message().session_id
+	fixture.mesh.transport.incoming.append({"source": 0, "channel": 0, "mode": 0, "bytes": direct})
+	if stop_on != "relay":
+		fixture.mesh.transport.incoming.append({"source": M.M.uuid_to_peer_id(M.V), "channel": 0, "mode": 0, "bytes": direct})
+	fixture.client.game_data_binary_received.emit(M.V, 1, U.E.encode(session, M.U, M.U, relay))
+	fixture.client.game_data_binary_received.emit(M.V, 1, U.E.encode(session, M.V, M.U, relay))
+	if stop_on == "relay":
+		fixture.client.game_data_binary_received.emit(M.V, 1, U.E.encode(session, M.V, M.U, PackedByteArray([53])))
+	var result: F.Result = fixture.fallback.poll(0, func(_uuid: String) -> Variant: return 42)
+	if not stop_on.is_empty():
+		context.equal(result.code, F.Code.WRONG_STATE, "room change inside callback fences both routes")
+		context.equal(result.received, 0, "room change precedes receive completion")
+		var first: PackedByteArray = direct if stop_on == "direct" else relay
+		context.equal(seen, [[M.V, first]], "terminal callback prevents later receives")
+	else:
+		context.equal(result.code, F.Code.BACKPRESSURE, "opaque receive pressure is retryable")
+		context.equal(result.received, 0, "both pressured routes retain their packets")
+		context.equal(fixture.fallback.poll(1).received, 2, "both routes accept retried bytes")
+		context.equal(seen, [[M.V, direct], [M.V, relay], [M.V, direct], [M.V, relay]], "callbacks use attributed UUID and exact payloads")
+	context.equal(fixture.direct.status().rejected, 1, "unknown direct sender never dispatched")
+	context.equal(fixture.relay.status().rejected, 1, "spoofed envelope sender never dispatched")
 	U.new().destroy(fixture)
 
 

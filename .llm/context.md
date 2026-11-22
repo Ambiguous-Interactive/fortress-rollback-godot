@@ -1,11 +1,11 @@
 # Fortress Rollback Godot — LLM Agent Instructions
 
-You are working on **fortress-rollback-godot**: a GDScript-only port of
+You are working on **fortress-rollback-godot**, a Godot integration for
 [fortress-rollback](https://github.com/wallstop/fortress-rollback), a
 fortified, deterministic, GGPO-inspired rollback networking library (a fork of
-`ggrs`). Target engine: **Godot 4.x**. Everything gameplay-relevant is written
-in **GDScript 2.0**. The shipped addon has no Rust, GDExtension or C# dependency;
-Rust is permitted for independent development oracles.
+`ggrs`). Target engine: **Godot 4.x**. The game simulation and callbacks use
+**GDScript 2.0**. The production GDScript backend runs without a native
+dependency. The online example can also use the optional upstream Rust extension.
 The project has pinned reference baselines, a deterministic test runner, bounded
 queues/snapshots, a shared rollback engine and fixed-membership byte sessions.
 Optional SignalFish membership freezes UUID slots and validates SDK plans; its

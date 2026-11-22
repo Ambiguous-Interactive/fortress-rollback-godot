@@ -61,6 +61,26 @@ with their original frozen destination and exact payload bytes.
 `FortressSignalFishRelayTypes.reason_text()` renders any transport code as short
 plain text for user-facing labels, keeping unknown codes numeric.
 
+## Use a different rollback backend
+
+The direct, relay and fallback adapters use `configure_packet_receiver()` for
+callback-based delivery. Supply the same `Callable` to all three adapters when
+combining routes. A room that starts with a relay plan can use the relay
+adapter directly.
+
+The callback receives an authenticated sender UUID and a copy of the packet
+bytes. It returns a code from `FortressInputEndpointTypes.Code`.
+
+- `OK` consumes the packet.
+- `BACKPRESSURE` retains the exact packet for retry.
+- `WRONG_SOURCE` or `WRONG_CONNECTION` discards the packet and counts it as rejected.
+- Other results latch `PEER_FAILURE`.
+
+The callback owns backend-specific validation and must return a terminal code
+when the backend stops. With callback-based receiving, poll can omit the
+handshake token factory. Outgoing batches still use `FortressPeerSession.Packet`
+values, with the destination set to `membership.identity(destination_uuid)`.
+
 ## Idle routes and bounded service batches
 
 `poll()` returns the traffic it moved. `activity` counts the transport items it

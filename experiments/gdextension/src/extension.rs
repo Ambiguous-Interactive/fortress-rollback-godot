@@ -1,48 +1,19 @@
-use crate::Game;
-use fortress_rollback::{
-    network::codec, FortressError, FortressRequest, InputStatus, Message, NonBlockingSocket,
-    P2PSession, PlayerHandle, PlayerType, SessionBuilder, SessionState,
+use crate::{
+    peer::{Peer, ReceiveCode},
+    Game,
 };
+use fortress_rollback::{FortressRequest, InputStatus, PlayerHandle, SessionBuilder};
 use godot::prelude::*;
-use std::{cell::RefCell, rc::Rc};
 
 struct Library;
 #[gdextension]
 unsafe impl ExtensionLibrary for Library {}
 
-// The experiment has exactly one remote endpoint. Queue overflow models packet loss.
-#[derive(Default)]
-struct Packets {
-    incoming: Vec<(u16, Message)>,
-    outgoing: Vec<Vec<u8>>,
-    encode_failed: bool,
-}
-
-#[derive(Clone, Default)]
-struct Socket(Rc<RefCell<Packets>>);
-
-impl NonBlockingSocket<u16> for Socket {
-    fn send_to(&mut self, msg: &Message, _: &u16) {
-        let mut packets = self.0.borrow_mut();
-        if packets.outgoing.len() < 256 {
-            match codec::encode(msg) {
-                Ok(bytes) => packets.outgoing.push(bytes),
-                Err(_) => packets.encode_failed = true,
-            }
-        }
-    }
-
-    fn receive_all_messages(&mut self) -> Vec<(u16, Message)> {
-        std::mem::take(&mut self.0.borrow_mut().incoming)
-    }
-}
-
 #[derive(GodotClass)]
 #[class(base=RefCounted, init)]
 struct FortressNativeSession {
-    session: Option<P2PSession<Game>>,
-    socket: Socket,
-    local: usize,
+    peer: Option<Peer>,
+    legacy_peer: bool,
     sync: Option<fortress_rollback::SyncTestSession<Game>>,
     players: usize,
     sync_checksums: bool,
@@ -52,101 +23,138 @@ struct FortressNativeSession {
 impl FortressNativeSession {
     #[func]
     fn start(&mut self, local: i32) -> bool {
-        if !(0..=1).contains(&local) || self.session.is_some() || self.sync.is_some() {
+        let endpoints = match local {
+            0 => [0, 1],
+            1 => [1, 0],
+            _ => return false,
+        };
+        self.configure_peer(&endpoints, true)
+    }
+
+    #[func]
+    fn wire_profile(&self) -> GString {
+        "fortress-native-d124c890-v1-u32".into()
+    }
+
+    #[func]
+    fn start_roster(&mut self, endpoints: PackedInt32Array) -> bool {
+        self.configure_peer(endpoints.as_slice(), false)
+    }
+
+    fn configure_peer(&mut self, endpoints: &[i32], legacy: bool) -> bool {
+        if self.peer.is_some() || self.sync.is_some() {
             return false;
         }
-        self.socket = Socket::default();
-        self.local = local as usize;
-        let build = || {
-            let mut builder = SessionBuilder::<Game>::new()
-                .with_num_players(2)?
-                .with_input_delay(0)?;
-            for slot in 0..2 {
-                let kind = if slot == self.local {
-                    PlayerType::Local
-                } else {
-                    PlayerType::Remote(1)
-                };
-                builder = builder.add_player(kind, PlayerHandle::new(slot))?;
-            }
-            builder.start_p2p_session(self.socket.clone())
+        self.peer = if legacy {
+            Peer::start_legacy(endpoints)
+        } else {
+            Peer::start(endpoints)
         };
-        self.session = build().ok();
-        self.session.is_some()
+        self.legacy_peer = self.peer.is_some() && legacy;
+        self.peer.is_some()
     }
 
     #[func]
     fn receive(&mut self, packet: PackedByteArray) -> bool {
-        let mut queues = self.socket.0.borrow_mut();
-        if self.session.is_none() || queues.incoming.len() >= 256 || packet.len() > 65507 {
-            return false;
-        }
-        match codec::decode_message(packet.as_slice()) {
-            Ok((message, used)) if used == packet.len() => {
-                queues.incoming.push((1, message));
-                true
-            }
-            _ => false,
-        }
+        self.legacy_peer && self.receive_from(1, packet)
+    }
+
+    #[func]
+    fn receive_from(&mut self, endpoint: i64, packet: PackedByteArray) -> bool {
+        self.receive_from_result(endpoint, packet) == ReceiveCode::Accepted as i32
+    }
+
+    #[func]
+    fn receive_from_result(&mut self, endpoint: i64, packet: PackedByteArray) -> i32 {
+        let Ok(endpoint) = i32::try_from(endpoint) else {
+            return ReceiveCode::Rejected as i32;
+        };
+        self.peer.as_mut().map_or(ReceiveCode::Rejected, |peer| {
+            peer.receive_from(endpoint, packet.as_slice())
+        }) as i32
     }
 
     #[func]
     fn drain_packets(&mut self) -> Array<PackedByteArray> {
-        self.socket
-            .0
-            .borrow_mut()
-            .outgoing
-            .drain(..)
-            .map(|b| PackedByteArray::from(b.as_slice()))
+        if !self.legacy_peer {
+            return Array::new();
+        }
+        self.peer
+            .iter_mut()
+            .flat_map(Peer::drain)
+            .map(|(_, bytes)| PackedByteArray::from(bytes.as_slice()))
             .collect()
     }
 
     #[func]
-    fn confirmed_frame(&self) -> i32 {
-        self.session
-            .as_ref()
-            .map_or(-1, |s| s.confirmed_frame().as_i32())
+    fn drain_routed_packets(&mut self) -> Array<VarDictionary> {
+        self.peer
+            .iter_mut()
+            .flat_map(Peer::drain)
+            .map(|(endpoint, bytes)| {
+                let mut packet = VarDictionary::new();
+                packet.set("endpoint", i32::from(endpoint));
+                packet.set("bytes", &PackedByteArray::from(bytes.as_slice()));
+                packet
+            })
+            .collect()
     }
 
-    // 0 = advanced, 1 = waiting for peers, -1 = terminal failure.
+    #[func]
+    fn current_frame(&self) -> i32 {
+        self.peer.as_ref().map_or(-1, Peer::current_frame)
+    }
+
+    #[func]
+    fn confirmed_frame(&self) -> i32 {
+        self.peer.as_ref().map_or(-1, Peer::confirmed_frame)
+    }
+
+    #[func]
+    fn is_running(&self) -> bool {
+        self.peer.as_ref().is_some_and(Peer::is_running)
+    }
+
+    #[func]
+    fn terminal_reason(&self) -> GString {
+        self.peer.as_ref().map_or("", Peer::terminal_reason).into()
+    }
+
+    #[func]
+    fn interrupted_endpoints(&self) -> PackedInt32Array {
+        self.peer
+            .iter()
+            .flat_map(Peer::interrupted_endpoints)
+            .collect()
+    }
+
     #[func]
     fn step(&mut self, input: PackedByteArray, game: Gd<Object>) -> i32 {
-        let Some(session) = &mut self.session else {
-            return -1;
-        };
-        let Ok(sample) = <[u8; 4]>::try_from(input.as_slice()) else {
-            return -1;
-        };
-        session.poll_remote_clients();
-        if self.socket.0.borrow().encode_failed {
+        if !self.legacy_peer || input.len() != 4 {
             return -1;
         }
-        if session.current_state() != SessionState::Running {
-            return 1;
+        let code = self.step_peer(input, game, false);
+        if code < 0 && self.peer.as_ref().is_some_and(|peer| peer.terminal_reason() == "callback_failed") {
+            self.peer = None;
+            self.legacy_peer = false;
         }
-        if session
-            .add_local_input(PlayerHandle::new(self.local), sample)
-            .is_err()
-        {
+        code
+    }
+
+    #[func]
+    fn step_roster(&mut self, inputs: PackedByteArray, game: Gd<Object>) -> i32 {
+        if self.legacy_peer {
             return -1;
         }
-        let before = session.current_frame();
-        let requests = match session.advance_frame() {
-            Ok(requests) => requests,
-            Err(FortressError::PredictionThreshold) => return 1,
-            Err(_) => return -1,
-        };
-        let advanced = session.current_frame() > before;
-        if dispatch(requests, game, false) {
-            if advanced {
-                0
-            } else {
-                1
-            }
-        } else {
-            self.session = None;
-            -1
-        }
+        self.step_peer(inputs, game, true)
+    }
+
+    fn step_peer(&mut self, inputs: PackedByteArray, game: Gd<Object>, checksums: bool) -> i32 {
+        self.peer.as_mut().map_or(-1, |peer| {
+            peer.step(inputs.as_slice(), |requests| {
+                dispatch(requests, game, checksums)
+            })
+        })
     }
 
     #[func]
@@ -160,7 +168,7 @@ impl FortressNativeSession {
     }
 
     fn configure_sync(&mut self, players: i32, checksums: bool) -> bool {
-        if self.session.is_some() || self.sync.is_some() || !(2..=8).contains(&players) {
+        if self.peer.is_some() || self.sync.is_some() || !(2..=8).contains(&players) {
             return false;
         }
         self.players = players as usize;

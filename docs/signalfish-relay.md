@@ -6,6 +6,8 @@ and filters other participants' traffic before the peer receives it.
 It reuses the [membership and plan seam](signalfish-membership.md) and the existing
 `FortressPeerSession`; it does not create another rollback engine.
 
+The adapter also accepts [a receiver callback](signalfish-fallback.md#use-a-different-rollback-backend).
+
 ## Configure the SDK and relay
 
 Use the same `SignalFishConfig` instance supplied to the SDK client:

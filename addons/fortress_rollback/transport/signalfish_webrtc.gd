@@ -17,6 +17,7 @@ var _transport: WeakRef = null
 var _membership: Membership
 var _adapter: Adapter
 var _peer: Peer
+var _receive_packet: Callable
 var _options: Types.Options
 var _generation: String = ""
 var _revision: int = -1
@@ -42,9 +43,20 @@ var _refused_destination: PackedByteArray = PackedByteArray()
 ## Exclusive PacketPeer consumer: never assign this mesh peer to MultiplayerAPI.
 ## Configure after its accepted mesh plan; a changed plan requires a new lifetime.
 func configure(mesh: Object, membership: Membership, adapter: Adapter, peer: Peer, options: Types.Options = null) -> int:
+	return _configure(mesh, membership, adapter, peer, options, Callable())
+
+
+## The receiver accepts (sender_uuid, owned_bytes) and returns an I.Code.
+func configure_packet_receiver(mesh: Object, membership: Membership, adapter: Adapter, receive_packet: Callable, options: Types.Options = null) -> int:
+	return _configure(mesh, membership, adapter, null, options, receive_packet)
+
+
+func _configure(mesh: Object, membership: Membership, adapter: Adapter, peer: Peer, options: Types.Options, receive_packet: Callable) -> int:
 	if _mesh != null or _busy:
 		return Code.WRONG_STATE
-	if mesh == null or membership == null or adapter == null or peer == null or not mesh.has_method("get_multiplayer_peer"):
+	if mesh == null or membership == null or adapter == null or not mesh.has_method("get_multiplayer_peer"):
+		return Code.INVALID_ARGUMENT
+	if (peer != null) == receive_packet.is_valid():
 		return Code.INVALID_ARGUMENT
 	var controls: Types.Options = Types.Options.new() if options == null else options
 	if not Types.valid_options(controls) or membership.handshake_message() == null:
@@ -68,6 +80,7 @@ func configure(mesh: Object, membership: Membership, adapter: Adapter, peer: Pee
 	_membership = membership
 	_adapter = adapter
 	_peer = peer
+	_receive_packet = receive_packet
 	_options = Types.copy_options(controls)
 	_generation = state.generation
 	_revision = state.lifetime_revision
@@ -200,7 +213,7 @@ func _receive(transport: Object, now_us: int, factory: Callable, result: Types.R
 				_rejected += 1
 				_incoming.clear()
 				continue
-		if not _token_ready:
+		if _peer != null and not _token_ready:
 			var candidate: Variant = factory.call(_membership.uuid_for_peer_id(_source)) if factory.is_valid() else null
 			result.code = _gate()
 			if result.code != Code.OK:
@@ -215,7 +228,13 @@ func _receive(transport: Object, now_us: int, factory: Callable, result: Types.R
 		result.code = _gate()
 		if result.code != Code.OK:
 			return
-		result.peer_code = _adapter.receive_mesh(_peer, _incoming.duplicate(), _source, now_us, _token)
+		if _peer != null:
+			result.peer_code = _adapter.receive_mesh(_peer, _incoming.duplicate(), _source, now_us, _token)
+		else:
+			result.peer_code = _receive_packet.call(_membership.uuid_for_peer_id(_source), _incoming.duplicate())
+			result.code = _gate()
+			if result.code != Code.OK:
+				return
 		if result.peer_code in [I.Code.WRONG_SOURCE, I.Code.WRONG_CONNECTION]:
 			_rejected += 1
 			_incoming.clear()
@@ -223,7 +242,7 @@ func _receive(transport: Object, now_us: int, factory: Callable, result: Types.R
 			_token_ready = false
 			continue
 		if result.peer_code != I.Code.OK:
-			if result.peer_code == I.Code.BACKPRESSURE and _peer.status().lifecycle == S.Lifecycle.RUNNING:
+			if result.peer_code == I.Code.BACKPRESSURE and (_peer == null or _peer.status().lifecycle == S.Lifecycle.RUNNING):
 				result.code = Code.BACKPRESSURE
 			else:
 				_failure = Code.PEER_FAILURE
@@ -272,6 +291,8 @@ func _gate() -> int:
 	elif mesh.call("get_multiplayer_peer") != transport or transport.call("get_connection_status") != MultiplayerPeer.CONNECTION_CONNECTED \
 		or transport.call("get_unique_id") != Membership.uuid_to_peer_id(_membership.local_uuid()):
 		_failure = Code.WRONG_STATE
+	elif _peer == null and not _receive_packet.is_valid():
+		_failure = Code.WRONG_STATE
 	return _failure
 
 
@@ -290,6 +311,7 @@ func detach() -> void:
 	_membership = null
 	_adapter = null
 	_peer = null
+	_receive_packet = Callable()
 	_pending.clear()
 	_pending_bytes = 0
 	_incoming.clear()
@@ -336,7 +358,11 @@ func send_readiness(identity: PackedByteArray, size: int) -> int:
 
 
 func matches_session(membership: Membership, adapter: Adapter, peer: Peer) -> bool:
-	return _membership == membership and _adapter == adapter and _peer == peer and _mesh != null
+	return peer != null and _peer == peer and _membership == membership and _adapter == adapter and _mesh != null
+
+
+func matches_packet_receiver(membership: Membership, adapter: Adapter, receive_packet: Callable) -> bool:
+	return _peer == null and _receive_packet == receive_packet and _membership == membership and _adapter == adapter and _mesh != null
 
 
 func packet_limit() -> int:

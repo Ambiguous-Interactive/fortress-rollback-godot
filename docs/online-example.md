@@ -1,4 +1,4 @@
-# Online two-player example
+# Online rollback example
 
 Open `examples/online/online.tscn` to play the existing integer movement game
 with someone in another browser. The scene uses real SignalFish signaling,
@@ -9,10 +9,33 @@ assigns numbers, so the room creator is not necessarily player one.
 ![The exported scene after actual online movement](online-example.png)
 
 The SignalFish SDK is optional. Without it the scene opens and explains how to
-install it; the root addon and other examples remain runnable. This example
-requires an initial WebRTC mesh plan with relay support available in standby.
-An initial relay-only plan is reported as unsupported. It keeps the same
-rollback session when an established direct link falls back to relay.
+install it. The default GDScript mode uses a two-player WebRTC mesh with binary
+relay in standby. It keeps the same rollback session when a direct link falls
+back to relay.
+
+## Try the native backend
+
+Install the [native addon archive](../experiments/gdextension/README.md) for the
+editor and export target alongside the regular addon. For Web, enable
+**Extensions Support**, leave **Thread Support** off, and export with the matching
+Web dynamic-linking, single-threaded template.
+
+Select **Native / WebRTC** or **Native / relay** and a room size from 2 to 8.
+Everyone joining the room uses the same mode and player count. Each browser
+controls one player. The app validates the backend and schema at room admission
+and checks the frozen room and roster tag before handing any datagram to Rust.
+**Native / WebRTC** starts once every direct link connects. **Native / relay**
+starts over relay, including when the server explicitly falls back to it.
+For the local server command below, pass `--max-players 8` to allow larger rooms
+and add `--route relay` to host a relay-only room.
+
+Native mode uses four-byte inputs and fixed zero input delay. The room ends
+when membership changes or the upstream session reports a terminal failure.
+The native example gives the SignalFish WebSocket a bounded 1 MiB receive ring
+to absorb broadcast bursts in larger rooms.
+Use the GDScript mode for recording, delay adjustment and the legacy diagnostic
+trace. See the [native migration contract](native-backend-migration.md) for
+qualification scope.
 
 ## Install and run
 

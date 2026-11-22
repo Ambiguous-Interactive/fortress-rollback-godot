@@ -211,7 +211,8 @@ EXPECTED['res://tests/unit/test_spectator_demo_recording.gd'] = {'prefix_capture
 for _suite in ['host', 'relay']:
     EXPECTED[f'res://tests/unit/test_signalfish_spectator_{_suite}.gd'].add('sdk_numbers')
 EXPECTED['res://tests/unit/test_signalfish_fallback_failure.gd'] = {
-    'send_failure', 'receive_failure', 'latched_failure', 'busy_control', 'failed_configuration', 'healthy_configuration'}
+    'send_failure', 'receive_failure', 'latched_failure', 'busy_control', 'failed_configuration', 'healthy_configuration',
+    'opaque_overlap', 'opaque_lifetime'}
 EXPECTED['res://tests/unit/test_replay_viewer_lifetime.gd'] = {
     'replacement', 'callback_controls', 'callback_termination', 'expert_controls', 'scene_busy_controls', 'scene_exit', 'scene_exit_callbacks'}
 EXPECTED['res://tests/unit/test_replay_input_navigation.gd'] = {'status_navigation', 'input_change_navigation', 'input_change_integrity', 'input_change_controls',

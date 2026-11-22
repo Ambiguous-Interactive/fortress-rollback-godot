@@ -20,6 +20,7 @@ RUNTIME_SCRIPTS = frozenset({
     'core/diagnostic_trace.gd',
     'core/diagnostic_trace_reader.gd',
     'core/driver.gd',
+    'core/native_driver.gd',
     'core/input_queue.gd',
     'core/peer_checksums.gd',
     'core/peer_drop_barrier.gd',

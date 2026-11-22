@@ -3,17 +3,28 @@ extends RefCounted
 # Value: protects=independent online handshake completion; fails_when=valid unordered early gameplay kills a synchronizing peer; seam=actual Match callers and SDK transport doubles
 const Example = preload("res://tests/unit/test_online_example.gd")
 const Match = preload("res://examples/online/match.gd")
+const Lobby = preload("res://examples/online/lobby.gd")
+const RelayFixture = preload("res://tests/unit/test_signalfish_relay.gd")
+const MembershipFixture = preload("res://tests/unit/test_signalfish_membership.gd")
 const Protocol = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["asymmetric_direct", "asymmetric_relay", "early_validation"])
+	return PackedStringArray(["asymmetric_direct", "asymmetric_relay", "early_validation", "native_relay_plan", "native_ingress_pressure"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	if name == "early_validation":
 		_early_validation(context)
+		context.finish()
+		return
+	if name == "native_relay_plan":
+		_native_relay_plan(context)
+		context.finish()
+		return
+	if name == "native_ingress_pressure":
+		_native_ingress_pressure(context)
 		context.finish()
 		return
 	var helper: RefCounted = Example.new()
@@ -151,3 +162,146 @@ func _early_validation(context: RefCounted) -> void:
 		fixture.driver.detach()
 		fixture.mesh.free()
 		fixture.client.free()
+
+
+# Value: protects=native relay startup on accepted SDK fallback; fails_when=either startup gate requires a literal relay plan; seam=production lobby, match and adapters
+func _native_relay_plan(context: RefCounted) -> void:
+	var rows: Array[Array] = [
+		["native", "relay", "relay", "relay", "", "relay", "playing"],
+		["native", "relay", "host", "direct", "relay", "relay_required", "playing"],
+		["native", "relay", "host", "direct", "direct", "blocked", "failed"],
+		["native", "mesh", "host", "direct", "relay", "relay_required", "failed"],
+		["legacy", "mesh", "host", "direct", "relay", "relay_required", "failed"],
+	]
+	for row: Array in rows:
+		var client: LobbyClient = LobbyClient.new()
+		var mesh: LobbyMesh = LobbyMesh.new()
+		var lobby: Lobby = Lobby.new()
+		lobby.client = client
+		lobby.mesh = mesh
+		lobby.game_match = StartupMatch.new()
+		lobby.backend = row[0]
+		lobby._requested_route = row[1]
+		lobby._config = RelayFixture.SDKConfig.new()
+		lobby._config.max_buffered_bytes = 4096
+		lobby._config.max_outbound_frame_bytes = 4096
+		lobby._info = RelayFixture.Info.new()
+		lobby.state = "lobby"
+		lobby.has_readied = true
+		var incarnation: PackedByteArray = PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8])
+		var label: String = "/".join(PackedStringArray(row.slice(0, 6)))
+		var game: Match = lobby.game_match
+		context.equal(game.freeze(client, mesh, PackedStringArray([Example.U, Example.V]), incarnation), OK, "freeze room " + label)
+		if lobby.backend == "native":
+			game.driver._native_backend = Match.Driver.Native.new()
+		var plan: MembershipFixture.Plan = MembershipFixture.Plan.new()
+		plan.data.topology = row[2]
+		plan.data.transport = row[3]
+		plan.data.fallback = row[4]
+		plan.data.peers.clear()
+		client.session_plan.emit(plan)
+		context.equal(game.adapter.status().route, row[5], "plan attribution " + label)
+		context.equal(mesh.attached, false, "non-mesh plan detaches the mesh " + label)
+		lobby.tick(0, 0)
+		context.equal(lobby.state, row[6], "lobby route selection " + label + " " + lobby.message)
+		var started: bool = row[6] == "playing"
+		context.equal(game.has_started, started, "match startup " + label)
+		context.equal(game.relay.status().code, Match.Relay.Code.OK if started else Match.Relay.Code.WRONG_STATE, "relay setup " + label)
+		context.equal(game.direct.status().code, Match.Direct.Code.WRONG_STATE, "no direct transport " + label)
+		lobby.disconnect_room()
+
+
+class LobbyClient:
+	extends RelayFixture.Client
+
+	func get_room_id() -> String:
+		return Example.ROOM
+
+	func poll() -> void:
+		pass
+
+	func close(_code: int, _reason: String) -> void:
+		pass
+
+
+class LobbyMesh:
+	extends MembershipFixture.FakeMesh
+
+	func poll() -> void:
+		pass
+
+
+class StartupMatch:
+	extends Match
+
+	# The fixture exercises transport startup without executing native gameplay.
+	func tick(_now_us: int, _buttons: int) -> void:
+		pass
+
+
+# Value: protects=native receive retry ownership; fails_when=a full native queue drops a valid datagram; seam=online match and binary relay receiver
+func _native_ingress_pressure(context: RefCounted) -> void:
+	var client: LobbyClient = LobbyClient.new()
+	var mesh: LobbyMesh = LobbyMesh.new()
+	var game: Match = Match.new()
+	var incarnation: PackedByteArray = PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8])
+	context.equal(game.freeze(client, mesh, PackedStringArray([Example.U, Example.V]), incarnation), OK, "freeze room")
+	var backend: Match.Driver.Native = Match.Driver.Native.new()
+	var ingress: NativeIngress = NativeIngress.new()
+	backend._native = ingress
+	game.driver._native_backend = backend
+	game._native_identity = game.membership.handshake_message().session_id
+	var plan: MembershipFixture.Plan = MembershipFixture.Plan.new()
+	plan.data.topology = "relay"
+	plan.data.transport = "relay"
+	plan.data.peers.clear()
+	client.session_plan.emit(plan)
+	var config: RelayFixture.SDKConfig = RelayFixture.SDKConfig.new()
+	config.max_buffered_bytes = 4096
+	config.max_outbound_frame_bytes = 4096
+	context.equal(game.start_transport(client, mesh, config, RelayFixture.Info.new(), 0), OK, "native relay ready")
+
+	var payload: PackedByteArray = PackedByteArray([91, 72])
+	var invalid: PackedByteArray = _native_envelope(game, PackedByteArray([0]))
+	var valid: PackedByteArray = _native_envelope(game, payload)
+	client.game_data_binary_received.emit(Example.V, 1, invalid)
+	client.game_data_binary_received.emit(Example.V, 1, valid)
+	var pressure: Match.Relay.Result = game.relay.poll(0)
+	context.equal(pressure.code, Match.Relay.Code.BACKPRESSURE, "valid datagram surfaces recoverable pressure")
+	context.equal(pressure.peer_code, Match.Inputs.Code.BACKPRESSURE, "match forwards native pressure")
+	context.equal(pressure.received, 0, "neither malformed nor refused datagram counted as accepted")
+	context.equal(game.relay.status().received_packets, 1, "malformed datagram dropped and exact valid datagram retained")
+	context.equal(game.relay.status().received_bytes, valid.size(), "retained bytes accounted for")
+	context.equal(ingress.accepted.size(), 0, "full native queue does not accept")
+	context.equal(game.driver.receive_native(2, payload), false, "boolean receive API still refuses capacity")
+
+	ingress.full = false
+	var retry: Match.Relay.Result = game.relay.poll(1)
+	context.equal(retry.code, Match.Relay.Code.OK, "pressure clears on retry")
+	context.equal(retry.received, 1, "exact retained datagram accepted once")
+	context.equal(ingress.accepted, [payload], "native ingress receives original bytes after capacity frees")
+	context.equal(game.relay.status().received_bytes, 0, "retry releases retained bytes")
+	context.equal(game.relay.poll(2).received, 0, "no duplicate retry after acceptance")
+	game.detach()
+	mesh.free()
+	client.free()
+
+
+func _native_envelope(game: Match, payload: PackedByteArray) -> PackedByteArray:
+	var identity: PackedByteArray = game.membership.handshake_message().session_id
+	return Match.Relay.Envelope.encode(identity, Example.V, Example.U, identity + payload)
+
+
+class NativeIngress:
+	extends RefCounted
+
+	var full: bool = true
+	var accepted: Array[PackedByteArray] = []
+
+	func receive_from_result(endpoint: int, bytes: PackedByteArray) -> int:
+		if endpoint != 2 or bytes.size() != 2:
+			return Match.Driver.Native.ReceiveCode.REJECTED
+		if full:
+			return Match.Driver.Native.ReceiveCode.FULL
+		accepted.append(bytes)
+		return Match.Driver.Native.ReceiveCode.ACCEPTED
