@@ -2,7 +2,8 @@
 
 Prefer a thin GDExtension for projects that require upstream fidelity. The experiment demonstrated a stock Rust peer and an exported GDScript peer
 completing the same corrected history. Keep the current addon available for its existing API, Godot protocol, recorded games and transport integrations.
-Adopting a new default backend requires a separate migration decision. [Binding source, installation and reproduction](../../experiments/gdextension/README.md)
+The [migration contract](../native-backend-migration.md) defines the gates for switching the default backend.
+See the [binding source, installation and reproduction](../../experiments/gdextension/README.md).
 
 ## Observations
 
