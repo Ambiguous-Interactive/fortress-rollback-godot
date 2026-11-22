@@ -6,6 +6,7 @@ const INPUTS = [[1, ['KeyA']], [2, ['KeyD']], [4, ['KeyW']], [8, ['KeyS']],
   [5, ['KeyA', 'KeyW']], [6, ['KeyD', 'KeyW']], [9, ['KeyA', 'KeyS']], [10, ['KeyD', 'KeyS']]];
 const GATE_FRAME = 12;
 const HISTORY_FRAMES = 40;
+const PAGE_BOOT_MS = 60000;
 
 function instrumentNativeWire() {
   const active = [];
@@ -119,6 +120,7 @@ async function run(root, endpoint, route, players) {
   const origin = `https://127.0.0.1:${server.address().port}`;
   const socketEndpoint = `wss://127.0.0.1:${server.address().port}/v3/ws`;
   const pages = [];
+  const bootstrap_ms = [];
   const contexts = [];
   const errors = [];
   const failures = [];
@@ -146,6 +148,7 @@ async function run(root, endpoint, route, players) {
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
         '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] });
     for (let index = 0; index < players; index++) {
+      const started = performance.now();
       const context = await browser.newContext({ ignoreHTTPSErrors: true });
       contexts.push(context);
       const page = await context.newPage();
@@ -162,7 +165,8 @@ async function run(root, endpoint, route, players) {
       });
       await page.addInitScript(instrumentNativeWire);
       await page.goto(`${origin}/index.html`);
-      await wait(page, () => window.fortressNativeReady === true);
+      await wait(page, () => window.fortressNativeReady === true, null, PAGE_BOOT_MS);
+      bootstrap_ms.push(Math.round(performance.now() - started));
     }
     phase = 'lobby';
     function connect(page, index, room) {
@@ -244,13 +248,13 @@ async function run(root, endpoint, route, players) {
       return window.fortressNative.state === 'offline' && sockets.every(state => state === WebSocket.CLOSED)
         && rtc.every(([, state]) => state === 'closed');
     })));
-    result = { passed: true, route, players, compared_frames: HISTORY_FRAMES, armed, stalled, peers, terminal, after };
+    result = { passed: true, route, players, compared_frames: HISTORY_FRAMES, bootstrap_ms, armed, stalled, peers, terminal, after };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map(page => page.evaluate(() => ({
       ...window.fortressNative, wire: window.fortressNativeWire?.status()
     }))));
-    console.error(JSON.stringify({ phase, errors, states }));
+    console.error(JSON.stringify({ phase, bootstrap_ms, errors, states }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close()));
     if (browser) failures.push(...await closeAll([browser], owner => owner.close()));
