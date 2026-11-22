@@ -70,10 +70,7 @@ def stage_export(root, output, editor, templates, sdk, addon, environment):
 
 
 def create_server_config(source, route, port):
-    config = server_config(source, port)
-    config['security']['allowed_apps'][0]['max_players_per_room'] = 8
-    if route == 'relay':
-        config['session'].update(default_topology='relay', enable_webrtc=False)
+    config = server_config(source, port, max_players=8, route=route)
     for key in config['rate_limit']:
         if key.startswith('max_'):
             config['rate_limit'][key] = max(config['rate_limit'][key], 1000000)
