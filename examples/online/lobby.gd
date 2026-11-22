@@ -8,10 +8,11 @@ const Multiplayer = preload("res://addons/fortress_rollback/transport/signalfish
 const SDK_PATH: String = "res://addons/signal_fish/signal_fish_client.gd"
 const CONFIG_PATH: String = "res://addons/signal_fish/signal_fish_config.gd"
 const MESH_PATH: String = "res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd"
+const SDK_SOCKET_PATH: String = "res://addons/signal_fish/transport/sf_websocket_transport.gd"
 # The optional SDK transport creates and connects the socket in one call.
 # Load this subclass only when the project installs the SDK.
 const NATIVE_TRANSPORT_SOURCE: String = """
-extends "res://addons/signal_fish/transport/sf_websocket_transport.gd"
+extends "%s"
 
 func _make_peer() -> SFWebSocketPeerAdapterScript:
 	var socket: WebSocketPeer = WebSocketPeer.new()
@@ -82,8 +83,11 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 			return ERR_UNAVAILABLE
 	var native_transport: RefCounted
 	if backend_choice == "native":
+		if not ResourceLoader.exists(SDK_SOCKET_PATH):
+			message = "The SignalFish SDK is missing its WebSocket transport."
+			return ERR_UNAVAILABLE
 		var transport_script: GDScript = GDScript.new()
-		transport_script.source_code = NATIVE_TRANSPORT_SOURCE
+		transport_script.source_code = NATIVE_TRANSPORT_SOURCE % SDK_SOCKET_PATH
 		if transport_script.reload() != OK:
 			message = "The SignalFish SDK could not configure the native WebSocket transport."
 			return ERR_UNAVAILABLE
