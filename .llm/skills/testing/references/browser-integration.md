@@ -87,6 +87,12 @@ For network scenarios, compare corrected confirmed prefixes while faults remain
 active and assert a nonzero comparison count for every peer. Confirmation can
 advance on delivery before predicted game state is repaired; capture actual
 callback boundaries rather than assuming the current state is already canonical.
+For a physical route change, sample channel counters after closure at both endpoints.
+Require addressed receives on the fallback route and compare inputs first sampled
+after the close. A send or a buffered pre-close row can pass a weaker check.
+For protocol timeout, defer the resulting physical signaling-socket closes until
+all peers report their causes when the first close would trigger a room departure.
+Read callback counts at entry to the terminal service tick and after later turns.
 Compare stalled save/load/advance requests too; unchanged frame numbers do not
 mean a session performed no work. Do not gate every new input on global
 confirmation when receipt gossip requires later submissions. Pace the witness
