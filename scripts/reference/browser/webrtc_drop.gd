@@ -588,9 +588,9 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 		for index: int in range(host.clients.size()):
 			host.clients[index].poll()
 			host.meshes[index].poll()
-		var polled: int = peer.poll(host.transport_us, host._poll_tokens(peer))
-		if polled == I.Code.OK and peer.status().current_frame != terminated_frame:
-			host.errors.append("peer_drop_history_lost_settle_%d" % polled)
+		peer.poll(host.transport_us, host._poll_tokens(peer))
+		if peer.status().current_frame != terminated_frame:
+			host.errors.append("peer_drop_history_lost_settle")
 			return false
 		await host.get_tree().create_timer(0.002).timeout
 	var final_frame: int = peer.status().current_frame
