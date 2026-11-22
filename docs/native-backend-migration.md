@@ -46,6 +46,13 @@ room namespace includes the pinned backend, input and game schema, room size
 and initial route. Both byte routes add the same 16-byte room/roster tag.
 The raw binding used for stock Rust interoperability carries no room tag.
 
+The exported four-player recovery cases begin with one direct link unavailable
+or close it after the match starts. Each case compares 40 confirmed input rows
+and canonical snapshots. The live-close case then withholds gameplay on both
+routes to exercise the upstream disconnect timeout with the SDK roster intact.
+Automatic direct restoration requires a replacement link within the same room
+and plan. [SignalFish SDK #585](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/585)
+
 ## Protocol and saved data
 
 Native gameplay packets use the codec in the [pinned upstream crate](reference/pins.json).

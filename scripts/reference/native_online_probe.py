@@ -23,7 +23,7 @@ from signalfish_probe import inventory
 sys.path.insert(0, str(ROOT / 'scripts'))
 import host_capacity  # noqa: E402
 
-CELLS = tuple(f'{route}:{count}' for route in ('mesh', 'relay') for count in (2, 4, 8))
+CELLS = tuple(f'{route}:{count}' for route in ('mesh', 'relay') for count in (2, 4, 8)) + ('mesh-startup:4', 'mesh-close:4')
 BROWSER = ROOT / 'scripts/reference/browser'
 EXTENSION = 'addons/fortress_native/fortress.gdextension'
 TEMPLATE = 'web_dlink_nothreads_release.zip'
@@ -82,7 +82,7 @@ def create_server_config(source, route, port):
 def play_cells(cells, export, environment, server_source, server_binary, output):
     results = []
     for route in ('mesh', 'relay'):
-        selected = [cell for cell in cells if cell.startswith(route + ':')]
+        selected = [cell for cell in cells if cell.split(':')[0].split('-')[0] == route]
         if not selected:
             continue
         with socket.socket() as selection:
@@ -93,10 +93,10 @@ def play_cells(cells, export, environment, server_source, server_binary, output)
         with (output / f'{route}-server.log').open('wb') as log:
             with OwnedServer(server_binary, server_environment, port, log) as server:
                 for cell in selected:
-                    players = cell.split(':')[1]
-                    command = ['node', str(BROWSER / 'native_online.cjs'), str(export), f'ws://127.0.0.1:{port}/v3/ws', route, players]
-                    evidence = json.loads(run_browser(command, environment, output / f'{route}-{players}.log', rooms=1))
-                    if (evidence.get('passed') is not True or evidence.get('route') != route
+                    mode, players = cell.split(':')
+                    command = ['node', str(BROWSER / 'native_online.cjs'), str(export), f'ws://127.0.0.1:{port}/v3/ws', mode, players]
+                    evidence = json.loads(run_browser(command, environment, output / f'{mode}-{players}.log', rooms=1))
+                    if (evidence.get('passed') is not True or evidence.get('route') != mode
                             or evidence.get('players') != int(players) or evidence.get('compared_frames') != 40):
                         raise ValueError(f'incomplete browser evidence: {cell}')
                     results.append(evidence)

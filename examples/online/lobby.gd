@@ -9,6 +9,8 @@ const SDK_PATH: String = "res://addons/signal_fish/signal_fish_client.gd"
 const CONFIG_PATH: String = "res://addons/signal_fish/signal_fish_config.gd"
 const MESH_PATH: String = "res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd"
 const SDK_SOCKET_PATH: String = "res://addons/signal_fish/transport/sf_websocket_transport.gd"
+const START_TIMEOUT_US: int = 30_000_000
+const NATIVE_MESH_GRACE_US: int = 3_000_000
 # The optional SDK transport creates and connects the socket in one call.
 # Load this subclass only when the project installs the SDK.
 const NATIVE_TRANSPORT_SOURCE: String = """
@@ -41,6 +43,7 @@ var _joined: bool = false
 var _closing: bool = false
 var _cleanup_pending: bool = false
 var _deadline: int = -1
+var _mesh_start_after: int = -1
 var _epoch: int = 0
 var _last_now: int = -1
 var _connection_revision: int = 0
@@ -137,6 +140,7 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 	_epoch = now_us
 	_last_now = now_us
 	_deadline = now_us + 30000000
+	_mesh_start_after = -1
 	_connect_callbacks()
 	var revision: int = _connection_revision
 	state = "connecting"
@@ -222,7 +226,7 @@ func _start() -> Error:
 		return ERR_UNAVAILABLE
 	var revision: int = _connection_revision
 	state = "starting"
-	_deadline = _last_now + 30000000
+	_deadline = _last_now + START_TIMEOUT_US
 	var code: Error = client.call("start_game")
 	if revision != _connection_revision:
 		return ERR_UNAVAILABLE
@@ -316,9 +320,13 @@ func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:
 		return
 	if state == "lobby":
 		state = "starting"
-		_deadline = now_us + 30000000
-	if route == "mesh" and not _mesh_ready(revision):
-		return
+		_deadline = now_us + START_TIMEOUT_US
+	if route == "mesh":
+		# Give direct links time to connect after the accepted mesh plan arrives.
+		if _mesh_start_after < 0:
+			_mesh_start_after = now_us + NATIVE_MESH_GRACE_US
+		if not _mesh_can_start(revision, backend == "native" and now_us >= _mesh_start_after):
+			return
 	var started: Error = game_match.start_transport(client, mesh, _config, _info, now_us - _epoch)
 	if revision != _connection_revision:
 		return
@@ -329,13 +337,15 @@ func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:
 		message = "Move with WASD or arrow keys. Leave to start a fresh room."
 
 
-func _mesh_ready(revision: int) -> bool:
+func _mesh_can_start(revision: int, allow_missing_links: bool) -> bool:
 	var transport: Object = mesh.call("get_multiplayer_peer")
 	if revision != _connection_revision or transport == null:
 		return false
 	transport.call("poll")
 	if revision != _connection_revision or state == "failed":
 		return false
+	if allow_missing_links:
+		return true
 	var peers: Dictionary = transport.call("get_peers")
 	if revision != _connection_revision or peers.size() != player_count - 1:
 		return false

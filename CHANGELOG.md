@@ -24,6 +24,8 @@
 
 ### Fixed
 
+- Fix native WebRTC startup when a direct link is unavailable. The match uses relay for that peer after a short grace period.
+
 - **Give a slow first Firefox window one bounded placement retry (#431)**: the nightly Firefox `clean` setup failed before gameplay when `xdotool search --sync` exceeded its 2 s bound while the first owned window was still compositing. Placement now retries that search once with a 4 s bound only after an `ETIMEDOUT`, so a visibly slow first window still places while an ambiguous window, a window that never appears (failing after 6 s) and malformed geometry keep their original rejections. The Node controls inject the delayed, ambiguous and never-appearing shapes.
 
 - **Coordinated drop**: Fix committed drops that continued after a second departure ended the match on a pending survivor. Both survivors now end with `participant_lost`, and the certified freeze stays unchanged ([#425](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/425)).

@@ -28,28 +28,24 @@ class ObservedGame:
 		super(players, Driver.Native.INPUT_BYTES)
 
 	func save_state(saved_frame: int, writer: Writer) -> Driver.SaveResult:
-		var result: Driver.SaveResult = super.save_state(saved_frame, writer)
-		if result.ok:
-			saves += 1
-		return result
+		saves += 1
+		return super.save_state(saved_frame, writer)
 
 	func load_state(saved_frame: int, reader: Reader) -> bool:
-		var accepted: bool = super.load_state(saved_frame, reader)
-		if accepted:
-			restores += 1
-		return accepted
+		restores += 1
+		return super.load_state(saved_frame, reader)
 
 	func simulate_frame(input_frame: int, inputs: Types.FrameInputs) -> bool:
 		var positions_x: PackedInt32Array = x.duplicate()
 		var positions_y: PackedInt32Array = y.duplicate()
+		advances += 1
 		var accepted: bool = super.simulate_frame(input_frame, inputs)
 		if not accepted:
 			return false
-		advances += 1
 		var row: Array[int] = []
 		for player: int in inputs.player_count():
 			var sample: Types.InputResult = inputs.read(player)
-			var buttons: int = sample.bytes[0]
+			var buttons: int = sample.bytes.decode_u32(0) if sample.bytes.size() == Driver.Native.INPUT_BYTES else -1
 			row.append(buttons)
 			if first_prediction == -1 and input_frame >= GATE_FRAME and sample.status == Queue.Status.PREDICTED:
 				first_prediction = input_frame
@@ -68,15 +64,39 @@ class ObservedLobby:
 
 	var observations: ObservedGame
 	var turns: int = 0
+	var transport_wait_started: int = -1
+	var transport_start_delay: int = -1
+	var previous_transport_delay: int = -1
+	var open_mesh_wait_ticks: int = 0
+	var failure_tick_callbacks: PackedInt32Array = []
+
+	func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:
+		if transport_wait_started < 0:
+			transport_wait_started = now_us
+		var elapsed: int = now_us - transport_wait_started
+		var mesh_open: bool = route == "mesh" and JavaScriptBridge.eval("window.fortressNativeWire.meshOpen(%d)" % (player_count - 1))
+		super._maybe_start_transport(route, now_us, revision)
+		if transport_start_delay < 0:
+			if state == "playing":
+				transport_start_delay = elapsed
+			else:
+				previous_transport_delay = elapsed
+				if mesh_open:
+					open_mesh_wait_ticks += 1
 
 	func tick(now_us: int, buttons: int) -> void:
 		turns += 1
+		var previous_state: String = state
+		var callbacks: PackedInt32Array = []
 		if state == "playing":
+			callbacks = [observations.saves, observations.restores, observations.advances]
 			var frame: int = game_match.status().current_frame
 			# Variations after the warmup force correction when delivery is held.
 			if frame >= GATE_FRAME and frame % 2 == 0:
 				buttons = 0
 		super.tick(now_us, buttons)
+		if state == "failed" and previous_state == "playing":
+			failure_tick_callbacks = callbacks
 
 
 var scene: Node2D
@@ -86,6 +106,9 @@ var command_code: Error = OK
 var session_id: String = ""
 var uuid: String = ""
 var room_id: String = ""
+var blocked_uuid: String = ""
+var closed_channel_state: int = -1
+var closed_channel_frame: int = -1
 
 
 func _ready() -> void:
@@ -122,8 +145,18 @@ func _process(_delta: float) -> void:
 		"reason": match_status.reason,
 		"terminated": match_status.lifecycle == Types.Lifecycle.TERMINATED,
 		"turns": lobby.turns,
+		"transport_start_delay": lobby.transport_start_delay,
+		"previous_transport_delay": lobby.previous_transport_delay,
+		"open_mesh_wait_ticks": lobby.open_mesh_wait_ticks,
+		"failure_tick_callbacks": lobby.failure_tick_callbacks,
 		"stalls": lobby.game_match.stalls,
 		"failure": lobby.game_match.failure,
+		"closed_channel_state": closed_channel_state,
+		"closed_channel_frame": closed_channel_frame,
+		"terminal_detail": lobby.game_match.driver.native_terminal_detail(),
+		"interrupted": lobby.game_match.driver.native_interrupted_endpoints(),
+		"sdk_roster": _sdk_roster(),
+		"relay_peers": lobby.game_match.fallback.status().relay_peers,
 	}
 	if game != null:
 		(
@@ -170,8 +203,37 @@ func _command(value: Dictionary) -> void:
 			uuid = lobby.game_match.membership.local_uuid()
 			session_id = lobby.game_match.membership.handshake_message().session_id.hex_encode()
 			room_id = lobby.client.call("get_room_id")
-			JavaScriptBridge.eval("window.fortressNativeWire.bind(" + JSON.stringify(session_id) + ")")
+			JavaScriptBridge.eval("window.fortressNativeWire.bind(...%s)" % JSON.stringify([session_id, uuid]))
+		"block_startup":
+			blocked_uuid = str(value.uuid)
+			lobby.client.connect("session_plan", _close_link, CONNECT_ONE_SHOT)
+		"close_link":
+			blocked_uuid = str(value.uuid)
+			_close_link()
 		"start":
 			scene.start_button.pressed.emit()
 		"leave":
 			scene.leave_button.pressed.emit()
+
+
+func _sdk_roster() -> PackedStringArray:
+	var roster: PackedStringArray = []
+	if lobby.client != null:
+		var players: Array = lobby.client.call("get_players")
+		for player: RefCounted in players:
+			roster.append(player.get("id"))
+	return roster
+
+
+func _close_link(_plan: RefCounted = null) -> void:
+	var transport: Object = lobby.mesh.call("get_multiplayer_peer")
+	if transport == null:
+		return
+	var peer_id: int = Lobby.Match.Membership.uuid_to_peer_id(blocked_uuid)
+	if not transport.call("has_peer", peer_id):
+		return
+	var entry: Dictionary = transport.call("get_peer", peer_id)
+	var channel: WebRTCDataChannel = entry.channels[2]
+	closed_channel_state = channel.get_ready_state()
+	closed_channel_frame = lobby.game_match.status().current_frame
+	channel.close()

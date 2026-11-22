@@ -24,13 +24,18 @@ Select **Native / WebRTC** or **Native / relay** and a room size from 2 to 8.
 Everyone joining the room uses the same mode and player count. Each browser
 controls one player. The app validates the backend and schema at room admission
 and checks the frozen room and roster tag before handing any datagram to Rust.
-**Native / WebRTC** starts once every direct link connects. **Native / relay**
-starts over relay, including when the server explicitly falls back to it.
+**Native / WebRTC** starts as soon as every direct link connects. If some links
+are still unavailable after three seconds, native synchronization begins and
+the transport can send to those peers through relay. **Native / relay** starts
+over relay, including when the server explicitly falls back to it.
 For the local server command below, pass `--max-players 8` to allow larger rooms
 and add `--route relay` to host a relay-only room.
 
 Native mode uses four-byte inputs and fixed zero input delay. The room ends
 when membership changes or the upstream session reports a terminal failure.
+In a WebRTC room, a closed direct link can continue over relay while the other
+links stay direct. Rebuilding a closed link within the same room is tracked in
+[SignalFish SDK #585](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/585).
 The native example gives the SignalFish WebSocket a bounded 1 MiB receive ring
 to absorb broadcast bursts in larger rooms.
 Use the GDScript mode for recording, delay adjustment and the legacy diagnostic
