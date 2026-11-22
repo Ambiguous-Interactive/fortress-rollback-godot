@@ -34,9 +34,11 @@ and assign every authenticated remote endpoint a stable ID from 1 to 8. An
 endpoint can own multiple slots. Supply four bytes per local slot in ascending
 slot order through `step_local(now_us, inputs)`. After a waiting result, pass the
 same sample or omit it with an empty byte array. Drain and route native datagrams
-with `drain_native_packets()` and `receive_native()` even during waits. The driver uses the existing
-`save_state`, `load_state` and `simulate_frame` callbacks and expires views
-when each callback returns.
+with `drain_native_packets()` and `receive_native()` even during waits.
+`receive_native_result()` distinguishes full queues from rejected packets
+so a transport can retry the original datagram after servicing the driver.
+The driver uses the existing `save_state`, `load_state` and
+`simulate_frame` callbacks and expires views when each callback returns.
 
 The [playable example](online-example.md#try-the-native-backend) selects the
 backend explicitly and uses one local slot per participant. The SignalFish

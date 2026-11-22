@@ -34,6 +34,13 @@ WebRTC and relay. The stock UDP peer still exercises the raw compatibility API.
 - The runtime archive rejected the new driver's GDScript adapter because its
   explicit inventory omitted the file. The inventory now includes the adapter
   and continues to exclude native binaries.
+- A full native receive queue originally took the same route as an invalid
+  packet. The real relay adapter dropped the oldest datagram in a saturated
+  queue instead of retrying it. The result now separates these cases and a
+  startup suite verifies exact-byte retry after capacity returns.
+- The corrective termination control saves frame 7 while the driver still
+  publishes frame 13. It compares the failure frame to the callback's frame
+  and independently checks that the published frontier stays at 13.
 
 ## Prune ledger
 
