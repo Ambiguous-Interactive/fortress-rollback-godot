@@ -318,11 +318,12 @@ every donor chunk on that same real link for the whole retry window. The barrier
 expires, both survivors terminate with `timeout`, no slot is frozen, the
 recipient never installs the interval, and each survivor compares its pre-cut
 confirmed prefix with independently reconstructed original inputs.
-The `peer-drop-commit` cell withholds the coordinator's first COMMIT on the real
-link after certification. The validator requires a later exact-byte retry with a
-positive observed delay, the follower's acknowledgement, and the committed
-canonical continuation; a fabricated drop, an immediate duplicate or a changed
-retry payload fails. Full pinned-source
+The `peer-drop-commit` cell withholds the first coordinator COMMIT after
+certification and the first follower commit acknowledgement after it freezes
+the target. The validator requires a later exact-byte retry on each link,
+decodes each packet against the sender's role and the shared operation, and
+requires the coordinator to have received the follower's acknowledgement.
+Both survivors continue through 38 canonical comparisons. Full pinned-source
 trace comparison and the expanded live fault matrix remain in
 [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).

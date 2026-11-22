@@ -216,6 +216,7 @@ class DropDirect:
 	var _commit_dropped: int = 0
 	var _commit_resends: int = 0
 	var _commit_operation: int = -1
+	var _commit_phase: int = 0
 	var _commit_cut: int = -1
 	var _commit_digest: int = 0
 	var _commit_slot: int = -1
@@ -237,8 +238,7 @@ class DropDirect:
 	func arm_history_drop(count: int) -> void:
 		_history_remaining = count
 
-	## Withhold the first COMMIT this page sends. Only the coordinator publishes
-	## a commit, so arming every survivor cannot drop a follower's packet.
+	## Withhold the first commit or commit acknowledgement this page sends.
 	func arm_commit_drop(count: int) -> void:
 		_commit_remaining = count
 
@@ -268,8 +268,7 @@ class DropDirect:
 			"chunks": _history_drop_counts.duplicate(),
 		}
 
-	## The exact COMMIT packet this link withheld and the later retry it saw, so
-	## the witness binds the irreversible phase rather than any barrier packet.
+	## The withheld commit or acknowledgement and its first retry on this link.
 	func commit_report() -> Dictionary:
 		return {
 			"dropped": _commit_dropped,
@@ -284,9 +283,7 @@ class DropDirect:
 			"delay_us": _commit_retry_us - _commit_dropped_us if _commit_retry_us >= 0 and _commit_dropped_us >= 0 else -1,
 		}
 
-	## Withhold the first COMMIT published on this link. A later COMMIT of the
-	## same operation is a retry candidate; it counts only once the poll actually
-	## hands it to the channel.
+	## Count retries of the withheld phase only when the channel accepts the send.
 	func _withhold_commit(now_us: int) -> Array[Dictionary]:
 		var retries: Array[Dictionary] = []
 		if _membership == null or (_commit_remaining <= 0 and _commit_dropped == 0):
@@ -300,8 +297,11 @@ class DropDirect:
 				kept.append(packet)
 				continue
 			var decoded: T.Result = Codec.decode(packet.bytes, limits)
-			if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.DROP_BARRIER \
-				or decoded.message.phase != Drop.Phase.COMMIT:
+			if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.DROP_BARRIER:
+				kept.append(packet)
+				continue
+			var phase: int = decoded.message.phase
+			if phase != Drop.Phase.COMMIT and (phase != Drop.Phase.REPORT or decoded.message.stage != Drop.Stage.COMMITTED):
 				kept.append(packet)
 				continue
 			var destination_slot: int = _membership.slot(_membership.uuid_for_peer_id(packet.to.decode_u32(0)))
@@ -309,6 +309,7 @@ class DropDirect:
 				_commit_remaining -= 1
 				_commit_dropped += 1
 				_commit_operation = int(decoded.message.operation)
+				_commit_phase = phase
 				_commit_cut = int(decoded.message.cut)
 				_commit_digest = int(decoded.message.cut_digest)
 				_commit_slot = destination_slot
@@ -316,7 +317,7 @@ class DropDirect:
 				_commit_dropped_us = now_us
 				_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
 				continue
-			if int(decoded.message.operation) == _commit_operation:
+			if phase == _commit_phase and int(decoded.message.operation) == _commit_operation:
 				retries.append({"index": kept.size(), "bytes": packet.bytes.hex_encode(), "slot": destination_slot})
 			kept.append(packet)
 		_pending = kept

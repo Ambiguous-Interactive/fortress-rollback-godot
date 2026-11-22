@@ -124,8 +124,7 @@ func run(host: Node, count: int) -> bool:
 	var process_missing: bool = bool(JavaScriptBridge.eval("window.fortressDropProcessMissing || false"))
 	var process_death: bool = bool(JavaScriptBridge.eval("window.fortressDropProcess || false"))
 	if commit_loss:
-		# Only the coordinator publishes COMMIT, so arming every survivor drops
-		# exactly the irreversible phase without assuming which page coordinates.
+		# The surviving roles publish opposite halves of the commit exchange.
 		for transport: Variant in host.transports:
 			if transport.has_method("arm_commit_drop"):
 				transport.arm_commit_drop(1)
@@ -355,6 +354,16 @@ func run(host: Node, count: int) -> bool:
 		if not host._service_batch():
 			return false
 		await host.get_tree().create_timer(0.002).timeout
+	if commit_loss:
+		host.stage = "peer_drop_commit_exchange"
+		if not await host._wait(
+			func() -> bool:
+				if barrier.role == Drop.Role.PROPOSER:
+					return not barrier.acknowledged.is_empty()
+				return int(host.transports[0].commit_report().get("resends", 0)) > 0,
+			true
+		):
+			return false
 	var certificates: Array[Dictionary] = []
 	for identity: String in barrier.certificates:
 		var certificate: Dictionary = barrier.certificates[identity]
