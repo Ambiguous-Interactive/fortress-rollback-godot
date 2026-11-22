@@ -249,9 +249,9 @@ def lost_evidence():
     return value
 
 
-def commit_packet(proposer, roster_digest='0000000000000001'):
+def commit_packet(proposer, roster_digest='0000000000000001', phase=4, stage=0):
     data = bytes([proposer['departing_slot']]) + proposer['target_generation'].to_bytes(2, 'little')
-    body = bytearray([4, 0, 0, 0])
+    body = bytearray([phase, stage, 0, 0])
     body += proposer['coordinator'].to_bytes(2, 'little')
     body += proposer['coordinator_generation'].to_bytes(2, 'little')
     body += proposer['operation'].to_bytes(4, 'little')
@@ -285,15 +285,16 @@ def commit_evidence():
                     target_generation=0, target_set_digest='00' * 8, departing_slot=2,
                     roster_digest='0000000000000001')
     payload = commit_packet(proposer)
-    proposer.update(commit_dropped=1, commit_resends=1, commit_operation=operation,
+    proposer.update(commit_dropped=1, commit_batch_duplicates=0, commit_resends=1, commit_operation=operation,
                     commit_cut=proposer['freeze_frame'], commit_digest=proposer['digest'],
                     commit_slot=follower['slot'], commit_first=payload, commit_retry=payload,
                     commit_retry_slot=follower['slot'], commit_delay_us=50000, acknowledged_peers=[hashlib.sha256(follower['uuid'].encode('ascii')).digest()[:8].hex()],
                     commit_ack_peers=[])
-    follower.update(commit_dropped=0, commit_resends=0, commit_operation=-1,
-                    commit_cut=-1, commit_digest='0000000000000000', commit_slot=-1, commit_retry_slot=-1,
-                    commit_first='', commit_retry='', commit_delay_us=-1,
-                    acknowledged_peers=[], commit_ack_peers=[])
+    acknowledgement = commit_packet(follower, phase=2, stage=3)
+    follower.update(commit_dropped=1, commit_batch_duplicates=2, commit_resends=1, commit_operation=operation,
+                    commit_cut=follower['freeze_frame'], commit_digest=follower['digest'], commit_slot=proposer['slot'],
+                    commit_first=acknowledgement, commit_retry=acknowledgement, commit_retry_slot=proposer['slot'],
+                    commit_delay_us=50000, acknowledged_peers=[], commit_ack_peers=[])
     return value
 
 
@@ -363,11 +364,15 @@ class CommitLossEvidence(unittest.TestCase):
             lambda value: proposer(value).update(acknowledged_peers=[], commit_ack_peers=[other]),
             lambda value: proposer(value).update(acknowledged_peers=None),
             lambda value: proposer(value).update(acknowledged_peers=[True]),
-            lambda value: follower(value).update(commit_dropped=1),
-            lambda value: follower(value).update(commit_resends=1),
+            lambda value: follower(value).update(commit_dropped=0),
+            lambda value: follower(value).update(commit_batch_duplicates=-1),
+            lambda value: follower(value).update(commit_batch_duplicates=True),
+            lambda value: follower(value).update(commit_resends=0),
             lambda value: follower(value).update(commit_first=payload),
-            lambda value: follower(value).update(commit_retry_slot=0),
-            lambda value: follower(value).update(commit_delay_us=50000),
+            lambda value: follower(value).update(commit_retry=follower(value)['commit_first'][:64] + '7f' * 8 + follower(value)['commit_first'][80:]),
+            lambda value: follower(value).update(commit_slot=follower(value)['slot']),
+            lambda value: follower(value).update(commit_retry_slot=follower(value)['slot']),
+            lambda value: follower(value).update(commit_delay_us=0),
             lambda value: follower(value).update(commit_dropped=False),
             lambda value: follower(value).update(commit_resends=False),
             lambda value: follower(value).update(commit_operation=-1.0),
@@ -390,6 +395,14 @@ class CommitLossEvidence(unittest.TestCase):
             value = copy.deepcopy(original)
             mutation(value)
             with self.subTest(mutation=mutations.index(mutation)), self.assertRaises(ValueError):
+                validate_drop_browser(value, commit_loss=True)
+        for packet, diagnostic in (
+            (commit_packet(follower(original), phase=2, stage=2), 'phase differs'),
+            (commit_packet(proposer(original), phase=2, stage=3), 'session or sender differs'),
+        ):
+            value = copy.deepcopy(original)
+            follower(value).update(commit_first=packet, commit_retry=packet)
+            with self.subTest(diagnostic=diagnostic), self.assertRaisesRegex(ValueError, f'lost-commit acknowledgement {diagnostic}'):
                 validate_drop_browser(value, commit_loss=True)
         high = copy.deepcopy(original)
         proposer(high)['commit_resends'] = 1000

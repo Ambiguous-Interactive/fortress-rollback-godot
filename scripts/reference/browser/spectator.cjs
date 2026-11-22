@@ -60,7 +60,29 @@ function reportFailure(error) {
   try {console.error(redact(inspect(error,{customInspect:false,getters:false,depth:8,maxStringLength:null})));}
   catch {console.error('Browser probe failed; diagnostic unavailable.');}
 }
-module.exports={observeErrors,run,reportFailure};
+function installViewerBridge(data) {
+  window.fortressSpectatorRuntime=data;
+  window.fortressSpectatorSockets=[];
+  window.WebSocket=new Proxy(window.WebSocket,{construct(target,args,newTarget) {
+    const socket=Reflect.construct(target,args,newTarget); window.fortressSpectatorSockets.push(socket); return socket;
+  }});
+  window.fortressSpectatorRequest=async(path,body,complete)=>{
+    let result;
+    try {
+      const response=await window.fetch(data.control+path,{
+        method:body ? 'POST' : 'GET',
+        headers:{Authorization:'Bearer '+data.viewer_token,'Content-Type':'application/json'},
+        body:body || undefined,signal:AbortSignal.timeout(3000),
+      });
+      // Chromium can report ERR_ABORTED after a no-store stream reader reaches EOF.
+      result={status:response.status,body:await response.json()};
+    } catch {
+      result={status:0};
+    }
+    complete(JSON.stringify(result));
+  };
+}
+module.exports={installViewerBridge,observeErrors,run,reportFailure};
 async function run(failureSignal,registerGuard) {
   const failures=[],stopState={stopped:false,reason:undefined,forwarded:false,active:true,retired:false};
   const stop=reason=>{
@@ -107,13 +129,7 @@ async function run(failureSignal,registerGuard) {
     const context = await wait(()=>browser.newContext());
     const page = await wait(()=>context.newPage());
     observeErrors(page,errors,()=>tearingDown,{requestFailures,phase:()=>phase});
-    await wait(()=>page.addInitScript(data => {
-      window.fortressSpectatorRuntime=data;
-      window.fortressSpectatorSockets=[];
-      window.WebSocket=new Proxy(window.WebSocket,{construct(target,args,newTarget) {
-        const socket=Reflect.construct(target,args,newTarget); window.fortressSpectatorSockets.push(socket); return socket;
-      }});
-    },
+    await wait(()=>page.addInitScript(installViewerBridge,
       {endpoint:runtime.endpoint, control:runtime.control, viewer_token:runtime.viewer_token,browser_fault:runtime.browser_fault}));
     phase='navigation';
     await wait(()=>page.goto(process.argv[2] + '/index.html'));
