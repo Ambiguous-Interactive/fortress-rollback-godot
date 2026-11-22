@@ -2,6 +2,12 @@
 
 Use for actual SDK, exported-browser, lifecycle, scheduling and watchdog witnesses.
 
+When a witness forwards packets to the upstream native binding, allow its
+monotonic retransmit clock to run. A tight fake-tick loop can exhaust the
+witness before the pinned 200 ms resend window opens after a multi-peer stall.
+Keep the sampled inputs and fault schedule tick-based and assert confirmation,
+rollback and final state, independent of exact retry counts.
+
 Qualify cross-origin control services with actual browser preflight and authenticated fetch.
 Native HTTP success does not exercise browser origin enforcement; keep origin permission separate from role capabilities.
 Expected provisioning waits use non-error HTTP pending responses; keep actual console/network failures fatal.
