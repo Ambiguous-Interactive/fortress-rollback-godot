@@ -9,6 +9,7 @@ const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
 const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
+const Native = preload("res://addons/fortress_rollback/core/native_driver.gd")
 
 
 class LocalInput:
@@ -53,6 +54,7 @@ class StepResult:
 
 
 var _session: Session
+var _native_backend: Native
 var _game: RefCounted
 var _is_stepping: bool = false
 # Config validates at most eight player slots; indices borrow only this step's input list.
@@ -72,12 +74,43 @@ func configure(session: Session, game: RefCounted) -> int:
 		return Types.Code.BUSY
 	if session == null or game == null:
 		return Types.Code.INVALID_CONFIGURATION
-	for method: String in ["save_state", "load_state", "simulate_frame"]:
-		if not accepts_callback_arguments(game, method):
-			return Types.Code.INVALID_CONFIGURATION
+	if not _valid_game(game):
+		return Types.Code.INVALID_CONFIGURATION
 	_session = session
+	_native_backend = null
 	_game = game
 	return Types.Code.OK
+
+
+## Select the optional native backend. Endpoint zero marks a local slot.
+## Supply four bytes per local slot through step_local(). The caller routes packets through native_backend().
+func configure_native(endpoints: PackedInt32Array, game: RefCounted, snapshot_limit: int) -> int:
+	if _is_stepping or (_session != null and _session._mutation_code() == Types.Code.BUSY):
+		return Types.Code.BUSY
+	if not _valid_game(game):
+		return Types.Code.INVALID_CONFIGURATION
+	var backend: Native = Native.new()
+	var code: int = backend.configure(endpoints, game, snapshot_limit, _native_save_succeeded)
+	if code == Types.Code.OK:
+		_session = null
+		_game = null
+		_native_backend = backend
+	return code
+
+
+func native_backend() -> Native:
+	return _native_backend
+
+
+static func _valid_game(game: RefCounted) -> bool:
+	for method: String in ["save_state", "load_state", "simulate_frame"]:
+		if not accepts_callback_arguments(game, method):
+			return false
+	return true
+
+
+static func _native_save_succeeded(saved: Variant) -> bool:
+	return saved is SaveResult and saved.ok
 
 
 ## Whether a game method accepts the frame and view arguments supplied by the driver.
@@ -121,12 +154,28 @@ static func _accepts_view_class(view_class: StringName, method: String) -> bool:
 ## Consume the session's ordered requests; simulation and recovery policy stay in session.
 ## Rejected sample metadata, conflicts and incomplete lists leave the accepted poll time unchanged.
 func step(now_us: int, local_inputs: Array[LocalInput]) -> StepResult:
+	if _native_backend != null:
+		return _native_unsupported()
 	return _step(now_us, local_inputs, true)
 
 
 ## Supply fixed-width bytes in ascending local-player order; frame metadata is inferred.
 ## Empty bytes omit a retained stalled sample. Reuses bounded wrappers; submitted bytes remain owned by the session.
 func step_local(now_us: int, local_inputs: Array[PackedByteArray]) -> StepResult:
+	if _native_backend != null:
+		var before_native: int = _native_backend.status().current_frame
+		if _is_stepping:
+			return _result(Types.Code.BUSY, before_native, _native_backend.status())
+		_is_stepping = true
+		var code_native: int = _native_backend.step(now_us, local_inputs)
+		var result_native: StepResult = _result(code_native, before_native, _native_backend.status())
+		step_completed.emit(result_native.code, result_native.frame_before, result_native.frame_after)
+		var status_native: Types.Status = _native_backend.status()
+		result_native.reason = status_native.reason
+		result_native.failure_frame = status_native.failure_frame
+		result_native.failure_kind = status_native.failure_kind
+		_is_stepping = false
+		return result_native
 	var before: int = _session.status().current_frame if _session != null else 0
 	if _is_stepping:
 		return _result(Types.Code.BUSY, before)
@@ -174,6 +223,8 @@ func step_local(now_us: int, local_inputs: Array[PackedByteArray]) -> StepResult
 ## Apply pending corrections and finalize confirmed recording history without advancing a new frame.
 ## Preserves staged samples and emits step_completed after ordered recovery callbacks.
 func recover(now_us: int) -> StepResult:
+	if _native_backend != null:
+		return _native_unsupported()
 	var empty: Array[LocalInput] = []
 	return _step(now_us, empty, false)
 
@@ -181,6 +232,8 @@ func recover(now_us: int) -> StepResult:
 ## Save the finalized replay boundary without a new sample or simulation frame. Read replay() after OK.
 ## Uses ordinary ordered callbacks, failure diagnostics, view expiry and completion notification guards.
 func capture_replay_boundary() -> StepResult:
+	if _native_backend != null:
+		return _native_unsupported()
 	var before: int = _session.status().current_frame if _session != null else 0
 	if _is_stepping:
 		return _result(Types.Code.BUSY, before)
@@ -193,11 +246,15 @@ func capture_replay_boundary() -> StepResult:
 ## Owned session status: current and confirmed frames, lifecycle, terminal reason and failure frame.
 ## A client that only holds the driver still learns why a session stopped.
 func status() -> Types.Status:
+	if _native_backend != null:
+		return _native_backend.status()
 	return _session.status() if _session != null else Types.Status.new()
 
 
 ## Owned session counters: rollbacks, resimulated and advanced frames, and prediction stalls.
 func statistics() -> Types.Statistics:
+	if _native_backend != null:
+		return _native_backend.statistics()
 	return _session.statistics() if _session != null else Types.Statistics.new()
 
 
@@ -210,6 +267,8 @@ func diagnostic_trace() -> Dictionary:
 ## Owned local sample retained through a stalled step; MISSING_LOCAL_INPUT when a new sample is needed.
 ## The result frame includes the local input delay, matching the expert session's scheduled frame.
 func scheduled_local_input(player: int) -> Types.InputResult:
+	if _native_backend != null:
+		return _native_backend.scheduled_local_input(player)
 	if _session == null:
 		var result: Types.InputResult = Types.InputResult.new()
 		result.code = Types.Code.NOT_CONFIGURED
@@ -220,17 +279,23 @@ func scheduled_local_input(player: int) -> Types.InputResult:
 ## Owned fixed-width neutral sample for constructing local input rows without retaining configuration.
 ## Empty before the session is configured; safe during callbacks and after termination.
 func neutral_input() -> PackedByteArray:
+	if _native_backend != null:
+		return PackedByteArray([0, 0, 0, 0])
 	return _session.neutral_input() if _session != null else PackedByteArray()
 
 
 ## Local delay now in effect, or -1 before configuration or for a nonlocal slot.
 func input_delay(player: int) -> int:
+	if _native_backend != null:
+		return 0 if player in _native_backend.local_players() else -1
 	return _session.input_delay(player) if _session != null else -1
 
 
 ## Owned local-player slots in the ascending order accepted by step_local().
 ## Empty before configuration or for receive-only playback; safe during callbacks.
 func local_players() -> PackedInt32Array:
+	if _native_backend != null:
+		return _native_backend.local_players()
 	var players: PackedInt32Array = PackedInt32Array()
 	if _session != null:
 		for player: int in range(_sample_indices.size()):
@@ -244,6 +309,8 @@ func local_players() -> PackedInt32Array:
 func set_input_delay(player: int, delay: int) -> Types.Result:
 	if _is_stepping:
 		return Types.Result.new(Types.Code.BUSY)
+	if _native_backend != null:
+		return Types.Result.new(Types.Code.UNSUPPORTED)
 	return _session.set_input_delay(player, delay) if _session != null else Types.Result.new(Types.Code.NOT_CONFIGURED)
 
 
@@ -267,8 +334,15 @@ func recording_status() -> Types.RecordingStatus:
 ## Stop the owned session and expire active views, including during callbacks or completion handlers.
 ## Keeps the session's first terminal cause. Before configuration this is a no-op.
 func terminate(reason: int = Types.Code.TERMINATED) -> void:
+	if _native_backend != null:
+		_native_backend.terminate(reason)
 	if _session != null:
 		_session.terminate(reason)
+
+
+func _native_unsupported() -> StepResult:
+	var current: Types.Status = _native_backend.status()
+	return _result(Types.Code.BUSY if _is_stepping else Types.Code.UNSUPPORTED, current.current_frame, current)
 
 
 func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) -> StepResult:

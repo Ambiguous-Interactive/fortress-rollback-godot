@@ -29,14 +29,41 @@ var _input_sample: PackedByteArray = PackedByteArray([0])
 var _samples: PackedByteArray = PackedByteArray([0, 0])
 
 
+## The original two-player, one-byte configuration retains its saved-state layout.
+func _init(players: int = 2, input_width: int = 1) -> void:
+	if players < 2 or players > 8 or input_width not in [1, 4]:
+		return
+	_input_sample.resize(input_width)
+	if players == 2:
+		return
+	x.resize(players)
+	y.resize(players)
+	pending_frame.resize(players)
+	pending_color.resize(players)
+	event_id.resize(players)
+	event_frame.resize(players)
+	color.resize(players)
+	_samples.resize(players)
+	for player: int in players:
+		x[player] = 70 + (player % 4) * 110
+		y[player] = 80 + (player >> 2) * 150
+		pending_frame[player] = -1
+		event_frame[player] = -1
+		color[player] = player % 4
+
+
+func snapshot_bytes() -> int:
+	return 24 + x.size() * 56
+
+
 ## Full fixed-width little-endian state, including delayed effects and random state.
 func canonical_bytes() -> PackedByteArray:
 	var bytes: PackedByteArray = PackedByteArray()
-	bytes.resize(SNAPSHOT_BYTES)
+	bytes.resize(snapshot_bytes())
 	bytes.encode_s64(0, FORMAT_VERSION)
 	bytes.encode_s64(8, frame)
 	bytes.encode_s64(16, rng_state)
-	for player: int in range(2):
+	for player: int in x.size():
 		var offset: int = 24 + player * 56
 		var fields: Array[int] = [x[player], y[player], pending_frame[player], pending_color[player], event_id[player], event_frame[player], color[player]]
 		for index: int in range(fields.size()):
@@ -52,7 +79,7 @@ func save_state(saved_frame: int, writer: Writer) -> Driver.SaveResult:
 
 
 func load_state(saved_frame: int, reader: Reader) -> bool:
-	var result: Reader.ReadResult = reader.read_bytes(SNAPSHOT_BYTES)
+	var result: Reader.ReadResult = reader.read_bytes(snapshot_bytes())
 	if result.code != Reader.Code.OK or not reader.is_complete():
 		return false
 	var bytes: PackedByteArray = result.bytes
@@ -60,7 +87,7 @@ func load_state(saved_frame: int, reader: Reader) -> bool:
 		return false
 	frame = saved_frame
 	rng_state = bytes.decode_s64(16)
-	for player: int in range(2):
+	for player: int in x.size():
 		var offset: int = 24 + player * 56
 		x[player] = bytes.decode_s64(offset)
 		y[player] = bytes.decode_s64(offset + 8)
@@ -78,7 +105,7 @@ func _is_valid_snapshot(bytes: PackedByteArray, saved_frame: int) -> bool:
 	var random_state: int = bytes.decode_s64(16)
 	if random_state < 0 or random_state > 0x7fffffff:
 		return false
-	for player: int in range(2):
+	for player: int in x.size():
 		var offset: int = 24 + player * 56
 		var position_x: int = bytes.decode_s64(offset)
 		var position_y: int = bytes.decode_s64(offset + 8)
@@ -97,7 +124,7 @@ func _is_valid_snapshot(bytes: PackedByteArray, saved_frame: int) -> bool:
 			return false
 		if pulse_frame >= 0 and pulse_frame % 20 != 3:
 			return false
-		var expected_id: int = 0 if pulse_frame == -1 else pulse_frame * 2 + player + 1
+		var expected_id: int = 0 if pulse_frame == -1 else pulse_frame * x.size() + player + 1
 		if pulse_id != expected_id:
 			return false
 	return true
@@ -106,19 +133,22 @@ func _is_valid_snapshot(bytes: PackedByteArray, saved_frame: int) -> bool:
 func simulate_frame(input_frame: int, inputs: Types.FrameInputs) -> bool:
 	if input_frame != frame or frame < 0 or frame >= MAX_FRAME:
 		return false
-	if inputs.player_count() != 2:
+	if inputs.player_count() != x.size():
 		return false
-	for player: int in range(2):
-		if inputs.read_into(player, _input_sample) != Types.Code.OK or _input_sample[0] > 15:
+	for player: int in x.size():
+		if inputs.read_into(player, _input_sample) != Types.Code.OK:
 			return false
-		_samples[player] = _input_sample[0]
-	for player: int in range(2):
+		var buttons: int = _input_sample[0] if _input_sample.size() == 1 else _input_sample.decode_u32(0)
+		if buttons > 15:
+			return false
+		_samples[player] = buttons
+	for player: int in x.size():
 		var buttons: int = _samples[player]
 		x[player] = clampi(x[player] + 2 * (int(bool(buttons & RIGHT)) - int(bool(buttons & LEFT))), 20, 460)
 		y[player] = clampi(y[player] + 2 * (int(bool(buttons & DOWN)) - int(bool(buttons & UP))), 20, 280)
 		if pending_frame[player] == frame:
 			color[player] = pending_color[player]
-			event_id[player] = frame * 2 + player + 1
+			event_id[player] = frame * x.size() + player + 1
 			event_frame[player] = frame
 			pending_frame[player] = -1
 		# The 31-bit LCG product fits signed 64-bit; no global or engine RNG.

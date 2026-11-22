@@ -11,6 +11,8 @@ var controller: Lobby = Lobby.new()
 var endpoint: LineEdit
 var player_name: LineEdit
 var room_code: LineEdit
+var backend_choice: OptionButton
+var room_size: SpinBox
 var create_button: Button
 var join_button: Button
 var ready_button: Button
@@ -35,11 +37,26 @@ func _ready() -> void:
 	panel.custom_minimum_size = Vector2(680, 0)
 	add_child(panel)
 	var title: Label = Label.new()
-	title.text = "Online rollback | two players in separate browsers"
+	title.text = "Online rollback"
 	panel.add_child(title)
 	endpoint = _field(panel, "SignalFish endpoint", "ws://127.0.0.1:8080/v3/ws")
 	player_name = _field(panel, "Player name", "Player")
 	room_code = _field(panel, "Room code (blank to create)", "")
+	var settings: HBoxContainer = HBoxContainer.new()
+	panel.add_child(settings)
+	backend_choice = OptionButton.new()
+	backend_choice.add_item("GDScript / WebRTC")
+	backend_choice.add_item("Native / WebRTC")
+	backend_choice.add_item("Native / relay")
+	settings.add_child(backend_choice)
+	var count_label: Label = Label.new()
+	count_label.text = "Players"
+	settings.add_child(count_label)
+	room_size = SpinBox.new()
+	room_size.min_value = 2
+	room_size.max_value = 8
+	room_size.value = 2
+	settings.add_child(room_size)
 	var buttons: HBoxContainer = HBoxContainer.new()
 	panel.add_child(buttons)
 	create_button = _button(buttons, "Create room", _create)
@@ -131,6 +148,7 @@ func _can_change_delay() -> bool:
 		and game.failure.is_empty()
 		and not game.replay_finishing
 		and game.local_slot >= 0
+		and game.native_driver() == null
 		and game.peer.network_status().state == "running"
 		and game.peer.status().lifecycle == Lobby.Match.Types.Lifecycle.RUNNING
 	)
@@ -175,7 +193,7 @@ func _watch_replay() -> void:
 
 
 func _create() -> void:
-	controller.connect_room(endpoint.text.strip_edges(), player_name.text, "", Time.get_ticks_usec())
+	_connect_room("")
 	_update_status()
 
 
@@ -183,12 +201,19 @@ func _join() -> void:
 	if room_code.text.strip_edges().is_empty():
 		controller.message = "Enter the room code shared by the creator."
 	else:
-		controller.connect_room(endpoint.text.strip_edges(), player_name.text, room_code.text, Time.get_ticks_usec())
+		_connect_room(room_code.text)
 	_update_status()
 
 
+func _connect_room(code: String) -> void:
+	var native: bool = backend_choice.selected != 0
+	var route: String = "relay" if backend_choice.selected == 2 else "mesh"
+	controller.connect_room(endpoint.text.strip_edges(), player_name.text, code, Time.get_ticks_usec(), "native" if native else "legacy",
+		int(room_size.value) if native else 2, route)
+
+
 func _ready_player() -> void:
-	if not controller.has_readied:
+	if not controller.has_readied and controller.backend == "legacy":
 		controller.game_match.capture_trace = trace_checkbox.button_pressed
 		controller.game_match.record_replay = replay_checkbox.button_pressed
 	if controller.ready() == OK:
@@ -211,6 +236,7 @@ func _leave() -> void:
 
 func _update_status() -> void:
 	var connected: bool = controller.client != null
+	var native: bool = controller.backend == "native" if connected else backend_choice.selected != 0
 	raise_delay_button.disabled = not _can_change_delay()
 	apply_delay_button.disabled = raise_delay_button.disabled or controller.game_match.suggested_delay < 0
 	var game: Lobby.Match = controller.game_match
@@ -221,30 +247,33 @@ func _update_status() -> void:
 	join_button.disabled = connected
 	leave_button.disabled = not connected
 	diagnostics_button.disabled = controller.game_match.local_slot < 0
-	trace_checkbox.disabled = controller.has_readied
-	replay_checkbox.disabled = controller.has_readied
+	trace_checkbox.disabled = controller.has_readied or native
+	replay_checkbox.disabled = controller.has_readied or native
 	finish_replay_button.disabled = not can_finish_replay
 	replay_button.disabled = not controller.game_match.has_recorded_replay
 	endpoint.editable = not connected
 	player_name.editable = not connected
 	room_code.editable = not connected
+	backend_choice.disabled = connected
+	room_size.editable = not connected and native
 	if connected and not controller.room_code().is_empty():
 		room_code.text = controller.room_code()
 	var players: int = controller.client.call("get_players").size() if connected else 0
-	ready_button.disabled = controller.state != "lobby" or controller.has_readied or players != 2
+	ready_button.disabled = controller.state != "lobby" or controller.has_readied or players != controller.player_count
 	start_button.disabled = controller.state != "lobby" or not controller.is_creator or not controller.has_readied or not controller.all_ready
-	_status.text = "%s\n%s\nRoom: %s | players: %d / 2" % [controller.state.capitalize(), controller.message, controller.room_code(), players]
+	var target: int = controller.player_count if connected else (int(room_size.value) if native else 2)
+	_status.text = "%s\n%s\nRoom: %s | players: %d / %d" % [controller.state.capitalize(), controller.message, controller.room_code(), players, target]
 	if not _replay_notice.is_empty():
 		_status.text += "\n" + _replay_notice
 	if game.local_slot >= 0:
-		var state: Lobby.Match.Types.Status = game.peer.status()
+		var state: Lobby.Match.Types.Status = game.status()
 		_status.text += (
 			"\nYou: player %d | frame %d | confirmed %d | delay %d%s | stalls %d | event %s"
 			% [
 				game.local_slot + 1,
 				state.current_frame,
 				state.confirmed_frame,
-				game.peer.input_delay(game.local_slot),
+				0 if native else game.peer.input_delay(game.local_slot),
 				" (= raises)" if _can_change_delay() else "",
 				game.stalls,
 				game.latest_event
@@ -272,7 +301,7 @@ func _update_status() -> void:
 			else:
 				_status.text += "\nFinal-state evidence unavailable: %s (code %d)." % [
 					Lobby.Match.Types.reason_text(game.replay_capture_code), game.replay_capture_code]
-		var counts: Lobby.Match.Types.Statistics = game.peer.statistics()
+		var counts: Lobby.Match.Types.Statistics = game.driver.statistics() if native else game.peer.statistics()
 		_status.text += (
 			"\nRollbacks: %d | max depth: %d | replayed frames: %d | relay links: %d"
 			% [counts.rollback_count, counts.max_rollback_depth, counts.resimulated_frames, game.fallback.status().relay_peers.size()]
@@ -283,6 +312,10 @@ func _update_status() -> void:
 func diagnostic_report() -> Dictionary:
 	var game: Lobby.Match = controller.game_match
 	var report: Dictionary = game.peer.diagnostics()
+	if game.native_driver() != null:
+		var state: Lobby.Match.Types.Status = game.status()
+		report = {"backend": "native", "frame": state.current_frame, "confirmed_frame": state.confirmed_frame,
+			"reason": Lobby.Match.Types.reason_text(state.reason), "terminal_detail": game.native_driver().terminal_detail()}
 	report["engine"] = Engine.get_version_info().string
 	var transport: Dictionary = game.fallback.status()
 	report["transport"] = {"relay_links": transport.relay_peers.size(), "pending_packets": transport.pending_packets, "pending_bytes": transport.pending_bytes}
@@ -347,7 +380,7 @@ func _draw() -> void:
 	draw_set_transform(origin, 0.0, Vector2.ONE * scale_factor)
 	draw_rect(Rect2(Vector2.ZERO, Vector2(480, 300)), Color(0.08, 0.10, 0.15))
 	var game: Simulation = controller.game_match.game
-	for player: int in 2:
+	for player: int in game.x.size():
 		var position: Vector2 = Vector2(game.x[player], game.y[player])
 		var tint: Color = COLORS[game.color[player]]
 		draw_circle(position, 12, tint)

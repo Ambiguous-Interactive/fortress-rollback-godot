@@ -27,8 +27,22 @@ Publish lifecycle events after stepping, so application callbacks cannot start a
 | Disconnect | The callback status can represent disconnected input. | Define how the driver reports interruptions, prediction stalls, room departure, and history loss. A disconnected input status alone gives no guarantee about coordinated drop. |
 
 See the [experiment API](../experiments/gdextension/README.md) for the methods that exist today.
-The first driver witness should start from a frozen roster, step actual GDScript callbacks, force rollback and a prediction stall, then confirm the same input history after recovery.
-Compare callback and frame results with the stock Rust peer at two players. Test the candidate at every declared count before promoting it.
+
+The opt-in driver entry point is `FortressDriver.configure_native(endpoints, game, snapshot_limit)`.
+The input array lists endpoint IDs in frozen slot order. Use zero for local slots
+and assign every authenticated remote endpoint a stable ID from 1 to 8. An
+endpoint can own multiple slots. Supply four bytes per local slot in ascending
+slot order through `step_local(now_us, inputs)`. After a waiting result, pass the
+same sample or omit it with an empty byte array. Drain and route native datagrams
+through `native_backend()` even during waits. The driver uses the existing
+`save_state`, `load_state` and `simulate_frame` callbacks and expires views
+when each callback returns.
+
+The [playable example](online-example.md#try-the-native-backend) selects the
+backend explicitly and uses one local slot per participant. The SignalFish
+room namespace includes the pinned backend, input and game schema, room size
+and initial route. Both byte routes add the same 16-byte room/roster tag.
+The raw binding used for stock Rust interoperability carries no room tag.
 
 ## Protocol and saved data
 
