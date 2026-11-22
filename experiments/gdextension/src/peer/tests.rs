@@ -220,9 +220,10 @@ fn check_timeout_policy(abort_on_event: bool) {
     time_ms.store(2700, Ordering::Relaxed);
     let frame = peers[0].current_frame();
     if !abort_on_event {
-        assert!(peers[0].step(&[0; 4], |requests| games[0].dispatch(requests)) >= 0);
+        assert_eq!(peers[0].step(&[0; 4], |_| panic!("paused upstream session")), 1);
         assert_eq!(peers[0].terminal_reason(), "");
-        assert!(peers[0].is_running());
+        assert_eq!(peers[0].current_frame(), frame);
+        assert_eq!(peers[0].session.current_state(), SessionState::Synchronizing);
         return;
     }
     assert_eq!(peers[0].step(&[0; 4], |_| panic!("terminal callback")), -1);
