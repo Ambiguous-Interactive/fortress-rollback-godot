@@ -251,23 +251,15 @@ func _until(path: String) -> Dictionary:
 
 
 func _http(path: String, body: Dictionary = {}) -> Dictionary:
-	var request: HTTPRequest = HTTPRequest.new()
-	add_child(request)
-	request.timeout = 3.0
-	var code: Error = request.request(
-		runtime.control + path,
-		PackedStringArray(["Authorization: Bearer " + runtime.viewer_token, "Content-Type: application/json"]),
-		HTTPClient.METHOD_GET if body.is_empty() else HTTPClient.METHOD_POST,
-		"" if body.is_empty() else JSON.stringify(body)
+	var response: Array[Dictionary] = []
+	var complete: JavaScriptObject = JavaScriptBridge.create_callback(func(arguments: Array) -> void:
+		response.append(JSON.parse_string(arguments[0]))
 	)
-	if code != OK:
-		request.queue_free()
-		return {"status": 0}
-	var response: Array = await request.request_completed
-	request.queue_free()
-	if response[0] != HTTPRequest.RESULT_SUCCESS:
-		return {"status": 0}
-	return {"status": response[1], "body": JSON.parse_string(response[3].get_string_from_utf8())}
+	var window: JavaScriptObject = JavaScriptBridge.get_interface("window")
+	window.fortressSpectatorRequest(path, "" if body.is_empty() else JSON.stringify(body), complete)
+	while response.is_empty():
+		await get_tree().process_frame
+	return response[0]
 
 
 func _wait(condition: Callable) -> bool:

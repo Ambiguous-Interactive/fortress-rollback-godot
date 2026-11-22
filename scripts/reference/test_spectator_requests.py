@@ -16,6 +16,46 @@ class SpectatorRequestTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
 
+    def test_viewer_control_reads_complete_json_and_reports_failures(self):
+        self.run_node(r"""
+const assert=require('node:assert/strict');
+const {installViewerBridge}=require(process.argv[1]);
+const options=[], deadlines=[];
+const timeout=AbortSignal.timeout.bind(AbortSignal);
+AbortSignal.timeout=ms=>{const signal=timeout(ms);deadlines.push({ms,signal});return signal;};
+global.window={WebSocket:class {},fetch:async(url,request)=>{
+  options.push({url,request});
+  assert.equal(request.signal,deadlines.at(-1).signal);
+  assert(request.signal instanceof AbortSignal);
+  assert(!request.signal.aborted);
+  if(url.endsWith('/failed')) throw Error('connection lost');
+  return {status:url.endsWith('/admission')?202:200,json:async()=>{
+    if(url.endsWith('/invalid')) throw SyntaxError('invalid JSON');
+    return request.body ? JSON.parse(request.body) : {pending:true};
+  }};
+}};
+installViewerBridge({control:'http://127.0.0.1:9000',viewer_token:'test-capability'});
+const request=async(path,body='')=>{
+  const replies=[];
+  await window.fortressSpectatorRequest(path,body,reply=>replies.push(JSON.parse(reply)));
+  assert.equal(replies.length,1);
+  return replies[0];
+};
+(async()=>{
+  assert.deepEqual(await request('/admission'),{status:202,body:{pending:true}});
+  assert.deepEqual(await request('/accept','{"accepted":true}'),{status:200,body:{accepted:true}});
+  assert.deepEqual(await request('/failed'),{status:0});
+  assert.deepEqual(await request('/invalid'),{status:0});
+  assert.deepEqual(deadlines.map(({ms})=>ms),[3000,3000,3000,3000]);
+  assert.deepEqual(options.map(({url,request})=>[url,request.method,request.body,request.headers.Authorization]),[
+    ['http://127.0.0.1:9000/admission','GET',undefined,'Bearer test-capability'],
+    ['http://127.0.0.1:9000/accept','POST','{"accepted":true}','Bearer test-capability'],
+    ['http://127.0.0.1:9000/failed','GET',undefined,'Bearer test-capability'],
+    ['http://127.0.0.1:9000/invalid','GET',undefined,'Bearer test-capability'],
+  ]);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+""")
+
     def test_bounded_sanitized_request_metadata_and_malformed_requests(self):
         self.run_node(r"""
 const assert=require('node:assert/strict');
