@@ -43,8 +43,18 @@ var _detach_requested: bool = false
 
 ## Both transports must use the same frozen membership, adapter and packet receiver.
 ## Reserve their outgoing queues and poll calls exclusively for this coordinator.
-func configure(direct: Direct, relay: Relay, membership: Membership, adapter: Adapter, peer: Peer, options: Options = null,
-		receive_packet: Callable = Callable()) -> int:
+func configure(direct: Direct, relay: Relay, membership: Membership, adapter: Adapter, peer: Peer, options: Options = null) -> int:
+	return _configure(direct, relay, membership, adapter, peer, options, Callable())
+
+
+## Compose transports configured with the same opaque packet receiver.
+func configure_packet_receiver(direct: Direct, relay: Relay, membership: Membership, adapter: Adapter, receive_packet: Callable,
+		options: Options = null) -> int:
+	return _configure(direct, relay, membership, adapter, null, options, receive_packet)
+
+
+func _configure(direct: Direct, relay: Relay, membership: Membership, adapter: Adapter, peer: Peer, options: Options,
+		receive_packet: Callable) -> int:
 	if _relay != null or _busy:
 		return Code.WRONG_STATE
 	var controls: Options = Options.new() if options == null else options
@@ -56,8 +66,12 @@ func configure(direct: Direct, relay: Relay, membership: Membership, adapter: Ad
 		return Code.INVALID_ARGUMENT
 	if (peer != null) == receive_packet.is_valid():
 		return Code.INVALID_ARGUMENT
-	if not direct.matches_session(membership, adapter, peer, receive_packet) or not relay.matches_session(membership, adapter, peer, receive_packet) \
-		or direct.status().code != Code.OK or direct.status().pending_packets != 0 or relay.status().pending_packets != 0 \
+	if peer != null:
+		if not direct.matches_session(membership, adapter, peer) or not relay.matches_session(membership, adapter, peer):
+			return Code.WRONG_STATE
+	elif not direct.matches_packet_receiver(membership, adapter, receive_packet) or not relay.matches_packet_receiver(membership, adapter, receive_packet):
+		return Code.WRONG_STATE
+	if direct.status().code != Code.OK or direct.status().pending_packets != 0 or relay.status().pending_packets != 0 \
 		or relay.status().code != Code.OK or adapter.status().route != "mesh":
 		return Code.WRONG_STATE
 	_direct = direct

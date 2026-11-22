@@ -98,18 +98,18 @@ func _opaque(context: RefCounted, stop_on: String) -> void:
 	fixture.fallback.detach()
 	fixture.direct.detach()
 	fixture.relay.detach()
-	context.equal(fixture.direct.configure(fixture.mesh, fixture.membership, fixture.adapter, fixture.peer, null, receive),
-		F.Code.INVALID_ARGUMENT, "only one packet receiver is allowed")
-	context.equal(fixture.direct.configure(fixture.mesh, fixture.membership, fixture.adapter, null, null, receive),
+	context.equal(fixture.direct.configure_packet_receiver(fixture.mesh, fixture.membership, fixture.adapter, Callable()),
+		F.Code.INVALID_ARGUMENT, "packet receiver is required")
+	context.equal(fixture.direct.configure_packet_receiver(fixture.mesh, fixture.membership, fixture.adapter, receive),
 		F.Code.OK, "direct accepts an opaque receiver")
 	var options: U.Relay.Options = U.Relay.Options.new()
 	options.max_packet_bytes = 512
-	context.equal(fixture.relay.configure(fixture.client, fixture.config, fixture.info, fixture.membership, fixture.adapter, null, options, receive),
+	context.equal(fixture.relay.configure_packet_receiver(fixture.client, fixture.config, fixture.info, fixture.membership, fixture.adapter, receive, options),
 		F.Code.OK, "relay accepts an opaque receiver")
 	var other: Callable = func(_sender: String, _bytes: PackedByteArray) -> int: return I.Code.OK
-	context.equal(fixture.fallback.configure(fixture.direct, fixture.relay, fixture.membership, fixture.adapter, null, null, other),
+	context.equal(fixture.fallback.configure_packet_receiver(fixture.direct, fixture.relay, fixture.membership, fixture.adapter, other),
 		F.Code.WRONG_STATE, "composition requires the same opaque receiver")
-	context.equal(fixture.fallback.configure(fixture.direct, fixture.relay, fixture.membership, fixture.adapter, null, null, receive),
+	context.equal(fixture.fallback.configure_packet_receiver(fixture.direct, fixture.relay, fixture.membership, fixture.adapter, receive),
 		F.Code.OK, "compose two routes to the same opaque receiver")
 	var direct: PackedByteArray = PackedByteArray([41, 42])
 	var relay: PackedByteArray = PackedByteArray([51, 52])

@@ -204,15 +204,15 @@ func _start_native_transport(client: Object, mesh: Object, sdk_config: Object, i
 		return ERR_UNAVAILABLE
 	var relay_options: Relay.Options = Relay.Options.new()
 	relay_options.max_packet_bytes = NATIVE_PACKET_BYTES
-	if relay.configure(client, sdk_config, info, membership, adapter, null, relay_options, _receive_native) != Relay.Code.OK:
+	if relay.configure_packet_receiver(client, sdk_config, info, membership, adapter, _receive_native, relay_options) != Relay.Code.OK:
 		return ERR_UNAVAILABLE
 	_native_relay_only = route == "relay"
 	if not _native_relay_only:
 		var direct_options: Direct.Options = Direct.Options.new()
 		direct_options.max_packet_bytes = NATIVE_PACKET_BYTES
-		if direct.configure(mesh, membership, adapter, null, direct_options, _receive_native) != Direct.Code.OK:
+		if direct.configure_packet_receiver(mesh, membership, adapter, _receive_native, direct_options) != Direct.Code.OK:
 			return ERR_UNAVAILABLE
-		if fallback.configure(direct, relay, membership, adapter, null, null, _receive_native) != Fallback.Code.OK:
+		if fallback.configure_packet_receiver(direct, relay, membership, adapter, _receive_native) != Fallback.Code.OK:
 			return ERR_UNAVAILABLE
 	if revision != _revision:
 		return ERR_UNAVAILABLE

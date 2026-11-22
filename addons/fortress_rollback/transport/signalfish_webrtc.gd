@@ -42,8 +42,16 @@ var _refused_destination: PackedByteArray = PackedByteArray()
 
 ## Exclusive PacketPeer consumer: never assign this mesh peer to MultiplayerAPI.
 ## Configure after its accepted mesh plan; a changed plan requires a new lifetime.
-## Supply either a PeerSession or receive_packet(sender_uuid, owned_bytes) returning I.Code.
-func configure(mesh: Object, membership: Membership, adapter: Adapter, peer: Peer, options: Types.Options = null, receive_packet: Callable = Callable()) -> int:
+func configure(mesh: Object, membership: Membership, adapter: Adapter, peer: Peer, options: Types.Options = null) -> int:
+	return _configure(mesh, membership, adapter, peer, options, Callable())
+
+
+## The receiver accepts (sender_uuid, owned_bytes) and returns an I.Code.
+func configure_packet_receiver(mesh: Object, membership: Membership, adapter: Adapter, receive_packet: Callable, options: Types.Options = null) -> int:
+	return _configure(mesh, membership, adapter, null, options, receive_packet)
+
+
+func _configure(mesh: Object, membership: Membership, adapter: Adapter, peer: Peer, options: Types.Options, receive_packet: Callable) -> int:
 	if _mesh != null or _busy:
 		return Code.WRONG_STATE
 	if mesh == null or membership == null or adapter == null or not mesh.has_method("get_multiplayer_peer"):
@@ -349,8 +357,12 @@ func send_readiness(identity: PackedByteArray, size: int) -> int:
 	return Code.WRONG_SOURCE
 
 
-func matches_session(membership: Membership, adapter: Adapter, peer: Peer, receive_packet: Callable = Callable()) -> bool:
-	return _membership == membership and _adapter == adapter and _peer == peer and _receive_packet == receive_packet and _mesh != null
+func matches_session(membership: Membership, adapter: Adapter, peer: Peer) -> bool:
+	return peer != null and _peer == peer and _membership == membership and _adapter == adapter and _mesh != null
+
+
+func matches_packet_receiver(membership: Membership, adapter: Adapter, receive_packet: Callable) -> bool:
+	return _peer == null and _receive_packet == receive_packet and _membership == membership and _adapter == adapter and _mesh != null
 
 
 func packet_limit() -> int:

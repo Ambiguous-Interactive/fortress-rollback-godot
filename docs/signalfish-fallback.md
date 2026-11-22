@@ -63,10 +63,10 @@ plain text for user-facing labels, keeping unknown codes numeric.
 
 ## Use a different rollback backend
 
-The direct, relay and fallback adapters accept a receiver callback as the last
-argument to `configure()`. Pass `null` for the peer session and supply the same
-`Callable` to all three adapters when combining routes. A room that starts
-with a relay plan can use the relay adapter directly.
+The direct, relay and fallback adapters use `configure_packet_receiver()` for
+callback-based delivery. Supply the same `Callable` to all three adapters when
+combining routes. A room that starts with a relay plan can use the relay
+adapter directly.
 
 The callback receives an authenticated sender UUID and a copy of the packet
 bytes. It returns a code from `FortressInputEndpointTypes.Code`.

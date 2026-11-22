@@ -43,9 +43,18 @@ var _detach_requested: bool = false
 
 
 ## Use actual SDK config and ProtocolInfo observed before joining; JSON fallback is refused.
-## Supply either a PeerSession or receive_packet(sender_uuid, owned_bytes) returning I.Code.
-func configure(client: Object, sdk_config: Object, protocol_info: Object, membership: Membership, adapter: Adapter, peer: Peer,
-		options: Types.Options = null, receive_packet: Callable = Callable()) -> int:
+func configure(client: Object, sdk_config: Object, protocol_info: Object, membership: Membership, adapter: Adapter, peer: Peer, options: Types.Options = null) -> int:
+	return _configure(client, sdk_config, protocol_info, membership, adapter, peer, options, Callable())
+
+
+## The receiver accepts (sender_uuid, owned_bytes) and returns an I.Code.
+func configure_packet_receiver(client: Object, sdk_config: Object, protocol_info: Object, membership: Membership, adapter: Adapter,
+		receive_packet: Callable, options: Types.Options = null) -> int:
+	return _configure(client, sdk_config, protocol_info, membership, adapter, null, options, receive_packet)
+
+
+func _configure(client: Object, sdk_config: Object, protocol_info: Object, membership: Membership, adapter: Adapter, peer: Peer,
+		options: Types.Options, receive_packet: Callable) -> int:
 	if _client != null:
 		return Code.WRONG_STATE
 	var controls: Types.Options = Types.Options.new() if options == null else options
@@ -312,8 +321,12 @@ static func _raw_mode(config: Object) -> bool:
 	return config.get("game_data_format") == "message_pack" and config.get("decode_msgpack_payloads") == false
 
 
-func matches_session(membership: Membership, adapter: Adapter, peer: Peer, receive_packet: Callable = Callable()) -> bool:
-	return _membership == membership and _adapter == adapter and _peer == peer and _receive_packet == receive_packet and _client != null
+func matches_session(membership: Membership, adapter: Adapter, peer: Peer) -> bool:
+	return peer != null and _peer == peer and _membership == membership and _adapter == adapter and _client != null
+
+
+func matches_packet_receiver(membership: Membership, adapter: Adapter, receive_packet: Callable) -> bool:
+	return _peer == null and _receive_packet == receive_packet and _membership == membership and _adapter == adapter and _client != null
 
 
 func packet_limit() -> int:
