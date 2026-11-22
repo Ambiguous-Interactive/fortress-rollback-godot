@@ -329,8 +329,8 @@ class CommitLossEvidence(unittest.TestCase):
             lambda value: proposer(value).update(commit_slot=True),
             lambda value: proposer(value).update(commit_retry_slot=proposer(value)['slot']),
             lambda value: proposer(value).update(commit_retry_slot=True),
-            lambda value: proposer(value).update(commit_delay_us=39999),
-            lambda value: proposer(value).update(commit_delay_us=4000001),
+            lambda value: proposer(value).update(commit_delay_us=0),
+            lambda value: proposer(value).update(commit_delay_us=-1),
             lambda value: proposer(value).update(commit_delay_us=True),
             lambda value: proposer(value).update(coordinator=True),
             lambda value: proposer(value).update(coordinator_generation=1.0),
@@ -394,6 +394,9 @@ class CommitLossEvidence(unittest.TestCase):
         high = copy.deepcopy(original)
         proposer(high)['commit_resends'] = 1000
         self.assertIs(validate_drop_browser(high, commit_loss=True), high)
+        quick = copy.deepcopy(original)
+        proposer(quick)['commit_delay_us'] = 1
+        self.assertIs(validate_drop_browser(quick, commit_loss=True), quick)
         for replacement in (False, 1, None):
             value = copy.deepcopy(original)
             value['dropCommit'] = replacement

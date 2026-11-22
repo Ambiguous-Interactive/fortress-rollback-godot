@@ -4,10 +4,10 @@ import hashlib
 
 
 _UUID = re.compile(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}')
-# RETRY_US is 50 ms, but transport_us is sampled once per service poll rather
-# than at publication. The 40 ms floor is an observation tolerance that still
-# rejects a same-poll duplicate; it does not claim a maximum sample gap.
-MIN_COMMIT_RETRY_DELAY_US = 40000
+# The transport samples its clock once per poll, so the observed delay cannot
+# prove the 50 ms RETRY_US interval. A positive value still rejects a same-poll
+# duplicate; the exact bytes and sent-accounted count establish the retry.
+_COMMIT_MIN_DELAY_US = 1
 # The current barrier wire version and the COMMIT phase/stage, from the codec.
 _COMMIT_HEADER = b'FRGP\x03\x00\x0c\x00'
 _COMMIT_PHASE = 4
@@ -589,7 +589,7 @@ def _validate_commit_loss(survivors):
             or type(proposer.get('commit_slot')) is not int or proposer['commit_slot'] != follower.get('slot')
             or type(proposer.get('commit_retry_slot')) is not int or proposer['commit_retry_slot'] != follower.get('slot')
             or type(proposer.get('commit_delay_us')) is not int
-            or not MIN_COMMIT_RETRY_DELAY_US <= proposer['commit_delay_us'] <= 4000000
+            or proposer['commit_delay_us'] < _COMMIT_MIN_DELAY_US
             or any(type(proposer.get(field)) is not int
                    for field in ('coordinator', 'coordinator_generation', 'target_generation', 'departing_slot'))
             or any(not isinstance(proposer.get(field), str) or not re.fullmatch(r'[0-9a-f]{16}', proposer[field])

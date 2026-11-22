@@ -320,9 +320,9 @@ recipient never installs the interval, and each survivor compares its pre-cut
 confirmed prefix with independently reconstructed original inputs.
 The `peer-drop-commit` cell withholds the coordinator's first COMMIT on the real
 link after certification. The validator requires a later exact-byte retry with a
-40-millisecond observation floor, the follower's acknowledgement, and the
-committed canonical continuation; a fabricated drop, an immediate duplicate or a
-changed retry payload fails. Full pinned-source
+positive observed delay, the follower's acknowledgement, and the committed
+canonical continuation; a fabricated drop, an immediate duplicate or a changed
+retry payload fails. Full pinned-source
 trace comparison and the expanded live fault matrix remain in
 [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).

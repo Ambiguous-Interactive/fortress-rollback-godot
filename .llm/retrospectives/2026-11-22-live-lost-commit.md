@@ -18,13 +18,13 @@
 
 | # | Finding | Type | Evidence |
 | --- | --- | --- | --- |
-| 1 | The transport-clock delay between the withheld COMMIT and its retry can read below 50 ms because the drop is stamped at the poll after publication while the retry is stamped at publication. A validator floor of exactly `RETRY_US` rejects a correct retry. | bug | first 4.3 cell: `commit_delay_us: 48565`; final four cells: 48.9-60.6 ms |
+| 1 | The transport-clock delay between the withheld COMMIT and its retry can read below 50 ms because the drop is stamped at the poll after publication while the retry is stamped at send. A fixed observation floor (50 ms or 40 ms) rejects a correct retry when the next poll withholds it late; no per-iteration cap proves a maximum gap. | bug | first 4.3 cell: `commit_delay_us: 48565`; final four cells: 48.6-49.9 ms; OpenAI round 2 named a valid 34 ms reading |
 | 2 | The witness must arm every survivor, not a page index. Join order decides which page owns the lowest surviving slot, and the coordinator was page/slot 1 or 0 depending on the browser pair. | design | 4.7.2 Chromium coordinator slot 1; Firefox coordinator slot 0 |
 | 3 | A dropped-packet count and a hex-length check are not evidence of a COMMIT retry. The receipt must keep the exact withheld and retried bytes, and the validator must decode those bytes rather than trust separately reported metadata. | review | adversarial round 1: an equal pair of 120 zero bytes passed; the hardened validator rejects it at the header |
 | 4 | A proposer can never legitimately populate `commit_ack_peers` (that map is written only for a follower), so accepting the acknowledgement from either list let an impossible field satisfy the receipt. | review | adversarial round 1: moving the follower identity from `acknowledged_peers` to `commit_ack_peers` passed; it is now rejected |
 | 5 | A candidate cap of 8 retries was below the protocol's own 4 s / 50 ms window, and the proposer retries a committed operation until every survivor acknowledges with no 4 s cap at all. Any upper bound would reject a correct run whose acknowledgment is repeatedly lost. | design | the final validator requires at least one retry and sets no upper cap |
 | 6 | The retry was recorded when the queued packet was scanned, before the poll sent it. A refused head would report a retry that never left, and a later poll could count the same queued packet again. | review | CodeRabbit round 1; the live one-resend cell now counts only after `super.poll` reports the queue position sent |
-| 7 | The 40 ms observation floor was described as tolerating one poll sample, but no per-iteration cap proves a maximum publish-to-poll gap. | review | CodeRabbit round 1; the comment and knowledge note now state a sampling tolerance without claiming a bound |
+| 7 | The 40 ms observation floor was described as tolerating one poll sample, but no per-iteration cap proves a maximum publish-to-poll gap; the second OpenAI round named a valid 34 ms reading. | review | OpenAI round 2; the floor is now a positive-delay check |
 | 8 | The row's acknowledgement lists were read before the final confirmation wait, which services transport, so an acknowledgement arriving during that wait could be missing. | review | CodeRabbit round 1; the row refreshes both lists after the wait |
 | 9 | The packet parser bound the identity fields but not the rest of the fixed COMMIT body, so `witnessed=2`, `chunk_count=65`, nonzero reserved bytes or a negative bound/capacity passed even though the codec rejects them. | review | adversarial round 2; each malformed body control now fails |
 | 10 | The follower row was never cross-checked against the proposer's operation, session, roster, coordinator or target fields. | review | adversarial round 2; a follower with another operation/session/roster/target now fails |
@@ -33,14 +33,14 @@
 
 | # | Action | Where it landed | Verified by |
 | --- | --- | --- | --- |
-| 1 | Lower the observed-delay floor to 40 ms with a named constant and a comment that states the sampling allowance. | `webrtc_drop.py` | the 4.3 and Firefox cells pass; a 39,999 us receipt mutation fails |
+| 1 | Require only a positive observed delay; keep the exact-byte equality and the sent-accounted retry count as the retry evidence. | `webrtc_drop.py`, `test_webrtc_drop.py` | the four live cells pass; a zero-delay mutation and a `-1` mutation fail; a 1 us receipt passes |
 | 2 | Arm every owned transport; drop only `Phase.COMMIT`; record the destination slot from the real queued packet. | `webrtc_setup.gd`, `webrtc_drop.gd` | four live cells cover both coordinator slots |
 | 3 | Record exact withheld/retry hex, operation, cut, digest, destination and delay; require byte equality and the follower acknowledgement. | `webrtc_setup.gd`, `webrtc_drop.gd`, `webrtc_drop.py` | four live cells; the receipt mutations and spacer controls reject the intended shapes |
 | 4 | Decode the captured packet again in the validator and bind header, session, sender, coordinator, operation, target list, cut, value digest and roster digest to the row. | `webrtc_drop.py`, `test_webrtc_drop.py` | a real live packet passes; 120 zero bytes, a changed trailing byte and a changed magic fail |
 | 5 | Accept the acknowledgement only from the proposer's `acknowledged_peers` and require `commit_ack_peers` empty; type-check every follower sentinel and the operation comparison. | `webrtc_drop.py`, `test_webrtc_drop.py` | the move-to-impossible-field, follower bool/float and operation-type mutations fail |
 | 6 | Remove the retry-count ceiling; require at least one retry and leave the upper bound to the witness deadline. | `webrtc_drop.py` | a one-retry receipt passes; a zero-retry receipt fails |
 | 7 | Record retry bytes, count and time only after `super.poll` sent their queue positions; a refused packet stays queued and is counted once on a later successful poll. | `webrtc_setup.gd` | the live Chromium 4.7.2 cell reports one resend after 51,470 us with exact bytes |
-| 8 | State the 40 ms floor as a sampling tolerance, not a proven publish-to-poll bound. | `webrtc_drop.py`, `.llm/knowledge/transport-tooling.md` | comment and note reviewed |
+| 8 | Replace the observation floor with a positive-delay check and state that the per-poll sample cannot prove the 50 ms interval. | `webrtc_drop.py`, `.llm/knowledge/transport-tooling.md` | zero-delay fails, 1 us passes, live cells pass |
 | 9 | Refresh the row's acknowledgement lists after the final confirmation wait. | `webrtc_drop.gd` | the live cell records the follower in `acknowledged_peers` with `commit_ack_peers` empty |
 | 10 | Validate the complete fixed COMMIT body: reason/reserved zero, nonnegative bound and capacity, chunk index zero, chunk count at most 64, witnessed zero. | `webrtc_drop.py` | seven malformed-body controls fail; the live 109-byte packet passes |
 | 11 | Cross-check the follower's operation, coordinator, generations, session, roster and target digest against the proposer, and type-check the packet's identity fields. | `webrtc_drop.py` | nine follower-identity and type controls fail; the live packet passes |
@@ -55,8 +55,8 @@
   `acknowledged_peers` can exist on a proposer.
 - Retired: counting a retry when it was scanned. A queued packet counts only
   after the poll reports its queue position sent.
-- Retired: the exact-50 ms observation floor. The protocol interval still
-  bounds retry ownership; the witness allows one poll sample.
+- Retired: every observation floor above zero. A per-poll clock sample cannot
+  prove the 50 ms interval; a positive delay rejects a same-poll duplicate.
 - Verify-on-touch: `make gate`, `make test-reference`, the live
   `peer-drop-commit` label on both pins and browsers, `make lint-source`.
 - No new abstraction: the commit control is one bounded filter in the existing
