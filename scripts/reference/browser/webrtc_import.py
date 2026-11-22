@@ -2,14 +2,22 @@
 from signalfish_probe import inventory
 
 
-def freeze_after_import(paths, before):
+def metadata_source(name, uid_suffixes):
+    if name.endswith(uid_suffixes):
+        return name[:-4]
+    if name.endswith('.import'):
+        return name[:-7]
+    return None
+
+
+def freeze_after_import(paths, before, uid_suffixes=('.gd.uid',)):
     after = inventory(paths)
     for name, expected in before.items():
-        source = name[:-4] if name.endswith('.gd.uid') else name[:-7] if name.endswith('.import') else None
+        source = metadata_source(name, uid_suffixes)
         if name not in after or (source not in before and after[name] != expected):
             raise ValueError('authored Web source changed during editor import: ' + name)
     for name in after.keys() - before.keys():
-        source = name[:-4] if name.endswith('.gd.uid') else name[:-7] if name.endswith('.import') else None
+        source = metadata_source(name, uid_suffixes)
         if source not in before:
             raise ValueError('unexpected editor-generated Web file: ' + name)
     return after
