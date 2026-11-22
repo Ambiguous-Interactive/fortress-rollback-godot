@@ -1,0 +1,143 @@
+name: Qualify Fortress GDExtension
+on:
+  workflow_dispatch:
+  push:
+    branches: [experiment/upstream-gdextension]
+    paths:
+      - experiments/gdextension/**
+      - .github/workflows/gdextension-experiment.yml
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["4.3", "4.7.2"]
+        target: [linux, windows, macos, android, ios, web]
+        include:
+          - {target: web, runner: ubuntu-24.04}
+          - {target: linux, runner: ubuntu-24.04}
+          - {target: windows, runner: windows-2025}
+          - {target: macos, runner: macos-15}
+          - {target: android, runner: ubuntu-24.04}
+          - {target: ios, runner: macos-15}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 70
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          echo RUSTUP_TOOLCHAIN=1.99.1 >> "$GITHUB_ENV"
+      - name: Run exported match and both controls on Android
+        if: matrix.target == 'android'
+        run: |
+          rustup target add aarch64-linux-android x86_64-linux-android
+          sudo chmod 666 /dev/kvm
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          "$sdkmanager" "system-images;android-35;google_apis;x86_64" "emulator" "platform-tools"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | "$avdmanager" create avd -n witness -p "$ANDROID_AVD_HOME/witness.avd" -k "system-images;android-35;google_apis;x86_64"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx witness
+          emulator="$ANDROID_HOME/emulator/emulator"
+          "$emulator" -accel-check
+          nohup "$emulator" -avd witness -no-window -no-audio -no-snapshot -gpu swiftshader > "$RUNNER_TEMP/emulator.log" 2>&1 </dev/null &
+          emulator_pid=$!
+          trap 'if [[ $? != 0 ]]; then
+            cat "$RUNNER_TEMP/emulator.log"
+            timeout 15 adb logcat -d -s godot AndroidRuntime libc DEBUG || true
+          fi' EXIT
+          export PATH="$ANDROID_HOME/platform-tools:$PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          timeout 180 bash -c 'while kill -0 "$1" 2>/dev/null; do
+            if adb devices | grep -Eq "^emulator-[0-9]+[[:space:]]+device"; then exit 0; fi
+            sleep 2
+          done; exit 1' _ "$emulator_pid"
+          timeout 300 bash -c 'until adb shell getprop sys.boot_completed | tr -d "\r" | grep -qx 1; do sleep 2; done'
+          adb shell input keyevent 82
+          python experiments/gdextension/platform_test.py "${{ matrix.version }}" android
+      - name: Install the Intel macOS target
+        if: matrix.target == 'macos'
+        run: rustup target add x86_64-apple-darwin
+      - name: Restore the ARM64 iOS simulator engine
+        if: matrix.target == 'ios'
+        id: simulator-engine
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}/godot-ios-simulator.a
+          key: godot-ios-simulator-arm64-${{ matrix.version }}-${{ hashFiles('.github/workflows/gdextension-experiment.yml') }}
+      - name: Build the ARM64 iOS simulator engine
+        if: matrix.target == 'ios' && steps.simulator-engine.outputs.cache-hit != 'true'
+        run: |
+          case "${{ matrix.version }}" in
+            4.3) rev=77dcf97d82cbfe4e4615475fa52ca03da645dbd8; extra_flags=(cxxflags=-Wno-module-import-in-extern-c) ;;
+            4.7.2) rev=ed1daf0bf001b61586d9930840f2f1394092c079; extra_flags=(metal=no) ;;
+          esac
+          python -m pip install SCons==4.10.1
+          engine="$RUNNER_TEMP/godot-ios"
+          git init "$engine"
+          git -C "$engine" fetch --depth 1 https://github.com/godotengine/godot.git "$rev"
+          git -C "$engine" checkout --detach FETCH_HEAD
+          scons -C "$engine" -j3 platform=ios target=template_release arch=arm64 ios_simulator=yes vulkan=no "${extra_flags[@]}"
+          lib="$engine/bin/libgodot.ios.template_release.arm64.simulator.a"
+          test "$(lipo -archs "$lib")" = arm64
+          cp "$lib" "$RUNNER_TEMP/godot-ios-simulator.a"
+      - name: Save the ARM64 iOS simulator engine
+        if: matrix.target == 'ios' && steps.simulator-engine.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}/godot-ios-simulator.a
+          key: ${{ steps.simulator-engine.outputs.cache-primary-key }}
+      - name: Boot an iOS simulator
+        if: matrix.target == 'ios'
+        run: |
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+          devices="$RUNNER_TEMP/simulators.json"
+          xcrun simctl list devices available -j > "$devices"
+          udid=$(python -c 'import json,sys; ds=json.load(sys.stdin)["devices"]; print(next(d["udid"] for g in ds.values() for d in g if "iPhone" in d["name"]))' < "$devices")
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          echo "SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+          lib="$RUNNER_TEMP/godot-ios-simulator.a"
+          test "$(lipo -archs "$lib")" = arm64
+          echo "FORTRESS_IOS_SIMULATOR_LIB=$lib" >> "$GITHUB_ENV"
+      - name: Prepare the single-threaded Web build
+        if: matrix.target == 'web'
+        run: |
+          rustup toolchain install nightly-2026-02-01 --profile minimal -c rust-src -t wasm32-unknown-emscripten
+          git init "$RUNNER_TEMP/emsdk"
+          git -C "$RUNNER_TEMP/emsdk" fetch --depth 1 https://github.com/emscripten-core/emsdk.git a7c808831a666cc903fedb906c171a718cd97341
+          git -C "$RUNNER_TEMP/emsdk" checkout --detach FETCH_HEAD
+          "$RUNNER_TEMP/emsdk/emsdk" install 3.1.74
+          "$RUNNER_TEMP/emsdk/emsdk" activate 3.1.74
+          npm install --prefix "$RUNNER_TEMP/browsers" playwright@1.64.1
+          "$RUNNER_TEMP/browsers/node_modules/.bin/playwright" install --with-deps chromium firefox webkit
+          echo "FORTRESS_PLAYWRIGHT_PACKAGE=$RUNNER_TEMP/browsers/node_modules/playwright" >> "$GITHUB_ENV"
+      - name: Run exported match and both controls
+        if: matrix.target != 'android'
+        run: |
+          if [[ "${{ matrix.target }}" == web ]]; then
+            source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+            xvfb-run -a python experiments/gdextension/platform_test.py "${{ matrix.version }}" web
+          else
+            python experiments/gdextension/platform_test.py "${{ matrix.version }}" "${{ matrix.target }}"
+          fi
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: fortress-${{ matrix.version }}-${{ matrix.target }}
+          include-hidden-files: true
+          path: |
+            .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/addon.zip
+            .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/qualification.json
+            .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/benchmark.json

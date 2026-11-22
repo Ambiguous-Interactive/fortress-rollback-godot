@@ -1,0 +1,29 @@
+[package]
+name = "fortress-gdextension-experiment"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fortress-rollback = { path = "../../.cache/reference/fortress-rollback-d124c89080004d96971a629bb0427056ee1805e3", default-features = false }
+godot = { version = "=0.5.5", default-features = false, features = ["api-4-3"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[features]
+default = ["extension"]
+extension = ["dep:godot"]
+peer = ["dep:serde_json"]
+web = ["extension", "godot/experimental-wasm", "godot/experimental-wasm-nothreads"]
+
+[[bin]]
+name = "reference-peer"
+path = "src/bin/reference_peer.rs"
+required-features = ["peer"]
+
+[[bin]]
+name = "sync-bench"
+path = "src/bin/sync_bench.rs"
+required-features = ["peer"]

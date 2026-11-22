@@ -1,0 +1,11 @@
+Fortress Rollback GDExtension experiment
+
+Fortress Rollback sources and license notices
+https://github.com/wallstop/fortress-rollback/tree/d124c89080004d96971a629bb0427056ee1805e3
+
+The Godot binding uses godot-rust 0.5.5 under the Mozilla Public License 2.0.
+https://github.com/godot-rust/gdext
+https://www.mozilla.org/MPL/2.0/
+
+The experiment source and pinned dependency list are in experiments/gdextension
+in the fortress-rollback-godot repository.
