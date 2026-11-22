@@ -232,19 +232,20 @@ def lost_evidence():
     proposer = value['records'][0]['peers'][0]['result']['records'][0]
     follower = value['records'][0]['peers'][1]['result']['records'][0]
     terminal = {'state': 'failed', 'failed': True, 'failure_reason': 'timeout', 'lifecycle': 'terminated',
-                'freeze_frame': -1, 'frozen_value': '', 'certified': False, 'certificates': 0,
+                'freeze_frame': -1, 'certified': False, 'certificates': 0,
                 'drop_events': 0, 'drop_frames': {}, 'pending_events': 1, 'frames_submitted': 8,
                 'final_frame': 8, 'frames_after_terminal': 0, 'post_terminal_code': 19, 'barrier_cut': 3, 'prediction_gap': 4,
                 'confirmed_prefix': 3, 'canonical_comparisons': 3, 'terminal_peer_code': 0,
-                'terminal_transport_code': 0, 'session_id': 'ab' * 16,
+                'terminal_transport_code': 0, 'terminal_enqueue_code': 0, 'session_id': 'ab' * 16,
                 'target_generation': 0, 'coordinator': 0, 'coordinator_generation': 0,
-                'target_set_digest': '00' * 8, 'target_slots': [2]}
+                'target_set_digest': '00' * 8, 'target_slots': [2], 'direct': {'sent': 20, 'received': 20},
+                'history_drop_chunks': []}
     proposer.update(terminal, history_installed=False, history_dropped=0, history_resends=0,
                     history_drop_chunk=-1, history_drop_operation=-1, history_drop_count=0,
                     minimum_confirmed=3)
     follower.update(terminal, history_installed=False, history_dropped=5, history_resends=0,
                     history_drop_chunk=0, history_drop_operation=9, history_drop_count=1,
-                    minimum_confirmed=2)
+                    history_drop_chunks=[5], minimum_confirmed=2)
     return value
 
 
@@ -301,7 +302,6 @@ class LostHistoryEvidence(unittest.TestCase):
             lambda value: proposer(value).update(state='committed'),
             lambda value: proposer(value).update(freeze_frame=6),
             lambda value: proposer(value).update(freeze_frame=True),
-            lambda value: proposer(value).update(frozen_value='01'),
             lambda value: proposer(value).update(certified=True),
             lambda value: proposer(value).update(certificates=1),
             lambda value: proposer(value).update(drop_events=1),
@@ -315,6 +315,7 @@ class LostHistoryEvidence(unittest.TestCase):
             lambda value: proposer(value).update(barrier_cut=4),
             lambda value: proposer(value).update(prediction_gap=-1),
             lambda value: proposer(value).update(prediction_gap=99),
+            lambda value: proposer(value).update(confirmed_prefix=0),
             lambda value: proposer(value).update(confirmed_prefix=4),
             lambda value: follower(value).update(canonical_comparisons=2),
             lambda value: follower(value).update(minimum_confirmed=7),
@@ -332,6 +333,8 @@ class LostHistoryEvidence(unittest.TestCase):
             lambda value: proposer(value).update(target_set_digest='ff' * 8),
             lambda value: proposer(value).update(terminal_peer_code=1),
             lambda value: follower(value).update(terminal_transport_code=1),
+            lambda value: follower(value).update(terminal_enqueue_code=1),
+            lambda value: follower(value).update(direct={'sent': 0, 'received': 20}),
             lambda value: proposer(value).update(history_installed=True),
             lambda value: follower(value).update(history_installed=True),
             lambda value: proposer(value).update(history_first=5),
@@ -343,6 +346,10 @@ class LostHistoryEvidence(unittest.TestCase):
             lambda value: proposer(value).update(history_drop_count=1),
             lambda value: proposer(value).update(history_drop_chunk=0),
             lambda value: follower(value).update(history_drop_chunk=1),
+            lambda value: follower(value).update(history_drop_chunks=[]),
+            lambda value: follower(value).update(history_drop_chunks=[1]),
+            lambda value: follower(value).update(history_drop_chunks=[5, 0]),
+            lambda value: follower(value).update(history_drop_chunks=['5']),
             lambda value: follower(value).update(history_drop_count=0),
             lambda value: follower(value).update(history_drop_count=5),
             lambda value: follower(value).update(history_drop_operation=8),

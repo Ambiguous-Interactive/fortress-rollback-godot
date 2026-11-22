@@ -395,10 +395,6 @@ func _observe_client(client: SDK) -> void:
 	for signal_name: String in MEMBERSHIP_SIGNALS:
 		client.connect(signal_name, func(_first: Variant = null, _second: Variant = null) -> void:
 			if membership_frozen:
-				if history_lost and signal_name == "player_left":
-					# The terminal match ends; a peer's session teardown may
-					# reach the server before this page publishes its row.
-					return
 				if room_departure and signal_name == "player_left" and _first is String:
 					if local_index != 2:
 						room_player_left.append(_first)

@@ -436,12 +436,12 @@ def _lost_history_row(row, role, slot, departing_slot, first, through):
             and row.get('failure_reason') == 'timeout'
             and row.get('lifecycle') == 'terminated'
             and type(row.get('freeze_frame')) is int and row['freeze_frame'] == -1
-            and row.get('frozen_value') == ''
             and type(row.get('role')) is int and row['role'] == role
             and row.get('certified') is False
             and type(row.get('certificates')) is int and row['certificates'] == 0
             and type(row.get('terminal_peer_code')) is int and row['terminal_peer_code'] in (0, 7)
             and type(row.get('terminal_transport_code')) is int and row['terminal_transport_code'] in (0, 9, 12)
+            and type(row.get('terminal_enqueue_code')) is int and row['terminal_enqueue_code'] in (0, 9)
             and type(row.get('drop_events')) is int and row['drop_events'] == 0
             and row.get('drop_frames') == {}
             and type(row.get('pending_events')) is int and row['pending_events'] == 1
@@ -451,11 +451,17 @@ def _lost_history_row(row, role, slot, departing_slot, first, through):
             and type(row.get('history_dropped')) is int and type(row.get('history_resends')) is int
             and type(row.get('history_drop_chunk')) is int and type(row.get('history_drop_operation')) is int
             and type(row.get('history_drop_count')) is int
+            and isinstance(row.get('history_drop_chunks'), list)
+            and all(type(count) is int and count >= 0 for count in row['history_drop_chunks'])
+            and len(row['history_drop_chunks']) == row['history_drop_count']
             and type(row.get('minimum_confirmed')) is int and 0 <= row['minimum_confirmed'] <= through
-            and type(row.get('confirmed_prefix')) is int and 0 <= row['confirmed_prefix'] <= first - 1
+            and type(row.get('confirmed_prefix')) is int and 1 <= row['confirmed_prefix'] <= first - 1
             and type(row.get('canonical_comparisons')) is int
             and row['canonical_comparisons'] == row['confirmed_prefix']
             and type(row.get('rollback_loads')) is int
+            and isinstance(row.get('direct'), dict)
+            and type(row['direct'].get('sent')) is int and row['direct']['sent'] >= 1
+            and type(row['direct'].get('received')) is int and row['direct']['received'] >= 1
             and isinstance(row.get('session_id'), str) and re.fullmatch(r'[0-9a-f]{32}', row['session_id'])
             and type(row.get('target_generation')) is int
             and type(row.get('operation')) is int
@@ -499,11 +505,15 @@ def _validate_lost_history(result, survivors):
         raise ValueError('peer-drop lost-history donor identity differs')
     if (type(proposer.get('history_dropped')) is not int or proposer['history_dropped'] != 0
             or type(proposer.get('history_drop_count')) is not int or proposer['history_drop_count'] != 0
+            or proposer.get('history_drop_chunks') != []
             or type(proposer.get('history_drop_chunk')) is not int or proposer['history_drop_chunk'] != -1):
         raise ValueError('peer-drop lost-history recipient withheld donor bytes')
     if (type(follower.get('history_dropped')) is not int or follower['history_dropped'] < 2
-            or type(follower.get('history_drop_chunk')) is not int or follower['history_drop_chunk'] != 0
             or type(follower.get('history_drop_count')) is not int or follower['history_drop_count'] < 1
+            or len(follower['history_drop_chunks']) != follower['history_drop_count']
+            or any(count < 2 for count in follower['history_drop_chunks'])
+            or type(follower.get('history_drop_chunk')) is not int
+            or not 0 <= follower['history_drop_chunk'] < follower['history_drop_count']
             or follower['history_dropped'] < 2 * follower['history_drop_count']
             or type(follower.get('history_drop_operation')) is not int
             or type(follower.get('operation')) is not int

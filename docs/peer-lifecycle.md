@@ -358,9 +358,9 @@ The validator requires exactly frames four through six (no overlapping packet ra
 the donor identity, the installed interval, chunk zero, a later chunk-zero resend and the agreed cut.
 The `peer-drop-missing-lost` control withholds every donor chunk until the barrier expires. It requires
 a failed barrier, `timeout` on both survivors, no `peer_dropped` event, no frozen slot, no installed
-interval, at least two full donor retry rounds, an unchanged pre-cut confirmed prefix against the
-independently reconstructed original inputs, and no frame advance from a post-terminal step or poll.
-A committed, frozen or continued receipt fails the control.
+interval, every donor journal chunk dropped at least twice, an unchanged pre-cut confirmed prefix
+against the independently reconstructed original inputs, and no frame advance from a post-terminal
+step or poll. A committed, frozen or continued receipt fails the control.
 The `peer-drop-second` case departs one page after seven inputs and a second page after twelve.
 The remaining survivor certifies the first cut, then observes the second departure and
 freezes that slot on its own confirmed frontier; this is a one-member freeze and no second

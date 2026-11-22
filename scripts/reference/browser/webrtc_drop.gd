@@ -510,9 +510,11 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 	# The terminal path must keep servicing each survivor's own barrier timeout
 	# after a peer stops or a real transport reports backpressure; the ordinary
 	# service batch treats both as fatal for a label that expects continuation.
+	host.tearing_down = true
 	var reason: String = ""
-	var terminal_peer_code: int = I.Code.OK
-	var terminal_transport_code: int = 0
+	var terminal_peer_code: int = -1
+	var terminal_transport_code: int = -1
+	var terminal_enqueue_code: int = 0
 	var started_us: int = Time.get_ticks_usec()
 	while Time.get_ticks_usec() - started_us < 15000000:
 		host._update_transport_clock()
@@ -535,9 +537,9 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 				continue
 			var packets: Array = host.peers[index].drain_outbox()
 			if not packets.is_empty():
-				var enqueued: int = host.transports[index].enqueue_batch(packets)
-				if enqueued != 0:
-					host.errors.append("peer_drop_history_lost_enqueue_%d" % enqueued)
+				terminal_enqueue_code = host.transports[index].enqueue_batch(packets)
+				if terminal_enqueue_code not in [0, DirectTypes.Code.BACKPRESSURE]:
+					host.errors.append("peer_drop_history_lost_enqueue_%d" % terminal_enqueue_code)
 					return false
 			var sent: Direct.Result = host.transports[index].poll(host.transport_us, host._next_token)
 			terminal_transport_code = sent.code
@@ -638,7 +640,6 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 			"barrier_cut": barrier.cut,
 			"prediction_gap": final_frame - barrier.cut - 1,
 			"freeze_frame": frozen_frame,
-			"frozen_value": "",
 			"state": barrier.state,
 			"failed": true,
 			"failure_reason": reason,
@@ -648,6 +649,7 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 			"certificates": barrier.certificates.size(),
 			"terminal_peer_code": terminal_peer_code,
 			"terminal_transport_code": terminal_transport_code,
+			"terminal_enqueue_code": terminal_enqueue_code,
 			"drop_events": 0,
 			"drop_frames": {},
 			"pending_events": pending_events,
@@ -660,6 +662,7 @@ func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 			"history_drop_chunk": int(history.get("chunk", -1)),
 			"history_drop_operation": int(history.get("operation", -1)),
 			"history_drop_count": int(history.get("count", 0)),
+			"history_drop_chunks": history.get("chunks", []),
 			"minimum_confirmed": peer.status().confirmed_frame,
 			"confirmed_prefix": confirmed_prefix,
 			"canonical_comparisons": comparisons,
