@@ -25,7 +25,10 @@ Godot 4.7.2 initially logged a Vulkan presentation error and stopped advancing a
 Setting the mobile renderer explicitly to Compatibility allowed both Android jobs to complete.
 The iOS addon contains ARM64 device and simulator slices. The stock Godot simulator archive contains x86-64 objects, so the current CI build
 compiles an ARM64 engine from each pinned revision and supplies that simulator library to the exported Xcode project.
-[Hosted qualification and artifacts](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45000317676)
+Both pins have completed the mixed-peer match on the ARM64 iOS Simulator. The hosted iOS runs also reproduced a deployment harness timeout at the old
+90-second outer deadline after Xcode had built the app. The runner now allows the individual install, launch, and match deadlines to report their own failures.
+[Desktop, Android, Web, and iOS 4.3 artifacts](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45000317676)
+· [iOS 4.7.2 artifact](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/44999699103/artifacts/14745758798)
 
 For a local iOS simulator run, use Apple Silicon macOS with Xcode and a booted iPhone simulator.
 Use the workflow's `Build the ARM64 iOS simulator engine` step to build the static library for the Godot pin and export its path as `FORTRESS_IOS_SIMULATOR_LIB`.
