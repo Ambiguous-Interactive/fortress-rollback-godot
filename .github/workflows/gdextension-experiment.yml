@@ -38,7 +38,7 @@ jobs:
         run: |
           rustup toolchain install 1.99.1 --profile minimal
           echo RUSTUP_TOOLCHAIN=1.99.1 >> "$GITHUB_ENV"
-      - name: Boot an Android emulator
+      - name: Run exported match and both controls on Android
         if: matrix.target == 'android'
         run: |
           rustup target add aarch64-linux-android x86_64-linux-android
@@ -63,6 +63,7 @@ jobs:
           done; exit 1' _ "$emulator_pid"
           timeout 300 bash -c 'until adb shell getprop sys.boot_completed | tr -d "\r" | grep -qx 1; do sleep 2; done'
           adb shell input keyevent 82
+          python experiments/gdextension/platform_test.py "${{ matrix.version }}" android
       - name: Install the Intel macOS target
         if: matrix.target == 'macos'
         run: rustup target add x86_64-apple-darwin
@@ -89,6 +90,7 @@ jobs:
           "$RUNNER_TEMP/browsers/node_modules/.bin/playwright" install --with-deps chromium firefox webkit
           echo "FORTRESS_PLAYWRIGHT_PACKAGE=$RUNNER_TEMP/browsers/node_modules/playwright" >> "$GITHUB_ENV"
       - name: Run exported match and both controls
+        if: matrix.target != 'android'
         run: |
           if [[ "${{ matrix.target }}" == web ]]; then
             source "$RUNNER_TEMP/emsdk/emsdk_env.sh"

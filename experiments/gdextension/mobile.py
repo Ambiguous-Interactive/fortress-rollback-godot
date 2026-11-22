@@ -36,6 +36,7 @@ def launch(stack, device, artifact):
         subprocess.run(list(args), check=True, timeout=120)
 
     if device == "android":
+        run("adb", "wait-for-device")
         run("adb", "install", "-r", artifact)
         run("adb", "reverse", f"tcp:{PORT}", f"tcp:{PORT}")
         stack.callback(run, "adb", "reverse", "--remove", f"tcp:{PORT}")
