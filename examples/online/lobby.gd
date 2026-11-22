@@ -158,7 +158,9 @@ func _ready() -> Error:
 		roster.append(player.get("id"))
 	# Host entropy belongs to the transport lifetime, never to simulation state.
 	var incarnation: PackedByteArray = Crypto.new().generate_random_bytes(8)
-	var frozen: Error = game_match.freeze(client, mesh, roster, incarnation, _native_name)
+	var frozen: Error = game_match.freeze(client, mesh, roster, incarnation) if _native_name.is_empty() else (
+		game_match.freeze_native(client, mesh, roster, incarnation, _native_name)
+	)
 	if revision != _connection_revision:
 		return ERR_UNAVAILABLE
 	if frozen != OK:

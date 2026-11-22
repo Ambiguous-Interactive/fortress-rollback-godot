@@ -34,7 +34,7 @@ and assign every authenticated remote endpoint a stable ID from 1 to 8. An
 endpoint can own multiple slots. Supply four bytes per local slot in ascending
 slot order through `step_local(now_us, inputs)`. After a waiting result, pass the
 same sample or omit it with an empty byte array. Drain and route native datagrams
-through `native_backend()` even during waits. The driver uses the existing
+with `drain_native_packets()` and `receive_native()` even during waits. The driver uses the existing
 `save_state`, `load_state` and `simulate_frame` callbacks and expires views
 when each callback returns.
 

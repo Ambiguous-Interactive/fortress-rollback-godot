@@ -53,11 +53,16 @@ def qualify_driver(binary, addon):
         command = [str(binary), "--headless", "--path", str(project)]
         subprocess.run(command + ["--editor", "--import", "--quit"], check=True, timeout=120)
         command += ["--script", script]
-        subprocess.run(command, check=True, timeout=60)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        print(result.stdout, end="")
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr)
         control = subprocess.run(command + ["--", "--wrong-sample"], capture_output=True, text=True, timeout=60)
         if control.returncode != 1 or "incorrect confirmed input at frame 12" not in control.stderr:
             raise RuntimeError(f"native driver's wrong-sample control did not fail as expected: {control.stdout}\n{control.stderr}")
-        print("Native driver control rejected: incorrect confirmed input at frame 12")
+        diagnostic = "incorrect confirmed input at frame 12"
+        print(f"Native driver control rejected: {diagnostic}")
+        return {"layouts": [line for line in result.stdout.splitlines() if line.startswith("Native driver slots=")], "negative_control": diagnostic}
 
 
 def main():
@@ -115,17 +120,17 @@ def main():
     receipt = {"version": version, "host": HOST, "architecture": ARCH, "target": target,
                "fortress_revision": data["sources"]["fortress"]["revision"],
                "addon_sha256": digest(directory / "addon.zip"), "runs": receipts}
-    partial = directory / "qualification.tmp"
-    partial.write_text(json.dumps(receipt, indent=2) + "\n")
-    partial.replace(directory / "qualification.json")
-    print(json.dumps(receipts))
     if target == "linux":
-        qualify_driver(binary, directory / "addon.zip")
+        receipt["driver"] = qualify_driver(binary, directory / "addon.zip")
         stall = subprocess.check_output([sys.executable, HERE / "qualify.py", "--export", directory / outputs[target],
                                          "--peer", peer, "--stall"], text=True, env=env)
         (directory / "prediction-stall.json").write_text(json.dumps(json.loads(stall.splitlines()[-1]), indent=2) + "\n")
         measurements = subprocess.check_output([sys.executable, HERE / "benchmark.py", version, "--editor", binary, "--rust-peer-dir", peer.parent], text=True, env=env)
         (directory / "benchmark.json").write_text(json.dumps([json.loads(line) for line in measurements.splitlines()], indent=2) + "\n")
+    partial = directory / "qualification.tmp"
+    partial.write_text(json.dumps(receipt, indent=2) + "\n")
+    partial.replace(directory / "qualification.json")
+    print(json.dumps(receipts))
 
 
 if __name__ == "__main__":

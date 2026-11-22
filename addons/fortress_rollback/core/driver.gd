@@ -83,7 +83,7 @@ func configure(session: Session, game: RefCounted) -> int:
 
 
 ## Select the optional native backend. Endpoint zero marks a local slot.
-## Supply four bytes per local slot through step_local(). The caller routes packets through native_backend().
+## Supply four bytes per local slot through step_local(). The caller authenticates and routes native datagrams.
 func configure_native(endpoints: PackedInt32Array, game: RefCounted, snapshot_limit: int) -> int:
 	if _is_stepping or (_session != null and _session._mutation_code() == Types.Code.BUSY):
 		return Types.Code.BUSY
@@ -98,8 +98,26 @@ func configure_native(endpoints: PackedInt32Array, game: RefCounted, snapshot_li
 	return code
 
 
-func native_backend() -> Native:
-	return _native_backend
+func uses_native_backend() -> bool:
+	return _native_backend != null
+
+
+func receive_native(endpoint: int, bytes: PackedByteArray) -> bool:
+	return _native_backend != null and not _is_stepping and _native_backend.receive(endpoint, bytes)
+
+
+func drain_native_packets() -> Array[Dictionary]:
+	if _native_backend == null or _is_stepping:
+		return []
+	return _native_backend.drain_packets()
+
+
+func native_interrupted_endpoints() -> PackedInt32Array:
+	return _native_backend.interrupted_endpoints() if _native_backend != null else PackedInt32Array()
+
+
+func native_terminal_detail() -> String:
+	return _native_backend.terminal_detail() if _native_backend != null else ""
 
 
 static func _valid_game(game: RefCounted) -> bool:
@@ -167,7 +185,7 @@ func step_local(now_us: int, local_inputs: Array[PackedByteArray]) -> StepResult
 		if _is_stepping:
 			return _result(Types.Code.BUSY, before_native)
 		_is_stepping = true
-		return _finish(_native_backend.step(now_us, local_inputs), before_native)
+		return _finish(_native_backend._step(now_us, local_inputs), before_native)
 	var before: int = _session.status().current_frame if _session != null else 0
 	if _is_stepping:
 		return _result(Types.Code.BUSY, before)

@@ -65,12 +65,8 @@ var _native_relay_only: bool = false
 var _native_sync_deadline: int = -1
 
 
-func native_driver() -> Driver.Native:
-	return driver.native_backend()
-
-
 func status() -> Types.Status:
-	return driver.status() if native_driver() != null else peer.status()
+	return driver.status() if driver.uses_native_backend() else peer.status()
 
 
 ## New rooms and sorted full UUID rosters define a fresh application match.
@@ -87,7 +83,17 @@ static func session_identity(room_id: String, roster: PackedStringArray, native_
 	return (profile + "|" + room_id + "|" + "|".join(sorted)).sha256_buffer().slice(0, NATIVE_TAG_BYTES)
 
 
-func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation: PackedByteArray, native_name: String = "") -> Error:
+func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation: PackedByteArray) -> Error:
+	return _freeze_room(client, mesh, roster, incarnation, "")
+
+
+func freeze_native(client: Object, mesh: Object, roster: PackedStringArray, incarnation: PackedByteArray, native_name: String) -> Error:
+	if native_name.is_empty():
+		return ERR_INVALID_PARAMETER
+	return _freeze_room(client, mesh, roster, incarnation, native_name)
+
+
+func _freeze_room(client: Object, mesh: Object, roster: PackedStringArray, incarnation: PackedByteArray, native_name: String) -> Error:
 	if _is_busy():
 		return ERR_BUSY
 	_is_servicing = true
@@ -165,7 +171,7 @@ func _start_transport(client: Object, mesh: Object, sdk_config: Object, info: Ob
 	if has_started:
 		return ERR_UNAVAILABLE
 	var route: String = adapter.status().route
-	if native_driver() != null:
+	if driver.uses_native_backend():
 		return _start_native_transport(client, mesh, sdk_config, info, now_us, revision, route)
 	if revision != _revision or route != "mesh":
 		return ERR_UNAVAILABLE
@@ -221,7 +227,7 @@ func _receive_native(uuid: String, bytes: PackedByteArray) -> int:
 		return Inputs.Code.WRONG_SOURCE
 	if bytes.size() <= NATIVE_TAG_BYTES or bytes.slice(0, NATIVE_TAG_BYTES) != _native_identity:
 		return Inputs.Code.WRONG_CONNECTION
-	if not native_driver().receive(slot + 1, bytes.slice(NATIVE_TAG_BYTES)):
+	if not driver.receive_native(slot + 1, bytes.slice(NATIVE_TAG_BYTES)):
 		return Inputs.Code.WRONG_CONNECTION
 	return Inputs.Code.OK
 
@@ -246,17 +252,17 @@ func _tick_native(now_us: int, buttons: int) -> void:
 		Types.Code.PREDICTION_STALL:
 			stalls += 1
 		_:
-			var detail: String = native_driver().terminal_detail()
+			var detail: String = driver.native_terminal_detail()
 			failure = "Native match ended (%s)." % (Types.reason_text(result.code) if detail.is_empty() else detail)
 	if failure.is_empty():
-		latest_event = "interrupted" if not native_driver().interrupted_endpoints().is_empty() else ("synchronizing" if _native_sync_deadline >= 0 else "running")
+		latest_event = "interrupted" if not driver.native_interrupted_endpoints().is_empty() else ("synchronizing" if _native_sync_deadline >= 0 else "running")
 		_service_native(now_us)
 
 
 func _service_native(now_us: int) -> bool:
 	if _pending.is_empty():
 		var roster: PackedStringArray = membership.roster()
-		for datagram: Dictionary in native_driver().drain_packets():
+		for datagram: Dictionary in driver.drain_native_packets():
 			var bytes: PackedByteArray = _native_identity + datagram.bytes
 			_pending.append(Peer.Packet.new(membership.identity(roster[datagram.endpoint - 1]), bytes))
 	for _index: int in mini(_pending.size(), SERVICE_ROUNDS):
@@ -296,7 +302,7 @@ func poll_protocol_time(now_us: int) -> bool:
 		return false
 	_last_now = now_us
 	_is_servicing = true
-	var healthy: bool = native_driver() != null or _poll_protocol(now_us)
+	var healthy: bool = driver.uses_native_backend() or _poll_protocol(now_us)
 	_is_servicing = false
 	return healthy
 
@@ -319,7 +325,7 @@ func _tick(now_us: int, buttons: int) -> void:
 	if _local_input_code(buttons) == Types.Code.INPUT_ALREADY_SUBMITTED:
 		return
 	_last_now = now_us
-	if native_driver() != null:
+	if driver.uses_native_backend():
 		_tick_native(now_us, buttons)
 		return
 	for _batch: int in SERVICE_ROUNDS:
@@ -356,7 +362,7 @@ func _tick(now_us: int, buttons: int) -> void:
 
 
 func _local_input_code(buttons: int) -> int:
-	if native_driver() != null or not has_started or not failure.is_empty() or replay_finishing or buttons < 0 or buttons > 15:
+	if driver.uses_native_backend() or not has_started or not failure.is_empty() or replay_finishing or buttons < 0 or buttons > 15:
 		return Types.Code.OK
 	var code: int = peer._core._check_advance_limits()
 	if code != Types.Code.OK:
@@ -372,7 +378,7 @@ func finish_replay() -> int:
 		return Types.Code.BUSY
 	if not has_started or not failure.is_empty():
 		return Types.Code.NOT_SYNCHRONIZED
-	if native_driver() != null or not record_replay:
+	if driver.uses_native_backend() or not record_replay:
 		return Types.Code.UNSUPPORTED
 	if replay_finishing:
 		return Types.Code.OK
@@ -407,7 +413,7 @@ func raise_input_delay() -> int:
 		return Types.Code.BUSY
 	if not has_started or local_slot < 0:
 		return Types.Code.NOT_SYNCHRONIZED
-	if native_driver() != null:
+	if driver.uses_native_backend():
 		return Types.Code.UNSUPPORTED
 	return peer.set_input_delay(local_slot, peer.input_delay(local_slot) + 1)
 
@@ -495,7 +501,7 @@ func _stopped_text(prefix: String, text: String, code: int) -> String:
 func detach() -> void:
 	_revision += 1
 	has_started = false
-	if native_driver() != null:
+	if driver.uses_native_backend():
 		driver.terminate()
 	if peer._core != null:
 		peer._core.terminate()

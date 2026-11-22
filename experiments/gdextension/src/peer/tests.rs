@@ -1,5 +1,5 @@
 use super::*;
-use fortress_rollback::{DesyncDetection, FortressRequest, ProtocolConfig};
+use fortress_rollback::{FortressRequest, ProtocolConfig};
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -135,12 +135,7 @@ fn routes_a_mesh_with_multiple_local_slots_in_ascending_slot_order() {
 
 #[test]
 fn native_desync_halts_before_dispatch_and_preserves_the_first_cause() {
-    let builder =
-        || SessionBuilder::new().with_desync_detection_mode(DesyncDetection::On { interval: 2 });
-    let mut peers = [
-        Peer::build(&[0, 2], builder()).unwrap(),
-        Peer::build(&[1, 0], builder()).unwrap(),
-    ];
+    let mut peers = [Peer::start(&[0, 2]).unwrap(), Peer::start(&[1, 0]).unwrap()];
     let mut games = [
         Simulation::default(),
         Simulation {
@@ -148,7 +143,7 @@ fn native_desync_halts_before_dispatch_and_preserves_the_first_cause() {
             ..Simulation::default()
         },
     ];
-    for _ in 0..50 {
+    for _ in 0..180 {
         transfer(&mut peers);
         for (index, (peer, game)) in peers.iter_mut().zip(&mut games).enumerate() {
             let before = peer.current_frame();

@@ -2,6 +2,7 @@ extends SceneTree
 
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const TARGET_FRAME: int = 48
 const HOLD_TICKS: int = 24
@@ -11,6 +12,16 @@ var _control: bool = false
 class ObservedGame extends Simulation:
 	var at_target: PackedByteArray
 	var wrong_rows: Dictionary = {}
+	var abort_driver: WeakRef
+	var expired_inside_save: bool = false
+
+	func save_state(saved_frame: int, writer: Writer) -> Driver.SaveResult:
+		if abort_driver == null:
+			return super(saved_frame, writer)
+		var owner: Driver = abort_driver.get_ref()
+		owner.terminate()
+		expired_inside_save = writer.write_bytes(PackedByteArray([4])) == Writer.Code.EXPIRED_VIEW
+		return Driver.SaveResult.new(false)
 
 	func simulate_frame(input_frame: int, inputs: Types.FrameInputs) -> bool:
 		if not super(input_frame, inputs):
@@ -79,7 +90,7 @@ func _qualify(addresses: PackedInt32Array) -> bool:
 		var holding: bool = hold_from >= 0 and tick - hold_from < HOLD_TICKS
 		if not holding and not held.is_empty():
 			for packet: Dictionary in held:
-				if not drivers[packet.to].native_backend().receive(packet.from, packet.bytes):
+				if not drivers[packet.to].receive_native(packet.from, packet.bytes):
 					return _failed(addresses, "could not release held packet")
 			held.clear()
 		for endpoint: int in drivers.size():
@@ -106,11 +117,11 @@ func _qualify(addresses: PackedInt32Array) -> bool:
 				if conflict.code != Types.Code.INPUT_ALREADY_SUBMITTED or conflict.frame_after != frame:
 					return _failed(addresses, "conflicting stalled sample was accepted")
 				conflict_checked = true
-			for packet: Dictionary in driver.native_backend().drain_packets():
+			for packet: Dictionary in driver.drain_native_packets():
 				var to: int = packet.endpoint - 1
 				if holding and (to == drivers.size() - 1 or endpoint == drivers.size() - 1):
 					held.append({"to": to, "from": endpoint + 1, "bytes": packet.bytes})
-				elif not drivers[to].native_backend().receive(endpoint + 1, packet.bytes):
+				elif not drivers[to].receive_native(endpoint + 1, packet.bytes):
 					return _failed(addresses, "could not route native packet")
 		if _all_confirmed(drivers, TARGET_FRAME - 1):
 			var restores: int = 0
@@ -127,10 +138,23 @@ func _qualify(addresses: PackedInt32Array) -> bool:
 					return _failed(addresses, "canonical state differs at frame %d (endpoint %d)" % [TARGET_FRAME, endpoint + 1])
 			if restores == 0 or stalls == 0 or not conflict_checked:
 				return _failed(addresses, "missing restore, stall or conflicting-input control")
+			if players == 2 and not _qualify_termination(drivers[0], games[0], tick + 1):
+				return _failed(addresses, "callback termination did not expire the active save view")
 			print("Native driver slots=%s confirmed=%d restores=%d stalls=%d conflicting_sample=rejected sha256=%s" % [
 				addresses, TARGET_FRAME - 1, restores, stalls, _sha256(expected)])
 			return true
 	return _failed(addresses, "confirmation deadline")
+
+
+func _qualify_termination(driver: Driver, game: ObservedGame, now_us: int) -> bool:
+	var before: int = game.frame
+	var retained: Types.InputResult = driver.scheduled_local_input(0)
+	var row: Array[PackedByteArray] = [PackedByteArray() if retained.code == Types.Code.OK else ObservedGame.sample(0, before)]
+	game.abort_driver = weakref(driver)
+	var ended: Driver.StepResult = driver.step_local(now_us, row)
+	var later: Driver.StepResult = driver.step_local(now_us + 1, row)
+	return game.expired_inside_save and ended.reason == Types.Code.TERMINATED and ended.failure_kind == Types.Kind.SAVE \
+		and ended.failure_frame == before and later.frame_after == before and game.frame == before
 
 
 func _all_confirmed(drivers: Array[Driver], frame: int) -> bool:

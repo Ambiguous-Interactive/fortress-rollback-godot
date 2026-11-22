@@ -148,7 +148,7 @@ func _can_change_delay() -> bool:
 		and game.failure.is_empty()
 		and not game.replay_finishing
 		and game.local_slot >= 0
-		and game.native_driver() == null
+		and not game.driver.uses_native_backend()
 		and game.peer.network_status().state == "running"
 		and game.peer.status().lifecycle == Lobby.Match.Types.Lifecycle.RUNNING
 	)
@@ -315,10 +315,10 @@ func _update_status() -> void:
 func diagnostic_report() -> Dictionary:
 	var game: Lobby.Match = controller.game_match
 	var report: Dictionary = game.peer.diagnostics()
-	if game.native_driver() != null:
+	if game.driver.uses_native_backend():
 		var state: Lobby.Match.Types.Status = game.status()
 		report = {"backend": "native", "frame": state.current_frame, "confirmed_frame": state.confirmed_frame,
-			"reason": Lobby.Match.Types.reason_text(state.reason), "terminal_detail": game.native_driver().terminal_detail()}
+			"reason": Lobby.Match.Types.reason_text(state.reason), "terminal_detail": game.driver.native_terminal_detail()}
 	report["engine"] = Engine.get_version_info().string
 	var transport: Dictionary = game.fallback.status()
 	report["transport"] = {"relay_links": transport.relay_peers.size(), "pending_packets": transport.pending_packets, "pending_bytes": transport.pending_bytes}

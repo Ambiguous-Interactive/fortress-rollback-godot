@@ -118,15 +118,26 @@ impl FortressNativeSession {
 
     #[func]
     fn step(&mut self, input: PackedByteArray, game: Gd<Object>) -> i32 {
-        if !self.legacy_peer {
+        if !self.legacy_peer || input.len() != 4 {
             return -1;
         }
-        self.step_roster(input, game)
+        let code = self.step_peer(input, game, false);
+        if code < 0 && self.peer.as_ref().is_some_and(|peer| peer.terminal_reason() == "callback_failed") {
+            self.peer = None;
+            self.legacy_peer = false;
+        }
+        code
     }
 
     #[func]
     fn step_roster(&mut self, inputs: PackedByteArray, game: Gd<Object>) -> i32 {
-        let checksums = !self.legacy_peer;
+        if self.legacy_peer {
+            return -1;
+        }
+        self.step_peer(inputs, game, true)
+    }
+
+    fn step_peer(&mut self, inputs: PackedByteArray, game: Gd<Object>, checksums: bool) -> i32 {
         self.peer.as_mut().map_or(-1, |peer| {
             peer.step(inputs.as_slice(), |requests| {
                 dispatch(requests, game, checksums)

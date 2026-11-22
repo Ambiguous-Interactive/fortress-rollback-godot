@@ -16,6 +16,10 @@ var _status: Types.Status = Types.Status.new()
 var _stats: Types.Statistics = Types.Statistics.new()
 var _retained: PackedByteArray
 var _callback_frame: int
+var _request_frame: int = -1
+var _request_kind: int = -1
+var _active_view: RefCounted
+var _terminal_detail: String
 var _busy: bool = false
 var _last_now: int = -1
 
@@ -44,7 +48,7 @@ func configure(endpoints: PackedInt32Array, game: RefCounted, snapshot_limit: in
 	return Types.Code.OK
 
 
-func step(now_us: int, samples: Array[PackedByteArray]) -> int:
+func _step(now_us: int, samples: Array[PackedByteArray]) -> int:
 	if _busy:
 		return Types.Code.BUSY
 	if _status.lifecycle == Types.Lifecycle.TERMINATED:
@@ -70,9 +74,11 @@ func step(now_us: int, samples: Array[PackedByteArray]) -> int:
 	var code: int = _native.call("step_roster", _retained, self)
 	_busy = false
 	if _status.lifecycle == Types.Lifecycle.TERMINATED:
+		_native = null
 		return _status.reason
 	if code < 0:
-		match terminal_detail():
+		_terminal_detail = _native.call("terminal_reason")
+		match _terminal_detail:
 			"callback_failed":
 				terminate(Types.Code.CALLBACK_FAILED)
 			"desync":
@@ -107,7 +113,7 @@ func interrupted_endpoints() -> PackedInt32Array:
 
 
 func terminal_detail() -> String:
-	return _native.call("terminal_reason") if _native != null and not _busy else ""
+	return _terminal_detail
 
 
 func status() -> Types.Status:
@@ -154,53 +160,77 @@ func terminate(reason: int) -> void:
 	if _status.lifecycle == Types.Lifecycle.RUNNING:
 		_status.lifecycle = Types.Lifecycle.TERMINATED
 		_status.reason = reason if reason != Types.Code.OK else Types.Code.TERMINATED
-		_status.failure_frame = _callback_frame
+		_status.failure_frame = _request_frame if _request_kind >= 0 else _status.current_frame
+		_status.failure_kind = _request_kind
 		_retained.clear()
+		if _active_view != null:
+			_active_view._expire()
+		if not _busy:
+			_native = null
 
 
 # Called synchronously by the native ordered request dispatcher.
 func save_state(frame: int) -> Variant:
-	_status.failure_kind = Types.Kind.SAVE
+	if not _can_dispatch():
+		return null
 	var writer: Writer = Writer.new(_snapshot_limit)
+	_begin_callback(frame, Types.Kind.SAVE, writer)
 	var saved: Variant = _game.save_state(frame, writer)
-	var ok: bool = _save_succeeded.call(saved) and writer.status() == Writer.Code.OK and _status.lifecycle == Types.Lifecycle.RUNNING
+	var ok: bool = _save_succeeded.call(saved) and writer.status() == Writer.Code.OK
 	var bytes: PackedByteArray = writer._written_copy()
-	writer._expire()
-	if ok:
-		_status.failure_kind = -1
+	if _end_callback(ok):
 		return bytes
 	return null
 
 
 func load_state(frame: int, bytes: PackedByteArray) -> bool:
-	_status.failure_kind = Types.Kind.LOAD
+	if not _can_dispatch():
+		return false
 	_callback_frame = frame
 	var reader: Reader = Reader.new(bytes, true)
+	_begin_callback(frame, Types.Kind.LOAD, reader)
 	var loaded: Variant = _game.load_state(frame, reader)
-	var ok: bool = loaded is bool and loaded and reader.is_complete() and _status.lifecycle == Types.Lifecycle.RUNNING
-	reader._expire()
-	if ok:
-		_status.failure_kind = -1
-		_stats.rollback_count += 1
-		_stats.last_rollback_depth = _status.current_frame - frame
-		_stats.max_rollback_depth = maxi(_stats.max_rollback_depth, _stats.last_rollback_depth)
-	return ok
+	if not _end_callback(loaded is bool and loaded and reader.is_complete()):
+		return false
+	_stats.rollback_count += 1
+	_stats.last_rollback_depth = _status.current_frame - frame
+	_stats.max_rollback_depth = maxi(_stats.max_rollback_depth, _stats.last_rollback_depth)
+	return true
 
 
 func advance_game(bytes: PackedByteArray, statuses: PackedByteArray) -> bool:
-	_status.failure_kind = Types.Kind.ADVANCE
+	if not _can_dispatch():
+		return false
 	var samples: Array[PackedByteArray] = []
 	var mapped: PackedInt32Array = PackedInt32Array()
 	for slot: int in statuses.size():
 		samples.append(bytes.slice(slot * INPUT_BYTES, (slot + 1) * INPUT_BYTES))
 		mapped.append(statuses[slot] + Types.Queue.Status.CONFIRMED)
 	var view: Types.FrameInputs = Types.FrameInputs.new(samples, mapped)
+	_begin_callback(_callback_frame, Types.Kind.ADVANCE, view)
 	var advanced: Variant = _game.simulate_frame(_callback_frame, view)
-	view._expire()
-	if not (advanced is bool and advanced) or _status.lifecycle != Types.Lifecycle.RUNNING:
+	if not _end_callback(advanced is bool and advanced):
 		return false
 	if _callback_frame < _status.current_frame:
 		_stats.resimulated_frames += 1
 	_callback_frame += 1
-	_status.failure_kind = -1
 	return true
+
+
+func _can_dispatch() -> bool:
+	return _busy and _active_view == null and _status.lifecycle == Types.Lifecycle.RUNNING
+
+
+func _begin_callback(frame: int, kind: int, view: RefCounted) -> void:
+	_request_frame = frame
+	_request_kind = kind
+	_active_view = view
+
+
+func _end_callback(ok: bool) -> bool:
+	_active_view._expire()
+	_active_view = null
+	if ok and _status.lifecycle == Types.Lifecycle.RUNNING:
+		_request_kind = -1
+		return true
+	return false
