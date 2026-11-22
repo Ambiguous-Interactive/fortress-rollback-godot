@@ -26,6 +26,11 @@ def install_package(project, archive_path, target):
     manifest = addon / "fortress.template"
     native = CACHE / "target/gdextension"
     libraries = {f"{HOST}.{ARCH}": native / "release" / LIB}
+    if target == "macos":
+        fat = project.parent / LIB
+        subprocess.run(["lipo", "-create", native / "release" / LIB,
+                        native / f"x86_64-apple-darwin/release/{LIB}", "-output", fat], check=True, timeout=30)
+        libraries = {"macos": fat}
     if target == "windows" and HOST != "windows":
         libraries["windows.x86_64"] = native / f"x86_64-pc-windows-gnu/release/{STEM}.dll"
     if target == "web":
@@ -124,7 +129,13 @@ def main():
         probe.unlink()
         for command in (["--import"], ["--export-release", name, staged / artifact]):
             proc = subprocess.run(base + command, capture_output=True, text=True, timeout=180)
-            if proc.returncode or "ERROR:" in proc.stdout + proc.stderr:
+            errors = [line for line in (proc.stdout + proc.stderr).splitlines() if "ERROR:" in line]
+            if HOST == "windows":
+                # Godot 4.3 reports optional PDB copy failures when loading an editor DLL.
+                errors = [line for line in errors if not (
+                    line.startswith("ERROR: File '") and line.endswith(f"/{STEM}.pdb' does not exist.")
+                )]
+            if proc.returncode or errors:
                 raise RuntimeError(proc.stdout + proc.stderr)
         if args.target == "ios":
             subprocess.run(["xcodebuild", "-project", staged / artifact, "-scheme", "witness",

@@ -73,6 +73,8 @@ def main():
         for abi in ("aarch64-linux-android", "x86_64-linux-android"):
             env["CARGO_TARGET_" + abi.replace("-", "_").upper() + "_LINKER"] = str(ndk / f"{abi}24-clang")
             subprocess.run(cargo + ["--target", abi, "--lib"], check=True, env=env)
+    if target == "macos":
+        subprocess.run(cargo + ["--target", "x86_64-apple-darwin", "--lib"], check=True, env=env)
     if target == "ios":
         for abi in ("aarch64-apple-ios", "aarch64-apple-ios-sim"):
             subprocess.run(cargo + ["--target", abi, "--lib"], check=True, env=env)
