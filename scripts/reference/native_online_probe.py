@@ -106,10 +106,8 @@ def play_cells(cells, export, environment, server_source, server_binary, output)
 
 
 def main():
-    manifest = load_manifest()
-    versions = (manifest['godot']['minimum'], manifest['godot']['current_stable'])
     parser = ReceiptParser(description=__doc__, receipt=REPORT)
-    parser.add_argument('--version', choices=versions, default=versions[-1])
+    parser.add_argument('--version', help='pinned Godot version, defaults to current stable')
     parser.add_argument('--cell', action='append', choices=CELLS)
     parser.add_argument('--cache', type=Path, default=ROOT / '.cache/reference')
     parser.add_argument('--addon', type=Path, required=True, help='locally built Web addon archive for this revision')
@@ -120,6 +118,12 @@ def main():
     logs += ['mesh-server.log', 'relay-server.log', 'import.log', 'export.log', 'version.log', 'tls.log']
     begin_results(output, REPORT, logs)
     receipt = output / REPORT
+    manifest = load_manifest()
+    versions = (manifest['godot']['minimum'], manifest['godot']['current_stable'])
+    if args.version is None:
+        args.version = versions[-1]
+    elif args.version not in versions:
+        parser.error(f'--version must be one of {", ".join(versions)}')
     environment = os.environ.copy()
     for variable in ('FORTRESS_PLAYWRIGHT_PACKAGE', 'FORTRESS_CHROMIUM_EXECUTABLE'):
         if not environment.get(variable):

@@ -16,6 +16,7 @@ import zipfile
 import urllib.error
 import run as rust_runner
 import godot_smoke as godot_runner
+import native_online_probe as native_online_runner
 
 from fetch import MANIFEST, fetch, load_manifest, sources
 from run import semantic
@@ -295,6 +296,28 @@ class ReferenceContracts(unittest.TestCase):
                     self.assertFalse((results / owned_log).exists(), 'prior runner log survived failed rerun')
                     self.assertEqual((results / other_log).read_text(), 'OTHER_RUNNER')
 
+    def test_native_online_invalidates_receipt_before_manifest_load(self):
+        # Value: a missing or malformed pins file cannot leave a stale browser qualification result.
+        for error in (FileNotFoundError, json.JSONDecodeError):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                manifest = root / 'pins.json'
+                if error is json.JSONDecodeError:
+                    manifest.write_text('{', encoding='utf-8')
+                report = root / native_online_runner.REPORT
+                log = root / 'mesh-2.log'
+                other_log = root / 'unrelated.log'
+                report.write_text('{"passed": true}', encoding='utf-8')
+                log.write_text('old result', encoding='utf-8')
+                other_log.write_text('unrelated', encoding='utf-8')
+                argv = ['runner', '--addon', str(root / 'addon.zip'), '--output', str(root)]
+                with patch.object(sys, 'argv', argv), patch.object(native_online_runner, 'load_manifest', side_effect=lambda: load_manifest(manifest)):
+                    with self.assertRaises(error):
+                        native_online_runner.main()
+                self.assertFalse(report.exists(), 'stale success survived the manifest failure')
+                self.assertFalse(log.exists(), 'old browser log survived the manifest failure')
+                self.assertEqual(other_log.read_text(encoding='utf-8'), 'unrelated')
+
     def test_rejected_launcher_arguments_invalidate_only_the_selected_receipt(self):
         # Launcher: receipt, default output under the copied cache, fixed output. The copy keeps real cache receipts untouched.
         launchers = {'reference/package_audit.py': ('package-audit.json', None, False),
@@ -302,6 +325,7 @@ class ReferenceContracts(unittest.TestCase):
                      'reference/signalfish_probe.py': ('signalfish-sdk.json', None, False),
                      'reference/signalfish_build_server.py': ('build-receipt.json', None, False),
                      'reference/signalfish_webrtc_probe.py': ('signalfish-webrtc.json', None, False),
+                     'reference/native_online_probe.py': ('native-online.json', None, False),
                      'reference/run.py': ('rust-baseline.json', 'results', False),
                      'oracle/launch.py': ('receipt.json', 'results/oracle', False),
                      'oracle/p2p_launch.py': ('receipt.json', 'results/p2p-oracle', False),
@@ -321,7 +345,8 @@ class ReferenceContracts(unittest.TestCase):
             selected, other = root / 'selected', root / 'other'
             webrtc = ['--server', 'x', '--server-source', 'x', '--build-receipt', 'x', '--online-example', '--browser-pair', 'firefox']
             validation = {'oracle/launch.py': (['--godot', 'godot', '--jobs', '9'], 'receipt.json'),
-                          'reference/signalfish_webrtc_probe.py': (webrtc, 'online-example.json')}
+                          'reference/signalfish_webrtc_probe.py': (webrtc, 'online-example.json'),
+                          'reference/native_online_probe.py': (['--addon', 'unused.zip', '--version', 'unknown'], 'native-online.json')}
             for launcher, (receipt, default, fixed) in launchers.items():
                 default = default and root / '.cache/reference' / default
                 chosen = (lambda directory: default) if fixed else (lambda directory: directory)

@@ -14,10 +14,16 @@ class ObservedGame extends Simulation:
 	var wrong_rows: Dictionary = {}
 	var abort_driver: WeakRef
 	var expired_inside_save: bool = false
+	var aborted_save_frame: int = -1
+	var aborted_save_state: PackedByteArray
+	var aborted_save_calls: int = 0
 
 	func save_state(saved_frame: int, writer: Writer) -> Driver.SaveResult:
 		if abort_driver == null:
 			return super(saved_frame, writer)
+		aborted_save_frame = saved_frame
+		aborted_save_state = canonical_bytes()
+		aborted_save_calls += 1
 		var owner: Driver = abort_driver.get_ref()
 		owner.terminate()
 		expired_inside_save = writer.write_bytes(PackedByteArray([4])) == Writer.Code.EXPIRED_VIEW
@@ -57,13 +63,13 @@ func _initialize() -> void:
 		if not _qualify(addresses):
 			quit(1)
 			return
-	if not _qualify(PackedInt32Array([1, 1, 1, 1, 1, 1, 1, 2])):
+	if not _qualify(PackedInt32Array([1, 1, 1, 1, 1, 1, 1, 2])) or not _qualify(PackedInt32Array([1, 2]), true):
 		quit(1)
 		return
 	quit(0)
 
 
-func _qualify(addresses: PackedInt32Array) -> bool:
+func _qualify(addresses: PackedInt32Array, abort_on_correction: bool = false) -> bool:
 	var players: int = addresses.size()
 	var drivers: Array[Driver] = []
 	var games: Array[ObservedGame] = []
@@ -93,6 +99,10 @@ func _qualify(addresses: PackedInt32Array) -> bool:
 				if not drivers[packet.to].receive_native(packet.from, packet.bytes):
 					return _failed(addresses, "could not release held packet")
 			held.clear()
+			if abort_on_correction:
+				if not _qualify_termination(drivers[0], games[0], tick):
+					return _failed(addresses, "callback termination during correction")
+				return true
 		for endpoint: int in drivers.size():
 			var driver: Driver = drivers[endpoint]
 			var frame: int = driver.status().current_frame
@@ -124,6 +134,8 @@ func _qualify(addresses: PackedInt32Array) -> bool:
 				elif not drivers[to].receive_native(endpoint + 1, packet.bytes):
 					return _failed(addresses, "could not route native packet")
 		if _all_confirmed(drivers, TARGET_FRAME - 1):
+			if abort_on_correction:
+				return _failed(addresses, "no held packets released for corrective termination")
 			var restores: int = 0
 			var stalls: int = 0
 			for endpoint: int in drivers.size():
@@ -138,8 +150,6 @@ func _qualify(addresses: PackedInt32Array) -> bool:
 					return _failed(addresses, "canonical state differs at frame %d (endpoint %d)" % [TARGET_FRAME, endpoint + 1])
 			if restores == 0 or stalls == 0 or not conflict_checked:
 				return _failed(addresses, "missing restore, stall or conflicting-input control")
-			if players == 2 and not _qualify_termination(drivers[0], games[0], tick + 1):
-				return _failed(addresses, "callback termination did not expire the active save view")
 			print("Native driver slots=%s confirmed=%d restores=%d stalls=%d conflicting_sample=rejected sha256=%s" % [
 				addresses, TARGET_FRAME - 1, restores, stalls, _sha256(expected)])
 			return true
@@ -147,14 +157,28 @@ func _qualify(addresses: PackedInt32Array) -> bool:
 
 
 func _qualify_termination(driver: Driver, game: ObservedGame, now_us: int) -> bool:
-	var before: int = game.frame
+	var before: Types.Status = driver.status()
+	var frontier: int = before.current_frame
 	var retained: Types.InputResult = driver.scheduled_local_input(0)
-	var row: Array[PackedByteArray] = [PackedByteArray() if retained.code == Types.Code.OK else ObservedGame.sample(0, before)]
+	var row: Array[PackedByteArray] = [PackedByteArray() if retained.code == Types.Code.OK else ObservedGame.sample(0, frontier)]
 	game.abort_driver = weakref(driver)
 	var ended: Driver.StepResult = driver.step_local(now_us, row)
 	var later: Driver.StepResult = driver.step_local(now_us + 1, row)
-	return game.expired_inside_save and ended.reason == Types.Code.TERMINATED and ended.failure_kind == Types.Kind.SAVE \
-		and ended.failure_frame == before and later.frame_after == before and game.frame == before
+	var after: Types.Status = driver.status()
+	var saved: int = game.aborted_save_frame
+	if saved < 0 or saved >= frontier or game.aborted_save_calls != 1 or not game.expired_inside_save:
+		return false
+	if game.frame != saved or game.canonical_bytes() != game.aborted_save_state:
+		return false
+	for result: Driver.StepResult in [ended, later]:
+		if result.code != Types.Code.TERMINATED or result.reason != Types.Code.TERMINATED or result.failure_kind != Types.Kind.SAVE:
+			return false
+		if result.failure_frame != saved or result.frame_before != frontier or result.frame_after != frontier:
+			return false
+	if after.lifecycle != Types.Lifecycle.TERMINATED or after.current_frame != frontier or after.confirmed_frame != before.confirmed_frame:
+		return false
+	print("Native driver corrective termination save=%d frontier=%d writer_expired=true" % [saved, frontier])
+	return true
 
 
 func _all_confirmed(drivers: Array[Driver], frame: int) -> bool:
