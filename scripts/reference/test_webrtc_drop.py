@@ -397,6 +397,17 @@ class CommitLossEvidence(unittest.TestCase):
         quick = copy.deepcopy(original)
         proposer(quick)['commit_delay_us'] = 1
         self.assertIs(validate_drop_browser(quick, commit_loss=True), quick)
+        nonzero = copy.deepcopy(original)
+        connection = changed(32, b'\x7f' * 8)
+        proposer(nonzero).update(commit_first=connection, commit_retry=connection)
+        self.assertIs(validate_drop_browser(nonzero, commit_loss=True), nonzero)
+        wrong_coordinator = copy.deepcopy(original)
+        proposer(wrong_coordinator)['coordinator'] = 1
+        follower(wrong_coordinator)['coordinator'] = 1
+        coordinator_packet = commit_packet(proposer(wrong_coordinator))
+        proposer(wrong_coordinator).update(commit_first=coordinator_packet, commit_retry=coordinator_packet)
+        with self.assertRaisesRegex(ValueError, 'lost-commit'):
+            validate_drop_browser(wrong_coordinator, commit_loss=True)
         for replacement in (False, 1, None):
             value = copy.deepcopy(original)
             value['dropCommit'] = replacement

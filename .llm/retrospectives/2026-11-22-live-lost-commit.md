@@ -28,6 +28,7 @@
 | 8 | The row's acknowledgement lists were read before the final confirmation wait, which services transport, so an acknowledgement arriving during that wait could be missing. | review | CodeRabbit round 1; the row refreshes both lists after the wait |
 | 9 | The packet parser bound the identity fields but not the rest of the fixed COMMIT body, so `witnessed=2`, `chunk_count=65`, nonzero reserved bytes or a negative bound/capacity passed even though the codec rejects them. | review | adversarial round 2; each malformed body control now fails |
 | 10 | The follower row was never cross-checked against the proposer's operation, session, roster, coordinator or target fields. | review | adversarial round 2; a follower with another operation/session/roster/target now fails |
+| 11 | The proposer's declared coordinator was never required to equal its own slot, so a receipt could name a packet sender that was not the coordinator. | review | OpenAI round 3; the coordinator-slot mutation now fails a `commit_packet` rebuilt with the same wrong coordinator |
 
 ## Actions Taken
 
@@ -45,6 +46,8 @@
 | 10 | Validate the complete fixed COMMIT body: reason/reserved zero, nonnegative bound and capacity, chunk index zero, chunk count at most 64, witnessed zero. | `webrtc_drop.py` | seven malformed-body controls fail; the live 109-byte packet passes |
 | 11 | Cross-check the follower's operation, coordinator, generations, session, roster and target digest against the proposer, and type-check the packet's identity fields. | `webrtc_drop.py` | nine follower-identity and type controls fail; the live packet passes |
 | 12 | Add a positive high-retry receipt so a future reintroduced cap is red. | `test_webrtc_drop.py` | `commit_resends=1000` validates; zero fails |
+| 13 | Require the proposer's coordinator slot to equal its own slot. | `webrtc_drop.py`, `test_webrtc_drop.py` | a rebuilt packet with coordinator 1 beside proposer slot 0 fails |
+| 14 | Keep the 8-byte connection ID opaque, as the codec does, and prove a nonzero one passes. | `test_webrtc_drop.py` | an all-`7f` connection ID validates; the header's real reserved byte stays pinned by the magic |
 
 ## Prune Ledger
 

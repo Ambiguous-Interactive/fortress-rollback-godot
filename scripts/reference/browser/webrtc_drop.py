@@ -591,7 +591,8 @@ def _validate_commit_loss(survivors):
             or type(proposer.get('commit_delay_us')) is not int
             or proposer['commit_delay_us'] < _COMMIT_MIN_DELAY_US
             or any(type(proposer.get(field)) is not int
-                   for field in ('coordinator', 'coordinator_generation', 'target_generation', 'departing_slot'))
+                   for field in ('slot', 'coordinator', 'coordinator_generation', 'target_generation', 'departing_slot'))
+            or proposer.get('slot') != proposer.get('coordinator')
             or any(not isinstance(proposer.get(field), str) or not re.fullmatch(r'[0-9a-f]{16}', proposer[field])
                    for field in ('target_set_digest', 'digest', 'roster_digest'))
             or not isinstance(proposer.get('session_id'), str) or not re.fullmatch(r'[0-9a-f]{32}', proposer['session_id'])
