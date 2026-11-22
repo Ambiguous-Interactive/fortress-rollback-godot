@@ -1,6 +1,9 @@
 """Simulator and attached-device support for the mixed-peer witness."""
 import os
 import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 BUNDLE = "org.fortress.witness"
 PORT = 45872
@@ -45,7 +48,19 @@ def launch(stack, device, artifact):
         stack.callback(run, "adb", "shell", "am", "force-stop", BUNDLE)
     else:
         udid = os.environ.get("SIMULATOR_UDID", "booted")
+        logs = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        stdout, stderr = logs / "console.log", logs / "error.log"
+
+        def report_logs():
+            for path in (stdout, stderr):
+                if path.is_file():
+                    print(path.read_text(errors="replace")[-8000:], file=sys.stderr, flush=True)
+
+        stack.callback(report_logs)
+        print(f"Installing {artifact.name} on iOS simulator {udid}", file=sys.stderr, flush=True)
         run("xcrun", "simctl", "install", udid, artifact)
-        run("xcrun", "simctl", "launch", "--terminate-running-process", udid, BUNDLE)
+        print(f"Launching {BUNDLE} on iOS simulator {udid}", file=sys.stderr, flush=True)
+        run("xcrun", "simctl", "launch", "--terminate-running-process",
+            f"--stdout={stdout}", f"--stderr={stderr}", udid, BUNDLE)
         # The witness can already have quit after delivering its last report.
         stack.callback(subprocess.run, ["xcrun", "simctl", "terminate", udid, BUNDLE], timeout=15)

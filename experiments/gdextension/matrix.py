@@ -14,19 +14,25 @@ def main():
     options = parser.parse_args().options
     if options[:1] == ["--"]:
         options = options[1:]
+    timeout = 360 if "--device" in options else 90
     receipts = []
     for slot, control in [(0, "none"), (1, "none"), (0, "restore"), (0, "encoding")]:
         command = [sys.executable, HERE / "qualify.py", *options, "--slot", str(slot), "--control", control]
-        proc = subprocess.run(command, text=True, capture_output=True, timeout=90)
+        try:
+            proc = subprocess.run(command, text=True, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            diagnostic = (exc.stderr or b"").decode(errors="replace")
+            raise RuntimeError(f"{control} control timed out for slot {slot}: {diagnostic[-8000:]}") from exc
         if control == "none":
             if proc.returncode:
-                raise RuntimeError(proc.stderr[-2000:])
+                raise RuntimeError(proc.stderr[-8000:])
             receipt = json.loads(proc.stdout.splitlines()[-1])
         else:
-            diagnostic = proc.stderr.splitlines()[-1]
+            diagnostics = proc.stderr.splitlines()
+            diagnostic = diagnostics[-1] if diagnostics else ""
             expected = "restored state differs at observed frame " if control == "restore" else "input encoding differs at frame 0"
             if proc.returncode != 1 or not diagnostic.startswith(expected):
-                raise RuntimeError(f"{control} control: {proc.returncode}, {proc.stderr[-2000:]}")
+                raise RuntimeError(f"{control} control: {proc.returncode}, {proc.stderr[-8000:]}")
             receipt = {"rejected": diagnostic}
         receipts.append({"slot": slot, "control": control, **receipt})
     print(json.dumps(receipts))

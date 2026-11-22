@@ -70,8 +70,15 @@ jobs:
       - name: Install the Intel macOS target
         if: matrix.target == 'macos'
         run: rustup target add x86_64-apple-darwin
-      - name: Build the ARM64 iOS simulator engine
+      - name: Restore the ARM64 iOS simulator engine
         if: matrix.target == 'ios'
+        id: simulator-engine
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}/godot-ios-simulator.a
+          key: godot-ios-simulator-arm64-${{ matrix.version }}-${{ hashFiles('.github/workflows/gdextension-experiment.yml') }}
+      - name: Build the ARM64 iOS simulator engine
+        if: matrix.target == 'ios' && steps.simulator-engine.outputs.cache-hit != 'true'
         run: |
           case "${{ matrix.version }}" in
             4.3) rev=77dcf97d82cbfe4e4615475fa52ca03da645dbd8; extra_flags=(cxxflags=-Wno-module-import-in-extern-c) ;;
@@ -85,7 +92,13 @@ jobs:
           scons -C "$engine" -j3 platform=ios target=template_release arch=arm64 ios_simulator=yes vulkan=no "${extra_flags[@]}"
           lib="$engine/bin/libgodot.ios.template_release.arm64.simulator.a"
           test "$(lipo -archs "$lib")" = arm64
-          echo "FORTRESS_IOS_SIMULATOR_LIB=$lib" >> "$GITHUB_ENV"
+          cp "$lib" "$RUNNER_TEMP/godot-ios-simulator.a"
+      - name: Save the ARM64 iOS simulator engine
+        if: matrix.target == 'ios' && steps.simulator-engine.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}/godot-ios-simulator.a
+          key: ${{ steps.simulator-engine.outputs.cache-primary-key }}
       - name: Boot an iOS simulator
         if: matrix.target == 'ios'
         run: |
@@ -96,6 +109,9 @@ jobs:
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
           echo "SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+          lib="$RUNNER_TEMP/godot-ios-simulator.a"
+          test "$(lipo -archs "$lib")" = arm64
+          echo "FORTRESS_IOS_SIMULATOR_LIB=$lib" >> "$GITHUB_ENV"
       - name: Prepare the single-threaded Web build
         if: matrix.target == 'web'
         run: |
