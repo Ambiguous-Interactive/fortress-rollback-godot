@@ -174,6 +174,17 @@ def check_encoding(scope_files: list[Path], root: Path) -> list[Finding]:
                     f"(found trailing blank lines)",
                 )
             )
+        elif data.endswith(b"\n"):
+            final_line = data[:-1].rsplit(b"\n", 1)[-1]
+            if final_line and not final_line.strip(b" \t"):
+                findings.append(
+                    Finding(
+                        "error",
+                        path,
+                        f"{rel}: must end with exactly one LF "
+                        f"(found a whitespace-only final line)",
+                    )
+                )
     return findings
 
 

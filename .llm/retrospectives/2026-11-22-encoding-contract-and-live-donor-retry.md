@@ -24,6 +24,7 @@
 | 7 | The coordinated-drop PLAN row is a remaining-outcome map, not a status log. Adding `donor-retry fence witnessed` duplicated the live status that `docs/peer-lifecycle.md` already owns, so the row keeps only the remaining pinned comparison and schedules. | review | CodeRabbit inline on `PLAN.md:94`; the row was reverted while the lifecycle doc keeps the witness status |
 | 8 | A non-UTF-8 harness file crashed `check_pointers`, `check_context` or `check_links` before the encoding finding could print. The content checks must read through a helper that yields no text on a decode failure, leaving the named encoding error authoritative. | review | adversarial round 1 finding 1; invalid UTF-8 in `.llm/context.md` now reports `not valid UTF-8` instead of a traceback |
 | 9 | The walk included editor artifacts and missed `PLAN.md`/`GOAL.md`. A text-suffix allowlist keeps `.DS_Store` and `notes.md.bak` out, while the two root contracts join the scope; the `__pycache__` filter now inspects the path below `.llm` rather than every ancestor. | review | adversarial round 1 findings 2, 4 and 5; new self-tests cover artifacts, both root files and a checkout below a `__pycache__` directory |
+| 10 | A final line containing only spaces or tabs is a second, whitespace-only line even though the bytes end in a single `\n`. The check must look at the final line's content, not only an adjacent `\n\n`. | review | OpenAI inline on re-review; `.llm/context.md` with `text\n \n` now reports `found a whitespace-only final line`; `.gd` space/tab cases added |
 
 Advisory, not fixed: a symlinked directory under `.llm` is not traversed, and
 a NUL byte is valid UTF-8 so it is not rejected. Neither shape exists in the
@@ -48,6 +49,7 @@ witness, not a correction to this one.
 | 5 | Require the drop count, chunk zero, its operation/count and a later chunk-zero resend beside the installed interval. | `scripts/reference/browser/webrtc_drop.py`, `test_webrtc_drop.py` | 22/22 mutations rejected; 40 reference tests pass |
 | 6 | State the donor-driven resend in the probe limits, lifecycle docs and knowledge; keep PLAN status-free. | `signalfish_webrtc_probe.py`, `docs/peer-lifecycle.md`, `.llm/knowledge/` | `make lint-llm`, `make lint-source` |
 | 7 | Read content checks through a decode-safe helper so an invalid UTF-8 file names itself instead of crashing. | `scripts/llm/lint_llm_instructions.py` | invalid-UTF-8 self-test; direct run names the file |
+| 9 | Reject a final line that is only spaces or tabs. | `scripts/llm/lint_llm_instructions.py` | `.gd` space/tab cases; direct run names the file |
 | 8 | Make `validate_skill_dir` return a named error for invalid UTF-8, so the index and stub generators do not crash before the meta-lint. | `scripts/llm/llm_frontmatter.py` | invalid `SKILL.md`: index and stubs exit 1 with `zz-bad: SKILL.md is not valid UTF-8` |
 
 ## Prune Ledger

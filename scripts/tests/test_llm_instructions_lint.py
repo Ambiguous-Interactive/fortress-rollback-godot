@@ -128,6 +128,8 @@ class MetaLintTest(unittest.TestCase):
             "double": (b"extends Node\n\n", True),
             "bom": (b"\xef\xbb\xbfextends Node\n", True),
             "crlf": (b"extends Node\r\n", True),
+            "space": (b"extends Node\n \n", True),
+            "tab": (b"extends Node\n\t\n", True),
         }
         for name, (data, broken) in cases.items():
             with self.subTest(name=name):
