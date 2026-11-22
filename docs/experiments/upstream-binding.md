@@ -27,6 +27,13 @@ The iOS addon contains ARM64 device and simulator slices. The stock Godot simula
 compiles an ARM64 engine from each pinned revision and supplies that simulator library to the exported Xcode project.
 [Hosted qualification and artifacts](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45000317676)
 
+For a local iOS simulator run, use Apple Silicon macOS with Xcode and a booted iPhone simulator.
+Use the workflow's `Build the ARM64 iOS simulator engine` step to build the static library for the Godot pin and export its path as `FORTRESS_IOS_SIMULATOR_LIB`.
+Install the Rust targets `aarch64-apple-ios` and `aarch64-apple-ios-sim`, then run the same platform script with `ios`.
+The script uses the booted simulator by default. Set `SIMULATOR_UDID` when several simulators are available.
+This test uses an unsigned simulator app. Device signing and App Store installation are separate release checks.
+[Simulator build and test commands](../../.github/workflows/gdextension-experiment.yml)
+
 ## Performance
 
 Headless Linux ARM64 measurements used the same four-byte inputs, 4096-byte snapshots and two-frame forced rewind for each backend.
