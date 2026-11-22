@@ -21,6 +21,7 @@
 | 4 | Arming both survivors is safe because only the selected donor publishes `BACKFILL`/`HISTORY` bytes. Binding the count to the row whose slot equals `history_donor` removes the page/slot assumption entirely. | design | four live cells: donor row `history_dropped: 1`, proposer row `history_installed: true` |
 | 5 | A whole-carrier drop at the real send boundary proves a retry only if the packet is the donor's first history chunk: the transfer cursor reaches the journal end, the retry window expires, and the donor resends from zero. A drop counted after installation would prove nothing. | design | `arm_history_drop` decrements on the first outgoing `BACKFILL`/`HISTORY` packet; the recipient row shows `history_installed: true` only with the donor count at 1 |
 | 6 | The pre-fix validator accepted every new donor-retry mutation, including a fabricated count and a missing field. The mutation table must run against the old module to prove the new requirement binds. | review | `PRE-FIX validator accepted 5/5`; post-fix rejects all five with `peer-drop live missing-history donor retry incomplete` |
+| 7 | The coordinated-drop PLAN row is a remaining-outcome map, not a status log. Adding `donor-retry fence witnessed` duplicated the live status that `docs/peer-lifecycle.md` already owns, so the row keeps only the remaining pinned comparison and schedules. | review | CodeRabbit inline on `PLAN.md:94`; the row was reverted while the lifecycle doc keeps the witness status |
 
 ## Actions Taken
 
@@ -31,7 +32,7 @@
 | 3 | Add missing-LF, double-LF and code-sample self-tests. | `scripts/tests/test_llm_instructions_lint.py` | 14 tests pass; pre-fix run had 3 failures |
 | 4 | Withhold the donor's first retained-history chunk on the real link. | `scripts/reference/browser/webrtc_setup.gd`, `webrtc_drop.gd` | live Chromium/Firefox on 4.3 and 4.7.2 |
 | 5 | Require the donor drop count beside the installed interval. | `scripts/reference/browser/webrtc_drop.py`, `test_webrtc_drop.py` | 5/5 mutations rejected; 40 reference tests pass |
-| 6 | State the retry in the probe limits, lifecycle docs, PLAN and knowledge. | `signalfish_webrtc_probe.py`, `docs/peer-lifecycle.md`, `PLAN.md`, `.llm/knowledge/` | `make lint-llm`, `make lint-source` |
+| 6 | State the retry in the probe limits, lifecycle docs and knowledge; keep PLAN status-free. | `signalfish_webrtc_probe.py`, `docs/peer-lifecycle.md`, `.llm/knowledge/` | `make lint-llm`, `make lint-source` |
 
 ## Prune Ledger
 
