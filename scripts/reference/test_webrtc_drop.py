@@ -249,6 +249,81 @@ def lost_evidence():
     return value
 
 
+def commit_evidence():
+    value = evidence()
+    value['dropCommit'] = True
+    proposer = value['records'][0]['peers'][0]['result']['records'][0]
+    follower = value['records'][0]['peers'][1]['result']['records'][0]
+    payload = '46524750' + 'ab' * 120
+    operation = 9
+    proposer.update(operation=operation, commit_dropped=1, commit_resends=1, commit_operation=operation,
+                    commit_cut=proposer['freeze_frame'], commit_digest=proposer['digest'],
+                    commit_slot=follower['slot'], commit_first=payload, commit_retry=payload,
+                    commit_delay_us=50000, acknowledged_peers=[hashlib.sha256(follower['uuid'].encode('ascii')).digest()[:8].hex()],
+                    commit_ack_peers=[])
+    follower.update(operation=operation, commit_dropped=0, commit_resends=0, commit_operation=-1,
+                    commit_cut=-1, commit_digest='0000000000000000', commit_slot=-1,
+                    commit_first='', commit_retry='', commit_delay_us=-1,
+                    acknowledged_peers=[], commit_ack_peers=[])
+    return value
+
+
+class CommitLossEvidence(unittest.TestCase):
+    def test_live_lost_commit_requires_exact_later_retry(self):
+        original = commit_evidence()
+        self.assertIs(validate_drop_browser(original, commit_loss=True), original)
+        proposer = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
+        follower = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
+        payload = proposer(original)['commit_first']
+        mutations = [
+            lambda value: proposer(value).update(commit_dropped=0),
+            lambda value: proposer(value).update(commit_dropped=2),
+            lambda value: proposer(value).update(commit_dropped=True),
+            lambda value: proposer(value).update(commit_resends=0),
+            lambda value: proposer(value).update(commit_resends=81),
+            lambda value: proposer(value).update(commit_resends=True),
+            lambda value: proposer(value).update(commit_operation=8),
+            lambda value: proposer(value).update(commit_operation=True),
+            lambda value: proposer(value).update(commit_cut=4),
+            lambda value: proposer(value).update(commit_cut=True),
+            lambda value: proposer(value).update(commit_digest='00' * 8),
+            lambda value: proposer(value).update(commit_slot=proposer(value)['slot']),
+            lambda value: proposer(value).update(commit_slot=True),
+            lambda value: proposer(value).update(commit_delay_us=39999),
+            lambda value: proposer(value).update(commit_delay_us=4000001),
+            lambda value: proposer(value).update(commit_delay_us=True),
+            lambda value: proposer(value).update(commit_first=payload[:-2]),
+            lambda value: proposer(value).update(commit_first=payload + '00'),
+            lambda value: proposer(value).update(commit_first='f' * 201),
+            lambda value: proposer(value).update(commit_first='AB' * 120),
+            lambda value: proposer(value).update(commit_retry=payload[:-2]),
+            lambda value: proposer(value).update(commit_retry=True),
+            lambda value: proposer(value).pop('commit_first'),
+            lambda value: proposer(value).update(acknowledged_peers=[]),
+            lambda value: proposer(value).update(acknowledged_peers=None),
+            lambda value: proposer(value).update(acknowledged_peers=[True]),
+            lambda value: follower(value).update(commit_dropped=1),
+            lambda value: follower(value).update(commit_resends=1),
+            lambda value: follower(value).update(commit_first=payload),
+            lambda value: follower(value).update(commit_delay_us=50000),
+        ]
+        for mutation in mutations:
+            value = copy.deepcopy(original)
+            mutation(value)
+            with self.subTest(mutation=mutations.index(mutation)), self.assertRaisesRegex(ValueError, 'lost-commit'):
+                validate_drop_browser(value, commit_loss=True)
+        for replacement in (False, 1, None):
+            value = copy.deepcopy(original)
+            value['dropCommit'] = replacement
+            with self.subTest(flag=replacement), self.assertRaisesRegex(ValueError, 'incomplete'):
+                validate_drop_browser(value, commit_loss=True)
+        with self.assertRaisesRegex(ValueError, 'exclusive'):
+            validate_drop_browser(original, commit_loss=True, missing_history=True)
+        without = evidence()
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            validate_drop_browser(without, commit_loss=True)
+
+
 class MissingHistoryEvidence(unittest.TestCase):
     def test_live_missing_history_requires_withholding_and_transfer(self):
         original = missing_evidence()

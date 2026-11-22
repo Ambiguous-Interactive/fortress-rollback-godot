@@ -115,6 +115,7 @@ func run(host: Node, count: int) -> bool:
 	var second_identity: PackedByteArray = host.memberships[0].identity(second_uuid) if not second_uuid.is_empty() else PackedByteArray()
 	var missing_history: bool = bool(JavaScriptBridge.eval("window.fortressDropMissing || false"))
 	var history_lost: bool = bool(JavaScriptBridge.eval("window.fortressDropHistoryLost || false"))
+	var commit_loss: bool = bool(JavaScriptBridge.eval("window.fortressDropCommit || false"))
 	var rollback_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropRollback || false"))
 	var room_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropRoom || false"))
 	var room_continue: bool = bool(JavaScriptBridge.eval("window.fortressDropRoomContinue || false"))
@@ -122,6 +123,12 @@ func run(host: Node, count: int) -> bool:
 	var room_before_drop: bool = bool(JavaScriptBridge.eval("window.fortressDropRoomBeforeDrop || false"))
 	var process_missing: bool = bool(JavaScriptBridge.eval("window.fortressDropProcessMissing || false"))
 	var process_death: bool = bool(JavaScriptBridge.eval("window.fortressDropProcess || false"))
+	if commit_loss:
+		# Only the coordinator publishes COMMIT, so arming every survivor drops
+		# exactly the irreversible phase without assuming which page coordinates.
+		for transport: Variant in host.transports:
+			if transport.has_method("arm_commit_drop"):
+				transport.arm_commit_drop(1)
 	if missing_history:
 		var own_slot: int = host.memberships[0].slot(host.clients[0].get_player_id())
 		var roster: PackedStringArray = host.memberships[0].roster()
@@ -362,6 +369,7 @@ func run(host: Node, count: int) -> bool:
 		elif event.kind == "peer_drop_pending":
 			pending_events += 1
 	var history: Dictionary = host.transports[0].history_report() if host.transports[0].has_method("history_report") else {}
+	var commit: Dictionary = host.transports[0].commit_report() if host.transports[0].has_method("commit_report") else {}
 	var row: Dictionary = {
 		"players": count,
 		"departed": false,
@@ -395,6 +403,15 @@ func run(host: Node, count: int) -> bool:
 		"history_drop_chunk": int(history.get("chunk", -1)),
 		"history_drop_operation": int(history.get("operation", -1)),
 		"history_drop_count": int(history.get("count", 0)),
+		"commit_dropped": int(commit.get("dropped", 0)),
+		"commit_resends": int(commit.get("resends", 0)),
+		"commit_operation": int(commit.get("operation", -1)),
+		"commit_cut": int(commit.get("cut", -1)),
+		"commit_digest": "%016x" % int(commit.get("digest", 0)),
+		"commit_slot": int(commit.get("slot", -1)),
+		"commit_first": str(commit.get("first", "")),
+		"commit_retry": str(commit.get("retry", "")),
+		"commit_delay_us": int(commit.get("delay_us", -1)),
 		"minimum_confirmed": peer.status().confirmed_frame,
 		"canonical_comparisons": 38,
 		"active_comparisons": comparisons,
