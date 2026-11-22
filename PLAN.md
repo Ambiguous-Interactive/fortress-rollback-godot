@@ -69,9 +69,9 @@ mixed-peer rollback and exported package feasibility for a two-player witness.
 owns the transition. The upstream crate will own the rollback engine and wire protocol.
 Godot retains game callbacks, the driver, and transport integration.
 
-Before switching the default, define the supported native API and input schemas,
-qualify the live transports and prebuilt packages, and document migration for
-existing callers, peers, and saved artifacts. Remove each superseded GDScript
+The [migration contract](docs/native-backend-migration.md) records the native
+API, input schemas and migration paths. Qualify the driver, live transports
+and prebuilt packages before switching the default. Remove each superseded GDScript
 runtime path when its replacement passes acceptance. Retain the end-to-end
 tests for supported behavior. The epics below track the existing port until
 their acceptance criteria are met or explicitly superseded.
@@ -106,7 +106,7 @@ already implemented but awaiting closure evidence still belongs to its issue.
 
 | Track | Remaining outcome | Issues |
 | --- | --- | --- |
-| Native backend | Define the release contract, qualify its replacements, then retire duplicate runtime code | [#444](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/444) |
+| Native backend | Qualify the driver, live transports and packages, then retire covered runtime paths | [#444](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/444) |
 | Coordinated drop | Live drop, room, process and commit/acknowledgement loss witnessed; pinned-source comparison and remaining schedules | [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48), [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166), [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188) |
 | Replay and recording | Asymmetric and long recordings, received browser replay downloads, final replay acceptance | [#45](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/45), [#256](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/256), [#290](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/290) |
 | Spectators | Live relay/startup qualification, exported host/viewer recovery, redundant hosts | [#47](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/47), [#131](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/131), [#245](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245), [#49](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/49) |
