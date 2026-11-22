@@ -9,7 +9,7 @@ PORT = 45872
 def options(target, temp):
     if target == "ios":
         return ['application/bundle_identifier="' + BUNDLE + '"', 'application/app_store_team_id="SIMULATOR"',
-                "application/export_project_only=true", "application/generate_simulator_library_if_missing=false"]
+                "application/export_project_only=true", "application/generate_simulator_library_if_missing=true"]
     # Disposable test key. The Android package is only used for local qualification.
     key = temp / "witness.p12"
     subprocess.run(["keytool", "-genkeypair", "-storetype", "PKCS12", "-keystore", key, "-alias", "witness",
