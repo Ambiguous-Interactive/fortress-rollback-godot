@@ -249,6 +249,177 @@ def lost_evidence():
     return value
 
 
+def commit_packet(proposer, roster_digest='0000000000000001'):
+    data = bytes([proposer['departing_slot']]) + proposer['target_generation'].to_bytes(2, 'little')
+    body = bytearray([4, 0, 0, 0])
+    body += proposer['coordinator'].to_bytes(2, 'little')
+    body += proposer['coordinator_generation'].to_bytes(2, 'little')
+    body += proposer['operation'].to_bytes(4, 'little')
+    body += int(proposer['target_set_digest'], 16).to_bytes(8, 'little')
+    body += proposer['freeze_frame'].to_bytes(4, 'little', signed=True)
+    body += (0).to_bytes(4, 'little') + (6).to_bytes(4, 'little')
+    body += int(proposer['digest'], 16).to_bytes(8, 'little')
+    body += (0).to_bytes(4, 'little')
+    body += b'\x00\x00'
+    body += len(data).to_bytes(4, 'little')
+    body += data
+    body += (0).to_bytes(4, 'little')
+    body += int(roster_digest, 16).to_bytes(8, 'little')
+    assert len(body) == 65
+    header = b'FRGP\x03\x00\x0c\x00' + bytes.fromhex(proposer['session_id'])
+    header += hashlib.sha256(proposer['uuid'].encode('ascii')).digest()[:8]
+    header += b'\x01' + b'\x00' * 7 + len(body).to_bytes(4, 'little')
+    return (header + bytes(body)).hex()
+
+
+def commit_evidence():
+    value = evidence()
+    value['dropCommit'] = True
+    proposer = value['records'][0]['peers'][0]['result']['records'][0]
+    follower = value['records'][0]['peers'][1]['result']['records'][0]
+    operation = 9
+    proposer.update(operation=operation, session_id='ab' * 16, coordinator=0, coordinator_generation=0,
+                    target_generation=0, target_set_digest='00' * 8, departing_slot=2,
+                    roster_digest='0000000000000001')
+    follower.update(operation=operation, session_id='ab' * 16, coordinator=0, coordinator_generation=0,
+                    target_generation=0, target_set_digest='00' * 8, departing_slot=2,
+                    roster_digest='0000000000000001')
+    payload = commit_packet(proposer)
+    proposer.update(commit_dropped=1, commit_resends=1, commit_operation=operation,
+                    commit_cut=proposer['freeze_frame'], commit_digest=proposer['digest'],
+                    commit_slot=follower['slot'], commit_first=payload, commit_retry=payload,
+                    commit_retry_slot=follower['slot'], commit_delay_us=50000, acknowledged_peers=[hashlib.sha256(follower['uuid'].encode('ascii')).digest()[:8].hex()],
+                    commit_ack_peers=[])
+    follower.update(commit_dropped=0, commit_resends=0, commit_operation=-1,
+                    commit_cut=-1, commit_digest='0000000000000000', commit_slot=-1, commit_retry_slot=-1,
+                    commit_first='', commit_retry='', commit_delay_us=-1,
+                    acknowledged_peers=[], commit_ack_peers=[])
+    return value
+
+
+class CommitLossEvidence(unittest.TestCase):
+    def test_live_lost_commit_requires_exact_later_retry(self):
+        original = commit_evidence()
+        self.assertIs(validate_drop_browser(original, commit_loss=True), original)
+        proposer = lambda value: value['records'][0]['peers'][0]['result']['records'][0]
+        follower = lambda value: value['records'][0]['peers'][1]['result']['records'][0]
+        payload = proposer(original)['commit_first']
+        other = hashlib.sha256(follower(original)['uuid'].encode('ascii')).digest()[:8].hex()
+        corrupt = payload[:-2] + ('00' if payload[-2:] != '00' else '01')
+
+        def changed(offset, value):
+            data = bytearray.fromhex(payload)
+            data[offset:offset + len(value)] = value
+            return data.hex()
+
+        mutations = [
+            lambda value: proposer(value).update(commit_dropped=0),
+            lambda value: proposer(value).update(commit_dropped=2),
+            lambda value: proposer(value).update(commit_dropped=True),
+            lambda value: proposer(value).update(commit_resends=0),
+            lambda value: proposer(value).update(commit_resends=True),
+            lambda value: proposer(value).update(commit_operation=8),
+            lambda value: proposer(value).update(commit_operation=True),
+            lambda value: proposer(value).update(operation=True, commit_operation=1),
+            lambda value: proposer(value).update(operation=9.0, commit_operation=9),
+            lambda value: proposer(value).update(commit_cut=4),
+            lambda value: proposer(value).update(commit_cut=True),
+            lambda value: proposer(value).update(commit_digest='00' * 8),
+            lambda value: proposer(value).update(commit_slot=proposer(value)['slot']),
+            lambda value: proposer(value).update(commit_slot=True),
+            lambda value: proposer(value).update(commit_retry_slot=proposer(value)['slot']),
+            lambda value: proposer(value).update(commit_retry_slot=True),
+            lambda value: proposer(value).update(commit_delay_us=0),
+            lambda value: proposer(value).update(commit_delay_us=-1),
+            lambda value: proposer(value).update(commit_delay_us=True),
+            lambda value: proposer(value).update(coordinator=True),
+            lambda value: proposer(value).update(coordinator_generation=1.0),
+            lambda value: proposer(value).update(target_generation=1.0),
+            lambda value: proposer(value).update(target_set_digest=0),
+            lambda value: proposer(value).update(session_id='ab'),
+            lambda value: proposer(value).update(commit_first=payload[:-2]),
+            lambda value: proposer(value).update(commit_first=payload + '00'),
+            lambda value: proposer(value).update(commit_first='f' * 201),
+            lambda value: proposer(value).update(commit_first='AB' * 120),
+            lambda value: proposer(value).update(commit_first='00' * 109, commit_retry='00' * 109),
+            lambda value: proposer(value).update(commit_first=corrupt, commit_retry=corrupt),
+            lambda value: proposer(value).update(commit_first='00000000' + payload[8:], commit_retry='00000000' + payload[8:]),
+            lambda value: proposer(value).update(commit_first=changed(46, b'\x01'), commit_retry=changed(46, b'\x01')),
+            lambda value: proposer(value).update(commit_first=changed(47, b'\x01'), commit_retry=changed(47, b'\x01')),
+            lambda value: proposer(value).update(commit_first=changed(68, (-1).to_bytes(4, 'little', signed=True)),
+                                                 commit_retry=changed(68, (-1).to_bytes(4, 'little', signed=True))),
+            lambda value: proposer(value).update(commit_first=changed(72, (-1).to_bytes(4, 'little', signed=True)),
+                                                 commit_retry=changed(72, (-1).to_bytes(4, 'little', signed=True))),
+            lambda value: proposer(value).update(commit_first=changed(84, (1).to_bytes(2, 'little')),
+                                                 commit_retry=changed(84, (1).to_bytes(2, 'little'))),
+            lambda value: proposer(value).update(commit_first=changed(86, (65).to_bytes(2, 'little')),
+                                                 commit_retry=changed(86, (65).to_bytes(2, 'little'))),
+            lambda value: proposer(value).update(commit_first=changed(88, b'\x02'), commit_retry=changed(88, b'\x02')),
+            lambda value: proposer(value).update(commit_first=changed(89, b'\x01'), commit_retry=changed(89, b'\x01')),
+            lambda value: proposer(value).update(commit_retry=payload[:-2]),
+            lambda value: proposer(value).update(commit_retry=True),
+            lambda value: proposer(value).pop('commit_first'),
+            lambda value: proposer(value).update(acknowledged_peers=[]),
+            lambda value: proposer(value).update(acknowledged_peers=[], commit_ack_peers=[other]),
+            lambda value: proposer(value).update(acknowledged_peers=None),
+            lambda value: proposer(value).update(acknowledged_peers=[True]),
+            lambda value: follower(value).update(commit_dropped=1),
+            lambda value: follower(value).update(commit_resends=1),
+            lambda value: follower(value).update(commit_first=payload),
+            lambda value: follower(value).update(commit_retry_slot=0),
+            lambda value: follower(value).update(commit_delay_us=50000),
+            lambda value: follower(value).update(commit_dropped=False),
+            lambda value: follower(value).update(commit_resends=False),
+            lambda value: follower(value).update(commit_operation=-1.0),
+            lambda value: follower(value).update(commit_cut=-1.0),
+            lambda value: follower(value).update(commit_slot=-1.0),
+            lambda value: follower(value).update(commit_retry_slot=-1.0),
+            lambda value: follower(value).update(commit_delay_us=-1.0),
+            lambda value: follower(value).update(commit_digest=''),
+            lambda value: follower(value).update(acknowledged_peers=['x']),
+            lambda value: follower(value).update(commit_ack_peers=['x']),
+            lambda value: follower(value).update(operation=8),
+            lambda value: follower(value).update(roster_digest='0000000000000002'),
+            lambda value: follower(value).update(session_id='cd' * 16),
+            lambda value: follower(value).update(coordinator=1),
+            lambda value: follower(value).update(target_set_digest='0000000000000009'),
+            lambda value: follower(value).update(target_generation=1),
+            lambda value: follower(value).update(departing_slot=1),
+        ]
+        for mutation in mutations:
+            value = copy.deepcopy(original)
+            mutation(value)
+            with self.subTest(mutation=mutations.index(mutation)), self.assertRaises(ValueError):
+                validate_drop_browser(value, commit_loss=True)
+        high = copy.deepcopy(original)
+        proposer(high)['commit_resends'] = 1000
+        self.assertIs(validate_drop_browser(high, commit_loss=True), high)
+        quick = copy.deepcopy(original)
+        proposer(quick)['commit_delay_us'] = 1
+        self.assertIs(validate_drop_browser(quick, commit_loss=True), quick)
+        nonzero = copy.deepcopy(original)
+        connection = changed(32, b'\x7f' * 8)
+        proposer(nonzero).update(commit_first=connection, commit_retry=connection)
+        self.assertIs(validate_drop_browser(nonzero, commit_loss=True), nonzero)
+        wrong_coordinator = copy.deepcopy(original)
+        proposer(wrong_coordinator)['coordinator'] = 1
+        follower(wrong_coordinator)['coordinator'] = 1
+        coordinator_packet = commit_packet(proposer(wrong_coordinator))
+        proposer(wrong_coordinator).update(commit_first=coordinator_packet, commit_retry=coordinator_packet)
+        with self.assertRaisesRegex(ValueError, 'lost-commit'):
+            validate_drop_browser(wrong_coordinator, commit_loss=True)
+        for replacement in (False, 1, None):
+            value = copy.deepcopy(original)
+            value['dropCommit'] = replacement
+            with self.subTest(flag=replacement), self.assertRaisesRegex(ValueError, 'incomplete'):
+                validate_drop_browser(value, commit_loss=True)
+        with self.assertRaisesRegex(ValueError, 'exclusive'):
+            validate_drop_browser(original, commit_loss=True, missing_history=True)
+        without = evidence()
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            validate_drop_browser(without, commit_loss=True)
+
+
 class MissingHistoryEvidence(unittest.TestCase):
     def test_live_missing_history_requires_withholding_and_transfer(self):
         original = missing_evidence()

@@ -188,7 +188,10 @@ acknowledgements remain missing. A survivor repeats its acknowledgement for a
 matching duplicate commit, including after its slot freeze. Acknowledgements
 must match the certified frame and value; once every non-coordinator
 participant acknowledges, commit retries stop. Neither duplicates nor
-acknowledgements freeze the slot again or repeat `peer_dropped`.
+acknowledgements freeze the slot again or repeat `peer_dropped`. The exported
+`peer-drop-commit` cell withholds the first real COMMIT, requires the later
+exact-byte retry, and continues the canonical history after both survivors
+commit ([#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166)).
 
 The barrier refuses a stale operation, a prepare of another connected era, a
 duplicated certificate and a commit that arrives without the local
@@ -314,7 +317,12 @@ and the continuing canonical history. The `peer-drop-missing-lost` cell withhold
 every donor chunk on that same real link for the whole retry window. The barrier
 expires, both survivors terminate with `timeout`, no slot is frozen, the
 recipient never installs the interval, and each survivor compares its pre-cut
-confirmed prefix with independently reconstructed original inputs. Full pinned-source
+confirmed prefix with independently reconstructed original inputs.
+The `peer-drop-commit` cell withholds the coordinator's first COMMIT on the real
+link after certification. The validator requires a later exact-byte retry with a
+positive observed delay, the follower's acknowledgement, and the committed
+canonical continuation; a fabricated drop, an immediate duplicate or a changed
+retry payload fails. Full pinned-source
 trace comparison and the expanded live fault matrix remain in
 [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).

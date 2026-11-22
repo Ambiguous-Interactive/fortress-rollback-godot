@@ -54,7 +54,7 @@ async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly
 
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault,
   disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false, dropClose = false,
-  dropAnswer = false, dropRelay = false, dropMissing = false, dropHistoryLost = false, dropSecond = false, dropRollback = false, dropForeign = false,
+  dropAnswer = false, dropRelay = false, dropMissing = false, dropHistoryLost = false, dropCommit = false, dropSecond = false, dropRollback = false, dropForeign = false,
   dropRoom = false, dropRoomContinue = false, dropProcess = false, dropProcessMissing = false,
   dropRoomAfterDrop = false, dropRoomBeforeDrop = false, recordingPressure = false }) {
   window.fortressRecordingPressure = recordingPressure;
@@ -71,6 +71,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   window.fortressPeerDrop = peerDrop;
   window.fortressDropMissing = dropMissing;
   window.fortressDropHistoryLost = dropHistoryLost;
+  window.fortressDropCommit = dropCommit;
   window.fortressDropSecond = dropSecond;
   window.fortressDropRollback = dropRollback;
   window.fortressDropForeign = dropForeign;
@@ -356,7 +357,7 @@ async function main() {
   const corrupt = process.argv[4] === 'corrupt';
   const defaultFactory = process.argv[4] === 'default';
   const peerDrop = ['peer-drop', 'peer-drop-corrupt', 'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay',
-    'peer-drop-missing', 'peer-drop-missing-lost', 'peer-drop-second', 'peer-drop-rollback', 'peer-drop-foreign',
+    'peer-drop-missing', 'peer-drop-missing-lost', 'peer-drop-commit', 'peer-drop-second', 'peer-drop-rollback', 'peer-drop-foreign',
     'peer-drop-room', 'peer-drop-room-continue', 'peer-drop-process', 'peer-drop-process-missing',
     'peer-drop-room-after-drop', 'peer-drop-room-before-drop'].includes(process.argv[4]);
   const dropRoom = process.argv[4] === 'peer-drop-room';
@@ -367,6 +368,7 @@ async function main() {
   const dropRoomBeforeDrop = process.argv[4] === 'peer-drop-room-before-drop';
   const dropHistoryLost = process.argv[4] === 'peer-drop-missing-lost';
   const dropMissing = process.argv[4] === 'peer-drop-missing' || dropHistoryLost;
+  const dropCommit = process.argv[4] === 'peer-drop-commit';
   const dropSecond = process.argv[4] === 'peer-drop-second';
   const dropRollback = process.argv[4] === 'peer-drop-rollback';
   const dropForeign = process.argv[4] === 'peer-drop-foreign';
@@ -451,7 +453,7 @@ async function main() {
           });
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
             faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop,
-            dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, dropHistoryLost, dropSecond, dropRollback, dropForeign,
+            dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, dropHistoryLost, dropCommit, dropSecond, dropRollback, dropForeign,
             dropRoom, dropRoomContinue, dropProcess, dropProcessMissing, dropRoomAfterDrop, dropRoomBeforeDrop, recordingPressure });
           await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
         }
@@ -668,7 +670,7 @@ async function main() {
       browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })),
       version: browsers[0].version(), browser_instances: 2, firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
       faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose,
-      dropAnswer, dropRelay, dropMissing, dropHistoryLost, dropSecond, dropRollback, dropForeign, dropRoom, dropRoomContinue,
+      dropAnswer, dropRelay, dropMissing, dropHistoryLost, dropCommit, dropSecond, dropRollback, dropForeign, dropRoom, dropRoomContinue,
       dropProcess, dropProcessMissing, dropRoomAfterDrop, dropRoomBeforeDrop, recordingPressure, records, errors }));
   } catch (error) {
     failures.push(error);

@@ -4,6 +4,15 @@ import hashlib
 
 
 _UUID = re.compile(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}')
+# The transport samples its clock once per poll, so the observed delay cannot
+# prove the 50 ms RETRY_US interval. A positive value still rejects a same-poll
+# duplicate; the exact bytes and sent-accounted count establish the retry.
+_COMMIT_MIN_DELAY_US = 1
+# The current barrier wire version and the COMMIT phase/stage, from the codec.
+_COMMIT_HEADER = b'FRGP\x03\x00\x0c\x00'
+_COMMIT_PHASE = 4
+_COMMIT_STAGE = 0
+_COMMIT_PACKET_BYTES = 109
 
 
 def _peer_id(uuid):
@@ -525,13 +534,100 @@ def _validate_lost_history(result, survivors):
     return result
 
 
+def _validate_commit_packet(packet, proposer):
+    data = bytes.fromhex(packet)
+    if len(data) != _COMMIT_PACKET_BYTES or data[:8] != _COMMIT_HEADER:
+        raise ValueError('peer-drop lost-commit payload is not a commit packet')
+    if int.from_bytes(data[40:44], 'little') != len(data) - 44:
+        raise ValueError('peer-drop lost-commit body length differs')
+    if data[8:24].hex() != proposer.get('session_id') or data[24:32].hex() != _peer_id(proposer.get('uuid')):
+        raise ValueError('peer-drop lost-commit session or sender differs')
+    if data[44] != _COMMIT_PHASE or data[45] != _COMMIT_STAGE:
+        raise ValueError('peer-drop lost-commit phase differs')
+    if (int.from_bytes(data[48:50], 'little') != proposer.get('coordinator')
+            or int.from_bytes(data[50:52], 'little') != proposer.get('coordinator_generation')
+            or int.from_bytes(data[52:56], 'little') != proposer.get('operation')):
+        raise ValueError('peer-drop lost-commit operation differs')
+    if f"{int.from_bytes(data[56:64], 'little'):016x}" != proposer.get('target_set_digest'):
+        raise ValueError('peer-drop lost-commit target digest differs')
+    if int.from_bytes(data[64:68], 'little', signed=True) != proposer.get('freeze_frame'):
+        raise ValueError('peer-drop lost-commit cut differs')
+    if f"{int.from_bytes(data[76:84], 'little'):016x}" != proposer.get('digest'):
+        raise ValueError('peer-drop lost-commit value digest differs')
+    if f"{int.from_bytes(data[101:109], 'little'):016x}" != proposer.get('roster_digest'):
+        raise ValueError('peer-drop lost-commit roster digest differs')
+    if (int.from_bytes(data[90:94], 'little') != 3
+            or data[94] != proposer.get('departing_slot')
+            or int.from_bytes(data[95:97], 'little') != proposer.get('target_generation')
+            or int.from_bytes(data[97:101], 'little') != 0):
+        raise ValueError('peer-drop lost-commit target list differs')
+    if (data[46] != 0 or data[47] != 0
+            or int.from_bytes(data[68:72], 'little', signed=True) < 0
+            or int.from_bytes(data[72:76], 'little', signed=True) < 0
+            or int.from_bytes(data[84:86], 'little') != 0
+            or int.from_bytes(data[86:88], 'little') > 64
+            or data[88] != 0 or data[89] != 0):
+        raise ValueError('peer-drop lost-commit fixed body differs')
+    return data
+
+
+def _validate_commit_loss(survivors):
+    proposer = next((row for row in survivors if row.get('role') == 1), None)
+    follower = next((row for row in survivors if row.get('role') == 0), None)
+    if proposer is None or follower is None:
+        raise ValueError('peer-drop lost-commit survivor rows missing')
+    other = _peer_id(follower.get('uuid'))
+    first = proposer.get('commit_first')
+    retry = proposer.get('commit_retry')
+    if (type(proposer.get('commit_dropped')) is not int or proposer['commit_dropped'] != 1
+            or type(proposer.get('commit_resends')) is not int or proposer['commit_resends'] < 1
+            or type(proposer.get('commit_operation')) is not int or proposer['commit_operation'] != proposer.get('operation')
+            or type(proposer.get('operation')) is not int
+            or type(proposer.get('commit_cut')) is not int or proposer['commit_cut'] != proposer.get('freeze_frame')
+            or type(proposer.get('freeze_frame')) is not int
+            or not isinstance(proposer.get('commit_digest'), str) or proposer.get('commit_digest') != proposer.get('digest')
+            or type(proposer.get('commit_slot')) is not int or proposer['commit_slot'] != follower.get('slot')
+            or type(proposer.get('commit_retry_slot')) is not int or proposer['commit_retry_slot'] != follower.get('slot')
+            or type(proposer.get('commit_delay_us')) is not int
+            or proposer['commit_delay_us'] < _COMMIT_MIN_DELAY_US
+            or any(type(proposer.get(field)) is not int
+                   for field in ('slot', 'coordinator', 'coordinator_generation', 'target_generation', 'departing_slot'))
+            or proposer.get('slot') != proposer.get('coordinator')
+            or any(not isinstance(proposer.get(field), str) or not re.fullmatch(r'[0-9a-f]{16}', proposer[field])
+                   for field in ('target_set_digest', 'digest', 'roster_digest'))
+            or not isinstance(proposer.get('session_id'), str) or not re.fullmatch(r'[0-9a-f]{32}', proposer['session_id'])
+            or type(first) is not str or not re.fullmatch(r'[0-9a-f]{202,2048}', first) or len(first) % 2
+            or type(retry) is not str or retry != first):
+        raise ValueError('peer-drop lost-commit retry evidence missing')
+    _validate_commit_packet(first, proposer)
+    acknowledgements = proposer.get('acknowledged_peers')
+    if (not isinstance(acknowledgements, list) or any(type(identity) is not str for identity in acknowledgements)
+            or other not in acknowledgements or proposer.get('commit_ack_peers') != []):
+        raise ValueError('peer-drop lost-commit acknowledgement missing')
+    if (any(type(follower.get(field)) is not int or follower[field] != proposer.get(field)
+            for field in ('operation', 'coordinator', 'coordinator_generation', 'target_generation', 'departing_slot'))
+            or any(follower.get(field) != proposer.get(field)
+                   for field in ('target_set_digest', 'session_id', 'roster_digest'))):
+        raise ValueError('peer-drop lost-commit follower identity differs')
+    follower_fields = {
+        'commit_dropped': 0, 'commit_resends': 0, 'commit_operation': -1, 'commit_cut': -1,
+        'commit_slot': -1, 'commit_retry_slot': -1, 'commit_delay_us': -1}
+    if (any(type(follower.get(field)) is not int or follower[field] != value
+            for field, value in follower_fields.items())
+            or follower.get('commit_first') != '' or follower.get('commit_retry') != ''
+            or follower.get('commit_digest') != '0000000000000000'
+            or follower.get('acknowledged_peers') != [] or follower.get('commit_ack_peers') != []):
+        raise ValueError('peer-drop lost-commit follower withheld bytes')
+    return survivors
+
+
 def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False,
                            missing_history=False, history_lost=False, second_departure=False, rollback_departure=False,
                            foreign_proposal=False, room_departure=False, room_continue=False, process_death=False,
-                           process_missing=False, room_after_drop=False, room_before_drop=False):
+                           process_missing=False, room_after_drop=False, room_before_drop=False, commit_loss=False):
     if history_lost and not missing_history:
         raise ValueError('peer-drop lost-history mode requires the withholding schedule')
-    new_modes = [process_death, process_missing, room_after_drop, room_before_drop]
+    new_modes = [process_death, process_missing, room_after_drop, room_before_drop, commit_loss]
     if any(new_modes) and (
             sum(bool(mode) for mode in new_modes) != 1
             or corrupt or physical_close or lost_answer or relay_only or missing_history
@@ -558,6 +654,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
             or result.get('dropProcessMissing', False) is not process_missing
             or result.get('dropRoomAfterDrop', False) is not room_after_drop
             or result.get('dropRoomBeforeDrop', False) is not room_before_drop
+            or result.get('dropCommit', False) is not commit_loss
             or result.get('errors') != []
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2):
         raise ValueError('peer-drop browser run incomplete')
@@ -792,6 +889,8 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 raise ValueError('peer-drop frozen roster changed')
         if history_lost:
             return _validate_lost_history(result, survivors)
+        if commit_loss:
+            _validate_commit_loss(survivors)
         if missing_history:
             departed = records[0]['peers'][2]['result']['records'][0]
             report = departed.get('missing_inputs')

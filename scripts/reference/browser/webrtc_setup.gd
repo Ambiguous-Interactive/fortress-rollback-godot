@@ -178,7 +178,9 @@ func run(host: Node, count: int) -> bool:
 		if begun != I.Code.OK:
 			host.errors.append("begin_%d" % begun)
 			return false
-		var direct: Direct = DropDirect.new() if bool(JavaScriptBridge.eval("window.fortressDropMissing || false")) else Direct.new()
+		var control_drop: bool = bool(JavaScriptBridge.eval("window.fortressDropMissing || false")) \
+			or bool(JavaScriptBridge.eval("window.fortressDropCommit || false"))
+		var direct: Direct = DropDirect.new() if control_drop else Direct.new()
 		host.transports.append(direct)
 		var options: Direct.Options = host._direct_options()
 		var connected_code: int = direct.configure(host.meshes[index], host.memberships[index], host.adapters[index], peer, options)
@@ -210,6 +212,18 @@ class DropDirect:
 	var _history_drop_operation: int = -1
 	var _history_drop_count: int = 0
 	var _history_drop_counts: Array[int] = []
+	var _commit_remaining: int = 0
+	var _commit_dropped: int = 0
+	var _commit_resends: int = 0
+	var _commit_operation: int = -1
+	var _commit_cut: int = -1
+	var _commit_digest: int = 0
+	var _commit_slot: int = -1
+	var _commit_first: String = ""
+	var _commit_retry: String = ""
+	var _commit_dropped_us: int = -1
+	var _commit_retry_us: int = -1
+	var _commit_retry_slot: int = -1
 
 	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int, slot: int) -> void:
 		_drop_identity = identity.duplicate()
@@ -223,10 +237,18 @@ class DropDirect:
 	func arm_history_drop(count: int) -> void:
 		_history_remaining = count
 
+	## Withhold the first COMMIT this page sends. Only the coordinator publishes
+	## a commit, so arming every survivor cannot drop a follower's packet.
+	func arm_commit_drop(count: int) -> void:
+		_commit_remaining = count
+
 	func poll(now_us: int, next_token_factory: Callable = Callable()) -> DirectTypes.Result:
 		_withhold_missing_inputs()
 		_withhold_history()
-		return super.poll(now_us, next_token_factory)
+		var retries: Array[Dictionary] = _withhold_commit(now_us)
+		var result: DirectTypes.Result = super.poll(now_us, next_token_factory)
+		_record_sent_commit_retries(retries, result.sent, now_us)
+		return result
 
 	func drop_report() -> Dictionary:
 		var frames: Array[int] = []
@@ -245,6 +267,72 @@ class DropDirect:
 			"count": _history_drop_count,
 			"chunks": _history_drop_counts.duplicate(),
 		}
+
+	## The exact COMMIT packet this link withheld and the later retry it saw, so
+	## the witness binds the irreversible phase rather than any barrier packet.
+	func commit_report() -> Dictionary:
+		return {
+			"dropped": _commit_dropped,
+			"resends": _commit_resends,
+			"operation": _commit_operation,
+			"cut": _commit_cut,
+			"digest": _commit_digest,
+			"slot": _commit_slot,
+			"retry_slot": _commit_retry_slot,
+			"first": _commit_first,
+			"retry": _commit_retry,
+			"delay_us": _commit_retry_us - _commit_dropped_us if _commit_retry_us >= 0 and _commit_dropped_us >= 0 else -1,
+		}
+
+	## Withhold the first COMMIT published on this link. A later COMMIT of the
+	## same operation is a retry candidate; it counts only once the poll actually
+	## hands it to the channel.
+	func _withhold_commit(now_us: int) -> Array[Dictionary]:
+		var retries: Array[Dictionary] = []
+		if _membership == null or (_commit_remaining <= 0 and _commit_dropped == 0):
+			return retries
+		var limits: T.Limits = T.Limits.new()
+		limits.player_count = _membership.roster().size()
+		limits.max_packet_bytes = 65536
+		var kept: Array[Peer.Packet] = []
+		for packet: Peer.Packet in _pending:
+			if packet == null or packet.bytes.size() < 4:
+				kept.append(packet)
+				continue
+			var decoded: T.Result = Codec.decode(packet.bytes, limits)
+			if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.DROP_BARRIER \
+				or decoded.message.phase != Drop.Phase.COMMIT:
+				kept.append(packet)
+				continue
+			var destination_slot: int = _membership.slot(_membership.uuid_for_peer_id(packet.to.decode_u32(0)))
+			if _commit_remaining > 0:
+				_commit_remaining -= 1
+				_commit_dropped += 1
+				_commit_operation = int(decoded.message.operation)
+				_commit_cut = int(decoded.message.cut)
+				_commit_digest = int(decoded.message.cut_digest)
+				_commit_slot = destination_slot
+				_commit_first = packet.bytes.hex_encode()
+				_commit_dropped_us = now_us
+				_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
+				continue
+			if int(decoded.message.operation) == _commit_operation:
+				retries.append({"index": kept.size(), "bytes": packet.bytes.hex_encode(), "slot": destination_slot})
+			kept.append(packet)
+		_pending = kept
+		return retries
+
+	## Count a retry only after the poll sent its queue position. A refused packet
+	## stays queued, so a later poll counts it once at its actual send time.
+	func _record_sent_commit_retries(retries: Array[Dictionary], sent: int, now_us: int) -> void:
+		for retry: Dictionary in retries:
+			if int(retry["index"]) >= sent:
+				break
+			_commit_resends += 1
+			if _commit_retry.is_empty():
+				_commit_retry = str(retry["bytes"])
+				_commit_retry_us = now_us
+				_commit_retry_slot = int(retry["slot"])
 
 	func _withhold_history() -> void:
 		if _membership == null or (_history_remaining <= 0 and _history_dropped == 0):
