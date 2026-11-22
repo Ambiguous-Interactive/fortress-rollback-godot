@@ -21,6 +21,19 @@ WebRTC and relay. The stock UDP peer still exercises the raw compatibility API.
   the view in the terminal transition. Removing that expiry produces
   `callback termination did not expire the active save view` in the
   [native qualification script](../../scripts/qualify_native_driver.gd).
+- Godot's parser treats added optional arguments as signature changes.
+  The local Gate identified three legacy transport subclass overrides that
+  stopped compiling. Native transport setup now has its own entry points, and
+  the [style skill](../skills/gdscript-style/SKILL.md) directs earlier validation.
+- Godot 4.7.2 filled its 64 KiB WebSocket receive ring in an eight-player
+  relay room. The pinned relay broadcasts each datagram to the room before
+  clients filter it by recipient. Increasing the SDK drain budget alone still
+  left 3,922 engine drops. Configuring the socket's bounded 1 MiB receive
+  ring before connect let the same room compare 40 confirmed frames and
+  stop all seven survivors after departure.
+- The runtime archive rejected the new driver's GDScript adapter because its
+  explicit inventory omitted the file. The inventory now includes the adapter
+  and continues to exclude native binaries.
 
 ## Prune ledger
 
