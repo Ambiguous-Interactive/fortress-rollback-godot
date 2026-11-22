@@ -8,6 +8,16 @@ const Multiplayer = preload("res://addons/fortress_rollback/transport/signalfish
 const SDK_PATH: String = "res://addons/signal_fish/signal_fish_client.gd"
 const CONFIG_PATH: String = "res://addons/signal_fish/signal_fish_config.gd"
 const MESH_PATH: String = "res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd"
+# The optional SDK transport creates and connects the socket in one call.
+# Load this subclass only when the project installs the SDK.
+const NATIVE_TRANSPORT_SOURCE: String = """
+extends "res://addons/signal_fish/transport/sf_websocket_transport.gd"
+
+func _make_peer() -> SFWebSocketPeerAdapterScript:
+	var socket: WebSocketPeer = WebSocketPeer.new()
+	socket.inbound_buffer_size = 1048576
+	return SFWebSocketPeerAdapterScript.new(socket)
+"""
 
 var game_match: Match = Match.new()
 var client: Node
@@ -70,10 +80,20 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 		if not ResourceLoader.exists(path):
 			message = "SignalFish SDK is missing. See docs/online-example.md for installation."
 			return ERR_UNAVAILABLE
+	var native_transport: RefCounted
+	if backend_choice == "native":
+		var transport_script: GDScript = GDScript.new()
+		transport_script.source_code = NATIVE_TRANSPORT_SOURCE
+		if transport_script.reload() != OK:
+			message = "The SignalFish SDK could not configure the native WebSocket transport."
+			return ERR_UNAVAILABLE
+		native_transport = transport_script.new()
 	_sdk = load(SDK_PATH)
 	var config_script: Script = load(CONFIG_PATH)
 	var mesh_script: Script = load(MESH_PATH)
 	client = _sdk.new()
+	if native_transport != null:
+		client.set("transport", native_transport)
 	mesh = mesh_script.new()
 	_config = config_script.new()
 	_config.set("app_id", "fortress-live-webrtc")
@@ -87,6 +107,9 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 	_config.set("game_data_format", "message_pack")
 	_config.set("decode_msgpack_payloads", false)
 	_config.set("auto_poll", false)
+	if backend_choice == "native":
+		# The relay broadcasts each addressed datagram to every room member.
+		_config.set("max_inbound_packets_per_poll", 256)
 	mesh.set("multiplayer_peer_factory", Multiplayer.create)
 	var connection_script: Script = load("res://addons/fortress_rollback/transport/signalfish_webrtc_connection.gd")
 	mesh.set("peer_connection_factory", Callable(connection_script, "create"))

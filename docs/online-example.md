@@ -29,6 +29,8 @@ and add `--route relay` to host a relay-only room.
 
 Native mode uses four-byte inputs and fixed zero input delay. The room ends
 when membership changes or the upstream session reports a terminal failure.
+The native example gives the SignalFish WebSocket a bounded 1 MiB receive ring
+to absorb broadcast bursts in larger rooms.
 Use the GDScript mode for recording, delay adjustment and the legacy diagnostic
 trace. See the [native migration contract](native-backend-migration.md) for
 qualification scope.
