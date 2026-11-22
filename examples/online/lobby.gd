@@ -310,7 +310,8 @@ func _tick(now_us: int, buttons: int) -> void:
 
 
 func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:
-	if route != _requested_route:
+	var relay_fallback: bool = backend == "native" and _requested_route == "relay" and route == "relay_required"
+	if route != _requested_route and not relay_fallback:
 		_fail("The server did not select the room's requested transport.")
 		return
 	if state == "lobby":

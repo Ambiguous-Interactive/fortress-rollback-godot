@@ -200,13 +200,13 @@ func _start_transport(client: Object, mesh: Object, sdk_config: Object, info: Ob
 
 
 func _start_native_transport(client: Object, mesh: Object, sdk_config: Object, info: Object, now_us: int, revision: int, route: String) -> Error:
-	if revision != _revision or route not in ["mesh", "relay"]:
+	if revision != _revision or route not in ["mesh", "relay", "relay_required"]:
 		return ERR_UNAVAILABLE
 	var relay_options: Relay.Options = Relay.Options.new()
 	relay_options.max_packet_bytes = NATIVE_PACKET_BYTES
 	if relay.configure_packet_receiver(client, sdk_config, info, membership, adapter, _receive_native, relay_options) != Relay.Code.OK:
 		return ERR_UNAVAILABLE
-	_native_relay_only = route == "relay"
+	_native_relay_only = route != "mesh"
 	if not _native_relay_only:
 		var direct_options: Direct.Options = Direct.Options.new()
 		direct_options.max_packet_bytes = NATIVE_PACKET_BYTES
