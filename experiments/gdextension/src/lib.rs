@@ -10,3 +10,6 @@ impl Config for Game {
 
 #[cfg(feature = "extension")]
 mod extension;
+
+#[cfg(feature = "extension")]
+mod peer;
