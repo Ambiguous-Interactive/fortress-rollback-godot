@@ -17,10 +17,12 @@ var report: Dictionary = {}
 
 func _ready() -> void:
 	add_child(http)
+	http.timeout = 10.0
 	http.request_completed.connect(_reply)
 	if OS.has_feature("web"):
 		endpoint = str(JavaScriptBridge.eval("location.origin")) + "/tick"
 	elif OS.has_feature("mobile"):
+		print("Fortress witness starting mobile HTTP exchange")
 		endpoint = "http://127.0.0.1:45872/tick"
 	else:
 		var arguments := OS.get_cmdline_user_args()
@@ -54,6 +56,8 @@ func _reply(result: int, code: int, _headers: PackedStringArray, body: PackedByt
 		return
 	if slot < 0:
 		slot = int(cmd.slot)
+		if OS.has_feature("mobile"):
+			print("Fortress witness received initial response for slot %d" % slot)
 		control = cmd.control
 		if not session.start(slot):
 			push_error("Witness failed to start the native session for slot %d" % slot)

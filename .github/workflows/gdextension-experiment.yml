@@ -56,7 +56,7 @@ jobs:
           emulator_pid=$!
           trap 'if [[ $? != 0 ]]; then
             cat "$RUNNER_TEMP/emulator.log"
-            timeout 15 adb logcat -d -t 300 || true
+            timeout 15 adb logcat -d -s godot AndroidRuntime libc DEBUG || true
           fi' EXIT
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
