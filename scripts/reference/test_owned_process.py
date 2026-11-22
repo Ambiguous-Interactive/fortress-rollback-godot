@@ -645,6 +645,39 @@ time.sleep(0.2)
                         carrier.kill()
                     carrier.wait(timeout=10)
 
+    def test_finish_observes_a_successor_after_the_tracked_parent_exits(self):
+        # Value: protects=the final ownership decision; fails_when=the final scan predates the tracked parent's last fork; seam=scripted scan order
+        host = mock.Mock(pid=80, owned_cgroup=None, owned_cgroup_released=True, owned_pin=None,
+                         stdin=None, stdout=None, stderr=None)
+        host.poll.return_value = 0
+        parent = {'pid': 81, 'name': 'parent', 'start': 10}
+        child = {'pid': 82, 'name': 'child', 'start': 11}
+        child_live = False
+        swept = []
+
+        def sweep(_token, *, observed):
+            nonlocal child_live
+            member = parent if not swept else child
+            swept.append(member['pid'])
+            observed[member['pid']] = member
+            if member == child:
+                child_live = False
+            return []
+
+        def still_live(member):
+            nonlocal child_live
+            if member == parent and len(swept) == 1:
+                child_live = True
+            return member == child and child_live
+
+        with mock.patch.object(owned_process, 'terminate', side_effect=sweep), \
+             mock.patch.object(owned_process, 'identities', side_effect=lambda _token: [child] if child_live else []), \
+             mock.patch.object(owned_process, '_observed_member_is_live', side_effect=still_live):
+            with self.assertRaises(owned_process.EscapedDescendants) as caught:
+                owned_process.finish(host, 'owned')
+        self.assertEqual(swept, [81, 82])
+        self.assertEqual([item['pid'] for item in caught.exception.survivors], [81, 82])
+
     # Value: protects=finish()'s cleanup from a failed pinned group signal (#404 review);
     # fails_when=an unsupported flag-4 on a SIGTERM-ignoring host skips the sweeps
     # and raises TimeoutExpired out of finish, stranding the host;

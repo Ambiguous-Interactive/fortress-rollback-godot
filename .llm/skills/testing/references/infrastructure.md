@@ -73,7 +73,9 @@ and permissions before opening its lock. Bound child readiness reads as well as 
 Verify owned descendants have exited before accepting final file inventories.
 Keep the identity from enumeration even if the signal is declined or the process
 leaves an ownership scan. Check that identity for retirement without using it
-alone to authorize a new signal. Inject a missed delivery to test the check.
+alone to authorize a new signal. After the last tracked process dies, scan for
+children it could have started before exiting. Inject missed delivery and a late
+child to test both checks.
 Exercise cancellation while waiting, during an active worker wave, between process
 spawn and ownership registration, and immediately after registration before body entry.
 Acquisition, registration and body entry must share the cleanup scope. Reap leaders

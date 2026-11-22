@@ -2563,19 +2563,19 @@ def _finish_descendants(process, token_value, boundary, grace):
 
     deadline = time.monotonic() + GROUP_SIGNAL_VERIFY_SECONDS
     while True:
-        remaining, verify_anomaly = _contained_sweeps(verify)
-        anomaly = anomaly or verify_anomaly
-        for item in remaining:
-            observed[item['pid']] = item
         # A previously observed member can lose its token or leave the group.
-        tracked_live = [item for item in observed.values() if _observed_member_is_live(item)]
-        host_live = process.poll() is None
-        if not tracked_live and not host_live:
-            return _strip_starts(observed.values()), anomaly
+        pending = [item for item in observed.values() if _observed_member_is_live(item)]
+        if process.poll() is None:
+            pending = merged_survivors(pending, [{'pid': process.pid, 'name': 'host'}])
+        if not pending:
+            # A retiring member may have started a child before its exit.
+            pending, verify_anomaly = _contained_sweeps(verify)
+            anomaly = anomaly or verify_anomaly
+            if not pending:
+                return _strip_starts(observed.values()), anomaly
+            observed.update((item['pid'], item) for item in pending)
         if time.monotonic() >= deadline:
-            if host_live:
-                tracked_live = merged_survivors(tracked_live, [{'pid': process.pid, 'name': 'host'}])
-            raise RuntimeError(f'owned processes did not stop during teardown: {_named(tracked_live)}') from anomaly
+            raise RuntimeError(f'owned processes did not stop during teardown: {_named(pending)}') from anomaly
         _, retry_anomaly = _contained_sweeps(kill)
         anomaly = anomaly or retry_anomaly
         time.sleep(GROUP_SIGNAL_VERIFY_POLL)

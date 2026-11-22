@@ -20,8 +20,9 @@ that was stopped, including a process no longer found by an ownership scan.
 
 - A kill attempt can produce a report while the process is still alive. Keep the
   original process identity from enumeration and confirm its retirement. Fresh
-  ownership still authorizes each signal. The final liveness check decides
-  whether the process retired before the deadline.
+  ownership still authorizes each signal. Once tracked processes retire, scan
+  again for children they could have started before exiting. The scripted
+  control failed with only PID 81 swept and passed when the new scan found 82.
 - The browser experiment's loopback bridge establishes wire and callback
   compatibility with the stock peer. Treat room admission, transport lifecycle,
   legacy recordings, and installation as individual gates. The
