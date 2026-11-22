@@ -217,8 +217,10 @@ def missing_evidence():
         'dropped': 3, 'from': 4, 'through': 6, 'frames': [4, 5, 6], 'overlaps': 0, 'slot': 2, 'unsupported': 0}
     proposer = value['records'][0]['peers'][0]['result']['records'][0]
     follower = value['records'][0]['peers'][1]['result']['records'][0]
-    proposer.update(history_donor=follower['slot'], history_first=4, history_cut=proposer['freeze_frame'], history_installed=True)
-    follower.update(history_donor=follower['slot'], history_first=4, history_cut=follower['freeze_frame'], history_installed=False)
+    proposer.update(history_donor=follower['slot'], history_first=4, history_cut=proposer['freeze_frame'], history_installed=True,
+                    history_dropped=0)
+    follower.update(history_donor=follower['slot'], history_first=4, history_cut=follower['freeze_frame'], history_installed=False,
+                    history_dropped=1)
     return value
 
 
@@ -237,6 +239,11 @@ class MissingHistoryEvidence(unittest.TestCase):
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_first=5),
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_cut=4),
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_cut=3),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_dropped=0),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_dropped=2),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_dropped=True),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].pop('history_dropped'),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_dropped=1),
         ]
         for mutation in mutations:
             value = copy.deepcopy(original)

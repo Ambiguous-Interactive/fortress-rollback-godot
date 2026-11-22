@@ -306,8 +306,10 @@ The deterministic byte-transport tests cover this recovery. The exported
 rooms: the departing page withholds its original frames four through six from
 one survivor at the direct-transport send boundary, the other survivor remains
 the complete donor, and both pages certify the agreed cut only after the
-missing bytes are installed. The validator requires the donor interval, the
-installed transfer and the continuing canonical history. Full pinned-source
+missing bytes are installed. The donor's first retained-history chunk is also
+withheld on the real link, so the recipient must retry before it installs.
+The validator requires the donor interval, the installed transfer, the donor
+retry and the continuing canonical history. Full pinned-source
 trace comparison and the expanded live fault matrix remain in
 [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
@@ -345,8 +347,9 @@ The `peer-drop-answer` case drops the follower's first actual inventory report a
 An exact-byte report retry precedes certified agreement and canonical continuation on both engine pins.
 The `peer-drop-missing` case withholds the departing page's original input frames four through six on
 one direct link. The other survivor is the selected donor; its bounded journal installs the missing
-rows before certification, and both survivors continue canonical history. The validator requires exactly frames four through six (no overlapping packet range),
-the donor identity, the installed interval and the agreed cut.
+rows before certification, and both survivors continue canonical history. The same real link withholds
+the donor's first retained-history chunk, so the recipient must retry before installation. The validator requires exactly frames four through six (no overlapping packet range),
+the donor identity, the installed interval, the donor retry and the agreed cut.
 The `peer-drop-second` case departs one page after seven inputs and a second page after twelve.
 The remaining survivor certifies the first cut, then observes the second departure and
 freezes that slot on its own confirmed frontier; this is a one-member freeze and no second

@@ -691,6 +691,9 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                     or proposer.get('history_donor') != follower.get('slot')
                     or follower.get('history_donor') != follower.get('slot')):
                 raise ValueError('peer-drop live missing-history transfer incomplete')
+            if (type(follower.get('history_dropped')) is not int or follower['history_dropped'] != 1
+                    or type(proposer.get('history_dropped')) is not int or proposer['history_dropped'] != 0):
+                raise ValueError('peer-drop live missing-history donor retry incomplete')
         proposer_slot = min(row['slot'] for row in survivors)
         for row in survivors:
             if row['role'] != int(row['slot'] == proposer_slot):

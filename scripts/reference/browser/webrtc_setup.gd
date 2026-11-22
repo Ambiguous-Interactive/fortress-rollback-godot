@@ -19,6 +19,7 @@ const H = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const Game = preload("res://webrtc_game.gd")
+const Drop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
 
 
 func run(host: Node, count: int) -> bool:
@@ -202,6 +203,8 @@ class DropDirect:
 	var _unsupported: int = 0
 	var _overlaps: int = 0
 	var _frames: Dictionary = {}
+	var _history_remaining: int = 0
+	var _history_dropped: int = 0
 
 	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int, slot: int) -> void:
 		_drop_identity = identity.duplicate()
@@ -209,8 +212,15 @@ class DropDirect:
 		_drop_through = through_frame
 		_drop_slot = slot
 
+	## Withhold the first retained-history chunks this page sends, so the
+	## recipient must retry before it can install the missing rows. Only the
+	## selected donor sends history, so arming both survivors is safe.
+	func arm_history_drop(count: int) -> void:
+		_history_remaining = count
+
 	func poll(now_us: int, next_token_factory: Callable = Callable()) -> DirectTypes.Result:
 		_withhold_missing_inputs()
+		_withhold_history()
 		return super.poll(now_us, next_token_factory)
 
 	func drop_report() -> Dictionary:
@@ -220,6 +230,30 @@ class DropDirect:
 		frames.sort()
 		return {"dropped": frames.size(), "from": _drop_from, "through": _drop_through,
 			"frames": frames, "overlaps": _overlaps, "slot": _drop_slot, "unsupported": _unsupported}
+
+	func history_dropped() -> int:
+		return _history_dropped
+
+	func _withhold_history() -> void:
+		if _history_remaining <= 0 or _membership == null:
+			return
+		var limits: T.Limits = T.Limits.new()
+		limits.player_count = _membership.roster().size()
+		limits.max_packet_bytes = 65536
+		var kept: Array[Peer.Packet] = []
+		for packet: Peer.Packet in _pending:
+			if _history_remaining <= 0 or packet == null or packet.bytes.size() < 4:
+				kept.append(packet)
+				continue
+			var decoded: T.Result = Codec.decode(packet.bytes, limits)
+			if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.DROP_BARRIER \
+				or decoded.message.phase != Drop.Phase.BACKFILL or decoded.message.stage != Drop.Stage.HISTORY:
+				kept.append(packet)
+				continue
+			_history_remaining -= 1
+			_history_dropped += 1
+			_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
+		_pending = kept
 
 	func _withhold_missing_inputs() -> void:
 		if _drop_identity.is_empty() or _membership == null or _peer == null:
