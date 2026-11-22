@@ -113,14 +113,19 @@ func run(host: Node, count: int) -> bool:
 	var room_before_drop: bool = bool(JavaScriptBridge.eval("window.fortressDropRoomBeforeDrop || false"))
 	var process_missing: bool = bool(JavaScriptBridge.eval("window.fortressDropProcessMissing || false"))
 	var process_death: bool = bool(JavaScriptBridge.eval("window.fortressDropProcess || false"))
-	if missing_history and host.local_index == 2:
+	if missing_history:
 		var own_slot: int = host.memberships[0].slot(host.clients[0].get_player_id())
-		var target_slot: int = 2147483647
+		var roster: PackedStringArray = host.memberships[0].roster()
+		var recipient_slot: int = 2147483647
 		for candidate: int in range(count):
 			if candidate != own_slot:
-				target_slot = mini(target_slot, candidate)
-		var roster: PackedStringArray = host.memberships[0].roster()
-		host.transports[0].arm_drop(host.memberships[0].identity(roster[target_slot]), 4, 6, own_slot)
+				recipient_slot = mini(recipient_slot, candidate)
+		if host.local_index == 2:
+			host.transports[0].arm_drop(host.memberships[0].identity(roster[recipient_slot]), 4, 6, own_slot)
+		else:
+			# The selected donor sends the retained history. Drop its first
+			# chunk so the recipient must retry before it installs the rows.
+			host.transports[0].arm_history_drop(1)
 	var steps_taken: int = 0
 	for frame: int in 7:
 		if not missing_history:
@@ -339,6 +344,7 @@ func run(host: Node, count: int) -> bool:
 			dropped_frames[event.peer.hex_encode()] = event.frame
 		elif event.kind == "peer_drop_pending":
 			pending_events += 1
+	var history: Dictionary = host.transports[0].history_report() if host.transports[0].has_method("history_report") else {}
 	var row: Dictionary = {
 		"players": count,
 		"departed": false,
@@ -367,6 +373,11 @@ func run(host: Node, count: int) -> bool:
 		"history_first": barrier.history.first,
 		"history_cut": barrier.history.cut,
 		"history_installed": barrier.history.installed,
+		"history_dropped": int(history.get("dropped", 0)),
+		"history_resends": int(history.get("resends", 0)),
+		"history_drop_chunk": int(history.get("chunk", -1)),
+		"history_drop_operation": int(history.get("operation", -1)),
+		"history_drop_count": int(history.get("count", 0)),
 		"minimum_confirmed": peer.status().confirmed_frame,
 		"canonical_comparisons": 38,
 		"active_comparisons": comparisons,

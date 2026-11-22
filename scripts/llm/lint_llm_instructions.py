@@ -5,7 +5,8 @@ Checks (in order):
 2. context.md: exists, exactly one H1, links the generated index, and does
    not embed generated content.
 3. Skill frontmatter: every `.llm/skills/*/SKILL.md` is a valid Agent Skill.
-4. Encoding contract: UTF-8 without BOM, LF-only, for every scoped file.
+4. Encoding contract: UTF-8 without BOM, LF-only, with exactly one final
+   LF, for every file the harness owns.
 5. Link integrity: every relative markdown link inside `.llm/**` resolves,
    except links into machine-local, never-committed directories.
 
@@ -42,6 +43,18 @@ class Finding:
         return f"[llm-lint] {self.level.upper()}: {self.message}"
 
 
+def _read_text(path: Path) -> str | None:
+    """Read a harness file without masking an encoding failure as a crash.
+
+    The encoding check reports invalid UTF-8 with the file name; the content
+    checks must not raise before that finding can be printed.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def check_pointers(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for rel, link in llm_paths.POINTER_FILES.items():
@@ -51,7 +64,9 @@ def check_pointers(root: Path) -> list[Finding]:
                 Finding("error", path, f"pointer file missing: {rel}")
             )
             continue
-        text = path.read_text(encoding="utf-8")
+        text = _read_text(path)
+        if text is None:
+            continue
         if f"]({link})" not in text:
             findings.append(
                 Finding(
@@ -78,7 +93,9 @@ def check_context(root: Path) -> list[Finding]:
     path = root / ".llm" / "context.md"
     if not path.is_file():
         return [Finding("error", path, f"{path} is missing")]
-    text = path.read_text(encoding="utf-8")
+    text = _read_text(path)
+    if text is None:
+        return []
     findings: list[Finding] = []
 
     h1_count = len([ln for ln in text.splitlines() if ln.startswith("# ")])
@@ -140,6 +157,34 @@ def check_encoding(scope_files: list[Path], root: Path) -> list[Finding]:
             findings.append(
                 Finding("error", path, f"{rel}: file is not valid UTF-8")
             )
+        if not data.endswith(b"\n"):
+            findings.append(
+                Finding(
+                    "error",
+                    path,
+                    f"{rel}: must end with exactly one LF (found none)",
+                )
+            )
+        elif data.endswith(b"\n\n"):
+            findings.append(
+                Finding(
+                    "error",
+                    path,
+                    f"{rel}: must end with exactly one LF "
+                    f"(found trailing blank lines)",
+                )
+            )
+        elif data.endswith(b"\n"):
+            final_line = data[:-1].rsplit(b"\n", 1)[-1]
+            if final_line and not final_line.strip(b" \t"):
+                findings.append(
+                    Finding(
+                        "error",
+                        path,
+                        f"{rel}: must end with exactly one LF "
+                        f"(found a whitespace-only final line)",
+                    )
+                )
     return findings
 
 
@@ -163,7 +208,9 @@ def check_links(root: Path) -> list[Finding]:
     if not llm_dir.is_dir():
         return findings
     for path in sorted(llm_dir.rglob("*.md")):
-        text = path.read_text(encoding="utf-8")
+        text = _read_text(path)
+        if text is None:
+            continue
         for match in _MD_LINK_RE.finditer(text):
             target = match.group(1)
             if target.startswith(_SKIP_PREFIXES):
@@ -184,7 +231,7 @@ def check_links(root: Path) -> list[Finding]:
 
 def run_all(root: Path | None = None) -> list[Finding]:
     base = llm_paths.resolve_root(root)
-    scope = llm_paths.size_scope_files(base)
+    scope = llm_paths.encoding_scope_files(base)
     return [
         *check_pointers(base),
         *check_context(base),

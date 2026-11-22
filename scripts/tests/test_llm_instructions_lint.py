@@ -99,6 +99,102 @@ class MetaLintTest(unittest.TestCase):
         ctx.write_bytes(b"\xef\xbb\xbf" + ctx.read_bytes())
         self.assertTrue(any("BOM" in f.message for f in self.errors()))
 
+    def test_missing_final_newline_is_error(self):
+        ctx = self.root / ".llm" / "context.md"
+        ctx.write_bytes(ctx.read_bytes().rstrip(b"\n"))
+        self.assertTrue(
+            any(
+                "exactly one LF" in f.message and "context.md" in f.message
+                for f in self.errors()
+            )
+        )
+
+    def test_double_final_newline_is_error(self):
+        ctx = self.root / ".llm" / "context.md"
+        ctx.write_bytes(ctx.read_bytes() + b"\n")
+        self.assertTrue(
+            any(
+                "exactly one LF" in f.message and "context.md" in f.message
+                for f in self.errors()
+            )
+        )
+
+    def test_non_markdown_harness_file_is_checked(self):
+        sample = self.root / ".llm" / "code-samples" / "demo.gd"
+        sample.parent.mkdir(parents=True)
+        cases = {
+            "clean": (b"extends Node\n", False),
+            "missing": (b"extends Node", True),
+            "double": (b"extends Node\n\n", True),
+            "bom": (b"\xef\xbb\xbfextends Node\n", True),
+            "crlf": (b"extends Node\r\n", True),
+            "space": (b"extends Node\n \n", True),
+            "tab": (b"extends Node\n\t\n", True),
+        }
+        for name, (data, broken) in cases.items():
+            with self.subTest(name=name):
+                sample.write_bytes(data)
+                findings = self.errors()
+                self.assertEqual(bool(findings), broken, findings)
+                if broken:
+                    self.assertTrue(any("demo.gd" in f.message for f in findings))
+
+    def test_invalid_utf8_is_named_instead_of_crashing(self):
+        for rel in (".llm/context.md", "AGENTS.md", ".llm/skills/demo-skill/SKILL.md"):
+            with self.subTest(rel=rel):
+                path = self.root / rel
+                original = path.read_bytes()
+                path.write_bytes(b"# Broken \xff\n")
+                findings = self.errors()
+                self.assertTrue(
+                    any("not valid UTF-8" in f.message and Path(rel).name in f.message for f in findings),
+                    findings,
+                )
+                path.write_bytes(original)
+
+    def test_other_text_suffixes_are_checked(self):
+        for name in ("demo.cfg", "demo.gdshader"):
+            with self.subTest(name=name):
+                path = self.root / ".llm" / "code-samples" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"x")
+                self.assertTrue(any(name in f.message for f in self.errors()), self.errors())
+
+    def test_pycache_directory_inside_llm_is_outside_the_contract(self):
+        path = self.root / ".llm" / "__pycache__" / "x.md"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"x")
+        self.assertEqual(self.errors(), [])
+
+    def test_plan_and_goal_final_newline_are_checked(self):
+        for name in ("PLAN.md", "GOAL.md"):
+            with self.subTest(name=name):
+                path = self.root / name
+                path.write_bytes(path.read_bytes().rstrip(b"\n"))
+                self.assertTrue(
+                    any(
+                        name in f.message and "exactly one LF" in f.message
+                        for f in self.errors()
+                    )
+                )
+
+    def test_editor_artifacts_are_outside_the_encoding_contract(self):
+        (self.root / ".llm" / ".DS_Store").write_bytes(b"\x00\x01")
+        (self.root / ".llm" / "notes.md.bak").write_bytes(b"old")
+        self.assertEqual(self.errors(), [])
+
+    def test_repository_path_named_pycache_still_scans_harness_files(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "__pycache__" / "repo"
+            make_min_repo(root)
+            sample = root / ".llm" / "code-samples" / "demo.gd"
+            sample.parent.mkdir(parents=True)
+            sample.write_bytes(b"extends Node")
+            findings = [f for f in lint.run_all(root) if f.level == "error"]
+            self.assertTrue(any("demo.gd" in f.message for f in findings))
+
     def test_broken_relative_link_is_error(self):
         skill = self.root / ".llm" / "skills" / "demo-skill" / "SKILL.md"
         skill.write_text(

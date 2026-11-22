@@ -50,6 +50,16 @@ POINTER_FILES = {
 # Generated agent-skill discovery stub roots (Agent Skills standard).
 STUB_ROOTS = (".claude/skills", ".agents/skills")
 
+# Text files the encoding contract can inspect. Suffix filtering keeps editor
+# and OS artifacts (`.DS_Store`, `notes.md.bak`) out of the harness contract.
+# Mirrors the text suffixes in scripts/check_source_line_lengths.py.
+ENCODING_SUFFIXES = (
+    ".bash", ".c", ".cfg", ".cjs", ".cpp", ".cs", ".css", ".gd", ".gdextension",
+    ".gdshader", ".godot", ".h", ".hpp", ".html", ".ini", ".js", ".json", ".jsx",
+    ".md", ".mdc", ".mjs", ".py", ".rs", ".scss", ".sh", ".sql", ".svg", ".toml",
+    ".tres", ".ts", ".tscn", ".tsx", ".txt", ".xml", ".yaml", ".yml",
+)
+
 # Machine-local, never-committed directories (see .gitignore). Links into them
 # resolve on the authoring machine but are absent from any fresh checkout, so
 # they must not be reported as broken by the link check.
@@ -58,6 +68,35 @@ LOCAL_ONLY_DIRS = ("progress",)
 
 def resolve_root(root: Path | None = None) -> Path:
     return Path(root) if root is not None else REPO_ROOT
+
+
+def encoding_scope_files(root: Path | None = None) -> list[Path]:
+    """Every file the UTF-8/LF/single-final-newline contract applies to.
+
+    The size scope limits authored instructions; the encoding contract also
+    covers non-markdown harness files such as `.llm/code-samples/*.gd`, which
+    are copied into instructions and must survive every checkout unchanged.
+    `.llm/skills/index.md` is generated but still must obey the contract.
+    """
+    base = resolve_root(root)
+    files: set[Path] = set(size_scope_files(base))
+    llm_dir = base / ".llm"
+    if llm_dir.is_dir():
+        for path in sorted(llm_dir.rglob("*")):
+            if not path.is_file() or path.suffix.lower() not in ENCODING_SUFFIXES:
+                continue
+            if "__pycache__" in path.relative_to(llm_dir).parts:
+                continue
+            files.add(path)
+    for name in ("PLAN.md", "GOAL.md"):
+        path = base / name
+        if path.is_file():
+            files.add(path)
+    return sorted(
+        path
+        for path in files
+        if "__pycache__" not in path.relative_to(base).parts
+    )
 
 
 def size_scope_files(root: Path | None = None) -> list[Path]:

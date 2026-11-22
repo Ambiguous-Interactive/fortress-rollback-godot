@@ -107,7 +107,10 @@ def validate_skill_dir(
     if not skill_md.is_file():
         return [f"{skill_dir.name}: missing SKILL.md"]
 
-    text = skill_md.read_text(encoding="utf-8")
+    try:
+        text = skill_md.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return [f"{skill_dir.name}: SKILL.md is not valid UTF-8"]
     try:
         meta, body = parse_frontmatter(text)
     except FrontmatterError as exc:
