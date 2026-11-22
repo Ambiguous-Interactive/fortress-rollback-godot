@@ -92,6 +92,8 @@ def main():
         options = [f'custom_template/{mode}="{custom.as_posix()}"' for mode in ("debug", "release")]
         export_arch = "universal" if args.target == "macos" else arch
         options.append(f'binary_format/architecture="{export_arch}"')
+        if args.target == "windows":
+            options.append("application/modify_resources=false")
         if args.target == "web":
             options += ["variant/extensions_support=true", "variant/thread_support=false"]
         if args.target in ("ios", "android"):
