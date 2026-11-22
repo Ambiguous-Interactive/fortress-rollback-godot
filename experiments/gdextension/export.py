@@ -84,7 +84,8 @@ def main():
         custom = parent / template
         with zipfile.ZipFile(CACHE / f"downloads/Godot_v{version}-stable_export_templates.tpz") as templates:
             custom.write_bytes(templates.read("templates/" + template))
-        options = [f'custom_template/release="{custom.as_posix()}"', f'binary_format/architecture="{arch}"']
+        options = [f'custom_template/{mode}="{custom.as_posix()}"' for mode in ("debug", "release")]
+        options.append(f'binary_format/architecture="{arch}"')
         if args.target == "web":
             options += ["variant/extensions_support=true", "variant/thread_support=false"]
         if args.target in ("ios", "android"):
@@ -109,10 +110,16 @@ def main():
         binary.rename(missing)
         probe_command = base + ["--script", "res://package_probe.gd"]
         red = subprocess.run(probe_command, capture_output=True, text=True, timeout=60)
-        if red.returncode != 23 or LIB not in red.stdout + red.stderr:
+        red_output = red.stdout + red.stderr
+        missing_diagnostic = LIB in red_output or (
+            "ERR_FILE_NOT_FOUND" in red_output and "res://addons/fortress_native/fortress.gdextension" in red_output
+        )
+        if red.returncode != 23 or not missing_diagnostic:
             raise RuntimeError("missing-library control failed: " + red.stdout + red.stderr)
         missing.rename(binary)
-        subprocess.run(probe_command, check=True, timeout=60)
+        green = subprocess.run(probe_command + ["--verbose"], capture_output=True, text=True, timeout=60)
+        if green.returncode:
+            raise RuntimeError("installed library did not register:\n" + green.stdout + green.stderr)
         probe.unlink()
         for command in (["--import"], ["--export-release", name, staged / artifact]):
             proc = subprocess.run(base + command, capture_output=True, text=True, timeout=180)

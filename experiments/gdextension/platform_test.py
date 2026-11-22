@@ -34,7 +34,7 @@ def editor(data, version):
         return dest / "Godot.app/Contents/MacOS/Godot"
     binary = name.removesuffix(".zip")
     prepare_zip(archive, dest, executable_members=(binary,))
-    return dest / binary
+    return dest / (name.removesuffix(".exe.zip") + "_console.exe" if HOST == "windows" else binary)
 
 
 def main():
