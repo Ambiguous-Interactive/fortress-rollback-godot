@@ -11,63 +11,102 @@ const PAGE_BOOT_MS = 60000;
 function instrumentNativeWire() {
   const active = [];
   const resources = { rtc: [], sockets: [] };
-  let session;
+  let session, localUuid;
   let holding = false;
   let armed = false;
   let totalBytes = 0;
   let released = 0;
   const counts = { mesh: 0, relay: 0 };
+  const relayRecipients = new Map();
+  const relaySenders = new Map();
   const held = { mesh: 0, relay: 0 };
   const nativeBytes = bytes => bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
     : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
   const matches = (bytes, offset) => session && offset + session.length < bytes.length
     && session.every((byte, index) => bytes[offset + index] === byte);
-  function send(route, sender, nativeSend, data, isGame) {
-    if (!isGame) return nativeSend.call(sender, data);
+  const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  function relayAddresses(data) {
+    const view = nativeBytes(data);
+    if (!session || !view) return null;
+    // The SDK binary envelope precedes FSR1, followed by the tagged native payload.
+    for (let index = 0; index + 73 < view.length; index++) {
+      if (view[index] === 70 && view[index + 1] === 83 && view[index + 2] === 82 && view[index + 3] === 49
+          && view[index + 4] === 1 && matches(view, index + 5) && matches(view, index + 57)) {
+        return [hex(view.subarray(index + 21, index + 37)), hex(view.subarray(index + 37, index + 53))];
+      }
+    }
+    return null;
+  }
+  const increment = (counts, uuid) => counts.set(uuid, (counts.get(uuid) ?? 0) + 1);
+  function send(route, emit, data, isGame) {
+    if (!isGame) return emit(data);
     counts[route]++;
-    if (!holding) return nativeSend.call(sender, data);
+    if (!holding) return emit(data);
     if (active.length >= 1024 || totalBytes + data.byteLength > 1024 * 1024) throw new Error('native packet hold exceeded bounds');
     const owned = nativeBytes(data).slice();
-    active.push(() => nativeSend.call(sender, owned));
+    active.push(() => emit(owned));
     totalBytes += owned.byteLength;
     held[route]++;
   }
   const createChannel = RTCPeerConnection.prototype.createDataChannel;
   RTCPeerConnection.prototype.createDataChannel = function(label, options) {
     const channel = createChannel.call(this, label, options);
-    resources.rtc.push(channel);
+    const record = { channel, connection: this, sent: 0, received: 0 };
+    channel.addEventListener('message', ({ data }) => {
+      const view = nativeBytes(data);
+      if (channel.id === 3 && view && matches(view, 0)) record.received++;
+    });
+    resources.rtc.push(record);
     const nativeSend = channel.send;
     channel.send = data => {
       const view = nativeBytes(data);
-      return send('mesh', channel, nativeSend, data, channel.id === 3 && view && matches(view, 0));
+      const isGame = channel.id === 3 && view && matches(view, 0);
+      return send('mesh', bytes => {
+        nativeSend.call(channel, bytes);
+        if (isGame) record.sent++;
+      }, data, isGame);
     };
     return channel;
   };
   const nativeSocket = WebSocket;
+  const socketClose = nativeSocket.prototype.close;
+  let deferredClose;
+  let holdTerminalClose = false;
+  nativeSocket.prototype.close = function(code, reason) {
+    if (holdTerminalClose && code === 1000 && reason === 'Online example failed') {
+      if (deferredClose) throw new Error('native terminal tried to close twice');
+      // Godot already cleared this receive buffer. The browser would stop messages on close.
+      this.onmessage = null;
+      deferredClose = () => socketClose.call(this, code, reason);
+      return;
+    }
+    return socketClose.call(this, code, reason);
+  };
   window.WebSocket = new Proxy(nativeSocket, { construct(target, args, newTarget) {
     const socket = Reflect.construct(target, args, newTarget);
     resources.sockets.push(socket);
+    socket.addEventListener('message', ({ data }) => {
+      const addresses = relayAddresses(data);
+      if (addresses && addresses[1] === localUuid) increment(relaySenders, addresses[0]);
+    });
     return socket;
   } });
   const socketSend = nativeSocket.prototype.send;
   nativeSocket.prototype.send = function(data) {
-    const view = nativeBytes(data);
-    let found = false;
-    // The SDK prepends its own binary envelope before the FSR1 relay header.
-    // Validate both the relay session and the native session at payload offset 57.
-    if (view && session) for (let index = 0; index + 73 < view.length; index++) {
-      if (view[index] === 70 && view[index + 1] === 83 && view[index + 2] === 82 && view[index + 3] === 49
-          && view[index + 4] === 1 && matches(view, index + 5) && matches(view, index + 57)) {
-        found = true;
-        break;
-      }
-    }
-    return send('relay', this, socketSend, data, found);
+    const recipient = relayAddresses(data)?.[1];
+    return send('relay', bytes => {
+      socketSend.call(this, bytes);
+      if (recipient) increment(relayRecipients, recipient);
+    }, data, Boolean(recipient));
   };
   window.fortressNativeWire = {
-    bind(hash) {
+    bind(hash, uuid) {
       if (session || !/^[0-9a-f]{32}$/.test(hash)) throw new Error('invalid native room session');
+      localUuid = uuid.replaceAll('-', '');
       session = hash.match(/../g).map(value => parseInt(value, 16));
+    },
+    meshOpen(peers) {
+      return resources.rtc.filter(({channel, connection}) => channel.readyState === 'open' && connection.connectionState === 'connected').length === peers * 3;
     },
     arm() {
       if (!armed) {
@@ -84,9 +123,21 @@ function instrumentNativeWire() {
       }
       active.length = 0;
     },
+    // Let every peer report native expiry before a socket close can cause a room-departure event.
+    holdTerminal() {
+      holdTerminalClose = true;
+      this.arm();
+    },
+    releaseTerminal() {
+      if (!deferredClose) throw new Error('native terminal did not close its SDK socket');
+      holdTerminalClose = false;
+      deferredClose();
+    },
     status() {
-      return { armed, holding, counts: { ...counts }, held: { ...held }, released, totalBytes,
-        rtc: resources.rtc.map(channel => [channel.id, channel.readyState]), sockets: resources.sockets.map(socket => socket.readyState) };
+      return { armed, holding, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
+        relayRecipients: Object.fromEntries(relayRecipients), relaySenders: Object.fromEntries(relaySenders),
+        rtc: resources.rtc.map(({channel, sent, received}) => [channel.id, channel.readyState, sent, received]),
+        sockets: resources.sockets.map(socket => socket.readyState) };
     },
   };
 }
@@ -114,7 +165,11 @@ async function closeAll(items, close) {
   return settled.filter(result => result.status === 'rejected').map(result => result.reason);
 }
 
-async function run(root, endpoint, route, players) {
+async function run(root, endpoint, mode, players) {
+  const startup = mode === 'mesh-startup';
+  const liveClose = mode === 'mesh-close';
+  const mixed = startup || liveClose;
+  const route = mixed ? 'mesh' : mode;
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY);
   const origin = `https://127.0.0.1:${server.address().port}`;
@@ -182,41 +237,95 @@ async function run(root, endpoint, route, players) {
     await Promise.all(pages.map(async (page, index) => {
       for (const key of INPUTS[index][1]) await page.keyboard.down(key);
     }));
-    phase = 'warmup';
+    const joined = mixed ? await observe() : [];
+    const roster = joined.map(peer => peer.uuid).sort();
+    if (startup) {
+      await command(pages[0], 'block_startup', { uuid: joined[1].uuid });
+      await command(pages[1], 'block_startup', { uuid: joined[0].uuid });
+    }
+    phase = startup ? 'startup with one closed channel pair' : 'warmup';
     await command(pages[0], 'start');
     await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
       && window.fortressNative.confirmed >= frame, GATE_FRAME, 45000)));
-    phase = 'prediction stall';
-    // Arming on each local frame can strand a slower peer before its own
-    // gate. Let every endpoint confirm the warmup while routes are open.
-    const armed = await Promise.all(pages.map(page => page.evaluate(() => {
-      const { frame, stalls, confirmed } = window.fortressNative;
-      window.fortressNativeWire.arm();
-      return { frame, stalls, confirmed };
-    })));
-    await Promise.all(pages.map((page, index) => wait(page, threshold => window.fortressNative.state === 'failed'
-      || (window.fortressNative.state === 'playing' && window.fortressNative.stalls > threshold.stalls
-        && window.fortressNative.prediction >= threshold.frame && window.fortressNativeWire.status().held[threshold.route] > 0),
-    { route, stalls: armed[index].stalls, frame: GATE_FRAME }, 45000)));
-    const stalled = await observe();
-    for (const [index, peer] of stalled.entries()) {
-      assert.equal(peer.state, 'playing', peer.message);
-      assert.ok(armed[index].frame < HISTORY_FRAMES, 'gate must affect the compared history');
+    let armed, stalled, direct, afterClose;
+    if (liveClose) {
+      phase = 'physical channel close';
+      direct = await observe();
+      for (const peer of direct) {
+        assert.deepEqual(peer.relay_peers, [], 'the room must begin on direct links');
+        assert.ok(peer.wire.counts.mesh > 0 && peer.wire.counts.relay === 0);
+        assert.equal(peer.wire.rtc.filter(([id, state]) => id === 3 && state === 'open').length, players - 1);
+        assert.ok(peer.frame < HISTORY_FRAMES, 'physical close must affect the compared history');
+      }
+      await command(pages[0], 'close_link', { uuid: joined[1].uuid });
+      await Promise.all(pages.slice(0, 2).map(page => wait(page, count => window.fortressNativeWire.status().rtc
+        .filter(([id, state]) => id === 3 && state === 'closed').length === count, 1)));
+      afterClose = await observe();
+      assert.ok(afterClose.every(peer => peer.frame < HISTORY_FRAMES - 1), 'the last compared inputs must be sampled after the physical close');
     }
-    await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.release())));
-    phase = 'corrected history';
-    await Promise.all(pages.map((page, index) => wait(page, target => window.fortressNative.state === 'playing'
-      && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores,
-    { frame: HISTORY_FRAMES, restores: stalled[index].restores }, 45000)));
+    if (!mixed) {
+      phase = 'prediction stall';
+      // Arming on each local frame can strand a slower peer before its own
+      // gate. Let every endpoint confirm the warmup while routes are open.
+      armed = await Promise.all(pages.map(page => page.evaluate(() => {
+        const { frame, stalls, confirmed } = window.fortressNative;
+        window.fortressNativeWire.arm();
+        return { frame, stalls, confirmed };
+      })));
+      await Promise.all(pages.map((page, index) => wait(page, threshold => window.fortressNative.state === 'failed'
+        || (window.fortressNative.state === 'playing' && window.fortressNative.stalls > threshold.stalls
+          && window.fortressNative.prediction >= threshold.frame && window.fortressNativeWire.status().held[threshold.route] > 0),
+      { route, stalls: armed[index].stalls, frame: GATE_FRAME }, 45000)));
+      stalled = await observe();
+      for (const [index, peer] of stalled.entries()) {
+        assert.equal(peer.state, 'playing', peer.message);
+        assert.ok(armed[index].frame < HISTORY_FRAMES, 'gate must affect the compared history');
+      }
+      await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.release())));
+      phase = 'corrected history';
+      await Promise.all(pages.map((page, index) => wait(page, target => window.fortressNative.state === 'playing'
+        && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores,
+      { frame: HISTORY_FRAMES, restores: stalled[index].restores }, 45000)));
+    } else {
+      phase = 'mixed confirmed history';
+      await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
+        && window.fortressNative.confirmed >= frame, HISTORY_FRAMES)));
+    }
     await Promise.all(pages.map(page => page.evaluate(() => { window.fortressNativeCapture = true; })));
     await Promise.all(pages.map(page => wait(page, () => !!window.fortressNative.snapshots?.[40])));
     const peers = await observe();
     compareHistory(peers);
     const other = route === 'mesh' ? 'relay' : 'mesh';
     for (const peer of peers) {
-      const before = stalled[peer.index];
       assert.equal(peer.movement_errors, 0, 'game must respond to every observed input');
       assert.equal(peer.game_frame, peer.frame, 'driver and game frame must agree');
+      if (mixed) {
+        const affected = peer.index < 2;
+        const expectedCloseState = startup && affected ? 0 : liveClose && peer.index === 0 ? 1 : -1;
+        assert.equal(peer.closed_channel_state, expectedCloseState, 'the target channel must close at the specified lifecycle boundary');
+        assert.deepEqual(peer.relay_peers, affected ? [joined[1 - peer.index].uuid] : [], 'fallback must target only the closed pair');
+        assert.deepEqual(peer.sdk_roster.sort(), roster, 'the original SDK roster must stay in the room');
+        if (startup && affected) {
+          assert.ok(peer.previous_transport_delay < 3000000 && peer.transport_start_delay >= 3000000, 'fallback must start on the first tick after grace');
+        } else {
+          assert.ok(peer.open_mesh_wait_ticks <= 2, 'a complete direct mesh must start once the engine observes its channels');
+        }
+        const recipient = affected ? joined[1 - peer.index].uuid.replaceAll('-', '') : null;
+        assert.deepEqual(Object.keys(peer.wire.relayRecipients), recipient ? [recipient] : [], 'relay must send only to the closed pair');
+        assert.deepEqual(Object.keys(peer.wire.relaySenders), recipient ? [recipient] : [], 'only the closed pair must receive addressed relay');
+        const open = peer.wire.rtc.filter(([id, state]) => id === 3 && state === 'open');
+        assert.equal(open.length, players - (affected ? 2 : 1));
+        assert.ok(open.every(([, , sent, received]) => sent > 0 && received > 0), 'every healthy channel must carry direct gameplay both ways');
+        if (liveClose) {
+          assert.ok(peer.wire.rtc.every(([id, state, sent, received], index) => id !== 3 || state !== 'open'
+            || (sent > afterClose[peer.index].wire.rtc[index][2] && received > afterClose[peer.index].wire.rtc[index][3])),
+          'each unaffected channel must exchange gameplay after the close');
+          if (peer.index === 0) assert.ok(peer.closed_channel_frame < HISTORY_FRAMES, 'physical close must precede confirmed history');
+        }
+        continue;
+      }
+      const before = stalled[peer.index];
+      if (route === 'mesh') assert.ok(peer.open_mesh_wait_ticks <= 2, 'a complete direct mesh must start when the engine sees its channels');
       assert.ok(peer.saves > 0 && peer.advances > peer.frame && peer.restores > before.restores, 'save, load and re-advance must run');
       assert.ok(before.frame > GATE_FRAME && before.confirmed < before.frame - 1, 'gate must force prediction beyond confirmation');
       assert.ok(before.wire.holding && before.wire.held[route] > 0, 'native bytes must be held on the selected physical route');
@@ -226,11 +335,25 @@ async function run(root, endpoint, route, players) {
       else assert.deepEqual(peer.wire.rtc, [], 'initial relay must avoid WebRTC channel creation');
     }
     await Promise.all(pages.map(page => page.evaluate(() => { window.fortressNativeCapture = false; })));
-    phase = 'departure';
-    const departing = pages.at(-1);
-    const survivors = pages.slice(0, -1);
-    await command(departing, 'leave');
-    await wait(departing, () => window.fortressNative.state === 'offline');
+    const survivors = liveClose ? pages : pages.slice(0, -1);
+    let interruption;
+    if (liveClose) {
+      phase = 'native interruption';
+      await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.holdTerminal())));
+      await Promise.all(pages.map(page => wait(page, () => window.fortressNative.interrupted.length > 0 && window.fortressNative.state === 'playing')));
+      interruption = await observe();
+      for (const peer of interruption) {
+        assert.deepEqual(peer.sdk_roster.sort(), roster);
+        assert.deepEqual(peer.wire.sockets, [1], 'SDK signaling must remain connected during the outage');
+        assert.ok(peer.wire.holding && peer.wire.held.mesh > 0, 'direct gameplay must be held');
+        assert.equal(peer.wire.held.relay > 0, peer.index < 2, 'relay gameplay for the closed pair must also be held');
+      }
+    } else {
+      phase = 'departure';
+      const departing = pages.at(-1);
+      await command(departing, 'leave');
+      await wait(departing, () => window.fortressNative.state === 'offline');
+    }
     await Promise.all(survivors.map(page => wait(page, () => window.fortressNative.state === 'failed' && window.fortressNative.terminated)));
     const terminal = await observe(survivors);
     await Promise.all(survivors.map((page, index) => wait(page, turns => window.fortressNative.turns >= turns + 8, terminal[index].turns)));
@@ -239,16 +362,24 @@ async function run(root, endpoint, route, players) {
       const before = terminal[index];
       assert.equal(peer.state, 'failed');
       assert.ok(peer.terminated && peer.reason !== 0 && peer.message);
-      for (const key of ['frame', 'confirmed', 'reason', 'message', 'game_frame', 'saves', 'restores', 'advances'])
+      if (liveClose) {
+        assert.equal(peer.terminal_detail, 'disconnected', 'the native protocol must report expiry');
+        assert.deepEqual(peer.sdk_roster.sort(), roster, 'the original SDK roster must survive until native expiry');
+        assert.deepEqual(peer.wire.sockets, [1], 'SDK room must survive the outage until native expiry');
+        assert.ok(peer.wire.deferredClose, 'the app must initiate native terminal cleanup');
+        assert.deepEqual([peer.saves, peer.restores, peer.advances], peer.failure_tick_callbacks, 'no callback may run on or after native expiry');
+      }
+      for (const key of ['frame', 'confirmed', 'reason', 'terminal_detail', 'message', 'game_frame', 'saves', 'restores', 'advances'])
         assert.equal(peer[key], before[key], `terminal ${key} changed for survivor ${index}`);
     }
+    if (liveClose) await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.releaseTerminal())));
     await Promise.all(survivors.map(page => command(page, 'leave')));
     await Promise.all(pages.map(page => wait(page, () => {
       const { sockets, rtc } = window.fortressNativeWire.status();
       return window.fortressNative.state === 'offline' && sockets.every(state => state === WebSocket.CLOSED)
         && rtc.every(([, state]) => state === 'closed');
     })));
-    result = { passed: true, route, players, compared_frames: HISTORY_FRAMES, bootstrap_ms, armed, stalled, peers, terminal, after };
+    result = { passed: true, route: mode, players, compared_frames: HISTORY_FRAMES, bootstrap_ms, armed, stalled, direct, afterClose, peers, interruption, terminal, after };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map(page => page.evaluate(() => ({
@@ -273,8 +404,8 @@ async function run(root, endpoint, route, players) {
 
 if (require.main === module) {
   const [root, endpoint, route, size] = process.argv.slice(2);
-  if (!['mesh', 'relay'].includes(route) || !['2', '4', '8'].includes(size)) {
-    console.error('usage: native_online.cjs EXPORT ENDPOINT mesh|relay 2|4|8');
+  if (!(['mesh-startup', 'mesh-close'].includes(route) && size === '4') && !(['mesh', 'relay'].includes(route) && ['2', '4', '8'].includes(size))) {
+    console.error('usage: native_online.cjs EXPORT ENDPOINT mesh|relay 2|4|8, or mesh-startup|mesh-close 4');
     process.exitCode = 1;
   } else run(root, endpoint, route, Number(size)).then(result => console.log(JSON.stringify(result))).catch(error => {
     console.error(error);
