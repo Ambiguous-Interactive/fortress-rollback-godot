@@ -575,6 +575,7 @@ def _validate_commit_packet(packet, sender, phase, stage, label):
 def _validate_commit_retry(sender, recipient, phase, stage, label):
     first = sender.get('commit_first')
     if (type(sender.get('commit_dropped')) is not int or sender['commit_dropped'] != 1
+            or type(sender.get('commit_batch_duplicates')) is not int or sender['commit_batch_duplicates'] < 0
             or type(sender.get('commit_resends')) is not int or sender['commit_resends'] < 1
             or type(sender.get('commit_delay_us')) is not int or sender['commit_delay_us'] < _COMMIT_MIN_DELAY_US
             or type(first) is not str or not re.fullmatch(r'[0-9a-f]{218}', first)

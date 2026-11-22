@@ -320,7 +320,8 @@ recipient never installs the interval, and each survivor compares its pre-cut
 confirmed prefix with independently reconstructed original inputs.
 The `peer-drop-commit` cell withholds the first coordinator COMMIT after
 certification and the first follower commit acknowledgement after it freezes
-the target. The validator requires a later exact-byte retry on each link,
+the target. Identical copies queued at the same transport-clock sample are
+withheld together. The validator requires a later exact-byte retry on each link,
 decodes each packet against the sender's role and the shared operation, and
 requires the coordinator to have received the follower's acknowledgement.
 Both survivors continue through 38 canonical comparisons. Full pinned-source

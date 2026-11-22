@@ -413,6 +413,7 @@ func run(host: Node, count: int) -> bool:
 		"history_drop_operation": int(history.get("operation", -1)),
 		"history_drop_count": int(history.get("count", 0)),
 		"commit_dropped": int(commit.get("dropped", 0)),
+		"commit_batch_duplicates": int(commit.get("batch_duplicates", 0)),
 		"commit_resends": int(commit.get("resends", 0)),
 		"commit_operation": int(commit.get("operation", -1)),
 		"commit_cut": int(commit.get("cut", -1)),

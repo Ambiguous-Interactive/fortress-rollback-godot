@@ -285,13 +285,13 @@ def commit_evidence():
                     target_generation=0, target_set_digest='00' * 8, departing_slot=2,
                     roster_digest='0000000000000001')
     payload = commit_packet(proposer)
-    proposer.update(commit_dropped=1, commit_resends=1, commit_operation=operation,
+    proposer.update(commit_dropped=1, commit_batch_duplicates=0, commit_resends=1, commit_operation=operation,
                     commit_cut=proposer['freeze_frame'], commit_digest=proposer['digest'],
                     commit_slot=follower['slot'], commit_first=payload, commit_retry=payload,
                     commit_retry_slot=follower['slot'], commit_delay_us=50000, acknowledged_peers=[hashlib.sha256(follower['uuid'].encode('ascii')).digest()[:8].hex()],
                     commit_ack_peers=[])
     acknowledgement = commit_packet(follower, phase=2, stage=3)
-    follower.update(commit_dropped=1, commit_resends=1, commit_operation=operation,
+    follower.update(commit_dropped=1, commit_batch_duplicates=2, commit_resends=1, commit_operation=operation,
                     commit_cut=follower['freeze_frame'], commit_digest=follower['digest'], commit_slot=proposer['slot'],
                     commit_first=acknowledgement, commit_retry=acknowledgement, commit_retry_slot=proposer['slot'],
                     commit_delay_us=50000, acknowledged_peers=[], commit_ack_peers=[])
@@ -365,6 +365,8 @@ class CommitLossEvidence(unittest.TestCase):
             lambda value: proposer(value).update(acknowledged_peers=None),
             lambda value: proposer(value).update(acknowledged_peers=[True]),
             lambda value: follower(value).update(commit_dropped=0),
+            lambda value: follower(value).update(commit_batch_duplicates=-1),
+            lambda value: follower(value).update(commit_batch_duplicates=True),
             lambda value: follower(value).update(commit_resends=0),
             lambda value: follower(value).update(commit_first=payload),
             lambda value: follower(value).update(commit_retry=follower(value)['commit_first'][:64] + '7f' * 8 + follower(value)['commit_first'][80:]),

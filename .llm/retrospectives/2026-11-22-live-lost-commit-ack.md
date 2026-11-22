@@ -24,3 +24,25 @@ identifier to prove that byte equality is required even for valid packets.
 The [transport note](../knowledge/transport-tooling.md) replaces the old
 single-direction procedure with the paired protocol. The earlier retrospective
 remains historical evidence for the original cell.
+
+## Merge-group findings
+
+The first group exposed a duplicate acknowledgement already queued when the
+first acknowledgement was withheld. The grouped 4.3 direct receipt reported
+three sends and a first retry delay of zero despite matching bytes. The
+transport now withholds all exact copies addressed to the same peer at that
+clock sample, accounts for them separately, and keeps the positive-delay
+requirement. The native clock control exercises the old failure, a different
+address that resolves to the same slot, and a changed payload.
+
+The grouped 4.7.2 spectator delayed-accept cell completed playback and
+reported `net::ERR_ABORTED` for the admission fetch. A split 11-byte
+`Cache-Control: no-store` response on the pinned Chromium 156.0.8078.4
+reproduced the failure after the streamed reader returned valid JSON.
+`Response.json()` returned the same JSON with a finished request.
+The pinned Godot Web adapter uses a streaming reader, which matches the
+[Playwright report](https://github.com/microsoft/playwright/issues/42742).
+The exported spectator fixture now uses full JSON consumption for its
+loopback control requests. It retains the browser's three-second abort
+signal, actual held HTTP acceptance, and fatal observer for network errors.
+The [transport note](../knowledge/transport-tooling.md) records both lessons.

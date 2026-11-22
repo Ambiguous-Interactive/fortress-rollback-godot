@@ -214,12 +214,14 @@ class DropDirect:
 	var _history_drop_counts: Array[int] = []
 	var _commit_remaining: int = 0
 	var _commit_dropped: int = 0
+	var _commit_batch_duplicates: int = 0
 	var _commit_resends: int = 0
 	var _commit_operation: int = -1
 	var _commit_phase: int = 0
 	var _commit_cut: int = -1
 	var _commit_digest: int = 0
 	var _commit_slot: int = -1
+	var _commit_destination: PackedByteArray = PackedByteArray()
 	var _commit_first: String = ""
 	var _commit_retry: String = ""
 	var _commit_dropped_us: int = -1
@@ -272,6 +274,7 @@ class DropDirect:
 	func commit_report() -> Dictionary:
 		return {
 			"dropped": _commit_dropped,
+			"batch_duplicates": _commit_batch_duplicates,
 			"resends": _commit_resends,
 			"operation": _commit_operation,
 			"cut": _commit_cut,
@@ -305,6 +308,7 @@ class DropDirect:
 				kept.append(packet)
 				continue
 			var destination_slot: int = _membership.slot(_membership.uuid_for_peer_id(packet.to.decode_u32(0)))
+			var packet_hex: String = packet.bytes.hex_encode()
 			if _commit_remaining > 0:
 				_commit_remaining -= 1
 				_commit_dropped += 1
@@ -313,12 +317,18 @@ class DropDirect:
 				_commit_cut = int(decoded.message.cut)
 				_commit_digest = int(decoded.message.cut_digest)
 				_commit_slot = destination_slot
-				_commit_first = packet.bytes.hex_encode()
+				_commit_destination = packet.to.duplicate()
+				_commit_first = packet_hex
 				_commit_dropped_us = now_us
 				_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
 				continue
 			if phase == _commit_phase and int(decoded.message.operation) == _commit_operation:
-				retries.append({"index": kept.size(), "bytes": packet.bytes.hex_encode(), "slot": destination_slot})
+				# Keep exact copies at the same clock sample in the withheld batch.
+				if now_us == _commit_dropped_us and packet.to == _commit_destination and packet_hex == _commit_first:
+					_commit_batch_duplicates += 1
+					_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
+					continue
+				retries.append({"index": kept.size(), "bytes": packet_hex, "slot": destination_slot})
 			kept.append(packet)
 		_pending = kept
 		return retries

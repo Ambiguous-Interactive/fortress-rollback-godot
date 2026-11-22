@@ -15,6 +15,14 @@ const Mixed = preload("res://webrtc_mixed.gd")
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const S = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Setup = preload("res://webrtc_setup.gd")
+const Drop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
+
+class BatchMembership:
+	extends "res://addons/fortress_rollback/transport/signalfish_membership.gd"
+	func roster() -> PackedStringArray:
+		return PackedStringArray(["coordinator", "follower", "departed"])
+
 
 class RetainedMixed:
 	extends Mixed
@@ -113,6 +121,7 @@ class ClockProbe:
 func _initialize() -> void:
 	var engine: Dictionary = Engine.get_version_info()
 	print("WEBRTC_ENGINE_IDENTITY ", "%d.%d.%d.%s %s" % [engine.major, engine.minor, engine.patch, engine.status, engine.hash])
+	if not _commit_batch(): return
 	var probe: ClockProbe = ClockProbe.new()
 	probe.service_calls = 0
 	if not await _passive_departure_wait(probe): return
@@ -239,6 +248,44 @@ func _passive_departure_wait(probe: ClockProbe) -> bool:
 	probe.passive_step_us = 500000
 	if not _check(probe.PHYSICAL_DEPARTURE_WAIT_US < 5000000, "passive phase stays below the unchanged peer timeout"): return false
 	return true
+
+# Value: protects=later commit retry evidence, fails_when=same-clock copies escape the simulated loss, seam=queued wire packets
+func _commit_batch() -> bool:
+	var limits: T.Limits = T.Limits.new()
+	limits.player_count = 3
+	var report: T.Message = T.Message.new()
+	report.kind = T.Kind.DROP_BARRIER
+	report.phase = Drop.Phase.REPORT
+	report.stage = Drop.Stage.COMMITTED
+	report.operation = 769
+	report.cut = 6
+	report.bound = 0
+	report.available_through = 6
+	report.data = PackedByteArray([2, 3, 0])
+	var original: T.Result = Codec.encode(report, limits)
+	report.connection_id[0] = 1
+	var different: T.Result = Codec.encode(report, limits)
+	if not _check(original.code == T.Code.OK and different.code == T.Code.OK, "encode commit batch reports"): return false
+	var transport: Setup.DropDirect = Setup.DropDirect.new()
+	transport._membership = BatchMembership.new()
+	var destination: PackedByteArray = PackedByteArray([1, 0, 0, 0])
+	var other: PackedByteArray = PackedByteArray([2, 0, 0, 0])
+	var untouched: Peer.Packet = Peer.Packet.new(other, original.bytes)
+	var changed: Peer.Packet = Peer.Packet.new(destination, different.bytes)
+	var original_packet: Peer.Packet = Peer.Packet.new(destination, original.bytes)
+	transport._pending.assign([original_packet, untouched, original_packet, changed])
+	transport._pending_bytes = 3 * original.bytes.size() + different.bytes.size()
+	transport.arm_commit_drop(1)
+	transport._withhold_commit(100)
+	if not _check(transport._pending == [untouched, changed] and transport._pending_bytes == original.bytes.size() + different.bytes.size(),
+		"withhold only exact copies to the original destination at the same clock sample"): return false
+	transport._pending.assign([original_packet])
+	var retries: Array[Dictionary] = transport._withhold_commit(101)
+	transport._record_sent_commit_retries(retries, 1, 101)
+	var evidence: Dictionary = transport.commit_report()
+	return _check(evidence.batch_duplicates == 1 and evidence.dropped == 1 and evidence.resends == 1 and evidence.delay_us == 1
+		and evidence.first == evidence.retry, "retain a later exact sent retry after withholding the commit batch")
+
 
 func _check(condition: bool, message: String) -> bool:
 	if condition: return true
