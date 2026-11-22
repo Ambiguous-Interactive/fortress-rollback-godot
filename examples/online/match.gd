@@ -110,6 +110,7 @@ func _freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnatio
 	var profile: Protocol.Config = Protocol.Config.new()
 	profile.player_count = roster.size()
 	profile.input_width = 1 if native_name.is_empty() else Driver.Native.INPUT_BYTES
+	profile.neutral_input.resize(profile.input_width)
 	profile.input_delay = 2 if native_name.is_empty() else 0
 	profile.desync_interval = 30 if native_name.is_empty() else 0
 	var player: String = client.call("get_player_id")
