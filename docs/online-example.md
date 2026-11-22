@@ -24,6 +24,8 @@ Select **Native / WebRTC** or **Native / relay** and a room size from 2 to 8.
 Everyone joining the room uses the same mode and player count. Each browser
 controls one player. The app validates the backend and schema at room admission
 and checks the frozen room and roster tag before handing any datagram to Rust.
+**Native / WebRTC** starts once every direct link connects. **Native / relay**
+starts over relay, including when the server explicitly falls back to it.
 For the local server command below, pass `--max-players 8` to allow larger rooms
 and add `--route relay` to host a relay-only room.
 
