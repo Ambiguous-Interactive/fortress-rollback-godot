@@ -29,7 +29,7 @@ The game implements three synchronous callbacks. Fulfill each before returning a
 | `load_state(frame: int, bytes: PackedByteArray) -> bool` | Restore the snapshot and check its frame. Return true on success. |
 | `advance_game(bytes: PackedByteArray, statuses: PackedByteArray) -> bool` | Run one simulation frame in player order. Slot i occupies four bytes at offset 4i. Status 0 is confirmed, 1 predicted, 2 disconnected. |
 
-For local sync tests call `start_sync(players)` and `step_sync(packed_inputs, game)`. The benchmark uses two and eight players with check distance two.
+For local sync tests call `start_sync(players)` and `step_sync(packed_inputs, game)`. The session hashes saved snapshots to detect divergent re-simulation. The benchmark uses two and eight players with check distance two and disables checksums for all three backends.
 The [test game](project/driver.gd) demonstrates all three callbacks. Its HTTP connection carries test commands and datagrams to the loopback UDP bridge.
 A live game supplies its own transport. The experiment does not implement SignalFish negotiation, replay migration, spectators or coordinated drop.
 

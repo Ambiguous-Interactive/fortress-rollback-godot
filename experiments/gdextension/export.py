@@ -14,10 +14,25 @@ import mobile
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 CACHE = ROOT / ".cache/reference"
+SCRATCH = ROOT / ".cache/native-experiment"
 HOST = {"Darwin": "macos", "Windows": "windows", "Linux": "linux"}[platform.system()]
 ARCH = {"aarch64": "arm64", "arm64": "arm64", "amd64": "x86_64", "x86_64": "x86_64"}[platform.machine().lower()]
+MACOS_CROSS_TARGET = {"arm64": "x86_64-apple-darwin", "x86_64": "aarch64-apple-darwin"}[ARCH]
 STEM = "fortress_gdextension_experiment"
 LIB = {"macos": f"lib{STEM}.dylib", "windows": f"{STEM}.dll", "linux": f"lib{STEM}.so"}[HOST]
+
+
+def editor_archive(version):
+    suffix = {"windows": "win64.exe.zip", "macos": "macos.universal.zip", "linux": f"linux.{ARCH}.zip"}[HOST]
+    return f"Godot_v{version}-stable_{suffix}"
+
+
+def prepared_editor(version):
+    archive = editor_archive(version)
+    executable = {"macos": "Godot.app/Contents/MacOS/Godot",
+                  "windows": archive.removesuffix(".exe.zip") + "_console.exe",
+                  "linux": archive.removesuffix(".zip")}[HOST]
+    return SCRATCH / "editors" / version / executable
 
 
 def install_package(project, archive_path, target):
@@ -30,7 +45,7 @@ def install_package(project, archive_path, target):
     if target == "macos":
         fat = project.parent / LIB
         subprocess.run(["lipo", "-create", native / "release" / LIB,
-                        native / f"x86_64-apple-darwin/release/{LIB}", "-output", fat], check=True, timeout=30)
+                        native / f"{MACOS_CROSS_TARGET}/release/{LIB}", "-output", fat], check=True, timeout=30)
         libraries = {"macos": fat}
     if target == "windows" and HOST != "windows":
         libraries["windows.x86_64"] = native / f"x86_64-pc-windows-gnu/release/{STEM}.dll"
@@ -65,11 +80,11 @@ def main():
     parser.add_argument("--editor", type=Path)
     args = parser.parse_args()
     version = args.version
-    scratch = ROOT / ".cache/native-experiment"
+    scratch = SCRATCH
     scratch.mkdir(exist_ok=True)
     output = scratch / version / args.target
     output.mkdir(parents=True, exist_ok=True)
-    for previous in ("qualification.json", "benchmark.json"):
+    for previous in ("qualification.json", "benchmark.json", "prediction-stall.json"):
         (output / previous).unlink(missing_ok=True)
     arch = "x86_64" if args.target == "windows" and HOST != "windows" else ARCH
     names = {"linux": ("Linux", f"linux_release.{ARCH}", "witness"),
@@ -104,7 +119,7 @@ def main():
         (project / "export_presets.cfg").write_text(
             f'[preset.0]\nname="{name}"\nplatform="{name}"\nrunnable=true\nexport_filter="all_resources"\n'
             'include_filter=""\nexclude_filter=""\n[preset.0.options]\n' + '\n'.join(options) + '\n')
-        editor = args.editor or CACHE / f"editors/{version}/Godot_v{version}-stable_linux.{ARCH}"
+        editor = args.editor or prepared_editor(version)
         base = [editor, "--headless", "--path", project]
         actual = subprocess.check_output([editor, "--version"], text=True).strip()
         if not actual.startswith(version + ".stable."):

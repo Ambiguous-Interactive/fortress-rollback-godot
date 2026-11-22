@@ -60,10 +60,12 @@ def main():
     parser.add_argument("--browser", type=Path)
     parser.add_argument("--engine", choices=["chromium", "firefox", "webkit"], default="chromium")
     parser.add_argument("--device", choices=["android", "ios"])
+    parser.add_argument("--stall", action="store_true", help="hold packets until the prediction window stalls")
     parser.add_argument("--slot", type=int, choices=(0, 1), default=0)
     parser.add_argument("--control", choices=("none", "restore", "encoding"), default="none")
     args = parser.parse_args()
     ticks = 0
+    last_frame = -1
     times = []
     held = []
     result = {}
@@ -96,7 +98,7 @@ def main():
                 self.wfile.write(data)
 
             def tick(self, gd):
-                nonlocal ticks
+                nonlocal ticks, last_frame
                 if gd.get("ack"):
                     if not result.get("verified"):
                         raise ValueError("premature client completion")
@@ -118,7 +120,13 @@ def main():
                         raise ValueError("unexpected UDP sender")
                     packets.append(packet.hex())
                 frame = gd.get("frame", 0)
-                if 8 <= frame < 12:
+                if args.stall and frame >= 12 and frame == last_frame and "held_packets" not in result:
+                    if gd["status"] != 1:
+                        raise ValueError("binding reported an advance at the prediction limit")
+                    result["prediction_stalled"] = True
+                last_frame = frame
+                delay = args.stall and not result.get("prediction_stalled")
+                if 8 <= frame and (frame < 12 or delay):
                     held.extend(packets)
                     packets.clear()
                 elif held:
@@ -138,6 +146,8 @@ def main():
                     if min(frame, rust["state"][0]) >= 48 and min(gd["confirmed"], rust["confirmed"]) >= 39:
                         if min(gd["loads"], rust["loads"]) <= 0 or result.get("held_packets", 0) < 2:
                             raise ValueError("missing rollback or fault exposure")
+                        if args.stall and not result.get("prediction_stalled"):
+                            raise ValueError("prediction limit was not exercised")
                         if not gd["corrected_fault"]:
                             raise ValueError("late delivery never corrected a replayed row")
                         expected = struct.pack("<III", 40, 820 * 17, 820 * 18)

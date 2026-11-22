@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from export import ARCH, CACHE, HERE, HOST, ROOT
+from export import ARCH, CACHE, HERE, HOST, MACOS_CROSS_TARGET, ROOT, SCRATCH, editor_archive, prepared_editor
 
 sys.path.insert(0, str(ROOT / "scripts/reference"))
 from fetch import digest, fetch, load_manifest, prepare_zip, sources
@@ -21,20 +21,18 @@ EDITOR_SHA512 = {
 
 
 def editor(data, version):
-    suffix = {"windows": "win64.exe.zip", "macos": "macos.universal.zip", "linux": f"linux.{ARCH}.zip"}[HOST]
-    name = f"Godot_v{version}-stable_{suffix}"
+    name = editor_archive(version)
     pin = data["artifacts"].get(name)
     if pin is None:
         pin = dict(url=f"https://github.com/godotengine/godot/releases/download/{version}-stable/{name}",
                    digest=EDITOR_SHA512[version, HOST], algorithm="sha512")
     archive = fetch(pin, name)
-    dest = ROOT / ".cache/native-experiment/editors" / version
+    dest = SCRATCH / "editors" / version
     if HOST == "macos":
         subprocess.run(["ditto", "-x", "-k", archive, dest], check=True)
-        return dest / "Godot.app/Contents/MacOS/Godot"
-    binary = name.removesuffix(".zip")
-    prepare_zip(archive, dest, executable_members=(binary,))
-    return dest / (name.removesuffix(".exe.zip") + "_console.exe" if HOST == "windows" else binary)
+    else:
+        prepare_zip(archive, dest, executable_members=(name.removesuffix(".zip"),))
+    return prepared_editor(version)
 
 
 def main():
@@ -44,7 +42,7 @@ def main():
     args = parser.parse_args()
     target, version = args.target, args.version
     directory = ROOT / ".cache/native-experiment" / version / target
-    for previous in ("qualification.json", "benchmark.json"):
+    for previous in ("qualification.json", "benchmark.json", "prediction-stall.json"):
         (directory / previous).unlink(missing_ok=True)
     data = load_manifest()
     sources(dict(data, sources={"fortress": data["sources"]["fortress"]}))
@@ -74,7 +72,7 @@ def main():
             env["CARGO_TARGET_" + abi.replace("-", "_").upper() + "_LINKER"] = str(ndk / f"{abi}24-clang")
             subprocess.run(cargo + ["--target", abi, "--lib"], check=True, env=env)
     if target == "macos":
-        subprocess.run(cargo + ["--target", "x86_64-apple-darwin", "--lib"], check=True, env=env)
+        subprocess.run(cargo + ["--target", MACOS_CROSS_TARGET, "--lib"], check=True, env=env)
     if target == "ios":
         for abi in ("aarch64-apple-ios", "aarch64-apple-ios-sim"):
             subprocess.run(cargo + ["--target", abi, "--lib"], check=True, env=env)
@@ -97,6 +95,9 @@ def main():
     partial.replace(directory / "qualification.json")
     print(json.dumps(receipts))
     if target == "linux":
+        stall = subprocess.check_output([sys.executable, HERE / "qualify.py", "--export", directory / outputs[target],
+                                         "--peer", peer, "--stall"], text=True, env=env)
+        (directory / "prediction-stall.json").write_text(json.dumps(json.loads(stall.splitlines()[-1]), indent=2) + "\n")
         measurements = subprocess.check_output([sys.executable, HERE / "benchmark.py", version, "--editor", binary, "--rust-peer-dir", peer.parent], text=True, env=env)
         (directory / "benchmark.json").write_text(json.dumps([json.loads(line) for line in measurements.splitlines()], indent=2) + "\n")
 

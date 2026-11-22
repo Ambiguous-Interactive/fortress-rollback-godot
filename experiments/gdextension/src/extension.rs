@@ -45,6 +45,7 @@ struct FortressNativeSession {
     local: usize,
     sync: Option<fortress_rollback::SyncTestSession<Game>>,
     players: usize,
+    sync_checksums: bool,
 }
 
 #[godot_api]
@@ -129,13 +130,19 @@ impl FortressNativeSession {
         {
             return -1;
         }
+        let before = session.current_frame();
         let requests = match session.advance_frame() {
             Ok(requests) => requests,
             Err(FortressError::PredictionThreshold) => return 1,
             Err(_) => return -1,
         };
-        if dispatch(requests, game) {
-            0
+        let advanced = session.current_frame() > before;
+        if dispatch(requests, game, false) {
+            if advanced {
+                0
+            } else {
+                1
+            }
         } else {
             self.session = None;
             -1
@@ -144,10 +151,20 @@ impl FortressNativeSession {
 
     #[func]
     fn start_sync(&mut self, players: i32) -> bool {
+        self.configure_sync(players, true)
+    }
+
+    #[func]
+    fn start_sync_without_checksums(&mut self, players: i32) -> bool {
+        self.configure_sync(players, false)
+    }
+
+    fn configure_sync(&mut self, players: i32, checksums: bool) -> bool {
         if self.session.is_some() || self.sync.is_some() || !(2..=8).contains(&players) {
             return false;
         }
         self.players = players as usize;
+        self.sync_checksums = checksums;
         self.sync = SessionBuilder::<Game>::new()
             .with_num_players(self.players)
             .and_then(|b| b.with_input_delay(0))
@@ -176,7 +193,7 @@ impl FortressNativeSession {
         }
         let success = session
             .advance_frame()
-            .is_ok_and(|requests| dispatch(requests, game));
+            .is_ok_and(|requests| dispatch(requests, game, self.sync_checksums));
         if !success {
             self.sync = None
         }
@@ -184,13 +201,19 @@ impl FortressNativeSession {
     }
 }
 
-fn dispatch(requests: fortress_rollback::RequestVec<Game>, mut game: Gd<Object>) -> bool {
+fn dispatch(
+    requests: fortress_rollback::RequestVec<Game>,
+    mut game: Gd<Object>,
+    checksums: bool,
+) -> bool {
     for request in requests {
         let success = match request {
             FortressRequest::SaveGameState { frame, cell } => {
                 let result = game.call("save_state", &[frame.as_i32().to_variant()]);
                 if let Ok(bytes) = result.try_to::<PackedByteArray>() {
-                    cell.save(frame, Some(bytes.as_slice().to_vec()), None)
+                    let bytes = bytes.as_slice();
+                    let checksum = checksums.then(|| fortress_rollback::hash_bytes_fnv1a(bytes));
+                    cell.save(frame, Some(bytes.to_vec()), checksum)
                 } else {
                     false
                 }

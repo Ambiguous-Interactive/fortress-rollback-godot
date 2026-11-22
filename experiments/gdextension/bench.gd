@@ -10,6 +10,8 @@ var trace := PackedStringArray()
 var ticks: Array[int] = []
 var copies: Array[int] = []
 var players: int
+var corrupt_load := false
+var corrupted := false
 var native := FortressNativeSession.new()
 var port := Session.new()
 
@@ -18,6 +20,9 @@ func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	players = int(args[1])
 	state.resize(4096)
+	if args[0] == "sync-control":
+		quit(0 if sync_control() else 1)
+		return
 	var cfg := Config.new()
 	cfg.player_count = players
 	cfg.local_players = PackedInt32Array(range(players))
@@ -26,7 +31,7 @@ func _initialize() -> void:
 	cfg.max_snapshot_bytes = state.size()
 	cfg.storage_budget_bytes = 1048576
 	cfg.checksums_enabled = false
-	if not native.start_sync(players) or port.configure(cfg) != Types.Code.OK:
+	if not native.start_sync_without_checksums(players) or port.configure(cfg) != Types.Code.OK:
 		quit(1)
 		return
 	for step: int in range(STEPS):
@@ -42,6 +47,21 @@ func _initialize() -> void:
 			return
 	print("BENCH ", JSON.stringify({"state": state.hex_encode(), "trace": trace, "ticks": ticks, "copies": copies}))
 	quit()
+
+
+func sync_control() -> bool:
+	var inputs := PackedByteArray()
+	inputs.resize(4 * players)
+	if not native.start_sync(players):
+		return false
+	for step: int in range(6):
+		if not native.step_sync(inputs, self) or frame != step + 1:
+			return false
+	corrupt_load = true
+	for _step: int in range(6):
+		if not native.step_sync(inputs, self):
+			return corrupted
+	return false
 
 
 func port_step(data: PackedByteArray) -> bool:
@@ -86,6 +106,9 @@ func load_state(which: int, bytes: PackedByteArray) -> bool:
 	trace.append("L%d" % which)
 	var start := Time.get_ticks_usec()
 	state = bytes.duplicate()
+	if corrupt_load:
+		state[4] ^= 1
+		corrupted = true
 	copies.append(Time.get_ticks_usec() - start)
 	frame = state.decode_u32(0)
 	return which == frame
