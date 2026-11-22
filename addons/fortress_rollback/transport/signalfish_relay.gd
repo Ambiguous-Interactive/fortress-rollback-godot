@@ -18,6 +18,7 @@ var _sdk_config: WeakRef = null
 var _membership: Membership
 var _adapter: Adapter
 var _peer: Peer
+var _receive_packet: Callable
 var _options: Types.Options
 var _session: PackedByteArray = PackedByteArray()
 var _pending: Array[PackedByteArray] = []
@@ -42,11 +43,15 @@ var _detach_requested: bool = false
 
 
 ## Use actual SDK config and ProtocolInfo observed before joining; JSON fallback is refused.
-func configure(client: Object, sdk_config: Object, protocol_info: Object, membership: Membership, adapter: Adapter, peer: Peer, options: Types.Options = null) -> int:
+## Supply either a PeerSession or receive_packet(sender_uuid, owned_bytes) returning I.Code.
+func configure(client: Object, sdk_config: Object, protocol_info: Object, membership: Membership, adapter: Adapter, peer: Peer,
+		options: Types.Options = null, receive_packet: Callable = Callable()) -> int:
 	if _client != null:
 		return Code.WRONG_STATE
 	var controls: Types.Options = Types.Options.new() if options == null else options
-	if client == null or sdk_config == null or protocol_info == null or membership == null or adapter == null or peer == null or not Types.valid_options(controls):
+	if client == null or sdk_config == null or protocol_info == null or membership == null or adapter == null or not Types.valid_options(controls):
+		return Code.INVALID_ARGUMENT
+	if (peer != null) == receive_packet.is_valid():
 		return Code.INVALID_ARGUMENT
 	if not client.has_method("send_game_data_binary") or not client.has_signal("game_data_binary_received") or not protocol_info.has_method("to_dict"):
 		return Code.INVALID_ARGUMENT
@@ -75,6 +80,7 @@ func configure(client: Object, sdk_config: Object, protocol_info: Object, member
 	_membership = membership
 	_adapter = adapter
 	_peer = peer
+	_receive_packet = receive_packet
 	_options = Types.copy_options(controls)
 	_session = membership.handshake_message().session_id
 	client.connect("game_data_binary_received", _on_binary)
@@ -126,7 +132,7 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 	var result: Types.Result = Types.Result.new()
 	for _index: int in mini(_options.max_receives_per_poll, _received.size()):
 		var incoming: Envelope.Decoded = _received[0]
-		if not _receive_token_ready:
+		if _peer != null and not _receive_token_ready:
 			var candidate: Variant = next_token_factory.call(incoming.sender) if next_token_factory.is_valid() else null
 			result.code = _gate()
 			if result.code != Code.OK:
@@ -141,7 +147,13 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 		result.code = _gate()
 		if result.code != Code.OK:
 			break
-		result.peer_code = _adapter.receive_relay(_peer, incoming.payload, incoming.sender, now_us, _receive_token)
+		if _peer != null:
+			result.peer_code = _adapter.receive_relay(_peer, incoming.payload, incoming.sender, now_us, _receive_token)
+		else:
+			result.peer_code = _receive_packet.call(incoming.sender, incoming.payload.duplicate())
+			result.code = _gate()
+			if result.code != Code.OK:
+				break
 		if result.peer_code in [I.Code.WRONG_SOURCE, I.Code.WRONG_CONNECTION]:
 			_rejected += 1
 			_received.pop_front()
@@ -151,7 +163,7 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 			continue
 		if result.peer_code != I.Code.OK:
 			# Event-capacity pressure can commit termination; only a live peer can retry.
-			if result.peer_code == I.Code.BACKPRESSURE and _peer.status().lifecycle == S.Lifecycle.RUNNING:
+			if result.peer_code == I.Code.BACKPRESSURE and (_peer == null or _peer.status().lifecycle == S.Lifecycle.RUNNING):
 				result.code = Code.BACKPRESSURE
 				break
 			result.code = Code.PEER_FAILURE
@@ -227,6 +239,7 @@ func detach() -> void:
 	_membership = null
 	_adapter = null
 	_peer = null
+	_receive_packet = Callable()
 	_pending.clear()
 	_received.clear()
 	_pending_bytes = 0
@@ -285,7 +298,7 @@ func _gate() -> int:
 	var config: Object = _sdk_config.get_ref()
 	if not is_instance_valid(client) or not is_instance_valid(config) or not _raw_mode(config) or config.get("max_inbound_packets_per_poll") > 4096:
 		return Code.INCOMPATIBLE_MODE
-	if _adapter.status().route not in ["mesh", "relay", "relay_required"]:
+	if _adapter.status().route not in ["mesh", "relay", "relay_required"] or (_peer == null and not _receive_packet.is_valid()):
 		return Code.WRONG_STATE
 	return Code.OK
 
@@ -299,8 +312,8 @@ static func _raw_mode(config: Object) -> bool:
 	return config.get("game_data_format") == "message_pack" and config.get("decode_msgpack_payloads") == false
 
 
-func matches_session(membership: Membership, adapter: Adapter, peer: Peer) -> bool:
-	return _membership == membership and _adapter == adapter and _peer == peer and _client != null
+func matches_session(membership: Membership, adapter: Adapter, peer: Peer, receive_packet: Callable = Callable()) -> bool:
+	return _membership == membership and _adapter == adapter and _peer == peer and _receive_packet == receive_packet and _client != null
 
 
 func packet_limit() -> int:

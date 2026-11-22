@@ -41,19 +41,22 @@ var _busy: bool = false
 var _detach_requested: bool = false
 
 
-## Both transports must use the same frozen membership, adapter and PeerSession.
+## Both transports must use the same frozen membership, adapter and packet receiver.
 ## Reserve their outgoing queues and poll calls exclusively for this coordinator.
-func configure(direct: Direct, relay: Relay, membership: Membership, adapter: Adapter, peer: Peer, options: Options = null) -> int:
+func configure(direct: Direct, relay: Relay, membership: Membership, adapter: Adapter, peer: Peer, options: Options = null,
+		receive_packet: Callable = Callable()) -> int:
 	if _relay != null or _busy:
 		return Code.WRONG_STATE
 	var controls: Options = Options.new() if options == null else options
-	if direct == null or relay == null or membership == null or adapter == null or peer == null or controls.fallback_after_us < 0 \
+	if direct == null or relay == null or membership == null or adapter == null or controls.fallback_after_us < 0 \
 		or controls.fallback_after_us > 60000000 or controls.restore_after_us < 0 or controls.restore_after_us > 60000000 \
 		or controls.max_pending_packets < 1 or controls.max_pending_packets > 4096 \
 		or controls.max_pending_bytes < mini(direct.packet_limit(), relay.packet_limit()) or controls.max_pending_bytes > 16777216 \
 		or controls.max_routes_per_poll < 1 or controls.max_routes_per_poll > controls.max_pending_packets:
 		return Code.INVALID_ARGUMENT
-	if not direct.matches_session(membership, adapter, peer) or not relay.matches_session(membership, adapter, peer) \
+	if (peer != null) == receive_packet.is_valid():
+		return Code.INVALID_ARGUMENT
+	if not direct.matches_session(membership, adapter, peer, receive_packet) or not relay.matches_session(membership, adapter, peer, receive_packet) \
 		or direct.status().code != Code.OK or direct.status().pending_packets != 0 or relay.status().pending_packets != 0 \
 		or relay.status().code != Code.OK or adapter.status().route != "mesh":
 		return Code.WRONG_STATE
@@ -68,7 +71,7 @@ func configure(direct: Direct, relay: Relay, membership: Membership, adapter: Ad
 	return Code.OK
 
 
-## Atomic ownership: retain the entire drained PeerSession batch until OK.
+## Atomic ownership: retain the entire drained batch until OK.
 func enqueue_batch(packets: Array[Peer.Packet]) -> int:
 	var gate: int = _gate()
 	if gate != Code.OK or _busy:
