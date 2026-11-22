@@ -408,15 +408,20 @@ def _strip_starts(members):
     return [{'pid': item['pid'], 'name': item['name']} for item in members]
 
 
-def terminate(token_value):
+def _terminate_members(members, make_identity_check, observed):
+    if observed is not None:
+        observed.update((member['pid'], member) for member in members)
+    return _strip_starts(
+        member for member in members if _send_kill(member['pid'], make_identity_check(member['start']))
+    )
+
+
+def terminate(token_value, *, observed=None):
     """Kill every live token carrier and return their terminal identities."""
-    survivors = identities(token_value)
-    belongs = {_item['pid']: _identity_check(_item['start']) for _item in survivors}
-    named = [item for item in survivors if _send_kill(item['pid'], belongs[item['pid']])]
-    return _strip_starts(named)
+    return _terminate_members(identities(token_value), _identity_check, observed)
 
 
-def terminate_group(group, proc=None, started_before=None, token_value=None):
+def terminate_group(group, proc=None, started_before=None, token_value=None, *, observed=None):
     """Kill every live member of one process group and return their identities.
 
     started_before bounds the scan on every post-exit caller, the way
@@ -429,9 +434,7 @@ def terminate_group(group, proc=None, started_before=None, token_value=None):
     scrubs; a recycled pid always reads a new one (#404 review).
     """
     members = group_members(group, proc=proc, started_before=started_before, token_value=token_value)
-    belongs = {_item['pid']: _identity_check(_item['start'], proc) for _item in members}
-    named = [item for item in members if _send_kill(item['pid'], belongs[item['pid']])]
-    return _strip_starts(named)
+    return _terminate_members(members, lambda start: _identity_check(start, proc), observed)
 
 
 def cgroup_members(leaf, proc=None):
@@ -492,7 +495,7 @@ def cgroup_members(leaf, proc=None):
     return sorted(found, key=lambda item: item['pid'])
 
 
-def terminate_cgroup(leaf, proc=None):
+def terminate_cgroup(leaf, proc=None, *, observed=None):
     """Kill every live member of one owned cgroup leaf and return their identities.
 
     The sweep that replaced the post-exit numeric group scans under
@@ -512,9 +515,7 @@ def terminate_cgroup(leaf, proc=None):
     saw and the verification sweeps re-check it.
     """
     members = cgroup_members(leaf, proc)
-    belongs = {_item['pid']: _leaf_member_check(leaf, _item['start'], proc) for _item in members}
-    named = [item for item in members if _send_kill(item['pid'], belongs[item['pid']])]
-    return _strip_starts(named)
+    return _terminate_members(members, lambda start: _leaf_member_check(leaf, start, proc), observed)
 
 
 def _leaf_member_check(leaf, start, proc):
@@ -2531,6 +2532,55 @@ def spawn(command, environment=None, stdout=None, stderr=None, cwd=None):
     return process, token_value
 
 
+def _observed_member_is_live(member):
+    try:
+        fields = (Path('/proc') / str(member['pid']) / 'stat').read_bytes().rsplit(b') ', 1)[-1].split()
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    if fields[0] in (b'Z', b'X'):
+        return False
+    return member['start'] is None or int(fields[19]) == member['start']
+
+
+def _finish_descendants(process, token_value, boundary, grace):
+    leaf = getattr(process, 'owned_cgroup', None)
+    observed = {}
+    kill = [lambda: terminate(token_value, observed=observed)]
+    verify = [lambda: identities(token_value)]
+    if leaf is not None:
+        kill.append(lambda: terminate_cgroup(leaf, observed=observed))
+        verify.append(lambda: cgroup_members(leaf))
+    elif not getattr(process, 'owned_cgroup_released', False):
+        kill.append(lambda: terminate_group(process.pid, started_before=boundary, token_value=token_value, observed=observed))
+        verify.append(lambda: group_members(process.pid, started_before=boundary, token_value=token_value))
+
+    _, anomaly = _contained_sweeps(kill)
+    if process.poll() is None:
+        try:
+            process.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            pass  # Include the host in the retirement check below.
+
+    deadline = time.monotonic() + GROUP_SIGNAL_VERIFY_SECONDS
+    while True:
+        remaining, verify_anomaly = _contained_sweeps(verify)
+        anomaly = anomaly or verify_anomaly
+        for item in remaining:
+            observed[item['pid']] = item
+        # A previously observed member can lose its token or leave the group.
+        tracked_live = [item for item in observed.values() if _observed_member_is_live(item)]
+        host_live = process.poll() is None
+        if not tracked_live and not host_live:
+            return _strip_starts(observed.values()), anomaly
+        if time.monotonic() >= deadline:
+            if host_live:
+                tracked_live = merged_survivors(tracked_live, [{'pid': process.pid, 'name': 'host'}])
+            raise RuntimeError(f'owned processes did not stop during teardown: {_named(tracked_live)}') from anomaly
+        _, retry_anomaly = _contained_sweeps(kill)
+        anomaly = anomaly or retry_anomaly
+        time.sleep(GROUP_SIGNAL_VERIFY_POLL)
+
+
 def finish(process, token_value, grace=5.0):
     """Stop one spawned process and verify its whole descendant tree is gone.
 
@@ -2547,9 +2597,10 @@ def finish(process, token_value, grace=5.0):
     kernel reissued afterwards names nothing (#399). Under membership
     containment (#411) the sweep reads the claimed leaf's kernel record
     instead — no numeric window exists there — and the leaf is released
-    (removed) once the tree is verified gone. Returns once nothing
-    owned is alive and releases the spawn's pin exactly once, even if a
-    caller finishes the same process twice.
+    (removed) once the tree is verified gone. Recheck both ownership
+    domains after signaling, retry within a bounded window, and report an
+    incomplete teardown if an owned process remains. Release the spawn's
+    pin exactly once, even if a caller finishes the same process twice.
     """
     pinned = getattr(process, 'owned_pin', None)
     process.owned_pin = None  # First finish owns the close: a repeated finish must not re-close the fd.
@@ -2578,29 +2629,7 @@ def finish(process, token_value, grace=5.0):
                 except subprocess.TimeoutExpired:
                     pass  # The ownership sweeps below name what remains.
         boundary = _boot_ticks()
-        # Both sweeps are contained, matching the runners' tails: a failing
-        # token scan must never skip the group scan, so a token-scrubbed
-        # same-group descendant is named and killed even when the scan
-        # raises, and the anomaly surfaces only after both sweeps ran
-        # (#398 review). Under membership containment (#411) the group
-        # sweep reads the claimed leaf's kernel record and the numeric id
-        # is never consulted; after a completed release the containment is
-        # recorded and a repeated finish re-verifies through the token
-        # sweep alone, because the numeric group there can only name a
-        # group the kernel reissued since the first finish.
-        leaf = getattr(process, 'owned_cgroup', None)
-        released = getattr(process, 'owned_cgroup_released', False)
-        survivors, sweep_anomaly = _contained_sweeps([
-            lambda: terminate(token_value),
-            (lambda: terminate_cgroup(leaf)) if leaf is not None
-            else (lambda: []) if released
-            else lambda: terminate_group(process.pid, started_before=boundary, token_value=token_value),
-        ])
-        if process.poll() is None:
-            try:
-                process.wait(timeout=grace)
-            except subprocess.TimeoutExpired:
-                pass  # The sweeps already killed every group member and carrier.
+        survivors, sweep_anomaly = _finish_descendants(process, token_value, boundary, grace)
         if survivors:
             # The escape is the stronger outcome, and the anomaly rides as its
             # cause: a caller that sees survivors must still learn the scan
