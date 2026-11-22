@@ -11,14 +11,16 @@ from run import capture
 PEAK_PLAYERS = {'clean': 8, 'faults': 8, 'mixed': 8, 'mixed-default': 8, 'mixed-close': 8,
                 'corrupt': 2, 'default': 2, 'mixed-disabled': 2, 'recording-pressure': 2,
                 'peer-drop': 3, 'peer-drop-corrupt': 3, 'peer-drop-close': 3,
-                'peer-drop-answer': 3, 'peer-drop-relay': 3, 'peer-drop-missing': 3, 'peer-drop-second': 3,
+                'peer-drop-answer': 3, 'peer-drop-relay': 3, 'peer-drop-missing': 3, 'peer-drop-missing-lost': 3,
+                'peer-drop-second': 3,
                 'peer-drop-rollback': 3, 'peer-drop-foreign': 3, 'peer-drop-room': 3, 'peer-drop-room-continue': 3,
                 'peer-drop-process': 3, 'peer-drop-process-missing': 3, 'peer-drop-room-after-drop': 3,
                 'peer-drop-room-before-drop': 3}
 ROOM_COUNTS = {'clean': 3, 'faults': 3, 'mixed': 3, 'mixed-default': 3, 'mixed-close': 3,
                'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1,
                'peer-drop': 1, 'peer-drop-corrupt': 1, 'peer-drop-close': 1,
-               'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1, 'peer-drop-second': 1,
+               'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1, 'peer-drop-missing-lost': 1,
+               'peer-drop-second': 1,
                'peer-drop-rollback': 1, 'peer-drop-foreign': 1, 'peer-drop-room': 1, 'peer-drop-room-continue': 1,
                'peer-drop-process': 1, 'peer-drop-process-missing': 1, 'peer-drop-room-after-drop': 1,
                'peer-drop-room-before-drop': 1}

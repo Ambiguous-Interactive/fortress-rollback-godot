@@ -40,7 +40,7 @@ HOST_WAIT_SECONDS = 900.0
 # each line whole on the shared stderr stream.
 PRINT_LOCK = threading.Lock()
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
-          'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-second', 'peer-drop-rollback', 'peer-drop-foreign',
+          'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-missing-lost', 'peer-drop-second', 'peer-drop-rollback', 'peer-drop-foreign',
           'peer-drop-room', 'peer-drop-room-continue', 'peer-drop-process', 'peer-drop-process-missing',
           'peer-drop-room-after-drop', 'peer-drop-room-before-drop', 'recording-pressure')
 
@@ -398,7 +398,8 @@ def main():
                        'mixed-disabled-events', 'mixed-close', 'mixed-close-events',
                        'peer-drop', 'peer-drop-events', 'peer-drop-corrupt', 'peer-drop-corrupt-events',
                        'peer-drop-close', 'peer-drop-close-events', 'peer-drop-answer', 'peer-drop-answer-events', 'peer-drop-relay', 'peer-drop-relay-events',
-                       'peer-drop-missing', 'peer-drop-missing-events', 'peer-drop-second', 'peer-drop-second-events',
+                       'peer-drop-missing', 'peer-drop-missing-events', 'peer-drop-missing-lost', 'peer-drop-missing-lost-events',
+                       'peer-drop-second', 'peer-drop-second-events',
                        'peer-drop-rollback', 'peer-drop-rollback-events', 'peer-drop-foreign', 'peer-drop-foreign-events',
                        'peer-drop-room', 'peer-drop-room-events', 'peer-drop-room-continue', 'peer-drop-room-continue-events',
                        'peer-drop-process', 'peer-drop-process-events', 'peer-drop-process-missing', 'peer-drop-process-missing-events',
@@ -621,7 +622,8 @@ def main():
                             if label.startswith('peer-drop'):
                                 result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt', label == 'peer-drop-close',
                                                                label == 'peer-drop-answer', label == 'peer-drop-relay',
-                                                               missing_history=label == 'peer-drop-missing',
+                                                               missing_history=label in ('peer-drop-missing', 'peer-drop-missing-lost'),
+                                                               history_lost=label == 'peer-drop-missing-lost',
                                                                second_departure=label == 'peer-drop-second',
                                                                rollback_departure=label == 'peer-drop-rollback',
                                                                foreign_proposal=label == 'peer-drop-foreign',
@@ -675,6 +677,9 @@ def main():
                         'The peer-drop-missing label withholds the departing page original input frames four through six on one direct link; '
                         'the complete survivor transfers the missing rows into the recipient, and its first retained-history chunk is '
                         'withheld on its own real link so the donor resends chunk zero before certification. '
+                        'The peer-drop-missing-lost label withholds every retained-history chunk on the donor real link; the barrier '
+                        'expires, both survivors terminate without a freeze or a local continuation, the recipient never installs the '
+                        'interval, each survivor compares its pre-cut confirmed prefix with reconstructed original inputs, and a post-terminal step must not advance the frame. '
                         'The peer-drop-second label departs a second page after twelve inputs; the single survivor freezes that slot '
                         'on its own confirmed frontier, then continues to 40 inputs with 38 canonical prefix checks. '
                         'The peer-drop-rollback label makes both survivors predict frame seven before the departing page submits it, '

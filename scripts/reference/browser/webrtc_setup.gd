@@ -209,6 +209,7 @@ class DropDirect:
 	var _history_drop_chunk: int = -1
 	var _history_drop_operation: int = -1
 	var _history_drop_count: int = 0
+	var _history_drop_counts: Array[int] = []
 
 	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int, slot: int) -> void:
 		_drop_identity = identity.duplicate()
@@ -242,6 +243,7 @@ class DropDirect:
 			"chunk": _history_drop_chunk,
 			"operation": _history_drop_operation,
 			"count": _history_drop_count,
+			"chunks": _history_drop_counts.duplicate(),
 		}
 
 	func _withhold_history() -> void:
@@ -266,6 +268,9 @@ class DropDirect:
 				_history_drop_chunk = int(decoded.message.chunk_index)
 				_history_drop_operation = int(decoded.message.operation)
 				_history_drop_count = int(decoded.message.chunk_count)
+				while _history_drop_counts.size() <= _history_drop_chunk:
+					_history_drop_counts.append(0)
+				_history_drop_counts[_history_drop_chunk] += 1
 				_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
 				continue
 			if _history_dropped > 0 and int(decoded.message.chunk_index) == 0 \

@@ -348,7 +348,7 @@ jobs:
         run: |
           if [[ "${{ matrix.part }}" == direct ]]; then
             labels=(clean faults corrupt default mixed-disabled peer-drop peer-drop-corrupt peer-drop-close peer-drop-answer
-                    peer-drop-relay peer-drop-missing peer-drop-second peer-drop-rollback peer-drop-foreign
+                    peer-drop-relay peer-drop-missing peer-drop-missing-lost peer-drop-second peer-drop-rollback peer-drop-foreign
                     peer-drop-room peer-drop-room-continue peer-drop-process peer-drop-process-missing
                     peer-drop-room-after-drop peer-drop-room-before-drop)
           else labels=(mixed mixed-default mixed-close recording-pressure); fi
