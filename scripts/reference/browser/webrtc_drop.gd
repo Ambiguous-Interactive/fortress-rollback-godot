@@ -344,6 +344,7 @@ func run(host: Node, count: int) -> bool:
 			dropped_frames[event.peer.hex_encode()] = event.frame
 		elif event.kind == "peer_drop_pending":
 			pending_events += 1
+	var history: Dictionary = host.transports[0].history_report() if host.transports[0].has_method("history_report") else {}
 	var row: Dictionary = {
 		"players": count,
 		"departed": false,
@@ -372,7 +373,11 @@ func run(host: Node, count: int) -> bool:
 		"history_first": barrier.history.first,
 		"history_cut": barrier.history.cut,
 		"history_installed": barrier.history.installed,
-		"history_dropped": int(host.transports[0].history_dropped()) if host.transports[0].has_method("history_dropped") else 0,
+		"history_dropped": int(history.get("dropped", 0)),
+		"history_resends": int(history.get("resends", 0)),
+		"history_drop_chunk": int(history.get("chunk", -1)),
+		"history_drop_operation": int(history.get("operation", -1)),
+		"history_drop_count": int(history.get("count", 0)),
 		"minimum_confirmed": peer.status().confirmed_frame,
 		"canonical_comparisons": 38,
 		"active_comparisons": comparisons,

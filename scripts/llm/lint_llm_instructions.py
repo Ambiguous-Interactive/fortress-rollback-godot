@@ -43,6 +43,18 @@ class Finding:
         return f"[llm-lint] {self.level.upper()}: {self.message}"
 
 
+def _read_text(path: Path) -> str | None:
+    """Read a harness file without masking an encoding failure as a crash.
+
+    The encoding check reports invalid UTF-8 with the file name; the content
+    checks must not raise before that finding can be printed.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def check_pointers(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for rel, link in llm_paths.POINTER_FILES.items():
@@ -52,7 +64,9 @@ def check_pointers(root: Path) -> list[Finding]:
                 Finding("error", path, f"pointer file missing: {rel}")
             )
             continue
-        text = path.read_text(encoding="utf-8")
+        text = _read_text(path)
+        if text is None:
+            continue
         if f"]({link})" not in text:
             findings.append(
                 Finding(
@@ -79,7 +93,9 @@ def check_context(root: Path) -> list[Finding]:
     path = root / ".llm" / "context.md"
     if not path.is_file():
         return [Finding("error", path, f"{path} is missing")]
-    text = path.read_text(encoding="utf-8")
+    text = _read_text(path)
+    if text is None:
+        return []
     findings: list[Finding] = []
 
     h1_count = len([ln for ln in text.splitlines() if ln.startswith("# ")])
@@ -181,7 +197,9 @@ def check_links(root: Path) -> list[Finding]:
     if not llm_dir.is_dir():
         return findings
     for path in sorted(llm_dir.rglob("*.md")):
-        text = path.read_text(encoding="utf-8")
+        text = _read_text(path)
+        if text is None:
+            continue
         for match in _MD_LINK_RE.finditer(text):
             target = match.group(1)
             if target.startswith(_SKIP_PREFIXES):

@@ -205,6 +205,10 @@ class DropDirect:
 	var _frames: Dictionary = {}
 	var _history_remaining: int = 0
 	var _history_dropped: int = 0
+	var _history_resends: int = 0
+	var _history_drop_chunk: int = -1
+	var _history_drop_operation: int = -1
+	var _history_drop_count: int = 0
 
 	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int, slot: int) -> void:
 		_drop_identity = identity.duplicate()
@@ -231,18 +235,24 @@ class DropDirect:
 		return {"dropped": frames.size(), "from": _drop_from, "through": _drop_through,
 			"frames": frames, "overlaps": _overlaps, "slot": _drop_slot, "unsupported": _unsupported}
 
-	func history_dropped() -> int:
-		return _history_dropped
+	func history_report() -> Dictionary:
+		return {
+			"dropped": _history_dropped,
+			"resends": _history_resends,
+			"chunk": _history_drop_chunk,
+			"operation": _history_drop_operation,
+			"count": _history_drop_count,
+		}
 
 	func _withhold_history() -> void:
-		if _history_remaining <= 0 or _membership == null:
+		if _membership == null or (_history_remaining <= 0 and _history_dropped == 0):
 			return
 		var limits: T.Limits = T.Limits.new()
 		limits.player_count = _membership.roster().size()
 		limits.max_packet_bytes = 65536
 		var kept: Array[Peer.Packet] = []
 		for packet: Peer.Packet in _pending:
-			if _history_remaining <= 0 or packet == null or packet.bytes.size() < 4:
+			if packet == null or packet.bytes.size() < 4:
 				kept.append(packet)
 				continue
 			var decoded: T.Result = Codec.decode(packet.bytes, limits)
@@ -250,8 +260,18 @@ class DropDirect:
 				or decoded.message.phase != Drop.Phase.BACKFILL or decoded.message.stage != Drop.Stage.HISTORY:
 				kept.append(packet)
 				continue
+			if _history_dropped > 0 and int(decoded.message.chunk_index) == 0:
+				# The donor restarted its journal after the withheld chunk, so the
+				# receiver cannot have installed the interval before this round.
+				_history_resends += 1
+			if _history_remaining <= 0:
+				kept.append(packet)
+				continue
 			_history_remaining -= 1
 			_history_dropped += 1
+			_history_drop_chunk = int(decoded.message.chunk_index)
+			_history_drop_operation = int(decoded.message.operation)
+			_history_drop_count = int(decoded.message.chunk_count)
 			_pending_bytes = maxi(0, _pending_bytes - packet.bytes.size())
 		_pending = kept
 

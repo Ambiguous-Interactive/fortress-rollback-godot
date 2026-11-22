@@ -50,6 +50,12 @@ POINTER_FILES = {
 # Generated agent-skill discovery stub roots (Agent Skills standard).
 STUB_ROOTS = (".claude/skills", ".agents/skills")
 
+# Text files the encoding contract can inspect. Suffix filtering keeps editor
+# and OS artifacts (`.DS_Store`, `notes.md.bak`) out of the harness contract.
+ENCODING_SUFFIXES = (
+    ".gd", ".json", ".md", ".mdc", ".py", ".sh", ".toml", ".txt", ".yaml", ".yml",
+)
+
 # Machine-local, never-committed directories (see .gitignore). Links into them
 # resolve on the authoring machine but are absent from any fresh checkout, so
 # they must not be reported as broken by the link check.
@@ -73,8 +79,15 @@ def encoding_scope_files(root: Path | None = None) -> list[Path]:
     llm_dir = base / ".llm"
     if llm_dir.is_dir():
         for path in sorted(llm_dir.rglob("*")):
-            if path.is_file() and "__pycache__" not in path.parts:
-                files.add(path)
+            if not path.is_file() or path.suffix.lower() not in ENCODING_SUFFIXES:
+                continue
+            if "__pycache__" in path.relative_to(llm_dir).parts:
+                continue
+            files.add(path)
+    for name in ("PLAN.md", "GOAL.md"):
+        path = base / name
+        if path.is_file():
+            files.add(path)
     return sorted(files)
 
 

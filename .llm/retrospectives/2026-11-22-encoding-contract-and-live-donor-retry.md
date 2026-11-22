@@ -19,20 +19,31 @@
 | 2 | The contract names every harness file, but the existing scope was markdown plus pointers and stubs. Code samples and the generated index were outside it. | bug | `.llm/code-samples/*.gd` was never read by `check_encoding`; the non-markdown self-test failed before `encoding_scope_files` |
 | 3 | A page index is not a roster slot. The first live arm dropped history on page 1, but page 0 was the donor (`slot: 2`) and page 1 was the coordinator (`slot: 0`), so the drop never fired and the validator failed with both rows at `history_dropped: 0`. | bug | first live run: donor `slot: 2`, `history_dropped: 0`; validator `peer-drop live missing-history donor retry incomplete` |
 | 4 | Arming both survivors is safe because only the selected donor publishes `BACKFILL`/`HISTORY` bytes. Binding the count to the row whose slot equals `history_donor` removes the page/slot assumption entirely. | design | four live cells: donor row `history_dropped: 1`, proposer row `history_installed: true` |
-| 5 | A whole-carrier drop at the real send boundary proves a retry only if the packet is the donor's first history chunk: the transfer cursor reaches the journal end, the retry window expires, and the donor resends from zero. A drop counted after installation would prove nothing. | design | `arm_history_drop` decrements on the first outgoing `BACKFILL`/`HISTORY` packet; the recipient row shows `history_installed: true` only with the donor count at 1 |
-| 6 | The pre-fix validator accepted every new donor-retry mutation, including a fabricated count and a missing field. The mutation table must run against the old module to prove the new requirement binds. | review | `PRE-FIX validator accepted 5/5`; post-fix rejects all five with `peer-drop live missing-history donor retry incomplete` |
+| 5 | A whole-carrier drop at the real send boundary proves a retry only if the packet is the donor's first history chunk and a later chunk-zero round is observed: the transfer cursor reaches the journal end, the retry window expires, and the donor resends from zero. A bare drop counter could be incremented without removing a packet, and a later duplicate drop would prove nothing. | review | adversarial round 1 finding 8; `arm_history_drop` now records chunk 0, its operation and count, and `_history_resends` counts the later chunk-zero round; the validator requires all of them |
+| 6 | The pre-fix validator accepted every new donor-retry mutation, including a fabricated count and a missing field. The mutation table must run against the old module to prove each new requirement binds. | review | the original validator accepted `5/5`; the first-strengthened version accepted `7/22`; the final validator rejects all twenty-two with `peer-drop live missing-history donor retry incomplete` |
 | 7 | The coordinated-drop PLAN row is a remaining-outcome map, not a status log. Adding `donor-retry fence witnessed` duplicated the live status that `docs/peer-lifecycle.md` already owns, so the row keeps only the remaining pinned comparison and schedules. | review | CodeRabbit inline on `PLAN.md:94`; the row was reverted while the lifecycle doc keeps the witness status |
+| 8 | A non-UTF-8 harness file crashed `check_pointers`, `check_context` or `check_links` before the encoding finding could print. The content checks must read through a helper that yields no text on a decode failure, leaving the named encoding error authoritative. | review | adversarial round 1 finding 1; invalid UTF-8 in `.llm/context.md` now reports `not valid UTF-8` instead of a traceback |
+| 9 | The walk included editor artifacts and missed `PLAN.md`/`GOAL.md`. A text-suffix allowlist keeps `.DS_Store` and `notes.md.bak` out, while the two root contracts join the scope; the `__pycache__` filter now inspects the path below `.llm` rather than every ancestor. | review | adversarial round 1 findings 2, 4 and 5; new self-tests cover artifacts, both root files and a checkout below a `__pycache__` directory |
+
+Advisory, not fixed: a symlinked directory under `.llm` is not traversed, and
+a NUL byte is valid UTF-8 so it is not rejected. Neither shape exists in the
+harness and neither is part of the documented contract; a symlink or NUL policy
+would be a new boundary, not a defect in this change. The live history filter
+has no separate native unit seam because `webrtc_setup.gd` preloads the
+export-only `res://webrtc_game.gd`; the merge-queue Reference Baseline runs the
+real label, so a copy of the filter in a unit test would not test production.
 
 ## Actions Taken
 
 | # | Action | Where it landed | Verified by |
 | --- | --- | --- | --- |
 | 1 | Reject a missing or doubled final LF and name the file. | `scripts/llm/lint_llm_instructions.py` | direct mutant run exits 1 with the path |
-| 2 | Cover every file under `.llm/` plus pointers and stubs. | `scripts/llm/llm_paths.py` `encoding_scope_files` | code-sample self-test; `make lint-llm` |
-| 3 | Add missing-LF, double-LF and code-sample self-tests. | `scripts/tests/test_llm_instructions_lint.py` | 14 tests pass; pre-fix run had 3 failures |
-| 4 | Withhold the donor's first retained-history chunk on the real link. | `scripts/reference/browser/webrtc_setup.gd`, `webrtc_drop.gd` | live Chromium/Firefox on 4.3 and 4.7.2 |
-| 5 | Require the donor drop count beside the installed interval. | `scripts/reference/browser/webrtc_drop.py`, `test_webrtc_drop.py` | 5/5 mutations rejected; 40 reference tests pass |
-| 6 | State the retry in the probe limits, lifecycle docs and knowledge; keep PLAN status-free. | `signalfish_webrtc_probe.py`, `docs/peer-lifecycle.md`, `.llm/knowledge/` | `make lint-llm`, `make lint-source` |
+| 2 | Cover every text harness file under `.llm/`, plus `PLAN.md`, `GOAL.md`, pointers and stubs, while skipping editor artifacts. | `scripts/llm/llm_paths.py` `encoding_scope_files` | 18 meta-lint tests; `make lint-llm` |
+| 3 | Add missing-LF, double-LF, BOM, CRLF, invalid UTF-8, artifact, root-contract and code-sample self-tests. | `scripts/tests/test_llm_instructions_lint.py` | 18 tests pass; pre-fix run had 3 failures |
+| 4 | Withhold the donor's first retained-history chunk on its real link. | `scripts/reference/browser/webrtc_setup.gd`, `webrtc_drop.gd` | live Chromium/Firefox on 4.3 and 4.7.2 |
+| 5 | Require the drop count, chunk zero, its operation/count and a later chunk-zero resend beside the installed interval. | `scripts/reference/browser/webrtc_drop.py`, `test_webrtc_drop.py` | 22/22 mutations rejected; 40 reference tests pass |
+| 6 | State the donor-driven resend in the probe limits, lifecycle docs and knowledge; keep PLAN status-free. | `signalfish_webrtc_probe.py`, `docs/peer-lifecycle.md`, `.llm/knowledge/` | `make lint-llm`, `make lint-source` |
+| 7 | Read content checks through a decode-safe helper so an invalid UTF-8 file names itself instead of crashing. | `scripts/llm/lint_llm_instructions.py` | invalid-UTF-8 self-test; direct run names the file |
 
 ## Prune Ledger
 

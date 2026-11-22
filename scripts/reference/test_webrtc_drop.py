@@ -217,10 +217,12 @@ def missing_evidence():
         'dropped': 3, 'from': 4, 'through': 6, 'frames': [4, 5, 6], 'overlaps': 0, 'slot': 2, 'unsupported': 0}
     proposer = value['records'][0]['peers'][0]['result']['records'][0]
     follower = value['records'][0]['peers'][1]['result']['records'][0]
-    proposer.update(history_donor=follower['slot'], history_first=4, history_cut=proposer['freeze_frame'], history_installed=True,
-                    history_dropped=0)
-    follower.update(history_donor=follower['slot'], history_first=4, history_cut=follower['freeze_frame'], history_installed=False,
-                    history_dropped=1)
+    proposer.update(operation=9, history_donor=follower['slot'], history_first=4, history_cut=proposer['freeze_frame'],
+                    history_installed=True, history_dropped=0, history_resends=0, history_drop_chunk=-1,
+                    history_drop_operation=-1, history_drop_count=0)
+    follower.update(operation=9, history_donor=follower['slot'], history_first=4, history_cut=follower['freeze_frame'],
+                    history_installed=False, history_dropped=1, history_resends=1, history_drop_chunk=0,
+                    history_drop_operation=9, history_drop_count=1)
     return value
 
 
@@ -244,6 +246,13 @@ class MissingHistoryEvidence(unittest.TestCase):
             lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_dropped=True),
             lambda value: value['records'][0]['peers'][1]['result']['records'][0].pop('history_dropped'),
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_dropped=1),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_resends=0),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_resends=True),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_resends=1),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_drop_chunk=1),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_drop_count=0),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_drop_operation=8),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0].update(history_drop_operation=True),
         ]
         for mutation in mutations:
             value = copy.deepcopy(original)
