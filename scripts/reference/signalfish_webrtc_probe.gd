@@ -103,7 +103,8 @@ func _run() -> void:
 			# generic lifetime checks would reject the deliberate termination.
 			# Membership changes during the shared teardown are expected once
 			# the terminal witness has already published its own rows.
-			tearing_down = history_lost
+			if history_lost:
+				tearing_down = true
 			if ok and not await _wait_room_teardown():
 				ok = false
 	elif ok or control:

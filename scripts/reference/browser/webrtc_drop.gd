@@ -8,6 +8,9 @@ const Drop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
 const Envelope = preload("res://addons/fortress_rollback/transport/signalfish_relay_envelope.gd")
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
+## Larger than every resend round inside the live barrier timeout, so the
+## lost-history control never lets a chunk through after the arm runs out.
+const LOST_HISTORY_DROP_COUNT: int = 10000
 var events: Array[Dictionary] = []
 var relay_barriers: Array[String] = []
 var _host: Node = null
@@ -128,7 +131,7 @@ func run(host: Node, count: int) -> bool:
 			# chunk so the recipient must retry before it installs the rows.
 			# The lost-history control withholds every chunk until the barrier
 			# expires, so the recipient can never install the interval.
-			host.transports[0].arm_history_drop(10000 if history_lost else 1)
+			host.transports[0].arm_history_drop(LOST_HISTORY_DROP_COUNT if history_lost else 1)
 	var steps_taken: int = 0
 	for frame: int in 7:
 		if not missing_history:

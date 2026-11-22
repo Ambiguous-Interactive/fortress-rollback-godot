@@ -679,7 +679,7 @@ def main():
                         'withheld on its own real link so the donor resends chunk zero before certification. '
                         'The peer-drop-missing-lost label withholds every retained-history chunk on the donor real link; the barrier '
                         'expires, both survivors terminate without a freeze or a local continuation, the recipient never installs the '
-                        'interval, and the final confirmation frontiers stay at the last contiguous original rows. '
+                        'interval, and its confirmation stays at or below the last original row before the withheld range. '
                         'The peer-drop-second label departs a second page after twelve inputs; the single survivor freezes that slot '
                         'on its own confirmed frontier, then continues to 40 inputs with 38 canonical prefix checks. '
                         'The peer-drop-rollback label makes both survivors predict frame seven before the departing page submits it, '
