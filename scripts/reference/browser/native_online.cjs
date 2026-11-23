@@ -13,6 +13,7 @@ const DIAGNOSTIC_MS = 5000;
 const CLOSE_MS = 10000;
 const CLOSE_CLOCK_POST_SAMPLES = 4;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
+const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 
 function browserOptions(name) {
   const executablePath = process.env[`FORTRESS_${name.toUpperCase()}_EXECUTABLE`];
@@ -31,7 +32,7 @@ function browserOptions(name) {
   throw new Error(`unknown browser ${name}`);
 }
 
-function instrumentNativeWire(tagWebKitSends) {
+function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   const active = [];
   const resources = { rtc: [], sockets: [] };
   const ice = new Map();
@@ -63,6 +64,13 @@ function instrumentNativeWire(tagWebKitSends) {
   const pendingReportLimit = { mesh: 16, relay: 256 };
   const channelReports = new Map();
   const socketReports = new WeakMap();
+  const warmupLinks = new Map();
+  const warmupTicks = [];
+  let warmupTickCount = 0;
+  let warmupStarted = null;
+  let warmupCutoff = null;
+  let warmupCheckpointPending = false;
+  let lastWarmupCheckpoint = -Infinity;
   const nativeBytes = bytes => bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
     : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
   const matches = (bytes, offset) => session && offset + session.length < bytes.length
@@ -82,6 +90,63 @@ function instrumentNativeWire(tagWebKitSends) {
     return { kind, token };
   }
   const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  function warmupStatus() {
+    if (!warmupLinks.size) return null;
+    return { recipient: localUuid, started_ms: warmupStarted, through_ms: warmupCutoff?.at_ms ?? performance.now(), cutoff: warmupCutoff,
+      tick_count: warmupTickCount, ticks: warmupTicks.slice(),
+      links: Array.from(warmupLinks, ([sender, { packets, evicted, unretained }]) => ({
+        sender, evicted, unretained, packets: Array.from(packets, ([payload, stages]) => ({ payload, ...stages })),
+      })) };
+  }
+  function checkpointWarmup(at) {
+    lastWarmupCheckpoint = at;
+    console.debug(warmupPrefix + JSON.stringify(warmupStatus()));
+  }
+  function scheduleWarmupCheckpoint(at) {
+    if (warmupCheckpointPending || at < lastWarmupCheckpoint + 1000) return;
+    warmupCheckpointPending = true;
+    // Serialize only after the current browser event or Godot tick returns.
+    setTimeout(() => {
+      warmupCheckpointPending = false;
+      if (!warmupCutoff) checkpointWarmup(performance.now());
+    }, 0);
+  }
+  function recordWarmup(stage, sender, payload, code) {
+    const link = !warmupCutoff && warmupLinks.get(sender.replaceAll('-', ''));
+    if (!link) return;
+    const at = performance.now();
+    scheduleWarmupCheckpoint(at);
+    let packet = link.packets.get(payload);
+    if (!packet && link.packets.size === 24) {
+      // Keep the first eight and latest sixteen. Evict the whole packet record;
+      // callbacks for evicted packets cannot reappear as missing raw observations.
+      if (stage !== 'raw') {
+        link.unretained[stage]++;
+        return;
+      }
+      link.packets.delete([...link.packets.keys()][8]);
+      link.evicted++;
+    }
+    if (!packet) {
+      // Once a link has evicted anything, a new key can be a repeat of an evicted packet.
+      packet = { after_eviction: link.evicted > 0, raw: null, sdk: null, native: null };
+      link.packets.set(payload, packet);
+    }
+    if (stage === 'native') {
+      packet.native ??= { first_ms: at, last_ms: at, first_code: code, last_code: code, accepted_ms: null, attempts: 0, acceptances: 0 };
+      packet.native.attempts++;
+      packet.native.last_ms = at;
+      packet.native.last_code = code;
+      if (code === 0) {
+        packet.native.accepted_ms ??= at;
+        packet.native.acceptances++;
+      }
+    } else {
+      packet[stage] ??= { first_ms: at, last_ms: at, count: 0 };
+      packet[stage].last_ms = at;
+      packet[stage].count++;
+    }
+  }
   function relayAddresses(data) {
     const view = nativeBytes(data);
     if (!session || !view) return null;
@@ -92,8 +157,9 @@ function instrumentNativeWire(tagWebKitSends) {
         const payload = index + 57;
         const size = new DataView(view.buffer, view.byteOffset + index + 53, 4).getUint32(0, true);
         if (size > view.length - payload) throw new Error('native relay payload exceeds its envelope');
+        const bytes = view.subarray(payload, payload + size);
         return { sender: hex(view.subarray(index + 21, index + 37)), recipient: hex(view.subarray(index + 37, index + 53)),
-          ...nativePacket(view.subarray(payload, payload + size)) };
+          ...nativePacket(bytes), bytes };
       }
     }
     return null;
@@ -215,6 +281,9 @@ function instrumentNativeWire(tagWebKitSends) {
       relayBroadcasts++;
       if (packet.recipient === localUuid) {
         increment(relaySenders, packet.sender);
+        if (!warmupCutoff && warmupLinks.has(packet.sender) && packet.kind === 4 && packet.bytes.length === 46 && (packet.bytes[30] & 3) === 0) {
+          recordWarmup('raw', packet.sender, hex(packet.bytes), null);
+        }
         traceRelayQuality('receive', packet.sender, packet);
         receive('relay', reports, packet.sender, packet);
       }
@@ -236,10 +305,31 @@ function instrumentNativeWire(tagWebKitSends) {
     }, data, packet?.sender === localUuid ? packet : null);
   };
   window.fortressNativeWire = {
-    bind(hash, uuid) {
+    bind(hash, uuid, warmupRoster = []) {
       if (session || !/^[0-9a-f]{32}$/.test(hash)) throw new Error('invalid native room session');
       localUuid = uuid.replaceAll('-', '');
       session = hash.match(/../g).map(value => parseInt(value, 16));
+      if (warmupPrefix) for (const member of warmupRoster.slice(0, 8)) {
+        const sender = member.replaceAll('-', '');
+        if (sender !== localUuid) warmupLinks.set(sender, { packets: new Map(), evicted: 0, unretained: { sdk: 0, native: 0 } });
+      }
+      if (warmupLinks.size) warmupStarted = performance.now();
+    },
+    recordWarmup,
+    warmupStatus,
+    recordWarmupTick(before, after, budget, elapsed_us, failed) {
+      if (!warmupLinks.size || warmupCutoff) return;
+      const at = performance.now();
+      if (warmupTicks.length === 24) warmupTicks.shift();
+      warmupTicks.push({ at_ms: at, before, after, budget, elapsed_us, failed });
+      warmupTickCount++;
+      scheduleWarmupCheckpoint(at);
+    },
+    finishWarmup(reason) {
+      if (warmupLinks.size && !warmupCutoff) {
+        warmupCutoff = { at_ms: performance.now(), reason };
+        checkpointWarmup(warmupCutoff.at_ms);
+      }
     },
     meshOpen(peers) {
       return resources.rtc.filter(({channel, connection}) => channel.readyState === 'open' && connection.connectionState === 'connected').length === peers * 3;
@@ -444,6 +534,9 @@ async function run(root, endpoint, mode, players, browserPair) {
   const liveClose = mode === 'mesh-close';
   const mixed = startup || liveClose;
   const route = mixed ? 'mesh' : mode;
+  const traceWarmup = route === 'relay' && players === 8;
+  const warmup = traceWarmup ? Array(players).fill(null) : undefined;
+  const warmupCheckpointErrors = traceWarmup ? Array(players).fill(null) : undefined;
   const playwright = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY);
   const origin = `https://127.0.0.1:${server.address().port}`;
@@ -500,6 +593,13 @@ async function run(root, endpoint, mode, players, browserPair) {
       page.on('crash', () => errors.push({ index, phase, text: 'Renderer crashed' }));
       page.on('console', message => {
         const text = message.text();
+        if (traceWarmup && text.startsWith(WARMUP_CHECKPOINT)) {
+          try {
+            warmup[index] = JSON.parse(text.slice(WARMUP_CHECKPOINT.length));
+          } catch (error) {
+            warmupCheckpointErrors[index] = String(error);
+          }
+        }
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push({ index, phase, text });
       });
       page.on('requestfailed', request => {
@@ -507,7 +607,8 @@ async function run(root, endpoint, mode, players, browserPair) {
         errors.push({ index, phase, host: url.host, path: url.pathname, method: request.method(), resource: request.resourceType(),
           code: request.failure()?.errorText });
       });
-      await page.addInitScript(instrumentNativeWire, name === 'webkit');
+      // Register the socket and warmup hooks in a single init script.
+      await page.addInitScript(`(${instrumentNativeWire})(${name === 'webkit'}, ${JSON.stringify(traceWarmup ? WARMUP_CHECKPOINT : '')})`);
       await page.goto(`${origin}/index.html`);
       await wait(page, () => window.fortressNativeReady === true, null, PAGE_BOOT_MS);
       bootstrap_ms.push(Math.round(performance.now() - started));
@@ -515,7 +616,7 @@ async function run(root, endpoint, mode, players, browserPair) {
     phase = 'lobby';
     function connect(page, index, room) {
       return command(page, 'connect', { endpoint: socketEndpoint, name: `Player ${index}`, room, route, players,
-        wait_for_full_mesh: mode === 'mesh' });
+        wait_for_full_mesh: mode === 'mesh', trace_warmup: traceWarmup });
     }
     await connect(pages[0], 0, '');
     await wait(pages[0], () => window.fortressNative.state === 'lobby' && window.fortressNative.room !== '');
@@ -708,17 +809,17 @@ async function run(root, endpoint, mode, players, browserPair) {
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
       direct, afterClose, peers, interruption, terminal, after, closeErrors, closeLinks,
-      departureClocks: closeReport.clocks ?? departureClocks, closeProofs: closeReport.proofs };
+      departureClocks: closeReport.clocks ?? departureClocks, closeProofs: closeReport.proofs, warmup, warmupCheckpointErrors };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
-      ...window.fortressNative, wire: window.fortressNativeWire?.status()
+      ...window.fortressNative, wire: window.fortressNativeWire?.status(), warmup: window.fortressNativeWire?.warmupStatus()
     })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
     const diagnostics = states.map(state => state.status === 'fulfilled' ? state : { status: state.status, reason: String(state.reason) });
     console.error(JSON.stringify({
       phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, departureClocks: closeReport.clocks ?? departureClocks,
       closeProofs: closeReport.proofs,
-      closeSnapshotErrors: closeReport.snapshotErrors, stalled, states: diagnostics
+      closeSnapshotErrors: closeReport.snapshotErrors, stalled, states: diagnostics, warmup, warmupCheckpointErrors
     }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
