@@ -39,6 +39,7 @@ function instrumentNativeWire(tagWebKitSends) {
   let holding = false;
   let releasingRelay = false;
   let releaseEnded = null;
+  let holdFailure;
   let holdAll = false;
   let armed = false;
   let holdStarted = null;
@@ -116,7 +117,10 @@ function instrumentNativeWire(tagWebKitSends) {
       }
       return sent;
     }
-    if (held.mesh + held.relay >= 1024 || totalBytes + data.byteLength > 1024 * 1024) throw new Error('native packet hold exceeded bounds');
+    if (held.mesh + held.relay >= 1024 || totalBytes + data.byteLength > 1024 * 1024) {
+      holdFailure ??= new Error('native packet hold exceeded bounds');
+      throw holdFailure;
+    }
     const owned = nativeBytes(data).slice();
     active.push(() => emit(owned));
     totalBytes += owned.byteLength;
@@ -244,13 +248,14 @@ function instrumentNativeWire(tagWebKitSends) {
       holdEnded = performance.now();
       // Each relay send fans out to the room. Keep originals ahead of newly sampled inputs.
       const batchSize = releasingRelay ? 16 : active.length;
-      while (active.length > 0) {
+      while (active.length > 0 && !holdFailure) {
         for (const emit of active.splice(0, batchSize)) {
           emit();
           released++;
         }
         if (active.length > 0) await new Promise(resolve => requestAnimationFrame(resolve));
       }
+      if (holdFailure) throw holdFailure;
       releasingRelay = false;
       releaseEnded = performance.now();
     },

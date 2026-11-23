@@ -182,6 +182,22 @@ async function run() {
   stoppedSocket.readyState = 3;
   await assert.rejects(stoppedWire.release(), /closed before release send/);
   assert.equal(stoppedWire.status().released, 0);
+
+  const full = { ...realm, window: {}, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
+  runInNewContext(`(${instrumentNativeWire})()`, full);
+  const fullWire = full.window.fortressNativeWire;
+  const fullSocket = new full.window.WebSocket();
+  fullWire.bind('00'.repeat(16), '01'.repeat(16));
+  fullWire.arm();
+  for (let i = 0; i < 1024; i++) fullSocket.send(relay(2, i));
+  const overflow = assert.rejects(fullWire.release(), /native packet hold exceeded bounds/);
+  assert.throws(() => fullSocket.send(relay(2, 33)), /native packet hold exceeded bounds/);
+  while (turns.length) {
+    turns.shift()();
+    await Promise.resolve();
+  }
+  await overflow;
+  assert.equal(fullWire.status().released, 16);
 }
 const timer = setTimeout(() => { throw new Error('release did not settle'); }, 1000);
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));

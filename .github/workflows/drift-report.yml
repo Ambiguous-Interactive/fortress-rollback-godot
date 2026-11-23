@@ -52,6 +52,7 @@ jobs:
         with:
           artifact-ids: ${{ steps.evidence.outputs.artifact-id }}
           path: ${{ runner.temp }}/drift-publish
+          merge-multiple: true
       - name: Publish drift observations
         if: ${{ !cancelled() && steps.receipt.outcome == 'success' }}
         env:
