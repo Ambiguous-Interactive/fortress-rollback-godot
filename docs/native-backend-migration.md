@@ -47,8 +47,8 @@ and initial route. Both byte routes add the same 16-byte room/roster tag.
 The raw binding used for stock Rust interoperability carries no room tag.
 
 The exported four-player recovery cases begin with one direct link unavailable
-or close it after the match starts. Each case compares 40 confirmed input rows
-and canonical snapshots. The live-close case then withholds gameplay on both
+or close it after the match starts. Each case compares at least 40 confirmed input rows
+and canonical snapshots, including samples after the close. The live-close case then withholds gameplay on both
 routes to exercise the upstream disconnect timeout with the SDK roster intact.
 Automatic direct restoration requires a replacement link within the same room
 and plan. [SignalFish SDK #585](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/585)
@@ -80,7 +80,10 @@ Recording, spectator and diagnostic formats have their own version and checksum 
 
 The experiment qualified fresh addon archives on both Godot pins across Linux, Windows, Apple Silicon macOS, Web, Android emulator and iOS Simulator.
 Keep the Godot 4.3 floor and test both pins. Require installation from a prebuilt archive and an exported game for each claimed target.
-Qualify physical devices and signing before claiming mobile release support. Qualify real 2/4/8-peer browser rooms, Linux Chromium, Firefox, WebKit and mixed browsers against [#39](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39) and [#44](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/44).
+The native archive installs the GDScript runtime and the platform extension together. Qualification installs both from that archive in clean projects.
+The SignalFish SDK and example projects are separate inputs. See the [installation instructions](../experiments/gdextension/README.md#install-and-use).
+Qualify physical devices and signing under [#452](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/452) before claiming mobile release support.
+Qualify real 2/4/8-peer browser rooms, Linux Chromium, Firefox, WebKit and mixed browsers against [#39](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39) and [#44](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/44).
 The single-threaded Web experiment establishes extension loading and mixed-peer rollback.
 
 For each claimed behavior, link evidence at the affected roadmap issue before superseding its acceptance criteria.

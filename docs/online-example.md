@@ -16,7 +16,8 @@ back to relay.
 ## Try the native backend
 
 Install the [native addon archive](../experiments/gdextension/README.md) for the
-editor and export target alongside the regular addon. For Web, enable
+editor and export target. It includes the regular addon and the native extension.
+Use the archive built from the same revision as the example. For Web, enable
 **Extensions Support**, leave **Thread Support** off, and export with the matching
 Web dynamic-linking, single-threaded template.
 

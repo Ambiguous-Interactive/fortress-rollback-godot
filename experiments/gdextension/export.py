@@ -5,6 +5,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
@@ -13,6 +14,9 @@ import mobile
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from package_addon import snapshot as runtime_snapshot
+
 CACHE = ROOT / ".cache/reference"
 SCRATCH = ROOT / ".cache/native-experiment"
 HOST = {"Darwin": "macos", "Windows": "windows", "Linux": "linux"}[platform.system()]
@@ -66,6 +70,8 @@ def install_package(project, archive_path, target):
     (addon / "fortress.gdextension").write_text(manifest.read_text() + "\n".join(entries) + "\n")
     manifest.unlink()
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for resource, data in runtime_snapshot(ROOT).items():
+            archive.writestr(resource, data)
         for file in sorted(addon.rglob("*")):
             archive.write(file, file.relative_to(project))
     shutil.rmtree(addon)

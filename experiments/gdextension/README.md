@@ -7,9 +7,14 @@ The GDScript-only addon in the main project has its own protocol and release con
 ## Install and use
 
 Extract the archive for your editor architecture and export target into your Godot project. Restart the editor.
+The archive installs both `addons/fortress_rollback` (the GDScript driver and runtime) and
+`addons/fortress_native` (the extension manifest and compiled libraries).
+Install it into a fresh project or replace both directories together when upgrading.
+Install the SignalFish SDK separately if your game uses it.
 A Web archive includes the host editor library and the single-threaded Web side module.
 Enable **Extensions Support** and turn off **Thread Support** in the Web export preset.
-Game authors only need Godot and the archive.
+Use the [Godot Web export instructions](https://docs.godotengine.org/en/4.3/tutorials/export/exporting_for_web.html#thread-and-extension-support)
+for hosting requirements.
 
 Create a `FortressNativeSession` with `FortressNativeSession.new()`. For the network experiment, call `start(local_slot)` with slot 0 or 1.
 The other participant runs the same pinned Fortress crate with input type `[u8; 4]`, zero input delay and the default prediction window.
@@ -43,7 +48,8 @@ python3 experiments/gdextension/platform_test.py 4.3 linux
 python3 experiments/gdextension/platform_test.py 4.7.2 linux
 ```
 
-Results, including `addon.zip`, `qualification.json` and the Linux `benchmark.json`, appear under `.cache/native-experiment/<version>/<target>/`.
+Results, including the installable `addon.zip`, `qualification.json` and the Linux `benchmark.json`, appear under `.cache/native-experiment/<version>/<target>/`.
+The [qualification workflow](../../.github/workflows/gdextension-experiment.yml) uploads these files by editor version and export target.
 Rust build artifacts share `.cache/reference/target/gdextension/`. Release builds and a normal Godot import each contribute to the first-run cost.
 For Windows and macOS, run the corresponding target on a native host. The workflow also contains Android emulator and iOS Simulator jobs.
 The Android job builds ARM64 and x86-64 libraries. The iOS job packages ARM64 device and ARM64 simulator slices. Device signing and store distribution are separate release work.

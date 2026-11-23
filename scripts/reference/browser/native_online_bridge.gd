@@ -10,7 +10,7 @@ const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
 const GATE_FRAME: int = 12
-const HISTORY_FRAMES: int = 40
+const HISTORY_LIMIT: int = 128
 
 
 class ObservedGame:
@@ -53,7 +53,7 @@ class ObservedGame:
 			var dy: int = int(bool(buttons & DOWN)) - int(bool(buttons & UP))
 			if x[player] != clampi(positions_x[player] + 2 * dx, 20, 460) or y[player] != clampi(positions_y[player] + 2 * dy, 20, 280):
 				movement_errors += 1
-		if input_frame < HISTORY_FRAMES:
+		if input_frame < HISTORY_LIMIT:
 			rows[str(input_frame)] = row
 			snapshots[str(frame)] = canonical_bytes().hex_encode()
 		return true
@@ -69,16 +69,22 @@ class ObservedLobby:
 	var previous_transport_delay: int = -1
 	var open_mesh_wait_ticks: int = 0
 	var failure_tick_callbacks: PackedInt32Array = []
+	var wait_for_full_mesh: bool = false
+	var started_on_full_mesh: bool = false
 
 	func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:
 		if transport_wait_started < 0:
 			transport_wait_started = now_us
 		var elapsed: int = now_us - transport_wait_started
 		var mesh_open: bool = route == "mesh" and JavaScriptBridge.eval("window.fortressNativeWire.meshOpen(%d)" % (player_count - 1))
+		# The direct-only witness starts after every real channel connects.
+		if wait_for_full_mesh and route == "mesh" and not mesh_open:
+			return
 		super._maybe_start_transport(route, now_us, revision)
 		if transport_start_delay < 0:
 			if state == "playing":
 				transport_start_delay = elapsed
+				started_on_full_mesh = mesh_open
 			else:
 				previous_transport_delay = elapsed
 				if mesh_open:
@@ -142,12 +148,14 @@ func _process(_delta: float) -> void:
 		"command_code": command_code,
 		"frame": match_status.current_frame,
 		"confirmed": match_status.confirmed_frame,
+		"history_limit": HISTORY_LIMIT,
 		"reason": match_status.reason,
 		"terminated": match_status.lifecycle == Types.Lifecycle.TERMINATED,
 		"turns": lobby.turns,
 		"transport_start_delay": lobby.transport_start_delay,
 		"previous_transport_delay": lobby.previous_transport_delay,
 		"open_mesh_wait_ticks": lobby.open_mesh_wait_ticks,
+		"started_on_full_mesh": lobby.started_on_full_mesh,
 		"failure_tick_callbacks": lobby.failure_tick_callbacks,
 		"stalls": lobby.game_match.stalls,
 		"failure": lobby.game_match.failure,
@@ -183,6 +191,7 @@ func _command(value: Dictionary) -> void:
 	command_code = OK
 	match value.get("kind", ""):
 		"connect":
+			lobby.wait_for_full_mesh = bool(value.get("wait_for_full_mesh", false))
 			scene.endpoint.text = str(value.endpoint)
 			scene.player_name.text = str(value.name)
 			scene.room_code.text = str(value.room)

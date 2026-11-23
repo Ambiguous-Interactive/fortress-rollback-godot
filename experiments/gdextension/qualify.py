@@ -65,7 +65,7 @@ def main():
     parser.add_argument("--control", choices=("none", "restore", "encoding"), default="none")
     args = parser.parse_args()
     ticks = 0
-    last_frame = -1
+    last_exchange = None
     times = []
     held = []
     result = {}
@@ -90,6 +90,7 @@ def main():
                     response = self.tick(payload)
                 except Exception as error:
                     result["error"] = str(error)
+                    result["timed_out"] = isinstance(error, TimeoutError)
                     response = {"done": True}
                 data = json.dumps(response).encode()
                 self.send_response(200)
@@ -98,7 +99,7 @@ def main():
                 self.wfile.write(data)
 
             def tick(self, gd):
-                nonlocal ticks, last_frame
+                nonlocal ticks, last_exchange
                 if gd.get("ack"):
                     if not result.get("verified"):
                         raise ValueError("premature client completion")
@@ -120,11 +121,13 @@ def main():
                         raise ValueError("unexpected UDP sender")
                     packets.append(packet.hex())
                 frame = gd.get("frame", 0)
-                if args.stall and frame >= 12 and frame == last_frame and "held_packets" not in result:
+                previous_frame = last_exchange["godot_frame"] if last_exchange is not None else -1
+                last_exchange = {"godot_frame": frame, "godot_confirmed": gd.get("confirmed"), "godot_status": gd.get("status"),
+                                 "rust_frame": rust["state"][0], "rust_confirmed": rust["confirmed"]}
+                if args.stall and frame >= 12 and frame == previous_frame and "held_packets" not in result:
                     if gd["status"] != 1:
                         raise ValueError("binding reported an advance at the prediction limit")
                     result["prediction_stalled"] = True
-                last_frame = frame
                 delay = args.stall and not result.get("prediction_stalled")
                 if 8 <= frame and (frame < 12 or delay):
                     held.extend(packets)
@@ -179,7 +182,12 @@ def main():
         while not result.get("done") and "error" not in result and (child is None or child.poll() is None) and time.monotonic() < deadline:
             server.handle_request()
         if "error" in result or not result.get("done"):
-            raise SystemExit(result.get("error", f"no completion after {ticks} ticks"))
+            cause = result.get("error", "no completion")
+            if "error" in result and not result.get("timed_out"):
+                raise SystemExit(cause)
+            detail = {"slot": args.slot, "control": args.control, "verified": result.get("verified", False),
+                      "last_exchange": last_exchange}
+            raise SystemExit(f"{cause} after {ticks} ticks {json.dumps(detail)}")
         if child is not None and not args.browser and child.wait(timeout=10) != 0:
             raise SystemExit("exported game exited unsuccessfully")
         print(json.dumps(result))
