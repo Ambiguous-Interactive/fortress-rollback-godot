@@ -59,6 +59,12 @@ and artifact uploads before adopting a partition count. GitHub runner limits and
 inform the experiments. [GitHub Actions limits](https://docs.github.com/en/actions/reference/limits) ·
 [CircleCI timing-based splitting](https://circleci.com/docs/guides/optimize/parallelism-faster-jobs/)
 
+The affected-test selector follows script and resource dependencies and widens to all suites when an
+edge cannot be resolved. An independent checkout derives the selected case inventory and checks the
+completed partition receipts. This uses the dependency-based selection studied at Google and preserves
+a complete qualification run on the GitHub merge candidate. [Regression Test Selection at Scale](https://research.google/pubs/regression-test-selection-at-scale-4/) ·
+[GitHub merge queues](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue)
+
 ## What runs on a candidate
 
 A PR runs the harness, affected unit partitions and, when tooling changes, the reference and oracle controls.
