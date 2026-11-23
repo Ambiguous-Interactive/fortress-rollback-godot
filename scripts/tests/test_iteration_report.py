@@ -38,6 +38,14 @@ class IterationReportTests(unittest.TestCase):
         self.assertTrue(summary(rows[:3] * 14)['p95_ceiling_verified'])
         self.assertFalse(summary(rows * 10)['p95_ceiling_verified'])
 
+    def test_incomplete_head_with_enough_completed_samples(self):
+        rows = [dict(outcome='success', elapsed_s=299, runner_s=1)] * 40
+        rows.append(dict(outcome='incomplete', elapsed_s=None, runner_s=0))
+        report = summary(rows)
+        self.assertEqual(report['p95_s'], 299)
+        self.assertFalse(report['target_verified'])
+        self.assertFalse(report['p95_ceiling_verified'])
+
     def test_runner_budget_accounts_for_the_change_mix(self):
         def row(tooling, seconds):
             return dict(event='pull_request', tooling_controls=tooling, runner_s=seconds, outcome='success')
