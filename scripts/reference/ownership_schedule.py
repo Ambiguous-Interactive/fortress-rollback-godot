@@ -97,6 +97,9 @@ def chromium_page_wave(page_suites, native_seconds, execute, workers):
             stopped.set()
             raise
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        list(pool.map(run_lane, lanes))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        try:
+            list(pool.map(run_lane, lanes))
+        finally:
+            stopped.set()  # An interrupted caller joins only the already active pages.
     return results
