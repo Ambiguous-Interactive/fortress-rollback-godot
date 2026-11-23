@@ -2,7 +2,7 @@
 import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import math
 from pathlib import Path
@@ -16,7 +16,28 @@ def ts(value):
     return (stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)).timestamp()
 
 
-def candidate(origin, required, jobs):
+CONTROLS = 'Reference and oracle negative controls'
+QUEUE = 'refs/heads/gh-readonly-queue/main/'
+
+
+def legacy_skip(job, jobs, event, non_tooling):
+    if job['name'] != CONTROLS:
+        return False
+    gate = [j for j in jobs if j['run_id'] == job['run_id']]
+    old_unit = any(j['name'] == 'Changed unit suites (Godot 4.3)' and
+                   any(s['name'] == 'Run the affected unit suites' for s in j['steps']) for j in gate)
+    detected = any(j['name'] == 'Detect tooling changes' and j['conclusion'] == 'success' for j in gate)
+    if not old_unit or not detected:
+        return False
+    if event == 'pull_request':
+        return non_tooling
+    if event == 'merge_group':
+        return any(j['name'] == 'Reference negative controls' and j['conclusion'] == 'success' and
+                   {'Run make test-reference', 'Run make test-oracle'} <= {s['name'] for s in j['steps'] if s['conclusion'] == 'success'} for j in jobs)
+    return False
+
+
+def candidate(origin, required, jobs, *, event=None, non_tooling=False):
     """Keep every attempt's work and carry successful checks through partial rerequests."""
     contexts = defaultdict(list)
     intervals, failures, steps = [], [], []
@@ -31,15 +52,15 @@ def candidate(origin, required, jobs):
         if failed or j['conclusion'] in ('failure', 'timed_out'):
             failures.append(min(failed, default=end))
         steps.append(dict(job=j['name'], run=j['run_id'], attempt=j['run_attempt'], outcome=j['conclusion'],
-                          pickup_s=start - ts(j['created_at']), seconds=end - start,
+                          pickup_s=start - ts(j['created_at']) if j.get('created_at') else None, seconds=end - start,
                           steps=[(s['name'], s['conclusion'], ts(s['completed_at']) - ts(s['started_at']))
                                  for s in j['steps'] if s['conclusion'] != 'skipped' and s.get('started_at') and s.get('completed_at')]))
     latest = [max(rows, key=lambda j: (j['run_id'], j['run_attempt'])) for rows in contexts.values()]
     missing = sorted(required - contexts.keys())
     conclusions = {j['conclusion'] for j in latest}
-    # The historical Gate legitimately skipped the controls on a non-tooling PR.
-    invalid_skip = any(j['conclusion'] == 'skipped' and j['name'] != 'Reference and oracle negative controls' for j in latest)
-    if missing or not origin or invalid_skip or any(not j.get('completed_at') for j in latest):
+    invalid_skips = sorted(j['name'] for j in latest if j['conclusion'] == 'skipped' and not legacy_skip(j, jobs, event, non_tooling))
+    missing_clock = any(not j.get('completed_at') or (j['conclusion'] != 'skipped' and not (j.get('created_at') and j.get('started_at'))) for j in latest)
+    if missing or not origin or invalid_skips or missing_clock:
         outcome = 'incomplete'
     elif 'cancelled' in conclusions:
         outcome = 'cancelled'
@@ -53,7 +74,7 @@ def candidate(origin, required, jobs):
     for _, delta in sorted((t, d) for a, b in intervals if b > a for t, d in ((a, 1), (b, -1))):
         concurrency += delta
         peak = max(peak, concurrency)
-    return dict(outcome=outcome, elapsed_s=elapsed, missing=missing, runner_s=sum(b-a for a,b in intervals),
+    return dict(outcome=outcome, elapsed_s=elapsed, missing=missing, unproven_skips=invalid_skips, runner_s=sum(b-a for a,b in intervals),
                 peak_runners=peak, first_failure_s=min(failures)-ts(origin) if origin and failures else None,
                 retry_recovery_s=end-min(failures) if failures and outcome == 'success' else None, jobs=steps)
 
@@ -90,33 +111,136 @@ def compare_budget(history, after):
                 ratio=round(observed / expected, 4), within_budget=observed <= 1.05 * expected)
 
 
+def ref_sha(events, clock):
+    previous = [e for e in events if e['timestamp'] <= clock]
+    sha = previous[-1]['after'] if previous else events[0]['before'] if events else None
+    return sha if sha and sha.strip('0') else None
+
+
+def eligible(repo, since, activity, pulls):
+    """Enumerate qualifying ref creations and open PR heads before consulting workflow runs."""
+    refs = defaultdict(list)
+    heads = {}
+    periods = defaultdict(list)
+
+    def add(event, owner, ref, sha, stamp, number=None, reason=None, closed=None):
+        key = (event, owner, ref, sha, stamp, number)
+        heads[key] = dict(event=event, head_repository=owner, ref=ref, sha=sha, start=None if reason else stamp,
+                          observed_at=stamp, pull_request=number, closed_at=closed, runs=[], coverage_gap=reason)
+
+    for e in sorted(activity, key=lambda e: (e['timestamp'], e.get('id', 0))):
+        if e['activity_type'] in ('branch_creation', 'push', 'force_push', 'branch_deletion', 'merge_queue_merge', 'pr_merge'):
+            refs[e['ref']].append(e)
+        if e['activity_type'] == 'branch_creation' and e['ref'].startswith(QUEUE):
+            add('merge_group', repo, e['ref'], e['after'], e['timestamp'])
+
+    for pr, transitions in pulls:
+        head = pr['head']
+        owner = (head.get('repo') or {}).get('full_name')
+        if owner and owner.casefold() == repo.casefold():
+            owner = repo
+        ref = 'refs/heads/' + head['ref']
+        events = refs[ref] if owner == repo else []
+        opened = pr['created_at']
+        transitions = list(transitions)
+        if pr['closed_at'] and (pr['closed_at'], 'closed') not in transitions:
+            transitions.append((pr['closed_at'], 'closed'))
+        for clock, action in [*sorted(transitions, key=lambda pair: pair[0]), (None, 'end')]:
+            if action == 'reopened':
+                opened = clock
+                continue
+            if opened is None:
+                continue
+            periods[owner, ref].append((opened, clock, pr['number']))
+            if clock is None or ts(clock) >= ts(since):
+                if owner != repo:
+                    # Base-repository activity cannot enumerate pushes on a deleted or foreign fork.
+                    observed = opened if ts(opened) >= ts(since) else since
+                    add('pull_request', owner, ref, head['sha'], observed, pr['number'], 'fork_ref_history_unavailable', clock)
+                else:
+                    sha = ref_sha(events, opened)
+                    add('pull_request', owner, ref, sha, opened, pr['number'], None if sha else 'opening_head_unavailable', clock)
+                    for e in events:
+                        if opened <= e['timestamp'] and (clock is None or e['timestamp'] < clock) and e['activity_type'] in ('push', 'force_push', 'branch_creation'):
+                            add('pull_request', owner, ref, e['after'], e['timestamp'], pr['number'], closed=clock)
+            opened = None
+    return list(heads.values()), refs, periods
+
+
+def attach_runs(rows, runs, repo, periods):
+    groups = defaultdict(list)
+    for row in rows:
+        groups[row['event'], row['head_repository'], row['ref'], row['sha']].append(row)
+    for run in runs:
+        owner = (run.get('head_repository') or {}).get('full_name')
+        if owner and owner.casefold() == repo.casefold():
+            owner = repo
+        key = (run['event'], owner, 'refs/heads/' + run['head_branch'], run['head_sha'])
+        numbers = {pr['number'] for pr in run.get('pull_requests', [])}
+        matching = [r for r in groups[key] if ts(r['observed_at']) <= ts(run['created_at']) and
+                    (not r['closed_at'] or run['created_at'] < r['closed_at']) and (not numbers or not r['pull_request'] or r['pull_request'] in numbers)]
+        if matching:
+            max(matching, key=lambda r: ts(r['observed_at']))['runs'].append(run['id'])
+            continue
+        event, owner, ref, sha = key
+        stamp = run['created_at']
+        prs = [(number, closed) for opened, closed, number in periods[owner, ref] if opened <= stamp and
+               (not closed or stamp < closed) and (not numbers or number in numbers)]
+        if (event == 'merge_group' and owner == repo and ref.startswith(QUEUE)) or (event == 'pull_request' and len(prs) == 1):
+            row = dict(event=event, head_repository=owner, ref=ref, sha=sha, start=None, observed_at=stamp,
+                       pull_request=prs[0][0] if prs else None, closed_at=prs[0][1] if prs else None, runs=[run['id']], coverage_gap='ref_clock_unavailable')
+            rows.append(row)
+            groups[key].append(row)
+
+
+def non_tooling_files(files):
+    if len(files) >= 300:  # GitHub caps the compare response's file list.
+        return False
+    tooling = ('scripts', 'Makefile', '.github/workflows/gate.yml', '.github/workflows/reference-baseline.yml', '.github/workflows/nightly.yml')
+    return not any(name.startswith('scripts/') or name in tooling for f in files for name in (f['filename'], f.get('previous_filename', '')))
+
+
 def collect(repo, since, until):
     def pages(endpoint):
         raw = subprocess.check_output(['gh', 'api', '--paginate', '--slurp', f'repos/{repo}/{endpoint}'])
         return json.loads(raw)
 
-    rules = [rule for page in pages('rules/branches/main') for rule in page if rule['type'] == 'required_status_checks']
+    def items(endpoint):
+        return [item for page in pages(endpoint) for item in page]
+
+    rules = [rule for rule in items('rules/branches/main') if rule['type'] == 'required_status_checks']
     required = {c['context'] for rule in rules for c in rule['parameters']['required_status_checks']}
     if not required:
         raise ValueError('no required check contexts reported by the main branch rules')
-    origin = defaultdict(list)
-    for page in pages('activity?per_page=100&time_period=month'):
-        for item in page:
-            if item['activity_type'] in ('branch_creation', 'push', 'force_push'):
-                origin[(item['ref'], item['after'])].append(item['timestamp'])
-    groups = defaultdict(list)
-    for event in ('pull_request', 'merge_group'):
-        query = urlencode(dict(event=event, created=f'{since}..{until}', per_page=100))
-        for workflow in ('gate.yml', 'reference-baseline.yml'):
-            result = pages(f'actions/workflows/{workflow}/runs?{query}')
-            runs = [run for page in result for run in page['workflow_runs']]
-            if len({r['id'] for r in runs}) != result[0]['total_count']:
-                raise ValueError('incomplete Actions query; use a shorter date window')
-            for run in runs:
-                ref = 'refs/heads/' + run['head_branch']
-                starts = [v for v in origin[ref, run['head_sha']] if ts(v) <= ts(run['created_at'])]
-                start = max(starts, default=None) if (run.get('head_repository') or {}).get('full_name') == repo else None
-                groups[(event, ref, run['head_sha'], start)].append(run)
+    activity = items('activity?per_page=100&time_period=month')
+    prs = [pr for pr in items('pulls?state=all&base=main&sort=updated&direction=desc&per_page=100')
+           if ts(pr['created_at']) <= ts(until) and (not pr['closed_at'] or ts(pr['closed_at']) >= ts(since))]
+    def timeline(pr):
+        changes = items(f"issues/{pr['number']}/timeline?per_page=100")
+        return pr, [(e['created_at'], e['event']) for e in changes if e['event'] in ('closed', 'reopened')]
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        rows, refs, periods = eligible(repo, since, activity, list(pool.map(timeline, prs)))
+    runs = {}
+    # A head at the window boundary can start its workflows later. Read through collection time
+    # in short ranges to stay within the Actions API's 1,000-result ceiling.
+    now = datetime.now(timezone.utc)
+    lower = datetime.fromtimestamp(ts(since), timezone.utc)
+    if lower > now or lower < now - timedelta(days=30) or ts(until) < ts(since) or ts(until) > now.timestamp():
+        raise ValueError('window must be ordered and within the last 30 days of repository activity')
+    while lower < now:
+        upper = min(lower + timedelta(days=5), now)
+        dates = '..'.join(d.strftime('%Y-%m-%dT%H:%M:%SZ') for d in (lower, upper))
+        for event in ('pull_request', 'merge_group'):
+            query = urlencode(dict(event=event, created=dates, per_page=100))
+            for workflow in ('gate.yml', 'reference-baseline.yml'):
+                result = pages(f'actions/workflows/{workflow}/runs?{query}')
+                selected = [run for page in result for run in page['workflow_runs']]
+                if len({r['id'] for r in selected}) != result[0]['total_count']:
+                    raise ValueError('incomplete Actions query; reduce the workflow run query interval')
+                runs.update((r['id'], r) for r in selected)
+        lower = upper
+    attach_runs(rows, sorted(runs.values(), key=lambda r: r['created_at']), repo, periods)
+    rows = [r for r in rows if ts(since) <= ts(r['observed_at']) <= ts(until)]
 
     def jobs(run):
         result = pages(f"actions/runs/{run['id']}/jobs?per_page=100&filter=all")
@@ -125,17 +249,22 @@ def collect(repo, since, until):
             raise ValueError(f"incomplete or mismatched job list for run {run['id']}")
         return run['id'], rows
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        work = dict(pool.map(jobs, (r for group in groups.values() for r in group)))
+    matched = {run_id for row in rows for run_id in row['runs']}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        work = dict(pool.map(jobs, (runs[run_id] for run_id in matched)))
     result = []
-    for (event, ref, sha, start), runs in groups.items():
-        executed = [j for r in runs for j in work[r['id']]]
-        row = candidate(start, required, executed)
-        # Historical controls ran both make targets in one job. The parallel
-        # layout still runs the exact targets in its two worker jobs.
+    for info in rows:
+        executed = [j for run_id in info['runs'] for j in work[run_id]]
+        non_tooling = False
+        if info['event'] == 'pull_request' and info['start'] and any(j['name'] == CONTROLS and j['conclusion'] == 'skipped' for j in executed):
+            base = ref_sha(refs['refs/heads/main'], info['start'])
+            if base:
+                compared = pages(f"compare/{base}...{info['sha']}?per_page=100")
+                non_tooling = non_tooling_files(compared[0]['files'])
+        row = candidate(info['start'], required, executed, event=info['event'], non_tooling=non_tooling)
         row['tooling_controls'] = any(step['name'] in ('Run make test-reference', 'Run make test-oracle') and step['conclusion'] != 'skipped'
                                       for j in executed for step in j['steps'])
-        result.append(dict(event=event, ref=ref, sha=sha, start=start, runs=[r['id'] for r in runs], **row))
+        result.append(dict(**info, **row))
     return dict(repo=repo, since=since, until=until, required=sorted(required), candidates=result,
                 cost_groups=cost_groups(result), summary={event: summary([r for r in result if r['event'] == event]) for event in ('pull_request', 'merge_group')})
 

@@ -26,7 +26,8 @@ assertion outcome. Cold samples clear runner timing history. Warm samples seed i
 
 The November 18–22, 2026 baseline uses repository activity and all five required check contexts.
 143 completed PR heads took 627 seconds at p95. Another 46 heads were cancelled.
-45 completed merge candidates took 825 seconds at p95. These distributions include failed verdicts.
+44 completed merge candidates took 823 seconds at p95. One more candidate lacked successful evidence for its skipped controls.
+Both distributions include failed verdicts.
 Successful merge candidates used a mean of 169.0 runner-minutes across the required workflows.
 The [baseline](iteration-baseline.json) includes the sample counts and cost by change mix.
 
@@ -38,7 +39,10 @@ python3 scripts/github/iteration_report.py --since "$ROLLOUT_UTC" \
   --baseline docs/reference/iteration-baseline.json --output .cache/tests/iteration.json
 ```
 
-The report joins Actions jobs across attempts and workflows to the exact branch, SHA, and ref activity.
+The report starts with queue ref creations and PR head revisions observed while each PR targeting main was open.
+Opening or reopening a PR starts a new sample at the current revision. The report joins Actions jobs by event, head repository, ref and SHA.
+Base repository activity cannot establish fork head history. An overlapping fork PR leaves an incomplete sample.
+A candidate with zero workflow runs also remains incomplete.
 It includes pickup, steps, upload, peak simultaneous runners, summed allocation, first failed step, and
 elapsed time through a successful retry. Missing ref timestamps or required contexts leave an incomplete row.
 Superseded heads are counted separately. A job step that emits the test failure before finishing provides

@@ -24,10 +24,11 @@
     "merge_group": {
       "outcomes": {
         "success": 39,
-        "failure": 6
+        "failure": 5,
+        "incomplete": 1
       },
-      "completed": 45,
-      "p95_s": 825.0,
+      "completed": 44,
+      "p95_s": 823.0,
       "target_verified": false,
       "total_runner_minutes": 7571.75
     }
@@ -37,8 +38,15 @@
       "event": "merge_group",
       "tooling_controls": true,
       "outcome": "failure",
-      "count": 6,
-      "mean_runner_s": 9808.833333333334
+      "count": 5,
+      "mean_runner_s": 9582.8
+    },
+    {
+      "event": "merge_group",
+      "tooling_controls": true,
+      "outcome": "incomplete",
+      "count": 1,
+      "mean_runner_s": 10939.0
     },
     {
       "event": "merge_group",
