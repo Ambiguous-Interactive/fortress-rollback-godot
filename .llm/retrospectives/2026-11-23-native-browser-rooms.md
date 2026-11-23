@@ -14,6 +14,9 @@
   In the exported run the survivor then reported an SCTP close abort and its callback counts froze. The receipt retains the exact diagnostic and requires the physical abort.
 - Fresh review found that TCP readiness accepted a stand-in without UDP STUN, and a pending diagnostic could stall cleanup.
   The controls rejected the stand-in and bounded the blocked renderer while still closing the browser and listening socket.
+- The hosted WebKit profiles found three browser-open ticks before the engine began some direct matches.
+  Those matches had complete meshes, no relay sends, and confirmed gameplay. The startup receipt now distinguishes browser-open time from engine readiness.
+  The two-tick guard measures only waits after both views report the full mesh ready.
 
 ## Prune ledger
 

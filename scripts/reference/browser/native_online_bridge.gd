@@ -67,10 +67,12 @@ class ObservedLobby:
 	var transport_wait_started: int = -1
 	var transport_start_delay: int = -1
 	var previous_transport_delay: int = -1
+	var browser_open_wait_ticks: int = 0
 	var open_mesh_wait_ticks: int = 0
 	var failure_tick_callbacks: PackedInt32Array = []
 	var wait_for_full_mesh: bool = false
 	var started_on_full_mesh: bool = false
+	var _engine_mesh_open: bool = false
 
 	func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:
 		if transport_wait_started < 0:
@@ -80,15 +82,39 @@ class ObservedLobby:
 		# The direct-only witness starts after every real channel connects.
 		if wait_for_full_mesh and route == "mesh" and not mesh_open:
 			return
+		_engine_mesh_open = false
 		super._maybe_start_transport(route, now_us, revision)
 		if transport_start_delay < 0:
 			if state == "playing":
 				transport_start_delay = elapsed
-				started_on_full_mesh = mesh_open
+				started_on_full_mesh = mesh_open and _engine_mesh_open
 			else:
 				previous_transport_delay = elapsed
 				if mesh_open:
+					browser_open_wait_ticks += 1
+				if mesh_open and _engine_mesh_open:
 					open_mesh_wait_ticks += 1
+
+	func _mesh_can_start(revision: int, allow_missing_links: bool) -> bool:
+		var ready: bool = super._mesh_can_start(revision, allow_missing_links)
+		_engine_mesh_open = _engine_sees_full_mesh()
+		return ready
+
+	func _engine_sees_full_mesh() -> bool:
+		if not is_instance_valid(mesh):
+			return false
+		var transport: Object = mesh.call("get_multiplayer_peer")
+		if transport == null:
+			return false
+		var peers: Dictionary = transport.call("get_peers")
+		if peers.size() != player_count - 1:
+			return false
+		var owner: String = game_match.membership.local_uuid()
+		for peer_id: int in peers:
+			var peer_uuid: String = game_match.membership.uuid_for_peer_id(peer_id)
+			if peer_uuid.is_empty() or peer_uuid == owner or not peers[peer_id].get("connected", false):
+				return false
+		return true
 
 	func tick(now_us: int, buttons: int) -> void:
 		turns += 1
@@ -154,6 +180,7 @@ func _process(_delta: float) -> void:
 		"turns": lobby.turns,
 		"transport_start_delay": lobby.transport_start_delay,
 		"previous_transport_delay": lobby.previous_transport_delay,
+		"browser_open_wait_ticks": lobby.browser_open_wait_ticks,
 		"open_mesh_wait_ticks": lobby.open_mesh_wait_ticks,
 		"started_on_full_mesh": lobby.started_on_full_mesh,
 		"failure_tick_callbacks": lobby.failure_tick_callbacks,
