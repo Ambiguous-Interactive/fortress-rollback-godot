@@ -45,6 +45,10 @@ at least 10 s without waiting for a host lease. Even 77 subsequent passes could 
 100-sample p95, so that trial stopped. Record the workspace filesystem along with host load.
 On Docker Desktop a container volume avoids the host bind mount. Use **Dev Containers: Clone
 Repository in Container Volume** and repeat the same study to compare both locations.
+A paired study on `5aba6b7` alternated execution order over 100 edits with the same engine, commit,
+changed bytes and result digests. The host mount produced median 3.39 s, p95 8.05 s and a maximum
+of 11.74 s. The container-local Linux filesystem produced median 0.88 s, p95 2.05 s and a maximum
+of 3.04 s. It finished first on all 100 pairs.
 [VS Code disk performance guide](https://code.visualstudio.com/remote/advancedcontainers/improve-performance)
 
 ## Hosted baseline and comparison
@@ -55,6 +59,12 @@ The November 18–22, 2026 baseline uses repository activity and all five requir
 Both distributions include failed verdicts.
 Successful merge candidates used a mean of 169.0 runner-minutes across the required workflows.
 The [baseline](iteration-baseline.json) includes the sample counts and cost by change mix.
+
+The first four PR revisions in the rollout trial completed in 231, 224, 229 and 236 seconds.
+Together they used 54.07 runner-minutes against a matched baseline of 54.91. The first real merge
+candidate passed all required checks in 353 s using 183.50 runner-minutes. Its Godot 4.3 positive
+ownership part took 336 s, including 179 s in browser batches. The PR left the queue for further
+tuning. [First merge-candidate qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45095685122)
 
 With authenticated `gh`, collect one rollout window after the new Gate went live. Supply UTC timestamps
 within the past month. Use a separate window for a change in workflow design or required checks.
