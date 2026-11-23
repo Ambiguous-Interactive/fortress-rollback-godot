@@ -306,31 +306,26 @@ def artifact_line_prefix(source):
     return f'Full per-path classification is in `{source}.json`. [Download report artifact]('
 
 
-def replay_command(source):
-    return f'python3 scripts/reference/drift_report.py --stage --source {shlex.quote(source)} \\'
-
-
-def replay_args(source, latest):
-    return f'  --latest {shlex.quote(f"{source}={latest}")} --output '
-
-
-def has_replay(body, source, latest):
-    command = re.escape(replay_command(source))
-    args = re.escape(replay_args(source, latest))
-    pattern = (r'^[^\r\n]*[Cc]heck out `[0-9a-f]{40}`[^\r\n]*\r?\n\r?\n'
-               + r'```sh\r?\n' + command + r'\r?\n' + args + r'[^\r\n]+\r?\n```(?=\r?$)')
-    return bool(re.search(pattern, body, re.MULTILINE))
-
-
 def replay_lines(source, latest, report_digest, checkout_sha):
     return [
         f'Check out `{checkout_sha}` and run this command to reproduce the report. Compare `report_digest` in the resulting JSON.',
         '',
         '```sh',
-        replay_command(source),
-        f'{replay_args(source, latest)}".cache/results/replay-{report_digest[:12]}"',
+        f'python3 scripts/reference/drift_report.py --stage --source {shlex.quote(source)} \\',
+        f'  --latest {shlex.quote(f"{source}={latest}")} --output ".cache/results/replay-{report_digest[:12]}"',
         '```',
     ]
+
+
+def has_replay(after_link, report):
+    lines = after_link.splitlines()
+    if len(lines) < 3 or lines[:2] != ['', '']:
+        return False
+    checkout = re.match(r'Check out `([0-9a-f]{40})` ', lines[2])
+    if not checkout:
+        return False
+    expected = replay_lines(report['source'], report['candidate_revision'], report['report_digest'], checkout[1])
+    return lines[2:2 + len(expected)] == expected
 
 
 def render_comment(source, entry, latest, report, report_digest, archive_digest, today, artifact_url=None, checkout_sha=None):
@@ -476,7 +471,7 @@ def refresh_artifact_link(report, comment, issues, artifact_url, checkout_sha):
         raise ToolingError('staged archive SHA-256 does not match the prior drift observation')
 
     updated_line = f'{prefix}{artifact_url})'
-    if not has_replay(body, source, report['candidate_revision']):
+    if not has_replay(body[link.end():], report):
         newline = '\r\n' if body[link.end():].startswith('\r\n') else '\n'
         updated_line += newline * 2 + newline.join(replay_lines(source, report['candidate_revision'], report['report_digest'], checkout_sha))
     replacement = body[:link.start()] + updated_line + body[link.end():]

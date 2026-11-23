@@ -249,7 +249,7 @@ class DriftReportTests(unittest.TestCase):
             return self.run_report(None, issues=fake, resolve=self.fail, override=False,
                                    extra=['--publish-staged', '--artifact-url', url])[0]
 
-        for old_state in ('absent', 'blockquote', 'legacy', 'prior-checkout', 'live', 'forbidden', 'network-error', 'foreign-host', 'foreign-repo',
+        for old_state in ('absent', 'blockquote', 'legacy', 'hidden-replay', 'prior-checkout', 'live', 'forbidden', 'network-error', 'foreign-host', 'foreign-repo',
                           'invalid-id', 'different-digest', 'foreign-author', 'replacement-absent', 'same-id-missing',
                           'archive-mismatch', 'oversize', 'edited', 'duplicate', 'comment-id-out-of-range', 'artifact-id-out-of-range'):
             with self.subTest(old_state=old_state):
@@ -275,11 +275,14 @@ class DriftReportTests(unittest.TestCase):
                     recorded['body'] = recorded['body'].replace(CHECKOUT_SHA, 'a' * 40)
                 if old_state == 'artifact-id-out-of-range':
                     recorded['body'] = recorded['body'].replace(base + '21', base + str(1 << 63))
-                if old_state == 'legacy':
+                if old_state in ('legacy', 'hidden-replay'):
                     start = recorded['body'].index('Check out ')
                     end = recorded['body'].index('\n```\n', start) + len('\n```\n\n')
+                    old_replay = recorded['body'][start:end]
                     recorded['body'] = recorded['body'][:start] + recorded['body'][end:]
                     recorded['body'] += '\nHuman note that must survive.\n'
+                    if old_state == 'hidden-replay':
+                        recorded['body'] += f'<!--\n{old_replay}-->\n'
                 if old_state == 'archive-mismatch':
                     recorded['body'] = '\n'.join(
                         'candidate archive sha256: `' + 'd' * 64 + '`' if line.startswith('candidate archive sha256: ') else line
@@ -334,11 +337,13 @@ class DriftReportTests(unittest.TestCase):
                     self.assertEqual(reads, [(42, 22), (42, 21)])
                     self.assertEqual(recorded['id'], original['id'])
                     self.assertEqual(recorded['author'], original['author'])
-                elif old_state == 'legacy':
-                    self.assertIn(CHECKOUT_SHA, recorded['body'])
+                elif old_state in ('legacy', 'hidden-replay'):
+                    archive_line = f'{base}22)\n\nCheck out `{CHECKOUT_SHA}`'
+                    self.assertIn(archive_line, recorded['body'])
                     self.assertIn(f'--latest fortress={NEW_SHA}', recorded['body'])
                     self.assertIn('Human note that must survive.', recorded['body'])
-                    self.assertIn(base + '22', recorded['body'])
+                    if old_state == 'hidden-replay':
+                        self.assertTrue(recorded['body'].endswith(f'<!--\n{old_replay}-->\n'))
                 elif old_state == 'edited':
                     self.assertTrue(changed)
                     self.assertEqual(recorded['body'], original['body'] + '\nConcurrent human change.\n')
