@@ -6,15 +6,14 @@ import sys
 
 from fetch import CACHE, load_manifest, sources
 from godot_smoke import prepare_editor
-from run import setup_rust
 from signalfish_webrtc_probe import LABELS
 
 # Each of the five three-room labels took 71..76 seconds on the 4.7.2 hosted pin.
 # Pair each with short labels. The probe still owns the eight-page limit within a lane.
 TRANSPORT = {
-    'clean': ('clean', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-process', 'peer-drop-process-missing'),
+    'clean': ('clean', 'default', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-process', 'peer-drop-process-missing'),
     'faults': ('faults', 'peer-drop-close', 'peer-drop-answer', 'peer-drop-room-after-drop', 'peer-drop-room-before-drop'),
-    'mixed': ('mixed', 'corrupt', 'default', 'peer-drop-relay', 'peer-drop-missing'),
+    'mixed': ('mixed', 'corrupt', 'peer-drop-relay', 'peer-drop-missing'),
     'mixed-default': ('mixed-default', 'mixed-disabled', 'peer-drop-missing-lost', 'peer-drop-commit'),
     'mixed-close': ('mixed-close', 'peer-drop-second', 'peer-drop-rollback', 'recording-pressure'),
     'departures': ('peer-drop-foreign', 'peer-drop-room', 'peer-drop-room-continue'),
@@ -36,7 +35,6 @@ def main():
         raise ValueError('transport lanes must execute every browser label exactly once')
     data = load_manifest()
     sources_by_name = sources(data)
-    setup_rust(data, False)
     results = CACHE / 'results'
     build = CACHE / 'server-build'
     server = ['--server', str(build / 'target/debug/signal-fish-server'), '--server-source', str(sources_by_name['server']),
