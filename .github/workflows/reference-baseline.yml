@@ -1,20 +1,9 @@
 name: Reference Baseline
 
-# Qualify tier: the full Chromium verification matrix (both pinned engines,
-# ownership probes, oracle launchers, browser transport witnesses and the whole
-# test inventory). The merge queue requires the Qualification summary check on
-# every grouped merge candidate, so this workflow runs there unconditionally;
-# workflow_dispatch keeps it available on demand. The per-push Gate workflow
-# keeps the fast loop; nightly.yml owns the axes that moved out of this matrix.
-
+# Gate calls the full Chromium matrix on the merge candidate. Manual runs
+# also execute the reference and oracle controls that Gate owns on candidates.
 on:
-  merge_group:
-    types: [checks_requested]
-  # GitHub refuses to enqueue a PR until every required context reports on the
-  # PR head, so pull requests run this workflow too: every heavy family skips
-  # on that event and only the eligibility summary reports (a skipped need is
-  # not a failure). The queue group run is the real gate.
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -24,8 +13,7 @@ jobs:
   contracts:
     name: Reference negative controls
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
-    # Both full suites took over ten minutes together; reserve setup and teardown time.
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
@@ -38,7 +26,6 @@ jobs:
   rust:
     name: Pinned Rust reference
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
@@ -75,20 +62,21 @@ jobs:
   ownership:
     name: Native and Chromium snapshot ownership ${{ matrix.version }}${{ matrix.suffix }}
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {version: "4.3", browser: chromium, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-negative-part-1"}
-          - {version: "4.3", browser: chromium, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-negative-part-2"}
-          - {version: "4.3", browser: chromium, phase: negative, suite_part: "3", suffix: " negative part 3", part_suffix: "-negative-part-3"}
-          - {version: "4.3", browser: chromium, phase: negative, suite_part: "4", suffix: " negative part 4", part_suffix: "-negative-part-4"}
-          - {version: "4.3", browser: chromium, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-positive-part-1"}
-          - {version: "4.3", browser: chromium, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-positive-part-2"}
-          - {version: "4.3", browser: chromium, phase: positive, suite_part: "3", suffix: " positive part 3", part_suffix: "-positive-part-3"}
-          - {version: "4.3", browser: chromium, phase: positive, suite_part: "4", suffix: " positive part 4", part_suffix: "-positive-part-4"}
+          - {version: "4.3", browser: chromium, phase: negative, suite_part: "1of5", suffix: " negative part 1", part_suffix: "-negative-part-1"}
+          - {version: "4.3", browser: chromium, phase: negative, suite_part: "2of5", suffix: " negative part 2", part_suffix: "-negative-part-2"}
+          - {version: "4.3", browser: chromium, phase: negative, suite_part: "3of5", suffix: " negative part 3", part_suffix: "-negative-part-3"}
+          - {version: "4.3", browser: chromium, phase: negative, suite_part: "4of5", suffix: " negative part 4", part_suffix: "-negative-part-4"}
+          - {version: "4.3", browser: chromium, phase: negative, suite_part: "5of5", suffix: " negative part 5", part_suffix: "-negative-part-5"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "1of5", suffix: " positive part 1", part_suffix: "-positive-part-1"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "2of5", suffix: " positive part 2", part_suffix: "-positive-part-2"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "3of5", suffix: " positive part 3", part_suffix: "-positive-part-3"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "4of5", suffix: " positive part 4", part_suffix: "-positive-part-4"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "5of5", suffix: " positive part 5", part_suffix: "-positive-part-5"}
           - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-negative-part-1"}
           - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-negative-part-2"}
           - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "3", suffix: " negative part 3", part_suffix: "-negative-part-3"}
@@ -110,11 +98,11 @@ jobs:
           # what is installed.
           cache: npm
           cache-dependency-path: scripts/reference/browser/package-lock.json
-      - name: Restore verified reference downloads
-        uses: actions/cache@v6.1.0
+      - uses: ./.github/actions/reference-browser-cache
         with:
-          path: .cache/reference/downloads
-          key: reference-ownership-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
+          version: ${{ matrix.version }}
+          browser: ${{ matrix.browser }}
+          legacy-ownership-cache: "true"
       - name: Select Ubuntu HTTPS mirror alternatives
         run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
       - name: Install pinned browser runner and operating system dependencies
@@ -126,9 +114,9 @@ jobs:
       - name: Verify integer encoding, snapshot ownership and byte sessions
         run: |
           python3 scripts/reference/ownership_probes.py --web --version "${{ matrix.version }}" \
-            --phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"
+            --phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}" --balance-chromium
       - name: Verify spectator browser control origins
-        if: matrix.browser == 'chromium' && matrix.version == '4.3' && matrix.phase == 'negative' && matrix.suite_part == '1'
+        if: matrix.browser == 'chromium' && matrix.version == '4.3' && matrix.phase == 'negative' && matrix.suite_part == '1of5'
         env:
           PYTHONPATH: scripts/reference
           FORTRESS_PLAYWRIGHT_PACKAGE: ${{ github.workspace }}/.cache/reference/browser/node_modules/@playwright/test
@@ -144,20 +132,12 @@ jobs:
   godot:
     name: Godot ${{ matrix.version }} and Chromium ${{ matrix.part }}
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
-    # The oracles wave's critical path stays bounded by design: the committed
-    # wrap-flood fixtures (#379) keep the quadratic builders out of CI and the
-    # wave runs the wrap corpus in its own launcher beside p2p, but the family
-    # still reserves 45-minute headroom like its ownership sibling so a slow
-    # runner cannot hang the merge queue's 30-minute check-response timeout.
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         version: ["4.3", "4.7.2"]
-        # Suites, oracle launchers and the two whole-inventory test shards share no state, so they
-        # run as parallel jobs. The CPU-saturated unit wave halves its wall time on a second runner.
-        part: [suites, oracles, tests-1of2, tests-2of2]
+        part: [suites, oracle-1, oracle-2, oracle-3, oracle-4, tests-1of3, tests-2of3, tests-3of3, integration]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
@@ -170,15 +150,30 @@ jobs:
           cache: npm
           cache-dependency-path: scripts/reference/browser/package-lock.json
       - name: Select Ubuntu HTTPS mirror alternatives
+        if: matrix.part == 'suites'
         run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
-      - name: Restore verified reference downloads and crates
+      - name: Restore the pinned editor
+        if: matrix.part != 'suites'
+        uses: actions/cache@v6.1.0
+        with:
+          path: .cache/reference/downloads/Godot_v${{ matrix.version }}-stable_linux.x86_64.zip
+          key: reference-editor-v1-${{ matrix.version }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
+      - name: Restore verified oracle downloads and crates
+        if: startsWith(matrix.part, 'oracle-')
         uses: actions/cache@v6.1.0
         with:
           path: |
-            .cache/reference/downloads
+            .cache/reference/downloads/*.tar.gz
+            .cache/reference/downloads/rust*
             .cache/reference/cargo/registry/cache
             .cache/reference/cargo/registry/index
-          key: reference-godot-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/oracle/rust/Cargo.lock') }}
+          key: oracle-v3-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/oracle/rust/Cargo.lock') }}
+      - name: Restore the pinned editor, Chromium and Web templates
+        if: matrix.part == 'suites'
+        uses: ./.github/actions/reference-browser-cache
+        with:
+          version: ${{ matrix.version }}
+          browser: chromium
       - name: Install pinned browser runner and operating system dependencies
         if: matrix.part == 'suites'
         run: |
@@ -191,28 +186,20 @@ jobs:
         # suites leg owns them and the oracles leg keeps only its own native work.
         if: matrix.part == 'suites'
         run: python3 scripts/reference/godot_smoke.py --web --version "${{ matrix.version }}"
-      - name: Execute the native engine probes for the oracle launchers
-        # The oracle launchers need the pinned engine, so this leg keeps the native probes
-        # and leaves the exported web probe to the suites leg.
-        if: matrix.part == 'oracles'
+      - name: Run the native oracle smoke probes
+        if: matrix.part == 'oracle-4'
         run: python3 scripts/reference/godot_smoke.py --version "${{ matrix.version }}"
-      - name: Prepare the pinned editor for the test shards
-        if: startsWith(matrix.part, 'tests')
+      - name: Prepare the pinned editor
+        if: matrix.part != 'suites' && matrix.part != 'oracle-4'
+        env:
+          VERSION: ${{ matrix.version }}
         run: |
-          PYTHONPATH=scripts/reference python3 - <<'PY'
-          from fetch import load_manifest, fetch, prepare_zip, CACHE
-          import platform
-          data = load_manifest()
-          arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
-          if arch is None:
-              raise SystemExit('editor bootstrap supports Linux arm64/x86_64 only')
-          version = "${{ matrix.version }}"
-          name = f'Godot_v{version}-stable_linux.{arch}.zip'
-          directory = CACHE / 'editors' / version
-          directory.mkdir(parents=True, exist_ok=True)
-          prepare_zip(fetch(data['artifacts'][name], name, False), directory, executable_members=(name[:-4],))
-          (directory / name[:-4]).chmod(0o755)
-          PY
+          PYTHONPATH=scripts/reference python3 - <<'PYTHON'
+          import os
+          from fetch import load_manifest
+          from godot_smoke import prepare_editor
+          prepare_editor(load_manifest(), os.environ['VERSION'])
+          PYTHON
       - name: Verify runner failure controls and fresh-process suites
         if: matrix.part == 'suites'
         run: |
@@ -239,24 +226,28 @@ jobs:
           editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
           part="${{ matrix.part }}"
           shard="${part#tests-}"
-          python3 scripts/run_godot_tests.py --godot "$editor" --shard "$shard" --timeout 180 --results ".cache/tests/runner-$version-$part.json"
-          if [[ "$shard" == 2of2 ]]; then
-            for case in default_single default_batched readiness_boundary aborted_wait; do
-              case_timeout=120
-              if [[ "$case" == default_single ]]; then case_timeout=180; fi
-              python3 scripts/run_godot_tests.py --godot "$editor" --category integration --filter "$case" --timeout "$case_timeout" \
-                --results ".cache/tests/integration-$version-$case.json"
-            done
-            python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
-          fi
-      - name: Compare actual upstream and Godot traces
-        if: matrix.part == 'oracles'
+          python3 scripts/run_godot_tests.py --godot "$editor" --shard "$shard" --verify-inventory --timeout 180 --results ".cache/tests/runner-$version-$part.json"
+      - name: Verify integration and determinism
+        if: matrix.part == 'integration'
         run: |
           version="${{ matrix.version }}"
           editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
+          for case in default_single default_batched readiness_boundary aborted_wait; do
+            case_timeout=120
+            if [[ "$case" == default_single ]]; then case_timeout=180; fi
+            python3 scripts/run_godot_tests.py --godot "$editor" --category integration --filter "$case" --timeout "$case_timeout" \
+              --results ".cache/tests/integration-$version-$case.json"
+          done
+          python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
+      - name: Compare actual upstream and Godot traces
+        if: startsWith(matrix.part, 'oracle-')
+        run: |
+          version="${{ matrix.version }}"
+          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
+          part="${{ matrix.part }}"
           # The handshake launcher records formal_skipped: the nightly models job owns
           # the TLC model evidence; this leg keeps the differential trace.
-          python3 scripts/oracle/parallel_launchers.py --godot "$editor" --suffix "$version" --skip-formal
+          python3 scripts/oracle/parallel_launchers.py --godot "$editor" --suffix "$version" --skip-formal --lane "${part#oracle-}"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
@@ -266,38 +257,27 @@ jobs:
             .cache/tests/
           if-no-files-found: error
 
-  signalfish:
-    name: SignalFish relay and Chromium WebRTC ${{ matrix.version }} ${{ matrix.part }}
+  server:
+    name: Build the pinned relay server
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
-    timeout-minutes: 180
-    strategy:
-      fail-fast: false
-      matrix:
-        version: ["4.3", "4.7.2"]
-        # Each part starts its own server and browsers, so they run as parallel jobs. The transport
-        # witness splits into direct-path and mixed-path labels; the short disabled-fallback control
-        # runs with the direct labels so both jobs take about as long.
-        part: [direct, mixed, online]
-        pair: [chromium]
+    timeout-minutes: 30
+    outputs:
+      artifact: ${{ steps.publish.outputs.artifact-id }}
+      receipt: ${{ steps.receipt.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.15.2"
-      - uses: actions/setup-node@v7.1.0
-        with:
-          node-version: "26.12.1"
-          cache: npm
-          cache-dependency-path: scripts/reference/browser/package-lock.json
-      - name: Restore verified transport downloads and crates
+      - name: Restore pinned server downloads and crates
         uses: actions/cache@v6.1.0
         with:
           path: |
-            .cache/reference/downloads
+            .cache/reference/downloads/*.tar.gz
+            .cache/reference/downloads/rust*
             .cache/reference/cargo/registry/cache
             .cache/reference/cargo/registry/index
-          key: reference-signalfish-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/reference/browser/package-lock.json') }}
+          key: server-sources-v1-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
       - name: Verify the pinned sources and name the server build cache
         id: pinned
         run: |
@@ -322,15 +302,8 @@ jobs:
           key: reference-signalfish-server-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned.outputs.pins }}-${{ steps.pinned.outputs.build }}
           restore-keys: |
             reference-signalfish-server-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned.outputs.pins }}-
-      - name: Select Ubuntu HTTPS mirror alternatives
-        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
-      - name: Install pinned browser runner and operating system dependencies
-        run: |
-          mkdir -p .cache/reference/browser
-          cp scripts/reference/browser/package*.json .cache/reference/browser/
-          npm ci --ignore-scripts --prefix .cache/reference/browser
-          bash scripts/reference/retry_apt_fetch.sh .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
       - name: Build the pinned local SignalFish server
+        id: build
         run: |
           PYTHONPATH=scripts/reference python3 - <<'PY'
           from fetch import load_manifest
@@ -339,88 +312,116 @@ jobs:
           setup_rust(manifest, False)
           PY
           cargo="$(RUSTUP_HOME="$PWD/.cache/reference/rustup" .cache/reference/cargo/bin/rustup which --toolchain 1.99.1 cargo)"
+          echo "tool_bin=$(realpath --relative-to="$PWD" "$(dirname "$cargo")")" >> "$GITHUB_OUTPUT"
           python3 scripts/reference/signalfish_build_server.py \
             --cargo "$cargo" \
             --source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
-            --output .cache/reference/results/signalfish-server-build
-      - name: Verify real browser WebRTC on the pinned engine
-        if: matrix.part == 'direct' || matrix.part == 'mixed'
+            --output .cache/reference/server-build
+      - name: Bind the relay receipt to this candidate
+        id: receipt
         run: |
-          if [[ "${{ matrix.part }}" == direct ]]; then
-            labels=(clean faults corrupt default mixed-disabled peer-drop peer-drop-corrupt peer-drop-close peer-drop-answer
-                    peer-drop-relay peer-drop-missing peer-drop-missing-lost peer-drop-commit peer-drop-second peer-drop-rollback peer-drop-foreign
-                    peer-drop-room peer-drop-room-continue peer-drop-process peer-drop-process-missing
-                    peer-drop-room-after-drop peer-drop-room-before-drop)
-          else labels=(mixed mixed-default mixed-close recording-pressure); fi
-          python3 scripts/reference/signalfish_webrtc_probe.py \
-            --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \
-            --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-            --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
-            --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
-            --output .cache/reference/results/signalfish-webrtc
-      - name: Play the shipped online example in two independent browsers
-        if: matrix.part == 'online'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "sha256=$(sha256sum .cache/reference/server-build/build-receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Publish the executable, compiler witnesses and build provenance
+        id: publish
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: relay-server-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            .cache/reference/server-build/
+            .cache/reference/downloads/sdk.tar.gz
+            .cache/reference/downloads/server.tar.gz
+            ${{ steps.build.outputs.tool_bin }}/cargo
+            ${{ steps.build.outputs.tool_bin }}/rustc
+          if-no-files-found: error
+
+  signalfish:
+    name: SignalFish relay and Chromium WebRTC ${{ matrix.version }} ${{ matrix.part }}
+    needs: server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["4.3", "4.7.2"]
+        part: [clean, faults, mixed, mixed-default, mixed-close, departures, admission, online, native]
+        pair: [chromium]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.15.2"
+      - uses: actions/setup-node@v7.1.0
+        if: matrix.part != 'native'
+        with:
+          node-version: "26.12.1"
+          cache: npm
+          cache-dependency-path: scripts/reference/browser/package-lock.json
+      - name: Require a single producer artifact
+        env:
+          ARTIFACT_ID: ${{ needs.server.outputs.artifact }}
+        run: '[[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]'
+      - name: Download this candidate's relay build
+        uses: actions/download-artifact@v8.0.2
+        with:
+          artifact-ids: ${{ needs.server.outputs.artifact }}
+          path: .cache/reference
+          merge-multiple: true
+      - name: Verify the candidate build receipt
+        env:
+          RECEIPT_SHA: ${{ needs.server.outputs.receipt }}
         run: |
-          python3 scripts/reference/signalfish_webrtc_probe.py \
-            --online-example --version "${{ matrix.version }}" \
-            --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-            --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
-            --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
-            --output .cache/reference/results/online-example
-      - name: Verify native relay and late-event controls
-        if: matrix.part == 'online'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "$RECEIPT_SHA  .cache/reference/server-build/build-receipt.json" | sha256sum --check --strict
+          chmod 755 .cache/reference/server-build/target/debug/signal-fish-server
+      - name: Restore the pinned editor
+        if: matrix.part == 'native'
+        uses: actions/cache@v6.1.0
+        with:
+          path: .cache/reference/downloads/Godot_v${{ matrix.version }}-stable_linux.x86_64.zip
+          key: reference-editor-v1-${{ matrix.version }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
+      - name: Restore the pinned editor, Chromium and Web templates
+        if: matrix.part != 'native'
+        uses: ./.github/actions/reference-browser-cache
+        with:
+          version: ${{ matrix.version }}
+          browser: chromium
+      - name: Select Ubuntu HTTPS mirror alternatives
+        if: matrix.part != 'native'
+        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
+      - name: Install pinned browser runner and operating system dependencies
+        if: matrix.part != 'native'
         run: |
-          for version in "${{ matrix.version }}"; do
-            editor=".cache/reference/webrtc-editors/$version/Godot_v${version}-stable_linux.x86_64"
-            server_args=(
-              --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server
-              --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560
-              --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json
-            )
-            for browser_cell in healthy initial-state room-identity viewer-departure host-departure delayed-accept; do
-              browser_args=()
-              if [ "$browser_cell" = delayed-accept ]; then
-                browser_args=(--browser-fault viewer-departure --acceptance-delay-ms 1500)
-              elif [ "$browser_cell" != healthy ]; then browser_args=(--browser-fault "$browser_cell"); fi
-              python3 scripts/reference/signalfish_spectator_live.py \
-                --godot "$editor" --browser-viewer "${browser_args[@]}" \
-                "${server_args[@]}" \
-                --output ".cache/reference/results/spectator-browser-$version-$browser_cell"
-            done
-            # The seven native probes overlap in one host-lease wave; browser pages above stay serial.
-            python3 scripts/reference/signalfish_native_probes.py \
-              --godot "$editor" \
-              "${server_args[@]}" \
-              --version "$version" \
-              --results .cache/reference/results \
-              --jobs 2
-          done
+          python3 scripts/reference/qualification_transport.py --version "${{ matrix.version }}" --part "${{ matrix.part }}" --prepare-browser &
+          preparing=$!
+          trap 'kill "$preparing" 2>/dev/null || true' EXIT
+          mkdir -p .cache/reference/browser
+          cp scripts/reference/browser/package*.json .cache/reference/browser/
+          npm ci --ignore-scripts --prefix .cache/reference/browser
+          bash scripts/reference/retry_apt_fetch.sh .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
+          wait "$preparing"
+          trap - EXIT
+      - name: Verify transport witnesses on the pinned engine
+        run: python3 scripts/reference/qualification_transport.py --version "${{ matrix.version }}" --part "${{ matrix.part }}"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: signalfish-live-reference-results-${{ matrix.version }}-${{ matrix.part }}
-          # The build receipt keeps the server binary's digest and build log; the published copy is not evidence.
-          path: |
-            .cache/reference/results/
-            !.cache/reference/results/signalfish-server-build/target/
+          path: .cache/reference/results/
           if-no-files-found: error
 
   qualification:
-    # The single required context the merge queue gates on: one stable name
-    # instead of every matrix job's display name, so a rename cannot hang the
-    # queue. always() makes this job run and fail when a family failed; a
-    # skipped required check would count as passing, which would defeat the
-    # gate.
-    name: Qualification summary
-    needs: [contracts, rust, ownership, godot, signalfish]
+    name: Verify qualification families
+    needs: [contracts, rust, ownership, godot, server, signalfish]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Report the qualification tree result
+        env:
+          FAMILIES: ${{ toJSON(needs) }}
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
-            echo "::error::A qualification job family failed or was cancelled: ${{ join(needs.*.result, ' ') }}"
-            exit 1
-          fi
-          echo "All qualification job families reported success."
+          contracts=skipped
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then contracts=success; fi
+          jq -e --arg contracts "$contracts" \
+            'all(to_entries[]; .value.result == (if .key == "contracts" then $contracts else "success" end))' <<< "$FAMILIES"

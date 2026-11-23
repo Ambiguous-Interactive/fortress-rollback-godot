@@ -1,16 +1,16 @@
-# Reference Baseline job baseline
+# Historical qualification timings
 
-Every Reference Baseline job spends wall time on the same warm cache key. This
-file records that per-job time so a later change is compared against a table
-instead of against a single run.
+These measurements record the qualification workflow and cache configuration in use for each experiment.
 
-## Measured baseline
+For current end-to-end targets, cost and measurement commands, see [iteration measurements](iteration.md).
 
-The workflow currently runs 48 jobs: 32 ownership parts (two engines, two
+## Historical measured baseline
+
+The November 9 workflow ran 48 jobs: 32 ownership parts (two engines, two
 browsers, two phases, four interleaved suite parts), six SignalFish legs, eight
 Godot legs, the negative controls and the pinned Rust reference. The last
 unchanged-source `main` run and this repository's first paired-page run record
-the current shape:
+that job layout:
 
 Source: `main` run `42562496243` (squash commit `639e51f`, 2026-11-09) against
 candidate run `42570092471` (2026-11-09). Both used warm cache keys.
@@ -53,7 +53,7 @@ gh run view 42570092471 --attempt 4 --json jobs \
   --jq '.jobs[] | "\(.name)\t\(.startedAt)\t\(.completedAt)"'
 ```
 
-## Where the browser time goes
+## Browser work before the November 23 scheduling change
 
 | Job | Browser work |
 | --- | --- |
@@ -212,7 +212,7 @@ observed reduction in overall workflow time. The broader browser-room savings
 and consecutive warm-run target remain open in #164.
 
 
-## Current ownership wall-time partition
+## Earlier ownership wall-time partition
 
 Run [41394927982](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/41394927982)
 qualified main `1e4f96f161430e7c400ea4764c325f4e23e589b0` on 2026-11-02.
@@ -376,7 +376,7 @@ part 2 took 12m39s here against 10m20s in the earlier main run, and became the
 critical path). These are single-run comparisons of changing trees, not a
 noise-controlled benchmark; the per-job table remains the comparison point.
 
-## Current 24-job baseline and the parallel oracle suite
+## Historical 24-job baseline and the parallel oracle suite
 
 Run [42443776980](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42443776980)
 qualified main `5118de2405a2c440ff1db661319ac90f84025f17` on 2026-11-08: all 24
@@ -443,7 +443,7 @@ their transitive `scripts/reference` imports resolve. `handshake_formal.py`
 now inserts that path itself, so every oracle test file is import-order
 independent and per-file subprocess isolation is sound.
 
-## Current 28-job baseline and the whole-inventory shard jobs
+## Historical 28-job baseline and the whole-inventory shard jobs
 
 Run [42543205499](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42543205499)
 qualified main `488f6c101ab7a19b22f5a7d9489b16f5a7808826` on 2026-11-09: all 28
@@ -481,7 +481,7 @@ exactly once) and splits the ownership parts from two to four per phase. The
 workflow-contract tests keep the shard union and the ownership part union
 equal to the declared inventories, so no gate moves with the schedule.
 
-## Current 48-job baseline and the shard jobs
+## Historical 48-job baseline and the shard jobs
 
 PR #338's candidate run
 [42553118792](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42553118792)
@@ -568,43 +568,12 @@ the full matrix. The same window showed sessions polling CI 10-27 times per
 gate and re-verifying the whole inventory locally before pushing, on top of
 the CI run that then repeated it.
 
-The workflow composition now follows the three tiers PLAN.md always defined:
+The tier split moved Firefox and the Java models to nightly. The merge queue introduced
+in #368 subsequently made full Chromium qualification a prerequisite for every merge.
+The current Gate calls Reference Baseline on the merge-group candidate. Its four stable
+checks and the Qualification summary report on that SHA. The queue uses squash merges,
+HEADGREEN grouping and a 30-minute check-response timeout.
 
-| Tier | Workflow | Trigger | Contents |
-| --- | --- | --- | --- |
-| Gate | `gate.yml` | every push and PR | harness checks, changed-suite unit run on the minimum pin (`run_godot_tests.py --changed`, fail-closed to the full inventory), reference/oracle negative controls when tooling changes |
-| Qualify | `reference-baseline.yml` (this file) | merges to `main`, dispatch | the Chromium matrix on both pins: ownership probes, oracle launcher wave (differential traces, formal check recorded as `formal_skipped`), whole test inventory, transport witnesses |
-| Nightly | `nightly.yml` | schedule, dispatch | the Firefox ownership matrix and Firefox transport witness, the SpectatorSession model and the handshake TLA+ formal check |
-
-Composition is pinned by `scripts/tests/test_workflow_tiers.py`; the
-per-engine job checks stay in
-`scripts/reference/test_reference_baseline_workflow.py`. Package-acquisition
-retry wrappers and APT mirror preparation remain mandatory in every tier
-that installs packages. The handshake launcher gained `--formal off`, which
-records `formal_skipped` in its receipt; nightly runs the launcher with the
-default `--formal on`, so the model evidence keeps a real receipt instead of
-a silent skip. The Qualify path filter keeps the pre-tier trigger list, so a
-harness-only change (`scripts/tests/**`, `scripts/llm/**`) does not run the
-full matrix: the Gate tier runs the same linters and self-tests plus the
-reference and oracle negative controls for any tooling change, and a
-`scripts/tests` file cannot reach the engine-side matrix.
-
-Expected per-push cost: the Gate workflow targets roughly four minutes of
-wall time for traced changes (the fail-closed full-inventory fallback
-concentrates the whole unit wave on one runner and stays under its 30-minute
-budget), and the qualification matrix moves to one run per merge. The
-nightly workflow runs the moved axes once per day. GitHub-side evidence for
-the new baselines (Gate wall time, Qualify wall time per merge, nightly
-failure rate) accumulates from the first runs after this change; reproduce
-them with the same `gh run view` records as every section above.
-
-A merge queue gates every merge on the full qualification matrix: the
-`main merge queue and protection` ruleset requires the four Gate checks plus
-the `Qualification summary` context on each grouped merge candidate and
-permits merges only through the queue (squash, HEADGREEN grouping,
-30-minute check timeout, no bypass actors — break-glass means disabling the
-ruleset). `reference-baseline.yml` runs unconditionally on `merge_group`
-events and no longer runs on pushes to `main`, so the group run replaces the
-post-merge qualification and main is green by construction. The Gate
-workflow carries the `merge_group` trigger and the merge-group base SHA for
-the same reason. The queue was created and verified in #368.
+See [iteration measurements](iteration.md) for the current entry points, end-to-end
+timing baseline and acceptance procedure. The tables above are historical measurements
+of the workloads and job shapes identified in each section.

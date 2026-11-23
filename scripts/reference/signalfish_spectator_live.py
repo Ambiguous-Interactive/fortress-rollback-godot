@@ -77,7 +77,9 @@ def verify_engine(engine, data, offline):
     if platform.system() != 'Linux' or arch is None:
         raise ValueError('native spectator witness supports Linux arm64/x86_64')
     actual = digest(engine)
-    for version in [data['godot']['minimum'], data['godot']['current_stable']]:
+    versions = [data['godot']['minimum'], data['godot']['current_stable']]
+    # Try the editor's own archive first. The digest comparison below decides its identity.
+    for version in sorted(versions, key=lambda pin: engine.name != f'Godot_v{pin}-stable_linux.{arch}'):
         name = f'Godot_v{version}-stable_linux.{arch}'
         archive = fetch(data['artifacts'][name + '.zip'], name + '.zip', offline)
         with zipfile.ZipFile(archive) as package, package.open(name) as member:
@@ -153,6 +155,7 @@ def run(args):
             sources['acceptance_controller'] = ROOT / 'scripts/reference/browser/spectator_acceptance.cjs'
         sources['import_freezer'] = ROOT / 'scripts/reference/browser/webrtc_import.py'
         sources['godot_smoke'] = ROOT / 'scripts/reference/godot_smoke.py'
+        sources['web_templates'] = ROOT / 'scripts/reference/web_templates.py'
     for helper in ['engine_path.py', 'local_ownership.py', 'receipt_arguments.py', 'signalfish_live_probe.py', 'signalfish_probe.py', 'run.py']:
         sources['helper/' + helper] = ROOT / 'scripts/reference' / helper
     sources.update({name: ROOT / 'scripts/reference' / name for name in FILES})
@@ -192,10 +195,13 @@ def run(args):
             raise ValueError('copied SDK source differs before import')
         export_server = None
         browser_environment = None
+        template_artifacts = {}
         if args.browser_viewer:
             arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}[platform.machine()]
             exported, browser_environment, browser_sources = spectator_browser.prepare(
                 project, engine, engine_version, data, arch, args.offline, args.output, authored_paths, staged_authored)
+            template_name = f'Godot_v{engine_version}-stable_export_templates.tpz'
+            template_artifacts[template_name] = data['artifacts'][template_name]
             sources.update(browser_sources)
             expanded = inventory(sources)
             if any(expanded.get(name) != value for name, value in before.items()):
@@ -275,7 +281,7 @@ def run(args):
         receipt.write_text(json.dumps({'passed': True, 'schema_version': 1, 'result': result, 'sources': before,
                                       'executed': frozen, 'server_source': server_before, 'sdk_revision': sdk['revision'], 'server_revision': server_pin['revision'],
                                       'engine_version': engine_version, 'python_version': sys.version, 'negative_control': args.late_signal, 'departure': args.departure,
-                                      'browser_viewer': args.browser_viewer, 'browser_fault': args.browser_fault,
+                                      'browser_viewer': args.browser_viewer, 'browser_fault': args.browser_fault, 'template_artifacts': template_artifacts,
                                       'control_accepts': control.received, 'control_rejections': control.rejected,
                                       'limitations': ['Loopback test admission uses per-run bearer capabilities, not a production identity provider.',
                                                       'Seated remote inputs use an injected deterministic schedule; spectator bytes use real sockets.',

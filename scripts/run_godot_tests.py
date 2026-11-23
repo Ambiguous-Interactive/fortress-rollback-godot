@@ -576,6 +576,17 @@ def case_inventory(command: list[str], suites: list[str], timeout: float) -> dic
     return inventory
 
 
+def verified_cases(command: list[str], suites: list[str], timeout: float, jobs: int) -> dict:
+    """List each suite in isolation, matching the CI execution boundary on the minimum engine."""
+    def list_one(suite: str) -> dict:
+        row = case_inventory(command, [suite], timeout)
+        if suite not in row:
+            raise ValueError(f"incomplete_case_inventory: {suite}")
+        return row
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        return {suite: names for row in pool.map(list_one, suites) for suite, names in row.items()}
+
+
 def split_cases(command: list[str], suites: list[str], timeout: float) -> dict:
     """List slow suites without splitting single-case suites."""
     return {suite: names for suite, names in case_inventory(command, suites, timeout).items() if len(names) > 1}
@@ -590,22 +601,37 @@ def discover(category: str, root: Path = ROOT) -> list[str]:
     return sorted(paths)
 
 
-def select_shard(suites: list[str], shard: str) -> list[str]:
-    """Split one whole-inventory run across same-tree jobs by name interleave.
+def suite_weights(suites: list[str], hints: dict) -> dict:
+    weights = {}
+    for suite in suites:
+        seconds = hints.get(suite)
+        weights[suite] = seconds if type(seconds) in (float, int) and math.isfinite(seconds) and 0 < seconds <= 3600 else 10
+    return weights
 
-    Two CI jobs each run half the unit inventory on its own runner, so the wall
-    time of the CPU-saturated engine wave halves without dropping a suite: the
-    union of all shards of one total is exactly the discovered inventory, and
-    the shards are disjoint. The interleaved order keeps every shard's suite
-    count within one of the ideal share.
-    """
+
+def balance_suites(weights: dict, count: int) -> list[list[str]]:
+    loads = [0.0] * min(count, len(weights))
+    groups = [[] for _ in loads]
+    for suite in sorted(weights, key=lambda s: (-weights[s], s)):
+        index = min(range(len(loads)), key=loads.__getitem__)
+        groups[index].append(suite)
+        loads[index] += weights[suite]
+    return [sorted(group) for group in groups]
+
+
+def select_shard(suites: list[str], shard: str, hints: dict | None = None) -> list[str]:
+    """Give each suite one deterministic owner on all jobs for this source snapshot."""
     match = re.fullmatch(r"([1-9][0-9]*)of([1-9][0-9]*)", shard)
     if not match:
         raise ValueError("shard must be NofM with positive whole numbers, such as 1of2")
     index, total = int(match.group(1)), int(match.group(2))
     if index > total:
         raise ValueError("shard index must not exceed its total")
-    return suites[index - 1::total]
+    if not hints:
+        return suites[index - 1::total]
+    if index > len(suites):
+        return []
+    return balance_suites(suite_weights(suites, hints), total)[index - 1]
 
 
 def merge(reports: list[dict], filtered: bool) -> dict:
@@ -693,6 +719,11 @@ class _Parser(argparse.ArgumentParser):
         super().error(message)
 
 
+def file_digest(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
 def helper_identity() -> dict:
     """Digest the Python bytes this launcher executed, from each loaded module's own staged file."""
     sources = {'run_godot_tests.py': _STAGE_ROOT / 'run_godot_tests.py'}
@@ -727,12 +758,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--inventory-timeout", type=float, default=120, help="seconds for each combined case listing, separate from test execution")
     parser.add_argument("--results", type=Path, default=DEFAULT_RESULTS)
+    parser.add_argument("--verify-inventory", action="store_true", help="require an independent case listing for every selected suite")
     parser.add_argument("--changed", metavar="BASE", help="run only suites that load files changed since BASE (e.g. origin/main)")
     parser.add_argument("--durations", type=Path, default=DURATIONS, help="per-suite times that order and split shards")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                         help="parallel Godot processes; each suite runs in its own pair of fresh processes")
     parser.add_argument("--host-wait", type=float, default=600, help="seconds to wait for exclusive host capacity before engine execution")
-    parser.add_argument("--shard", default="", help="N/M name-interleaved whole-inventory shard for parallel CI jobs (unit only)")
+    parser.add_argument("--shard", default="", help="NofM whole-inventory shard balanced using checked-in durations for parallel CI jobs (unit only)")
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be finite and positive")
@@ -760,6 +792,8 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error("shard selects no suite")
         except ValueError as failure:
             parser.error(str(failure))
+    if args.verify_inventory and args.filter:
+        parser.error("--verify-inventory requires unfiltered suites")
     if args.changed and args.suite:
         parser.error("--changed selects suites itself")
     # Supersede prior success before any external executable gets control.
@@ -814,28 +848,31 @@ def main(argv: list[str] | None = None) -> int:
 
 def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot, helpers: dict[str, str],
             live_helpers: dict[str, str]) -> int:
-    engine_sha256 = hashlib.sha256(executable.read_bytes()).hexdigest()
+    engine_sha256 = file_digest(executable)
     command = [str(executable), "--headless", "--path", str(snapshot.path), "--script",
                "res://tests/runner/run_tests.gd", "--", "--category", args.category,
                "--seed", str(args.seed)]
     if args.filter:
         command += ["--filter", args.filter]
     # run_tests.gd sorts its suites, so shards follow the same order.
+    selection = None
     if args.changed:
-        import changed_suites  # already loaded in main; a cached import cannot re-read the file
-        # The staged helper module defaults to its own copy's parents, so the live project
-        # root is passed explicitly: selection reads the same evidence inputs the run names.
-        changed = changed_suites.changed_files(args.changed, root=ROOT)
-        args.suite = changed_suites.select(discover(args.category, snapshot.path), changed, root=snapshot.path,
-                                           old_names=changed_suites.previous_class_names(args.changed, changed, root=ROOT))
-        print(json.dumps({"changed_since": args.changed, "suites": args.suite}), file=sys.stderr)
+        import changed_suites  # already loaded from the staged helper image
+        selection = changed_suites.from_base(args.changed, discover(args.category, snapshot.path), ROOT, snapshot.path, snapshot.files)
+        args.suite = selection["suites"]
+        print(json.dumps(selection), file=sys.stderr)
         if not args.suite:
-            args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "no_affected_suites"}) + "\n", encoding="utf-8")
+            snapshot.verify_image()
+            if snapshot.changed() or live_helper_identity() != live_helpers or helper_identity() != helpers:
+                raise ValueError("source_changed")
+            report = {"format": 1, "passed": False, "failure": "no_affected_suites", "selection": selection,
+                      "commit": snapshot.commit, "working_tree_dirty": snapshot.dirty, "source_snapshot": snapshot.evidence(), "helper_sources": helpers}
+            args.results.write_text(json.dumps(report) + "\n", encoding="utf-8")
             print(json.dumps({"passed": None, "results": str(args.results), "note": "no suite loads a changed file"}))
             return 0
     suites = sorted(args.suite) or discover(args.category, snapshot.path)
     if args.shard:
-        suites = select_shard(suites, args.shard)
+        suites = select_shard(suites, args.shard, load_durations(snapshot.path / "scripts/unit_suite_seconds.json"))
     durations = load_durations(args.durations)
     version_probe = None
     try:
@@ -855,6 +892,7 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
         if version_probe["exit"] != 0:
             raise ValueError("version_probe_failed")
         version = version_probe["stdout"].strip()
+        expected = verified_cases(command, suites, args.inventory_timeout, args.jobs) if args.verify_inventory else {}
         if contended or args.jobs > 1:
             if args.filter and len(suites) > 1:
                 inventory = case_inventory(command, suites, args.inventory_timeout)
@@ -862,7 +900,10 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
                 # Empty or invalid listings retain the original failure path, including zero matches.
                 suites = matching or suites
             slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
-            cases = split_cases(command, slow, args.inventory_timeout) if slow else {}
+            if expected:
+                cases = {suite: expected[suite] for suite in slow if len(expected[suite]) > 1}
+            else:
+                cases = split_cases(command, slow, args.inventory_timeout) if slow else {}
             # Shards stay in suite order, then inventory order, so merged records match one process.
             keys = [(suite, case) for suite in suites for case in cases.get(suite, [None])]
             shards = [command + ["--suite", suite] + (["--case", case] if case else []) for suite, case in keys]
@@ -908,6 +949,11 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
             failed = True
             runs[1]["failure"] = "fresh_process_divergence"
             runs[1]["divergence"] = first_divergence(runs[0].get("result"), runs[1].get("result"))
+        if expected and not failed:
+            actual = [(r["suite"], r["case"]) for r in runs[0]["result"]["records"]]
+            if actual != [(suite, case) for suite in suites for case in expected[suite]]:
+                runs[0]["failure"] = "case_inventory_mismatch"
+                failed = True
         manifest = snapshot.path / "docs/reference/pins.json"
         report = {"format": 1, "passed": not failed, "commit": snapshot.commit,
                   "working_tree_dirty": snapshot.dirty,
@@ -915,6 +961,8 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
                   "pin_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest() if manifest.exists() else None,
                   "platform": platform.platform(), "machine": platform.machine(),
                   "cwd": str(ROOT), "seed": str(args.seed), "runs": runs}
+        if expected:
+            report["case_inventory"] = expected
     except (OSError, subprocess.SubprocessError, ValueError, UnicodeError) as exc:
         report = {"format": 1, "passed": False, "failure": str(exc)}
         if version_probe is not None:
@@ -923,10 +971,12 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
             report[exc.phase + "_probe"] = exc.report
         if isinstance(exc, subprocess.TimeoutExpired):
             report.update(stdout=_decode(exc.stdout), stderr=_decode(exc.stderr))
+    if selection is not None:
+        report["selection"] = selection
     report.update(commit=snapshot.commit, working_tree_dirty=snapshot.dirty, source_snapshot=snapshot.evidence(),
                   helper_sources=helpers)
     try:
-        if hashlib.sha256(executable.read_bytes()).hexdigest() != engine_sha256:
+        if file_digest(executable) != engine_sha256:
             raise ValueError("engine_changed")
         if helper_identity() != helpers:
             raise ValueError("helper_image_changed")

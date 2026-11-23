@@ -212,13 +212,10 @@ drift cannot merge.
   stub freshness, and the meta-lint.
 - **pre-commit framework**: `.pre-commit-config.yaml` exposes the same checks
   as local hooks (`pre-commit run --all-files`).
-- **CI tiers**: `.github/workflows/gate.yml` runs on every push (harness
-  checks, changed-suite unit run on the minimum pin, tooling negative
-  controls when tooling changes); `.github/workflows/reference-baseline.yml`
-  qualifies every merge to `main` with the full Chromium matrix;
-  `.github/workflows/nightly.yml` owns the Firefox axis and the Java model
-  checks on a schedule. Workflow composition is pinned by
-  `scripts/tests/test_workflow_tiers.py`.
+- **CI tiers**: Gate runs on PRs, main pushes and merge groups. On a merge group it calls
+  the full Reference Baseline workflow on that candidate. Nightly owns Firefox and the Java model checks.
+  The [iteration measurements](../docs/reference/iteration.md) define the required verdict clocks and runner budget.
+  Workflow composition is pinned by `scripts/tests/test_workflow_tiers.py`.
 - **Makefile**: single entry point for all of the above. `make gate` is the
   pre-push minimum.
 

@@ -4,6 +4,8 @@
 
 ### Added
 
+- Measure PR and merge-queue validation from the branch update through the required verdict, including reruns. [Iteration measurements](docs/reference/iteration.md)
+
 - Add an opt-in upstream Fortress backend to the online example. Install the native addon to try 2–8-player WebRTC or relay rooms. [Setup guide](docs/online-example.md#try-the-native-backend)
 
 - **Coordinated drop**: Add the live `peer-drop-commit` witness, which withholds the first COMMIT and requires its exact-byte retry before both survivors continue ([#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166)).

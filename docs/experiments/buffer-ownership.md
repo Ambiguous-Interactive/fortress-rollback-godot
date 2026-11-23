@@ -96,6 +96,11 @@ Every selected case still runs twice, with exact native/Web comparison.
 Receipts declare `suite_part_requested` and the exact `suites_requested`
 inventory. All four parts and both phases must pass for full qualification.
 Omitting `--suite-part` keeps the complete inventory.
+Chromium qualification adds `--balance-chromium`. Godot 4.3 runs five parts per phase
+and 4.7.2 runs four. Their schedules account for the positive replay-prefix download checks
+and measured suite costs.
+Each receipt records native suite and wave times, browser page times and the download
+duration when present. Both Chromium and Firefox compare every selected native and Web record.
 Owned browser contexts close before their parent process. Full Firefox shutdown
 also runs the destructor that removes late updater locks; exit code zero alone
 does not prove cleanup. The [paired shutdown control](firefox-shutdown.md)

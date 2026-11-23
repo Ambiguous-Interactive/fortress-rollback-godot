@@ -21,6 +21,22 @@ def run(cmd, environment, log, timeout=180):
     return output
 
 
+def prepare_editor(data, version, offline=False):
+    if version not in (data['godot']['minimum'], data['godot']['current_stable']):
+        raise ValueError('only pinned engine versions are accepted')
+    arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
+    if arch is None or platform.system() != 'Linux':
+        raise ValueError('editor bootstrap supports Linux arm64/x86_64 only')
+    name = f'Godot_v{version}-stable_linux.{arch}.zip'
+    archive = fetch(data['artifacts'][name], name, offline)
+    directory = CACHE / 'editors' / version
+    directory.mkdir(parents=True, exist_ok=True)
+    prepare_zip(archive, directory, executable_members=(name[:-4],))
+    editor = directory / name[:-4]
+    editor.chmod(0o755)
+    return editor
+
+
 def main():
     parser = ReceiptParser(description=__doc__, receipt='godot-baseline.json', output=CACHE / 'results')
     parser.add_argument('--offline', action='store_true')
@@ -38,13 +54,8 @@ def main():
     if any(version not in pinned for version in args.version or []):
         parser.error('only pinned engine versions are accepted')
     for version in [version for version in pinned if version in (args.version or pinned)]:
-        name = f'Godot_v{version}-stable_linux.{arch}.zip'
-        archive = fetch(data['artifacts'][name], name, args.offline)
-        directory = CACHE / 'editors' / version
-        directory.mkdir(parents=True, exist_ok=True)
-        prepare_zip(archive, directory, executable_members=(name[:-4],))
-        editor = directory / name[:-4]
-        editor.chmod(0o755)
+        editor = prepare_editor(data, version, args.offline)
+        name = editor.name + '.zip'
         environment = os.environ.copy()
         environment['XDG_DATA_HOME'] = str(CACHE / 'godot-data')
         actual = run([str(editor), '--version'], environment, results / f'godot-{version}-version.log').strip()
@@ -79,14 +90,21 @@ def main():
         invalid.unlink()
         record = {'invalid_script_rejected': True, 'version': actual, 'editor_artifact': name, 'headless_repeats': 2, 'marker': MARKER}
         if args.web:
+            from signalfish_probe import inventory
+            from web_templates import web_template_archive
+
             template_name = f'Godot_v{version}-stable_export_templates.tpz'
-            templates = fetch(data['artifacts'][template_name], template_name, args.offline)
+            template_pin = data['artifacts'][template_name]
+            templates = web_template_archive(template_pin, template_name, args.offline, CACHE, fetch)
             template_dir = Path(environment['XDG_DATA_HOME']) / 'godot/export_templates' / (version + '.stable')
             template_dir.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(templates) as package:
                 for member in package.namelist():
                     if Path(member).name.startswith('web_'):
                         (template_dir / Path(member).name).write_bytes(package.read(member))
+            template_inputs = {'archive': templates, 'installation': template_dir, 'helper': ROOT / 'scripts/reference/web_templates.py',
+                               'inventory_helper': ROOT / 'scripts/reference/signalfish_probe.py'}
+            template_before = inventory(template_inputs)
             (project / 'export_presets.cfg').write_text(
                 '[preset.0]\nname="Web"\nplatform="Web"\nrunnable=true\nexport_filter="all_resources"\ninclude_filter=""\nexclude_filter=""\n'
                 '[preset.0.options]\nvariant/extensions_support=false\nvariant/thread_support=false\n')
@@ -107,7 +125,10 @@ def main():
                 raise ValueError('Playwright browser registry differs from pin')
             output = run(['node', str(ROOT / 'scripts/reference/browser/smoke.cjs'), str(export)], environment,
                          results / f'godot-{version}-browser.log')
-            record.update(browser_artifact=browser_name, template_artifact=template_name, browser=json.loads(output))
+            if inventory(template_inputs) != template_before:
+                raise ValueError('Web templates changed during smoke export')
+            record.update(browser_artifact=browser_name, template_artifact=template_name, template_pin=template_pin,
+                          template_inventory=template_before, browser=json.loads(output))
         records.append(record)
         print(f'Godot {version}: headless twice' + (' and Chromium export passed' if args.web else ' passed'))
     report = {'status': 'passed', 'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'smoke_source_sha256': digest(ROOT / 'scripts/reference/smoke.gd'),

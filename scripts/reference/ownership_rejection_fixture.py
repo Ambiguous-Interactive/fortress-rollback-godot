@@ -90,13 +90,14 @@ class OwnershipRejectionFixture(unittest.TestCase):
 
     def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None,
                  version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False, runtime_before=None, tool_fault=None,
-                 phase=None, suite_part='all', download_fault=None, control_output=None):
+                 phase=None, suite_part='all', download_fault=None, control_output=None, balance_chromium=False):
         """Run the ownership launcher against mocked tools and return its results."""
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
         root = directory / 'root'
         cache = directory / 'cache'
-        files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+        files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/ownership_schedule.py', 'scripts/reference/web_templates.py',
+                                'scripts/reference/browser/ownership.cjs',
                                 'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
                                 'scripts/reference/browser/replay_chooser.cjs',
                                 'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
@@ -162,7 +163,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
 
         # The native wave overlaps per-suite engine children, so a fault keys on
         # the suite identity it names instead of a global call order.
-        native_suites = sorted(probes.select_suites(suite_part))
+        native_suites = sorted(probes.select_suites(suite_part, (phase or 'both') if balance_chromium else None))
         faulted_native_suite = native_suites[1] if len(native_suites) > 1 else None
 
         def run(command, environment, log, timeout=180):
@@ -204,7 +205,9 @@ class OwnershipRejectionFixture(unittest.TestCase):
                                    display={'x': 0, 'y': 0, 'width': 1280, 'height': 720, 'screen_width': 1280, 'screen_height': 1024})
                 return json.dumps(browser)
             if str(command[1]).endswith('ownership.cjs'):
-                browser_calls.append((command, log, timeout))
+                with fixture_lock:
+                    browser_calls.append((command, log, timeout))
+                    call_number = len(browser_calls)
                 if node_alias:
                     executed_node = node_path.resolve() if command[0] == 'node' else Path(command[0]).resolve()
                     self.assertEqual(executed_node, node_target, 'browser must execute verified Node despite changed PATH alias')
@@ -226,13 +229,13 @@ class OwnershipRejectionFixture(unittest.TestCase):
                         browser.update(firefox_preferences={'webgl.force-enabled': True, 'webgl.disabled': False,
                                                           'toolkit.shutdown.fastShutdownStage': 0},
                                        display={'x': 0, 'y': 0, 'width': 1280, 'height': 720, 'screen_width': 1280, 'screen_height': 1024})
-                    if runtime_fault and len(browser_calls) == 1:
+                    if runtime_fault and call_number == 1:
                         target = {'browser': Path(environment['FORTRESS_' + selected.upper() + '_EXECUTABLE']),
                                   'package': registry, 'export': Path(command[2]) / 'changed.js',
                                   'source': root / 'scripts/reference/browser/ownership.cjs',
                                   'display': root / 'scripts/reference/browser/webrtc_display.cjs'}[runtime_fault]
                         target.write_text('changed runtime input')
-                    if len(browser_calls) == 1:
+                    if call_number == 1:
                         if browser_fault == 'unknown':
                             browser['foreign_field'] = {'abort': 'unrecognized error'}
                         elif browser_fault == 'missing_errors':
@@ -249,7 +252,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
                             browser['version'] = 123
                         elif browser_fault == 'wrong_browser':
                             browser['browser'] = 'foreign browser'
-                    elif len(browser_calls) == 2 and browser_fault == 'changed_version':
+                    elif call_number == 2 and browser_fault == 'changed_version':
                         browser['version'] = 'changed fixture'
                     return json.dumps(browser)
                 log.write_text(browser_log, encoding='utf-8')
@@ -374,7 +377,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
                 mock.patch.object(probes.platform, 'system', return_value='Linux'), \
                 mock.patch('sys.argv', ['ownership_probes.py', '--offline', '--web', '--browser', selected]
                            + ([] if version is None else ['--version', version]) + ([] if phase is None else ['--phase', phase])
-                           + ([] if suite_part == 'all' else ['--suite-part', suite_part])):
+                           + ([] if suite_part == 'all' else ['--suite-part', suite_part]) + (['--balance-chromium'] if balance_chromium else [])):
             if expected is None:
                 probes.main()
                 helpers.assert_called_once_with(probes.source_inventory())
@@ -401,10 +404,13 @@ class OwnershipRejectionFixture(unittest.TestCase):
             self.assertTrue(changed_runtime, 'mutation must reach the frozen input boundary')
             self.assertEqual(browser_calls, [], 'changed runtime or export must never execute')
         if runtime_fault:
-            self.assertEqual(len(browser_calls), 1, 'mutation during a batch must stop before another executes')
+            if balance_chromium:
+                self.assertIn(len(browser_calls), (1, 2), 'only the active pair can reach the changed runtime')
+            else:
+                self.assertEqual(len(browser_calls), 1, 'mutation during a batch must stop before another executes')
         if expected is None:
             round_count = (2 if version is None else 1) * (2 if phase in (None, 'both') else 1)
-            expected_suites = probes.select_suites(suite_part)
+            expected_suites = probes.select_suites(suite_part, (phase or 'both') if balance_chromium else None)
             selections = [[command[index + 1] for index, item in enumerate(command) if item == '--suite']
                           for command, log, timeout in capture_calls]
             # The native wave overlaps per-suite engine children, so the calls
@@ -414,6 +420,8 @@ class OwnershipRejectionFixture(unittest.TestCase):
             self.assertTrue(all(timeout == 180 for command, log, timeout in capture_calls))
             logs = [log for command, log, timeout in capture_calls]
             self.assertEqual(len(logs), len(set(logs)), 'each native batch keeps its own log')
+            if balance_chromium:
+                browser_calls.sort(key=lambda call: call[1].name)
             groups = [json.loads(command[3]) for command, log, timeout in browser_calls]
             suites = sorted(expected_suites)
             expected_groups = []

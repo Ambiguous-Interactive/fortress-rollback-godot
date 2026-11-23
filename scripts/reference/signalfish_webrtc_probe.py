@@ -29,6 +29,7 @@ from receipt_arguments import ReceiptParser
 from signalfish_live_probe import (build_cargo, extract, native_inventory, source_inventory, validate_build_receipt, wait_ready)
 from signalfish_probe import inventory
 from run import capture
+from web_templates import web_template_archive
 from wire import INPUT_HEADER
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -486,6 +487,8 @@ def main():
     sources['browser_registry'] = CACHE / 'browser/node_modules/playwright-core/browsers.json'
     if digest(sources['browser_registry']) != pins['browser']['browser_registry_sha256']:
         raise ValueError('browser registry differs from pin')
+    template_artifacts = {}
+    sources['web_templates'] = ROOT / 'scripts/reference/web_templates.py'
     engines = {}
     environment = os.environ.copy()
     environment.update(XDG_DATA_HOME=str(CACHE / 'godot-data'), FORTRESS_CHROMIUM_EXECUTABLE=str(sources['browser_executable']),
@@ -507,14 +510,16 @@ def main():
             engine.chmod(0o755)
         engines[version] = engine
         template_name = f'Godot_v{version}-stable_export_templates.tpz'
-        templates = fetch(pins['artifacts'][template_name], template_name, args.offline)
+        template_artifacts[template_name] = pins['artifacts'][template_name]
+        templates = web_template_archive(template_artifacts[template_name], template_name, args.offline, CACHE, fetch)
         template_dir = Path(environment['XDG_DATA_HOME']) / 'godot/export_templates' / (version + '.stable')
         template_dir.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(templates) as package:
             for member in package.namelist():
                 if Path(member).name.startswith('web_'):
                     (template_dir / Path(member).name).write_bytes(package.read(member))
-        sources.update({f'engine_{version}': engine, f'engine_archive_{version}': archive, f'templates_{version}': templates})
+        sources.update({f'engine_{version}': engine, f'engine_archive_{version}': archive, f'templates_{version}': templates,
+                        f'template_installation_{version}': template_dir})
     before = native_inventory(sources)
     server_before = source_inventory(args.server_source)
     expected = {name: before[name] for name in ('builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'receipt_arguments', 'cargo', 'rustc')}
@@ -665,7 +670,7 @@ def main():
         raise ValueError('source or tool inventory changed during execution')
     report = {'passed': True, 'sdk_revision': sdk_pin['revision'], 'server_revision': server_pin['revision'],
               'browser_pair': list(pair), 'labels': [] if args.online_example else labels, 'input_inventory': before,
-              'server_source_inventory': server_before, 'executed': executed_records,
+              'template_artifacts': template_artifacts, 'server_source_inventory': server_before, 'executed': executed_records,
               'server_config': config, 'server_events': server_events, 'records': records,
               'log_sha256': {name: digest(args.output / name) for name in owned_logs if (args.output / name).exists()},
               'limits': 'Real release Web exports in two independent selected pinned browser processes over local host ICE. '

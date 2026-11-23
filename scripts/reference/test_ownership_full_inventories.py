@@ -39,6 +39,51 @@ class OwnershipFullInventoryTests(OwnershipRejectionFixture):
                         self.assertEqual(row['native']['count'], sum(map(len, selected.values())))
                         self.assertEqual(row['browser']['result'], row['native'])
 
+    # Value: protects=both Chromium phases cover the complete native/Web inventory; fails_when=balancing omits a control or adds an overlap; seam=mocked tools
+    def test_balanced_chromium_phases(self):
+        for phase in ('negative', 'positive'):
+            groups = [probes.select_suites(str(i), phase) for i in range(1, 5)]
+            for suite in probes.EXPECTED:
+                self.assertEqual(sum(suite in group for group in groups), 4 if suite == probes.ALIAS_CONTROL else 1)
+            loads = [sum(probes.chromium_seconds(suite, phase) for suite in group) for group in groups]
+            self.assertLessEqual(max(loads) - min(loads), 2)
+            part = next(i for i, group in enumerate(groups, 1) if probes.DOWNLOAD_SUITE in group)
+            if phase == 'positive':
+                ordinary_work = [sum(probes.chromium_seconds(suite) for suite in group) for group in groups]
+                self.assertGreaterEqual(min(value for i, value in enumerate(ordinary_work, 1) if i != part) - ordinary_work[part - 1], 90)
+            results = self.scenario(expected=None, version='4.3', phase=phase, suite_part=str(part), balance_chromium=True)
+            receipt = json.loads((results / 'ownership.json').read_text())
+            self.assertIs(receipt['balanced_chromium'], True)
+            self.assertEqual(receipt['suites_requested'], {suite: sorted(cases) for suite, cases in groups[part - 1].items()})
+            record, = receipt['records']
+            self.assertEqual(record['browser']['result'], record['native'])
+            self.assertEqual(record['native']['count'], sum(map(len, groups[part - 1].values())))
+            self.assertEqual(set(record['timings']['native_suite_seconds']), set(groups[part - 1]))
+            self.assertEqual([suite for page in record['timings']['browser_pages'] for suite in page['suites']], sorted(groups[part - 1]))
+            self.assertEqual('replay_download_controls' in record, phase == 'positive')
+            self.assertEqual('replay_download_seconds' in record['timings'], phase == 'positive')
+
+    def test_minimum_chromium_parts_execute_exact_native_and_browser_members(self):
+        for phase in ('positive', 'negative'):
+            groups = [probes.select_suites(f'{part}of5', phase) for part in range(1, 6)]
+            self.assertEqual(set().union(*groups), set(probes.EXPECTED))
+            for suite in probes.EXPECTED:
+                self.assertEqual(sum(suite in group for group in groups), 5 if suite == probes.ALIAS_CONTROL else 1)
+            results = self.scenario(expected=None, version='4.3', phase=phase, suite_part='5of5', balance_chromium=True)
+            received = json.loads((results / 'ownership.json').read_text())
+            selected = groups[4]
+            self.assertEqual(received['suites_requested'], {s: sorted(cases) for s, cases in selected.items()})
+            record, = received['records']
+            self.assertEqual(record['native'], record['browser']['result'])
+            self.assertEqual(record['native']['count'], sum(map(len, selected.values())))
+            self.assertEqual(len([g for g in groups if probes.DOWNLOAD_SUITE in g]), 1)
+
+    def test_balanced_chromium_runtime_mutation_rejects_the_active_wave(self):
+        results = self.scenario(expected=ValueError, version='4.3', phase='positive', suite_part='5of5',
+                                balance_chromium=True, runtime_fault='browser')
+        self.assertFalse((results / 'ownership.json').exists())
+        self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')
+
     # Value: protects=complete declared phase receipts; fails_when=missing controls or foreign pins publish; why_new=per-batch validation omits phase inventory; seam=none
     def test_completed_phase_inventory_rejects_missing_foreign_and_alias_phases(self):
         records = [{'engine_version': '4.3', 'negative_control': negative} for negative in (True, False)]

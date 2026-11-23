@@ -10,6 +10,8 @@ exactly once and exited zero; timeouts and crashes are failures.
 """
 import argparse
 import concurrent.futures
+import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -24,8 +26,22 @@ def discover(start: Path, pattern: str) -> list[str]:
     return files
 
 
-def run_file(root: Path, start: Path, name: str, timeout: float) -> dict:
+def ordered_files(files: list[str], profile: Path, family: str) -> list[str]:
+    """Missing observations fall back to the discovery order for equal weights."""
+    try:
+        weights = json.loads(profile.read_text())[family]
+    except (OSError, ValueError, KeyError, TypeError):
+        return files
+    if not isinstance(weights, dict):
+        return files
+    valid = {key: seconds for key, seconds in weights.items() if type(seconds) in (float, int) and 0 < seconds <= 3600 and math.isfinite(seconds)}
+    return sorted(files, key=lambda name: -valid.get(name, 1))
+
+
+def run_file(root: Path, start: Path, name: str, timeout: float, top_level: Path | None = None) -> dict:
     command = [sys.executable, '-m', 'unittest', 'discover', '-s', str(start), '-p', name, '-v']
+    if top_level is not None:
+        command.extend(['-t', str(top_level)])
     began = time.monotonic()
     try:
         completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=timeout, check=False)
@@ -41,19 +57,31 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--start-dir', type=Path, default=Path(__file__).resolve().parent / 'reference')
     parser.add_argument('--pattern', default='test_*.py')
-    parser.add_argument('--jobs', type=int, default=min(8, os.cpu_count() or 2))
+    parser.add_argument('--top-level', type=Path, help='same package root as unittest discovery -t')
+    parser.add_argument('--jobs', type=int, default=8)
     parser.add_argument('--timeout', type=float, default=900.0, help='per-file subprocess bound in seconds')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     start = args.start_dir.resolve()
     if not start.is_dir():
         raise ValueError(f'test start directory is missing: {start}')
+    # A package hook or nested package may implement its own discovery or repeat a basename.
+    # Delegate these trees to the original single discovery invocation.
+    if args.top_level:
+        args.top_level = args.top_level.resolve()
+    initializer = start / '__init__.py'
+    if args.top_level and (not initializer.exists() or initializer.stat().st_size or any(start.glob('*/__init__.py'))):
+        return subprocess.call([sys.executable, '-m', 'unittest', 'discover', '-s', str(start), '-t', str(args.top_level),
+                                '-p', args.pattern, '-v'], cwd=root)
     files = discover(start, args.pattern)
-    jobs = max(1, min(args.jobs, len(files)))
+    if start.parent == root / 'scripts':
+        files = ordered_files(files, Path(__file__).with_name('unittest_durations.json'), start.name)
+    cpus = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count() or 1
+    jobs = max(1, min(args.jobs, cpus, len(files)))
     print(f'Running {len(files)} test files from {start} with {jobs} parallel subprocesses.')
     results = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        pending = {pool.submit(run_file, root, start, name, args.timeout): name for name in files}
+        pending = {pool.submit(run_file, root, start, name, args.timeout, args.top_level): name for name in files}
         for future in concurrent.futures.as_completed(pending):
             try:
                 result = future.result()
@@ -63,15 +91,14 @@ def main() -> int:
             results[result['file']] = result
             mark = 'pass' if result['returncode'] == 0 else 'FAIL'
             print(f"[{len(results)}/{len(files)}] {mark} {result['file']} {result['seconds']:.1f}s", flush=True)
+            if result['returncode']:
+                print(f'--- {result["file"]} exited {result["returncode"]}'
+                      + (' after exceeding the per-file timeout' if result['timeout'] else '') + ' ---', flush=True)
+                if result['stdout']:
+                    print(result['stdout'], flush=True)
+                if result['stderr']:
+                    print(result['stderr'], file=sys.stderr, flush=True)
     failed = [name for name in files if results[name]['returncode'] != 0]
-    for name in failed:
-        result = results[name]
-        print(f'--- {name} exited {result["returncode"]}'
-              + (' after exceeding the per-file timeout' if result['timeout'] else '') + ' ---')
-        if result['stdout']:
-            print(result['stdout'])
-        if result['stderr']:
-            print(result['stderr'], file=sys.stderr)
     summed = sum(result['seconds'] for result in results.values())
     print(f'Parallel unittest: {len(files)} files, {len(failed)} failed; {summed:.1f}s summed process time.')
     return int(bool(failed))

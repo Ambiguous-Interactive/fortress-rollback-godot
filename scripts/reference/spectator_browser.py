@@ -20,8 +20,10 @@ FILES = ['spectator_browser_host.gd', 'spectator_browser_viewer.gd']
 
 
 def prepare(project, engine, version, data, arch, offline, output, authored_paths, authored_before):
+    from web_templates import web_template_archive
+
     templates_name = f'Godot_v{version}-stable_export_templates.tpz'
-    templates = fetch(data['artifacts'][templates_name], templates_name, offline)
+    templates = web_template_archive(data['artifacts'][templates_name], templates_name, offline, CACHE, fetch)
     environment = os.environ.copy()
     environment['XDG_DATA_HOME'] = str(CACHE / 'godot-data')
     directory = Path(environment['XDG_DATA_HOME']) / 'godot/export_templates' / (version + '.stable')

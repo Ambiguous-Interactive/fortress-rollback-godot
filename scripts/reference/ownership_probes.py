@@ -17,6 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fetch import CACHE, ROOT, digest, fetch, load_manifest, prepare_zip
 from local_ownership import claim
+from ownership_schedule import chromium_page_wave, minimum_chromium_cost, minimum_chromium_parts
+from web_templates import web_template_archive
 from replay_download import CONTROL_DIAGNOSTICS, validate_controls, validate_downloads
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -601,23 +603,51 @@ def validate(result, negative, expected=None):
 
 def negative_suite(suite, negative):
     """Only the mutated ownership suite is expected to fail in a negative round."""
-    return negative and suite == 'res://tests/determinism/test_buffer_ownership.gd'
+    return negative and suite == ALIAS_CONTROL
 
 
-def select_suites(part):
-    """Split suite work into four interleaved parts, retaining the alias control in every part.
+# Median seconds from the four Chromium engine/phase cells in run 45081767956.
+# Each estimate includes its share of a measured browser page and four-worker native wave.
+CHROMIUM_SLOW_SUITES = {
+    'spectator_replay_viewer': 50, 'peer_drop_commit': 46, 'peer_example_ownership': 32,
+    'driver_peer_parity': 30, 'peer_drop_backfill': 23, 'peer_drop_late_ack': 22,
+    'peer_drop_donor_fairness': 16, 'peer_drop_inventory': 16, 'peer_drop_capacity': 15,
+    'peer_drop_multi_slot': 15, 'stalled_gossip': 14, 'peer_drop_history': 13, 'peer_drop_overlap': 13,
+    'peer_scene_controls': 12, 'spectator_demo': 12, 'peer_drop_eviction': 10,
+    'peer_drop_plan_fairness': 10, 'peer_drop_replay': 10,
+}
+ALIAS_CONTROL = 'res://tests/determinism/test_buffer_ownership.gd'
+DOWNLOAD_SUITE = 'res://tests/unit/test_replay_viewer_prefix.gd'
 
-    Four same-runner jobs halve the workflow's wall-time share of the witness: the
-    name interleave keeps the browser pages of each part balanced (25 suites per
-    part over the current 97-suite inventory), while every part still repeats the
-    mutated ownership control.
-    """
-    if type(part) is not str or part not in ('all', '1', '2', '3', '4'):
+
+def chromium_seconds(suite, phase='negative'):
+    seconds = CHROMIUM_SLOW_SUITES.get(Path(suite).stem.removeprefix('test_'), 2)
+    # The downloaded replays and their controls took 92 and 126 seconds across the two pins.
+    return seconds + (109 if suite == DOWNLOAD_SUITE and phase != 'negative' else 0)
+
+
+def select_suites(part, chromium_phase=None):
+    """Keep the alias control in every part and the receipt inventory in suite order."""
+    five = isinstance(part, str) and re.fullmatch(r'[1-5]of5', part)
+    if type(part) is not str or (part not in ('all', '1', '2', '3', '4') and not five):
         raise ValueError('invalid ownership suite part')
     ordered = sorted(EXPECTED)
-    selected = ordered if part == 'all' else ordered[int(part) - 1::4]
-    control = 'res://tests/determinism/test_buffer_ownership.gd'
-    return {suite: EXPECTED[suite] for suite in ordered if suite in selected or suite == control}
+    if part == 'all':
+        return {suite: EXPECTED[suite] for suite in ordered}
+    if five:
+        groups = minimum_chromium_parts([s for s in ordered if s != ALIAS_CONTROL], chromium_phase, DOWNLOAD_SUITE, ALIAS_CONTROL)
+        selected = groups[int(part[0]) - 1]
+    elif chromium_phase is None:
+        selected = ordered[int(part) - 1::4]
+    else:
+        groups = [[] for _ in range(4)]
+        seconds = [0] * 4
+        for suite in sorted((suite for suite in ordered if suite != ALIAS_CONTROL), key=lambda suite: -chromium_seconds(suite, chromium_phase)):
+            group = min(range(4), key=seconds.__getitem__)
+            groups[group].append(suite)
+            seconds[group] += chromium_seconds(suite, chromium_phase)
+        selected = groups[int(part) - 1]
+    return {suite: EXPECTED[suite] for suite in ordered if suite in selected or suite == ALIAS_CONTROL}
 
 
 def firefox_pages(ordered_suites, native_seconds, budget=FIREFOX_PAGE_NATIVE_BUDGET):
@@ -677,9 +707,9 @@ def aggregate_case_pages(suite, pages, native):
     return result
 
 
-def validate_coverage(records, part, suites):
+def validate_coverage(records, part, suites, chromium_phase=None):
     """A partial receipt must describe exactly the canonical requested suite part."""
-    expected = select_suites(part)
+    expected = select_suites(part, chromium_phase)
     if type(suites) is not dict or list(suites) != sorted(expected) or not same_json(suites, {suite: sorted(cases) for suite, cases in expected.items()}):
         raise ValueError('incorrect declared ownership suite inventory')
     if type(records) is not list or not records:
@@ -693,7 +723,7 @@ def validate_coverage(records, part, suites):
             validate(record['browser']['result'], negative, expected)
             if not same_json(record['native'], record['browser']['result']):
                 raise ValueError('native/web ownership divergence')
-            if not negative and 'res://tests/unit/test_replay_viewer_prefix.gd' in expected:
+            if not negative and DOWNLOAD_SUITE in expected:
                 validate_downloads(record.get('replay_downloads'))
                 validate_controls(record.get('replay_download_controls'))
 
@@ -783,7 +813,8 @@ def rejected_state(progress):
 
 
 def source_inventory():
-    helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+    helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/ownership_schedule.py', 'scripts/reference/web_templates.py',
+               'scripts/reference/browser/ownership.cjs',
                'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
                'scripts/reference/browser/replay_chooser.cjs',
                'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
@@ -802,7 +833,7 @@ def verify_sources(expected):
             raise ValueError(f'ownership source changed during execution: {filename}')
 
 
-HELPER_MODULES = ('fetch', 'local_ownership', 'replay_download', 'receipt_arguments', 'godot_smoke',
+HELPER_MODULES = ('fetch', 'ownership_schedule', 'web_templates', 'local_ownership', 'replay_download', 'receipt_arguments', 'godot_smoke',
                   'run', 'owned_process', 'host_capacity', 'browser.webrtc_matrix', 'browser.webrtc_import',
                   'signalfish_probe')
 
@@ -976,7 +1007,8 @@ def main():
         parser.add_argument('--web', action='store_true')
         parser.add_argument('--browser', choices=['chromium', 'firefox'], default='chromium')
         parser.add_argument('--phase', choices=['both', 'negative', 'positive'], default='both')
-        parser.add_argument('--suite-part', choices=['all', '1', '2', '3', '4'], default='all')
+        parser.add_argument('--balance-chromium', action='store_true', help='balance Chromium parts using hosted suite and replay download times')
+        parser.add_argument('--suite-part', choices=['all', '1', '2', '3', '4', *[f'{n}of5' for n in range(1, 6)]], default='all')
         pins = load_manifest()['godot']
         parser.add_argument('--version', choices=list(dict.fromkeys([pins['minimum'], pins['current_stable']])))
         try:
@@ -987,6 +1019,10 @@ def main():
             raise
         if args.browser != 'chromium' and not args.web:
             parser.error('--browser firefox requires --web')
+        if args.balance_chromium and (not args.web or args.browser != 'chromium' or args.suite_part == 'all'):
+            parser.error('--balance-chromium requires a Chromium Web suite part')
+        if args.suite_part.endswith('of5') and (not args.balance_chromium or args.version != pins['minimum'] or args.phase == 'both'):
+            parser.error('five ownership partitions require one balanced minimum-pin Chromium phase')
         results = CACHE / 'results'
         # One local run at a time owns these paths, and the browser part needs a
         # responsive host: a local test wave would otherwise starve it and turn a
@@ -1051,11 +1087,10 @@ def run_probes(args, results):
     records = []
     versions_requested = [args.version] if args.version is not None else [data['godot']['minimum'], data['godot']['current_stable']]
     phases_requested = ['negative', 'positive'] if args.phase == 'both' else [args.phase]
-    selected = select_suites(args.suite_part)
+    chromium_phase = args.phase if args.balance_chromium else None
+    selected = select_suites(args.suite_part, chromium_phase)
     suites_requested = {suite: sorted(cases) for suite, cases in selected.items()}
-    # The native wave overlaps fresh per-suite engine processes; browser pages
-    # stay serial because they need a responsive host. Another owner of the
-    # host-capacity lease keeps the wave serial instead of competing with it.
+    # Both waves honor the host-capacity lease. The native and Web waves never overlap.
     native_workers = host_capacity.worker_count(min(os.cpu_count() or 1, 4))
     if any(version not in (data['godot']['minimum'], data['godot']['current_stable']) for version in versions_requested):
         raise ValueError('requested ownership engine is not pinned')
@@ -1197,17 +1232,25 @@ def run_probes(args, results):
             # running; KeyboardInterrupt reaches only this main thread, so a
             # running worker's engine keeps its own watchdog and ends within
             # its 180-second bound rather than being killed mid-run.
+            native_started = time.monotonic()
             wave = ThreadPoolExecutor(max_workers=native_workers)
-            futures = [wave.submit(native_suite_task, suite) for suite in ordered_suites]
+            launch_order = ordered_suites
+            if args.suite_part.endswith('of5'):
+                launch_order = sorted(ordered_suites, key=lambda suite: -minimum_chromium_cost(suite)[0])
+            elif args.balance_chromium:
+                launch_order = sorted(ordered_suites, key=lambda suite: -chromium_seconds(suite))
+            futures = {suite: wave.submit(native_suite_task, suite) for suite in launch_order}
             try:
-                outcomes = [future.result() for future in futures]
+                outcomes = [futures[suite].result() for suite in ordered_suites]
             except BaseException as error:
-                for future in futures:
+                for future in futures.values():
                     future.cancel()
                 reject(started, 'failed', alive=False, errors=bounded_errors([f'{type(error).__name__}: {error}']))
                 raise
             finally:
                 wave.shutdown(wait=True, cancel_futures=True)
+            timings = {'native_wave_seconds': round(time.monotonic() - native_started, 3),
+                       'native_suite_seconds': {suite: round(native_seconds[suite], 3) for suite in ordered_suites}}
             batches = []
             for kind, suite, progress, payload, error in outcomes:
                 if kind == 'timeout':
@@ -1222,10 +1265,10 @@ def run_probes(args, results):
                 batches.append((suite, payload))
             native = aggregate_native(batches, negative, selected)
             record = {'engine_version': version, 'version': actual, 'editor_artifact': name, 'negative_control': negative, 'native': native,
-                      'staged_inventory': staged_frozen, 'editor_inventory': editor_frozen}
+                      'staged_inventory': staged_frozen, 'editor_inventory': editor_frozen, 'timings': timings}
             if args.web:
                 template_name = f'Godot_v{version}-stable_export_templates.tpz'
-                templates = fetch(data['artifacts'][template_name], template_name, args.offline)
+                templates = web_template_archive(data['artifacts'][template_name], template_name, args.offline, CACHE, fetch)
                 template_dir = Path(environment['XDG_DATA_HOME']) / 'godot/export_templates' / (version + '.stable')
                 template_dir.mkdir(parents=True, exist_ok=True)
                 with zipfile.ZipFile(templates) as package:
@@ -1251,7 +1294,11 @@ def run_probes(args, results):
                     page_suites = firefox_pages(ordered_suites, native_seconds)
                 else:
                     page_suites = [ordered_suites[offset:offset + 4] for offset in range(0, len(ordered_suites), 4)]
-                for batch_index, suites in enumerate(page_suites):
+
+                def execute_batch(batch_index):
+                    suites = page_suites[batch_index]
+                    page_timings = []
+                    identity = None
                     case_names = [None]
                     native_suite = None
                     if args.browser == 'firefox' and suites == [PEER_PARITY_SUITE]:
@@ -1263,6 +1310,7 @@ def run_probes(args, results):
                         suffix = '' if case_name is None else f'-case-{case_index:02d}'
                         browser_log = results / f'ownership-{label}-browser-{batch_index:02d}{suffix}.log'
                         try:
+                            page_started = time.monotonic()
                             verify_staged(project, staged_frozen)
                             verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
                             verify_sources(frozen_sources)
@@ -1273,10 +1321,11 @@ def run_probes(args, results):
                             verify_staged(project, staged_frozen)
                             verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
                             browser = json.loads(output)
-                            browser_identity = validate_browser(browser, browser_identity, args.browser, data)
+                            identity = validate_browser(browser, identity, args.browser, data)
                             validate(browser['result'], any(negative_suite(suite, negative) for suite in suites),
                                      {suite: EXPECTED[suite] if case_name is None else {case_name} for suite in suites})
                             pages.append(browser['result'])
+                            page_timings.append({'suites': suites, 'case': case_name, 'seconds': round(time.monotonic() - page_started, 3)})
                         except Exception:
                             # The browser watchdog rejected the run. Its inventory of
                             # page and engine errors, and the progress the page
@@ -1297,6 +1346,18 @@ def run_probes(args, results):
                         except ValueError:
                             reject(started, 'failed', alive=False, errors=['incomplete or divergent ownership case pages'])
                             raise
+                    return browser, page_timings
+
+                # Each Chromium process owns its browser profile, server, port, deadline and log. All trees are read-only here.
+                # Both workers finish before the download controls can mutate an export. Firefox owns a display and stays serial.
+                workers = 2 if args.balance_chromium and native_workers >= 2 and len(os.sched_getaffinity(0)) >= 4 else 1
+                browser_started = time.monotonic()
+                completed = chromium_page_wave(page_suites, native_seconds, execute_batch, workers)
+                timings['browser_wave_seconds'] = round(time.monotonic() - browser_started, 3)
+                timings['browser_pages'] = []
+                for suites, (browser, page_timings) in zip(page_suites, completed):
+                    browser_identity = validate_browser(browser, browser_identity, args.browser, data)
+                    timings['browser_pages'].extend(page_timings)
                     browser_batches.append((suites, browser['result']))
                 browser['result'] = aggregate_native(browser_batches, negative, selected)
                 if not same_json(browser['result'], native):
@@ -1304,8 +1365,9 @@ def run_probes(args, results):
                     raise ValueError('native/web ownership divergence')
                 record.update(browser=browser, browser_artifact=browser_artifact, template_artifact=template_name,
                               export_inventory=exported_sources, export_tool_inventory=export_frozen)
-                if not negative and 'res://tests/unit/test_replay_viewer_prefix.gd' in selected:
+                if not negative and DOWNLOAD_SUITE in selected:
                     try:
+                        download_started = time.monotonic()
                         download_output = results / ('ownership-' + label + '-downloads')
                         if download_output.exists():
                             shutil.rmtree(download_output)
@@ -1346,6 +1408,7 @@ def run_probes(args, results):
                         verify_sources(frozen_sources)
                         verify_staged(project, staged_frozen)
                         verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
+                        timings['replay_download_seconds'] = round(time.monotonic() - download_started, 3)
                     except Exception as error:
                         reject(started, 'failed', alive=False, errors=bounded_errors([str(error)]))
                         raise
@@ -1354,7 +1417,7 @@ def run_probes(args, results):
             finish(started)
             print(f'Ownership {label}: native' + (' and Web' if args.web else '') + ' verified')
     validate_phases(records, rounds, versions_requested, phases_requested)
-    validate_coverage(records, args.suite_part, suites_requested)
+    validate_coverage(records, args.suite_part, suites_requested, chromium_phase)
     verify_sources(frozen_sources)
     if digest(python_path) != python_binding['sha256']:
         raise ValueError('ownership interpreter changed during execution')
@@ -1364,7 +1427,7 @@ def run_probes(args, results):
               'browser_requested': args.browser if args.web else None, 'browser_runtime_inventory': browser_frozen,
               'python': python_binding,
               'rounds': rounds, 'versions_requested': versions_requested, 'phases_requested': phases_requested,
-              'suite_part_requested': args.suite_part, 'suites_requested': suites_requested,
+              'suite_part_requested': args.suite_part, 'balanced_chromium': args.balance_chromium, 'suites_requested': suites_requested,
               'manifest_sha256': frozen_sources['docs/reference/pins.json'],
               'sources': frozen_sources,
               'records': records, 'scope': 'For requested engine pins, phases and suite inventory only: '
