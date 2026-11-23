@@ -518,12 +518,18 @@ async function run(root, endpoint, mode, players, browserPair) {
         assert.equal(peer.state, 'playing', peer.message);
       }
       comparedFrames = historyThrough(stalled);
-      phase = 'corrected history';
+      phase = 'input release';
+      const correctionBudgetMs = 45000;
+      const correctionDeadline = performance.now() + correctionBudgetMs;
       await Promise.all(pages.map((page, index) => boundedRoom(() => page.evaluate(() => window.fortressNativeWire.release()),
-        45000, `native peer ${index} input release`)));
+        correctionBudgetMs, `native peer ${index} input release`)));
+      phase = 'corrected history';
+      const correctionRemainingMs = Math.floor(correctionDeadline - performance.now());
+      assert.ok(correctionRemainingMs > 0, 'native input release exhausted the correction deadline');
       await Promise.all(pages.map((page, index) => wait(page, target => window.fortressNative.state === 'playing'
         && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores,
-      { frame: comparedFrames, restores: stalled[index].restores }, 45000)));
+      { frame: comparedFrames, restores: stalled[index].restores }, correctionRemainingMs)));
+      assert.ok(performance.now() < correctionDeadline, 'native corrected history exceeded the correction deadline');
     } else {
       phase = 'mixed confirmed history';
       await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
