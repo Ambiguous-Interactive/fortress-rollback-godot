@@ -368,7 +368,11 @@ async function readConfirmedHistory(page, frames, wait) {
     window.fortressNativeCapture = frameCount;
   }, frames);
   await wait(page, frameCount => window.fortressNativeHistory?.frames === frameCount, frames);
-  return page.evaluate(() => window.fortressNativeHistory);
+  return page.evaluate(frameCount => {
+    const history = window.fortressNativeHistory;
+    if (history?.frames !== frameCount) throw new Error('native history receipt changed');
+    return history;
+  }, frames);
 }
 
 function compareHistory(peers, frames = HISTORY_FRAMES) {
@@ -557,6 +561,7 @@ async function run(root, endpoint, mode, players, browserPair) {
     const history = await Promise.all(pages.map(page => readConfirmedHistory(page, comparedFrames, wait)));
     const peers = (await observe()).map((peer, index) => ({ ...peer, rows: history[index].rows, snapshots: history[index].snapshots }));
     compareHistory(peers, comparedFrames);
+    phase = 'route validation';
     const other = route === 'mesh' ? 'relay' : 'mesh';
     for (const peer of peers) {
       assert.equal(peer.movement_errors, 0, 'game must respond to every observed input');

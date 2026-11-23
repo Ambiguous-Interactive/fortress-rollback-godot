@@ -222,6 +222,11 @@ async function run() {
     assert.equal(complete(frames), true);
   });
   assert.deepEqual(captured, fresh);
+  await assert.rejects(readConfirmedHistory(page, 2, async (_, complete, frames) => {
+    window.fortressNativeHistory = fresh;
+    assert.equal(complete(frames), true);
+    window.fortressNativeHistory = { ...fresh, frames: 3 };
+  }), /native history receipt changed/);
 
   const peers = [0, 1].map(slot => ({ ...fresh, index: slot, slot, uuid: String(slot), session_id: '00'.repeat(16), room_id: 'room' }));
   compareHistory(peers, 2);
