@@ -13,8 +13,8 @@ SOURCES = ("addons", "tests", "examples", "scripts")
 SCANNED = (".gd", ".tscn", ".tres", ".json", ".cfg")
 CLASS_NAME = re.compile(r"(?m)^(?:@\w+\s+)*class_name\s+(\w+)")
 LITERAL = re.compile(r"""(?P<quote>["'])(?P<value>[^"'\n]*)(?P=quote)""")
-ACCESS = re.compile(r"(?:(?<![\w.])(?:pre)?load|\.(?:change_scene_to_file|change_dir)|ResourceLoader\.\w+"
-                    r"|FileAccess\.(?:open\w*|get_file_as_\w+|file_exists)|DirAccess\.(?:open|get_\w+_at))\s*\(\s*")
+ACCESS = re.compile(r"(?:(?<![\w])(?:pre)?load|\.(?:change_scene_to_file|change_dir|load_from_file)|ResourceLoader\.\w+"
+                    r"|FileAccess\.(?!get_open_error\b)\w+|DirAccess\.(?:open|get_\w+_at|dir_exists_absolute))\s*\(\s*")
 # These exact source versions have indirect reads of user files, supervisor output, SDK constants or selected suite paths.
 # A new reader or an edit to one of these files restores the conservative fallback until its inputs are reviewed.
 REVIEWED_READERS = {
@@ -26,6 +26,8 @@ REVIEWED_READERS = {
     "tests/runner/abort_supervisor.gd": "e22b3f8b74b9e31d61f0af1cb824be7f2a847f8252c913e0cd004373b0744113",
     "tests/runner/run_tests.gd": "2ee26d3f3f890bf0c30a4b05c0127971af0120a51f85181c76a91ac6152ae674",
     "tests/unit/test_diagnostic_viewer.gd": "e444e5f83a5ac1059fb711aafc44a41dc50680fe92b7adb555dc3389c8785679",
+    "tests/unit/test_example_scene_exit.gd": "3f08ea607bfe91462171d1d1db2a9c0bef78428017a966b54f3d9522745c7e7e",
+    "tests/unit/test_example_shortcuts.gd": "0c2396cc579298fd8a7b2d06770605a52b343ec45d0a8ad382a3efc2ba6c8ee6",
     "tests/unit/test_online_example.gd": "7f1f35e49bc9f65a6c0758848b71c3850ceeac6465cd3944fbb869d7e6972ccc",
     "tests/unit/test_replay_viewer.gd": "965cdc5e29f6263825cb8c6dcc850d81b568c9417012d534d88b24ef8545cad0",
     "tests/unit/test_replay_viewer_prefix.gd": "91522f8602503ac28d080fff29590d3e775fc4623eb3317116b23404c99db613",
@@ -132,9 +134,8 @@ def inputs(path: str, text: str) -> tuple[set[str], bool]:
             elif not arg["value"].startswith(("res://", "user://")) and PurePosixPath(arg["value"]).suffix not in SCANNED:
                 opaque = True
             elif not text[arg.end():].lstrip().startswith((",", ")")):
-                # Concatenation can extend even a literal filename. A directory prefix already covers its descendants.
-                if not (arg["value"].startswith("res://") and (arg["value"].endswith("/") or "%" in arg["value"])):
-                    opaque = True
+                # A computed suffix can escape a literal directory through parent components.
+                opaque = True
     if opaque and hashlib.sha256(text.encode()).hexdigest() == REVIEWED_READERS.get(path):
         opaque = False
         if path == "tests/runner/run_tests.gd":

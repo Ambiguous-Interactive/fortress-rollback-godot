@@ -84,7 +84,9 @@ class SelectTests(unittest.TestCase):
             for path in ("scripts/new_agent.py", "scripts/reference/new_settings.cfg", "addons/data.unknown", "project.godot"):
                 self.assertEqual(selection([suite], [path], root)["reason"], "unknown_input")
             for expression in ('load(dynamic_path)', 'ResourceLoader.load_threaded_request(path)',
-                               'FileAccess.get_file_as_string(path)', 'load("uid://unknown")', 'load("res://prefix" + suffix)'):
+                               'FileAccess.get_file_as_string(path)', 'FileAccess.get_sha256(path)', 'Image.load_from_file(path)',
+                               'DirAccess.dir_exists_absolute(path)', 'config.load(path)', 'load("res://scenes/" + filename)',
+                               'load("uid://unknown")', 'load("res://prefix" + suffix)'):
                 with self.subTest(expression=expression):
                     (root / "scripts/reference/bridge.gd").write_text(expression)
                     self.assertEqual(selection([suite], ["scripts/oracle/p2p_lifecycle.py"], root)["reason"], "unresolved_resource")
