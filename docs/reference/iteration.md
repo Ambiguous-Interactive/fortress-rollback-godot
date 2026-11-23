@@ -39,6 +39,14 @@ The first five paired edits on each revision matched the control's edited bytes,
 digests. Their median time difference changed sign between runs, so these small pairs establish
 workload equivalence and do not establish a consistent speedup.
 
+A further 100-edit run on `ef16395` finished at p95 4.24 s on the same development host. During
+a later period of high host I/O pressure, 14 of the first 23 edits on the host-mounted checkout took
+at least 10 s without waiting for a host lease. Even 77 subsequent passes could not meet the
+100-sample p95, so that trial stopped. Record the workspace filesystem along with host load.
+On Docker Desktop a container volume avoids the host bind mount. Use **Dev Containers: Clone
+Repository in Container Volume** and repeat the same study to compare both locations.
+[VS Code disk performance guide](https://code.visualstudio.com/remote/advancedcontainers/improve-performance)
+
 ## Hosted baseline and comparison
 
 The November 18–22, 2026 baseline uses repository activity and all five required check contexts.
