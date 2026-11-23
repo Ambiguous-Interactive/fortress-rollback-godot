@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SUITES_CHECKS = ['scripts/reference/package_audit.py', 'scripts/reference/test_package_audit.py',
                  'scripts/reference/signalfish_probe.py', 'scripts/reference/test_godot_runner.py',
                  'scripts/reference/diagnostic_json.py']
-TESTS_CHECKS = ['scripts/run_godot_tests.py', '--shard "$shard"']
+TESTS_CHECKS = ['scripts/run_godot_tests.py', '--shard "$shard" --verify-inventory']
 # The oracle leg keeps the differential launcher wave; the spectator model and the
 # handshake formal check are nightly-tier jobs (scripts/tests/test_workflow_tiers.py).
 # The runner's table owns the six upstream comparisons; a dropped entry would silently

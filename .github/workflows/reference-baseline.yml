@@ -227,7 +227,7 @@ jobs:
           editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
           part="${{ matrix.part }}"
           shard="${part#tests-}"
-          python3 scripts/run_godot_tests.py --godot "$editor" --shard "$shard" --timeout 180 --results ".cache/tests/runner-$version-$part.json"
+          python3 scripts/run_godot_tests.py --godot "$editor" --shard "$shard" --verify-inventory --timeout 180 --results ".cache/tests/runner-$version-$part.json"
       - name: Verify integration and determinism
         if: matrix.part == 'integration'
         run: |
