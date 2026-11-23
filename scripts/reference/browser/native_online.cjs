@@ -67,7 +67,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   const warmupLinks = new Map();
   const warmupTicks = [];
   let warmupTickCount = 0;
+  let warmupStarted = null;
   let warmupCutoff = null;
+  let warmupCheckpointPending = false;
   let lastWarmupCheckpoint = -Infinity;
   const nativeBytes = bytes => bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
     : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
@@ -90,7 +92,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
   function warmupStatus() {
     if (!warmupLinks.size) return null;
-    return { through_ms: warmupCutoff?.at_ms ?? performance.now(), cutoff: warmupCutoff,
+    return { recipient: localUuid, started_ms: warmupStarted, through_ms: warmupCutoff?.at_ms ?? performance.now(), cutoff: warmupCutoff,
       tick_count: warmupTickCount, ticks: warmupTicks.slice(),
       links: Array.from(warmupLinks, ([sender, { packets, evicted, unretained }]) => ({
         sender, evicted, unretained, packets: Array.from(packets, ([payload, stages]) => ({ payload, ...stages })),
@@ -100,10 +102,20 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     lastWarmupCheckpoint = at;
     console.debug(warmupPrefix + JSON.stringify(warmupStatus()));
   }
+  function scheduleWarmupCheckpoint(at) {
+    if (warmupCheckpointPending || at < lastWarmupCheckpoint + 1000) return;
+    warmupCheckpointPending = true;
+    // Serialize only after the current browser event or Godot tick returns.
+    setTimeout(() => {
+      warmupCheckpointPending = false;
+      if (!warmupCutoff) checkpointWarmup(performance.now());
+    }, 0);
+  }
   function recordWarmup(stage, sender, payload, code) {
     const link = !warmupCutoff && warmupLinks.get(sender.replaceAll('-', ''));
     if (!link) return;
     const at = performance.now();
+    scheduleWarmupCheckpoint(at);
     let packet = link.packets.get(payload);
     if (!packet && link.packets.size === 24) {
       // Keep the first eight and latest sixteen. Evict the whole packet record;
@@ -116,17 +128,24 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       link.evicted++;
     }
     if (!packet) {
-      packet = { raw_ms: null, sdk_ms: null, native: null };
+      // Once a link has evicted anything, a new key can be a repeat of an evicted packet.
+      packet = { after_eviction: link.evicted > 0, raw: null, sdk: null, native: null };
       link.packets.set(payload, packet);
     }
     if (stage === 'native') {
-      packet.native ??= { first_ms: at, first_code: code, last_code: code, accepted_ms: null, attempts: 0 };
+      packet.native ??= { first_ms: at, last_ms: at, first_code: code, last_code: code, accepted_ms: null, attempts: 0, acceptances: 0 };
       packet.native.attempts++;
+      packet.native.last_ms = at;
       packet.native.last_code = code;
-      if (code === 0) packet.native.accepted_ms ??= at;
-    } else packet[`${stage}_ms`] ??= at;
-    // Export a bounded checkpoint even if a renderer cannot answer the final evaluation.
-    if (at >= lastWarmupCheckpoint + 1000) checkpointWarmup(at);
+      if (code === 0) {
+        packet.native.accepted_ms ??= at;
+        packet.native.acceptances++;
+      }
+    } else {
+      packet[stage] ??= { first_ms: at, last_ms: at, count: 0 };
+      packet[stage].last_ms = at;
+      packet[stage].count++;
+    }
   }
   function relayAddresses(data) {
     const view = nativeBytes(data);
@@ -294,6 +313,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
         const sender = member.replaceAll('-', '');
         if (sender !== localUuid) warmupLinks.set(sender, { packets: new Map(), evicted: 0, unretained: { sdk: 0, native: 0 } });
       }
+      if (warmupLinks.size) warmupStarted = performance.now();
     },
     recordWarmup,
     warmupStatus,
@@ -303,7 +323,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       if (warmupTicks.length === 24) warmupTicks.shift();
       warmupTicks.push({ at_ms: at, before, after, budget, elapsed_us, failed });
       warmupTickCount++;
-      if (at >= lastWarmupCheckpoint + 1000) checkpointWarmup(at);
+      scheduleWarmupCheckpoint(at);
     },
     finishWarmup(reason) {
       if (warmupLinks.size && !warmupCutoff) {

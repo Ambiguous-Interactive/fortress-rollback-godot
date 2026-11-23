@@ -38,9 +38,10 @@ class Socket {
   addEventListener(name, listener) { this[name] = listener; }
 }
 let time = 1;
-const window = {}, checkpoints = [];
+const window = {}, checkpoints = [], tasks = [];
 const realm = {
   window, performance: {now: () => time}, console: {debug: value => checkpoints.push(value)},
+  setTimeout: callback => tasks.push(callback),
   Uint8Array, ArrayBuffer, DataView, WebSocket: Socket, RTCPeerConnection: class {},
 };
 runInNewContext(`(${instrumentNativeWire})(false, 'warmup ')`, realm);
@@ -55,6 +56,8 @@ excluded[30] = 1;
 raw(socket, excluded);
 const quality = bytes(0);
 raw(socket, quality);
+time = 1.5;
+raw(socket, quality);
 const identicalToken = Buffer.from(quality);
 identicalToken[28] = 1;
 time = 2;
@@ -63,18 +66,25 @@ time = 3;
 sample('native', quality, 6);
 time = 4;
 sample('native', quality, 0);
+assert.equal(checkpoints.length, 0);
+assert.equal(tasks.length, 1);
+tasks.shift()();
+assert.equal(checkpoints.length, 1);
 let [link] = wire.warmupStatus().links;
 assert.equal(link.sender, remote);
 assert.deepEqual(link.packets.map(packet => packet.payload).join(), [quality, identicalToken].map(b => b.toString('hex')).join());
 const [rawRecord, sdkRecord] = link.packets;
 // Missing SDK evidence stays absent even if the native enqueue was observed with the same payload.
-assert.equal(rawRecord.raw_ms, 1);
-assert.equal(rawRecord.sdk_ms, null);
+assert.equal(rawRecord.raw.first_ms, 1);
+assert.equal(rawRecord.raw.last_ms, 1.5);
+assert.equal(rawRecord.raw.count, 2);
+assert.equal(rawRecord.sdk, null);
 assert.equal(rawRecord.native.first_code, 6);
 assert.equal(rawRecord.native.attempts, 2);
+assert.equal(rawRecord.native.acceptances, 1);
 assert.equal(rawRecord.native.accepted_ms, 4);
-assert.equal(sdkRecord.raw_ms, null);
-assert.equal(sdkRecord.sdk_ms, 2);
+assert.equal(sdkRecord.raw, null);
+assert.equal(sdkRecord.sdk.first_ms, 2);
 assert.equal(sdkRecord.native, null);
 for (let i = 1; i < 30; i++) {
   time = i + 10;
@@ -92,15 +102,27 @@ assert.equal(link.evicted, 7);
 assert.equal(link.unretained.sdk, 1);
 assert.equal(link.unretained.native, 1);
 assert.equal(link.packets.some(packet => packet.payload === bytes(8).toString('hex')), false);
-assert.equal(link.packets[23].sdk_ms, 50);
+assert.equal(link.packets[23].sdk.first_ms, 50);
 assert.equal(link.packets[23].native.accepted_ms, 50);
+time = 1051;
+raw(socket, bytes(8));
+sample('sdk', bytes(8));
+sample('native', bytes(8), 0);
+const resurfaced = wire.warmupStatus().links[0].packets.at(-1);
+assert.equal(resurfaced.payload, bytes(8).toString('hex'));
+assert.equal(resurfaced.after_eviction, true);
 const wireBeforeCutoff = wire.status();
+assert.equal(tasks.length, 1);
 wire.finishWarmup('gate');
 const cutoff = JSON.stringify(wire.warmupStatus());
 assert.equal(JSON.stringify(JSON.parse(checkpoints.at(-1).slice('warmup '.length))), cutoff);
-assert.equal(wire.warmupStatus().cutoff.at_ms, 50);
+assert.equal(wire.warmupStatus().recipient, local);
+assert.equal(wire.warmupStatus().started_ms, 1);
+assert.equal(wire.warmupStatus().cutoff.at_ms, 1051);
 assert.equal(wire.warmupStatus().ticks[0].budget, 256);
-time = 51;
+tasks.shift()();
+assert.equal(checkpoints.length, 2);
+time = 1052;
 raw(socket, bytes(30));
 sample('sdk', bytes(30));
 sample('native', bytes(30), 0);
