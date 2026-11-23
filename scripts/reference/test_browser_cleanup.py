@@ -105,7 +105,9 @@ for (const expiry of [false, true]) {
         # Value: protects=departure attribution; fails_when=another link excuses the warning; seam=browser receipt validator
         script = r"""
 const assert = require('node:assert/strict');
-const { reportedChannel, receivedClose } = require(process.argv[1]);
+const { closeEvidence, reportedChannel } = require(process.argv[1]);
+const receivedClose = (index, channel, before, closed, closer, {sentAt, clocks} = {}) =>
+  Boolean(closeEvidence({index, channel, sentAt}, before, closed, closer, clocks).proof);
 const frame = '    at fortressNativeSend_5 (:5:27)';
 assert.deepEqual(reportedChannel('Error sending binary data\n' + frame), {channel:5, sentAt:null});
 assert.deepEqual(reportedChannel(frame + '\n' + frame), {channel:null, sentAt:null});
@@ -136,6 +138,41 @@ assert.ok(!receivedClose(1, 5, [link, other], [[counterpart, counterpart], close
 assert.ok(!receivedClose(1, 5, [link, other], [[counterpart], [link, {...other, closeAborts:1}]]));
 const same = {...link, remote:link.local};
 assert.ok(!receivedClose(1, 5, [same], [[], [{...same, closeAborts:2, closed:true}]]));
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
+    def test_native_webkit_close_receipt_names_the_ambiguous_link(self):
+        # Value: protects=failed causal attribution; fails_when=actual reciprocal channel or clock gap is lost; seam=browser receipt validator
+        script = r"""
+const assert = require('node:assert/strict');
+const { closeEvidence } = require(process.argv[1]);
+const before = {index:17, local:'survivor', remote:'leaver', closeAborts:1, closed:false};
+const sender = {...before, closed:true, connectionClosed:true, closedAt:50000};
+const closer = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
+const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
+const tagged = {index:1, channel:17, sentAt:47199};
+const fail = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks);
+assert.deepEqual(JSON.parse(JSON.stringify(fail)), {
+  ...tagged, closer:null, before, sender, counterparts:[{...closer, owner:0}], minimumGapUs:1999, proof:null,
+});
+const timed = closeEvidence({...tagged, sentAt:47200}, [before], [[closer], [sender]], null, clocks);
+assert.equal(timed.minimumGapUs, 2000);
+assert.equal(timed.proof, 'clock-order');
+const aborted = closeEvidence(tagged, [before], [[closer], [{...sender, closeAborts:2}]], null, clocks);
+assert.equal(aborted.minimumGapUs, 1999);
+assert.equal(aborted.proof, 'sctp-abort');
+const missing = closeEvidence(tagged, [before], [[], [sender]], null, clocks);
+assert.deepEqual(missing.counterparts, []);
+assert.equal(missing.minimumGapUs, null);
+assert.equal(missing.proof, null);
+const duplicate = closeEvidence(tagged, [before], [[closer], [sender], [closer]], null, clocks);
+assert.deepEqual(duplicate.counterparts, [{...closer, owner:0}, {...closer, owner:2}]);
+assert.equal(duplicate.proof, null);
+const stream = closeEvidence(tagged, [before], [[{...closer, connectionClosed:false, closedAt:null}], [sender]], 0, undefined);
+assert.equal(stream.closer, 0);
+assert.equal(stream.minimumGapUs, null);
+assert.equal(stream.proof, 'stream-close');
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)

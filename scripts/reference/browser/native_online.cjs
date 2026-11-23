@@ -265,23 +265,29 @@ function reportedChannel(stack) {
   return { channel: Number(channel), sentAt: sentAt === undefined ? null : Number(sentAt) };
 }
 
-function receivedClose(pageIndex, index, before, closedByPage, closer = null, timing = {}) {
-  const link = before.find(peer => peer.index === index);
-  if (!link?.local || !link.remote || link.closed) return false;
-  const counterparts = closedByPage.flatMap((links, owner) => owner === pageIndex ? [] : links
-    .filter(peer => peer.local === link.remote && peer.remote === link.local)
+function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, closer = null, clocks) {
+  const before = linksBefore.find(peer => peer.index === channel) ?? null;
+  const evidence = { index, channel, sentAt, closer, before, sender: null, counterparts: [], minimumGapUs: null, proof: null };
+  if (!before?.local || !before.remote || before.closed) return evidence;
+  evidence.sender = closedByPage[index].find(peer => peer.index === channel && peer.local === before.local && peer.remote === before.remote) ?? null;
+  evidence.counterparts = closedByPage.flatMap((links, owner) => owner === index ? [] : links
+    .filter(peer => peer.local === before.remote && peer.remote === before.local)
     .map(peer => ({ ...peer, owner })));
-  if (counterparts.length !== 1) return false;
-  const counterpart = counterparts[0];
-  const confirmedClose = closer === null ? counterpart.connectionClosed : counterpart.owner === closer && counterpart.closed;
-  const senderClock = timing.clocks?.[pageIndex];
-  const closerClock = timing.clocks?.[counterpart.owner];
+  if (evidence.counterparts.length !== 1) return evidence;
+  const [counterpart] = evidence.counterparts;
+  const senderClock = clocks?.[index];
+  const closerClock = clocks?.[counterpart.owner];
   // Compare the earliest possible send with the latest possible close.
-  const sentAfterClose = senderClock && closerClock && Number.isSafeInteger(timing.sentAt) && Number.isSafeInteger(counterpart.closedAt)
-    && timing.sentAt + senderClock.offsetMin - counterpart.closedAt - closerClock.offsetMax >= 2000;
-  return confirmedClose
-    && closedByPage[pageIndex].some(peer => peer.index === index && peer.local === link.local && peer.remote === link.remote
-      && (closer === null ? peer.closeAborts > link.closeAborts || sentAfterClose : peer.closed));
+  if (senderClock && closerClock && Number.isSafeInteger(sentAt) && Number.isSafeInteger(counterpart.closedAt)) {
+    evidence.minimumGapUs = sentAt + senderClock.offsetMin - counterpart.closedAt - closerClock.offsetMax;
+  }
+  if (closer !== null) {
+    if (counterpart.owner === closer && counterpart.closed && evidence.sender?.closed) evidence.proof = 'stream-close';
+  } else if (counterpart.connectionClosed && evidence.sender) {
+    if (evidence.sender.closeAborts > before.closeAborts) evidence.proof = 'sctp-abort';
+    else if (evidence.minimumGapUs >= 2000) evidence.proof = 'clock-order';
+  }
+  return evidence;
 }
 
 function historyThrough(peers) {
@@ -336,6 +342,7 @@ async function run(root, endpoint, mode, players, browserPair) {
   let phase = 'launch';
   let sequence = 0;
   let departureClocks;
+  let closeProofs;
   const wait = async (page, condition, argument = null, timeout = 30000) => {
     const handle = await page.waitForFunction(condition, argument, { timeout });
     await handle.dispose();
@@ -353,22 +360,23 @@ async function run(root, endpoint, mode, players, browserPair) {
   }), index)));
   async function verifyCloseErrors(before, closer = null) {
     if (!closeErrors.length) return undefined;
-    const takeLinks = () => Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.status().sctp)));
-    const verified = ({ index, channel, sentAt }, links) =>
-      receivedClose(index, channel, before[index].wire.sctp, links, closer, { sentAt, clocks: departureClocks });
+    const takeLinks = async () => {
+      const links = await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.status().sctp)));
+      closeProofs = closeErrors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, departureClocks));
+      return links;
+    };
     let closedByPage = await takeLinks();
-    const pending = closeErrors.filter(error => !verified(error, closedByPage));
+    const pending = closeProofs.filter(error => !error.proof);
     // A channel close resets the stream. Peer teardown can also report an SCTP abort.
-    await Promise.all(pending.map(({ index, channel }) => {
-      const link = before[index].wire.sctp.find(link => link.index === channel);
+    await Promise.all(pending.map(({ index, channel, before: link }) => {
       assert.ok(link, `WebKit send failure for peer ${index} lacked a sending channel`);
       return wait(pages[index], ({ channel, aborts, streamClose }) => window.fortressNativeWire.status().sctp
         .some(link => link.index === channel && (streamClose ? link.closed : link.closeAborts > aborts)),
       { channel, aborts: link.closeAborts, streamClose: closer !== null }, DIAGNOSTIC_MS);
     }));
     if (pending.length) closedByPage = await takeLinks();
-    for (const error of closeErrors) {
-      assert.ok(verified(error, closedByPage),
+    for (const error of closeProofs) {
+      assert.ok(error.proof,
         `WebKit send failure for peer ${error.index} channel ${error.channel} lacked confirmation on the expected closed link`);
     }
     return closedByPage;
@@ -601,7 +609,7 @@ async function run(root, endpoint, mode, players, browserPair) {
       ...window.fortressNative, wire: window.fortressNativeWire?.status()
     })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
     const diagnostics = states.map(state => state.status === 'fulfilled' ? state : { status: state.status, reason: String(state.reason) });
-    console.error(JSON.stringify({ phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, states: diagnostics }));
+    console.error(JSON.stringify({ phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, departureClocks, closeProofs, states: diagnostics }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
     failures.push(...await closeAll(browsers, owner => owner.close(), 'browser'));
@@ -633,4 +641,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { compareHistory, instrumentNativeWire, receivedClose, reportedChannel };
+module.exports = { closeEvidence, compareHistory, instrumentNativeWire, reportedChannel };
