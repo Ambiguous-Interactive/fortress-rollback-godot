@@ -11,6 +11,7 @@ const HISTORY_FRAMES = 40;
 const PAGE_BOOT_MS = 60000;
 const DIAGNOSTIC_MS = 5000;
 const CLOSE_MS = 10000;
+const CLOSE_CLOCK_POST_SAMPLES = 4;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 
 function browserOptions(name) {
@@ -238,7 +239,7 @@ function instrumentNativeWire(tagWebKitSends) {
     meshOpen(peers) {
       return resources.rtc.filter(({channel, connection}) => channel.readyState === 'open' && connection.connectionState === 'connected').length === peers * 3;
     },
-    observeDeparture() { observingDeparture = true; return instant(); },
+    observeDeparture() { observingDeparture = true; return window.crossOriginIsolated ? instant() : null; },
     arm(all = false) {
       if (!armed) {
         armed = true;
@@ -311,6 +312,19 @@ function reportedChannel(stack) {
   return { channel: Number(channel), sentAt: sentAt === undefined ? null : Number(sentAt) };
 }
 
+function clockWindow(start, end, sampledAt) {
+  if (!Number.isSafeInteger(sampledAt) || sampledAt < 0) return null;
+  // The isolated browser clocks coarsen by up to 20 us. Allow for two reads and integer rounding.
+  return { offsetMin: start - sampledAt - 41, offsetMax: end - sampledAt + 41 };
+}
+
+function intersectClock(previous, sample) {
+  if (!previous || !sample) return null;
+  const offsetMin = Math.max(previous.offsetMin, sample.offsetMin);
+  const offsetMax = Math.min(previous.offsetMax, sample.offsetMax);
+  return offsetMin <= offsetMax ? { offsetMin, offsetMax } : null;
+}
+
 function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, closer = null, clocks) {
   const before = linksBefore.find(peer => peer.index === channel) ?? null;
   const evidence = { index, channel, sentAt, closer, before, sender: null, counterparts: [], minimumGapUs: null, proof: null };
@@ -339,19 +353,32 @@ function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, cl
 async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks, clock = () => performance.now(), delay = pause } = {}) {
   if (!errors.length) return undefined;
   report.proofs = [];
+  report.clocks = clocks;
+  let rounds = 0;
   const deadline = clock() + DIAGNOSTIC_MS;
   while (clock() < deadline) {
+    const sampleClock = Boolean(report.clocks) && rounds++ < CLOSE_CLOCK_POST_SAMPLES;
     const snapshots = await Promise.allSettled(pages.map((page, index) =>
-      boundedRoom(() => page.evaluate(() => window.fortressNativeWire.status().sctp),
-        Math.max(0, Math.ceil(deadline - clock())), `native peer ${index} close snapshot`)));
+      boundedRoom(async () => {
+        const start = Math.floor(clock() * 1000);
+        const { links, sampledAt } = await page.evaluate(timed => ({
+          sampledAt: timed && window.crossOriginIsolated ? Math.round(performance.now() * 1000) : null,
+          links: window.fortressNativeWire.status().sctp,
+        }), sampleClock);
+        const end = Math.ceil(clock() * 1000);
+        return { links, bound: sampleClock ? clockWindow(start, end, sampledAt) : null };
+      }, Math.max(0, Math.ceil(deadline - clock())), `native peer ${index} close snapshot`)));
     const failed = snapshots.flatMap((entry, index) => entry.status === 'rejected' ? [{ index, reason: entry.reason }] : []);
     report.snapshotErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
     if (failed.length) {
       throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} close snapshot failed`, { cause: reason })),
         'WebKit close snapshots failed');
     }
-    const links = snapshots.map(entry => entry.value);
-    report.proofs = errors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, clocks));
+    const links = snapshots.map(entry => entry.value.links);
+    if (sampleClock && clock() < deadline) {
+      report.clocks = report.clocks.map((bound, index) => intersectClock(bound, snapshots[index].value.bound));
+    }
+    report.proofs = errors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks));
     for (const proof of report.proofs) assert.ok(proof.before, `WebKit send failure for peer ${proof.index} lacked a sending channel`);
     const remaining = deadline - clock();
     if (remaining <= 0) break;
@@ -630,12 +657,13 @@ async function run(root, endpoint, mode, players, browserPair) {
       if (route === 'mesh' && browserPair.includes('webkit')) {
         departureClocks = await Promise.all(pages.map(async page => {
           let bound;
-          // Keep the tightest round trip. Each window is measured on the same controller clock.
+          // Every round trip brackets the same page offset on the controller's clock.
           for (let attempt = 0; attempt < 3; attempt++) {
             const start = Math.floor(performance.now() * 1000);
             const sample = await page.evaluate(() => window.fortressNativeWire.observeDeparture());
             const end = Math.ceil(performance.now() * 1000);
-            if (!bound || end - start < bound.offsetMax - bound.offsetMin) bound = { offsetMin: start - sample, offsetMax: end - sample };
+            const measured = clockWindow(start, end, sample);
+            bound = attempt === 0 ? measured : intersectClock(bound, measured);
           }
           return bound;
         }));
@@ -673,7 +701,8 @@ async function run(root, endpoint, mode, players, browserPair) {
         && rtc.every(([, state]) => state === 'closed');
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
-      direct, afterClose, peers, interruption, terminal, after, closeErrors, closeLinks, departureClocks };
+      direct, afterClose, peers, interruption, terminal, after, closeErrors, closeLinks,
+      departureClocks: closeReport.clocks ?? departureClocks, closeProofs: closeReport.proofs };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
@@ -681,7 +710,8 @@ async function run(root, endpoint, mode, players, browserPair) {
     })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
     const diagnostics = states.map(state => state.status === 'fulfilled' ? state : { status: state.status, reason: String(state.reason) });
     console.error(JSON.stringify({
-      phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, departureClocks, closeProofs: closeReport.proofs,
+      phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, departureClocks: closeReport.clocks ?? departureClocks,
+      closeProofs: closeReport.proofs,
       closeSnapshotErrors: closeReport.snapshotErrors, stalled, states: diagnostics
     }));
   } finally {

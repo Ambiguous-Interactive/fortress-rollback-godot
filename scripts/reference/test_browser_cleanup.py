@@ -351,43 +351,104 @@ const { waitForCloseProofs } = require(process.argv[1]);
 const before = {index:17, local:'survivor', remote:'leaver', closeAborts:0, closed:false};
 const reciprocal = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
 const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
-const sample = links => ({ evaluate: async () => links() });
+const sample = (links, offset) => ({
+  evaluate: async () => {
+    const start = now;
+    const snapshot = links();
+    await Promise.resolve();
+    now = Math.max(now, start + 1);
+    return {links:snapshot, sampledAt:start * 1000 - offset + 500};
+  },
+});
 const initial = [{wire:{sctp:[reciprocal]}}, {wire:{sctp:[before]}}];
 const warning = [{index:1, channel:17, sentAt:47200}];
-const sender = sample(() => [before]);
+const sender = sample(() => [before], -5000);
+let now = 25;
 
 (async () => {
   let rounds = 0;
-  let now = 0;
   const clock = () => now;
   const pause = async ms => { now += ms; };
   const report = {};
-  const late = sample(() => ++rounds === 1 ? [{...reciprocal, connectionClosed:false, closedAt:null}] : [reciprocal]);
+  const late = sample(() => ++rounds === 1 ? [{...reciprocal, connectionClosed:false, closedAt:null}] : [reciprocal], 10000);
   assert.deepEqual(await waitForCloseProofs([late, sender], initial, warning, report, { clocks, clock, delay: pause }), [[reciprocal], [before]]);
   assert.equal(rounds, 2);
   assert.equal(report.proofs[0].proof, 'clock-order');
 
-  now = 0;
+  now = 25;
   let attempts = 0;
-  const ambiguous = sample(() => { attempts++; return [{...reciprocal, closedAt:30001}]; });
-  const expire = async () => { now = 5000; };
+  const ambiguous = sample(() => { attempts++; return [{...reciprocal, closedAt:30001}]; }, 10000);
+  const expire = async () => { now = 5025; };
   await assert.rejects(waitForCloseProofs([ambiguous, sender], initial, warning, report, { clocks, clock, delay: expire }),
     /WebKit close evidence deadline .*peer 1 channel 17/);
   assert.equal(attempts, 1);
   assert.equal(report.proofs[0].minimumGapUs, 1999);
   assert.equal(report.proofs[0].proof, null);
 
-  now = 0;
+  now = 25;
   const crashed = { evaluate: async () => { throw Error('Page crashed'); } };
   await assert.rejects(waitForCloseProofs([late, crashed], initial, warning, report, { clocks, clock, delay: pause }),
     error => error instanceof AggregateError && error.errors[0].message.includes('peer 1') && error.errors[0].cause.message === 'Page crashed');
   assert.deepEqual(report.snapshotErrors, [{index:1, reason:'Error: Page crashed'}]);
   assert.deepEqual(report.proofs, []);
 
-  const lateReply = sample(() => { now = 5000; return [reciprocal]; });
-  now = 0;
+  const lateReply = sample(() => { now = 5025; return [reciprocal]; }, 10000);
+  now = 25;
   await assert.rejects(waitForCloseProofs([lateReply, sender], initial, warning, report, { clocks, clock, delay: pause }),
     /WebKit close evidence deadline/);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
+    def test_native_webkit_close_intersects_only_bounded_clock_samples(self):
+        # Value: protects=exact close-time margin and bounded calibration; fails_when=proof ignores compatible samples or accepts bad clocks; seam=room verifier
+        script = r"""
+const assert = require('node:assert/strict');
+const { waitForCloseProofs } = require(process.argv[1]);
+const before = {index:17, local:'survivor', remote:'leaver', closeAborts:0, closed:false};
+const reciprocal = {index:18, local:'leaver', remote:'survivor', connectionClosed:true, closedAt:30000};
+const initial = [{wire:{sctp:[reciprocal]}}, {wire:{sctp:[before]}}];
+const clocks = [{offsetMin:9500, offsetMax:10500}, {offsetMin:-5500, offsetMax:-4500}];
+
+async function collect(sentAt, sender, contradictory = false) {
+  let now = 25;
+  const report = {};
+  const sampled = [[], []];
+  const pages = [reciprocal, sender].map((link, index) => ({
+    evaluate: async (_read, sampleClock) => {
+      sampled[index].push(sampleClock);
+      const offsets = [10000, contradictory && sampled[index].length === 1 ? 0 : -5000];
+      return {links:[link], sampledAt:now * 1000 - offsets[index]};
+    },
+  }));
+  const proof = waitForCloseProofs(pages, initial, [{index:1, channel:17, sentAt}], report, {
+    clocks, clock: () => now, delay: async ms => { now = sampled[0].length === 5 ? 5025 : now + ms; },
+  });
+  return { report, proof, sampled };
+}
+
+(async () => {
+  const enough = await collect(47082, before);
+  await enough.proof;
+  assert.equal(enough.report.proofs[0].minimumGapUs, 2000);
+  assert.equal(enough.report.proofs[0].proof, 'clock-order');
+  assert.deepEqual(enough.report.clocks, [{offsetMin:9959, offsetMax:10041}, {offsetMin:-5041, offsetMax:-4959}]);
+
+  const short = await collect(47081, before);
+  await assert.rejects(short.proof, /WebKit close evidence deadline .*peer 1 channel 17/);
+  assert.equal(short.report.proofs[0].minimumGapUs, 1999);
+  assert.deepEqual(short.sampled, [[true,true,true,true,false], [true,true,true,true,false]]);
+
+  const conflict = await collect(52000, before, true);
+  await assert.rejects(conflict.proof, /WebKit close evidence deadline .*peer 1 channel 17/);
+  assert.equal(conflict.report.clocks[1], null);
+  assert.equal(conflict.report.proofs[0].minimumGapUs, null);
+
+  const exactAbort = await collect(47081, {...before, closeAborts:1}, true);
+  await exactAbort.proof;
+  assert.equal(exactAbort.report.clocks[1], null);
+  assert.equal(exactAbort.report.proofs[0].proof, 'sctp-abort');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
