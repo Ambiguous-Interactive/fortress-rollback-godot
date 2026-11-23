@@ -28,6 +28,11 @@
   smaller unpaced control. The hosted baseline also failed before release, so
   the pacing result covers the burst during correction.
   [Hosted Firefox baseline](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45231576057)
+- A paced Godot 4.3 room reached confirmed recovery then timed out waiting
+  for browser history. The witness serialized the entire history on every
+  render while capture was enabled. It now exports one requested prefix.
+  The control rejects a stale receipt, a changed frame count, a wrong input
+  row and a wrong canonical snapshot.
 
 ## Changes to guidance
 
