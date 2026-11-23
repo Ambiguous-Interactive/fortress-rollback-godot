@@ -10,6 +10,18 @@ Run `make test-focus SUITE=res://tests/unit/test_online_startup.gd` for a named 
 `FILTER=<case substring>` for a single regression or `make test-changed` for the affected unit suites.
 The broader local pre-push check is `make gate`.
 
+For a repeatable edit study, the following commands create private, temporary Git worktrees.
+They require a Godot 4.7.2 executable on PATH and each writes a new JSONL file.
+
+```sh
+python3 scripts/measure_local_iteration.py --revision e2bdaca --count 5 --output .cache/scratch/control.jsonl
+python3 scripts/measure_local_iteration.py --revision HEAD --control .cache/scratch/control.jsonl --output .cache/scratch/candidate.jsonl
+```
+
+The study alternates expected failures and passes in a shared addon, the online example and unit tests.
+It verifies edited bytes, case identity, both fresh processes, both in-process repeats and the expected
+assertion outcome. Cold samples clear runner timing history. Warm samples seed it. Both use the host's ordinary filesystem cache.
+
 ## Hosted baseline and comparison
 
 The November 18–22, 2026 baseline uses repository activity and all five required check contexts.
@@ -42,3 +54,15 @@ failure-control results. Count scheduling hints only as estimates. Measure the v
 and artifact uploads before adopting a partition count. GitHub runner limits and timing-based scheduling
 inform the experiments. [GitHub Actions limits](https://docs.github.com/en/actions/reference/limits) ·
 [CircleCI timing-based splitting](https://circleci.com/docs/guides/optimize/parallelism-faster-jobs/)
+
+## What runs on a candidate
+
+A PR runs the harness, affected unit partitions and, when tooling changes, the reference and oracle controls.
+The merge-group Gate runs both controls once. It calls the full qualification workflow on the same SHA.
+The required unit verdict uses the full minimum-engine result on the candidate. The Qualification summary
+requires the controls and the complete matrix. A standalone qualification dispatch runs its own controls.
+
+Per engine, the matrix balances whole-unit suites by recorded time, runs integration and determinism
+separately, and distributes the upstream oracle launchers across four jobs. A common server build
+supplies the verified executable to the transport jobs. Chromium ownership assigns the download
+controls and expensive suites to parts by estimated cost. Firefox retains its nightly plan.

@@ -55,7 +55,7 @@ gh run view 42570092471 --attempt 4 --json jobs \
   --jq '.jobs[] | "\(.name)\t\(.startedAt)\t\(.completedAt)"'
 ```
 
-## Where the browser time goes
+## Browser work before the November 23 scheduling change
 
 | Job | Browser work |
 | --- | --- |
@@ -570,43 +570,12 @@ the full matrix. The same window showed sessions polling CI 10-27 times per
 gate and re-verifying the whole inventory locally before pushing, on top of
 the CI run that then repeated it.
 
-The workflow composition now follows the three tiers PLAN.md always defined:
+The tier split moved Firefox and the Java models to nightly. The merge queue introduced
+in #368 subsequently made full Chromium qualification a prerequisite for every merge.
+The current Gate calls Reference Baseline on the merge-group candidate. Its four stable
+checks and the Qualification summary report on that SHA. The queue uses squash merges,
+HEADGREEN grouping and a 30-minute check-response timeout.
 
-| Tier | Workflow | Trigger | Contents |
-| --- | --- | --- | --- |
-| Gate | `gate.yml` | every push and PR | harness checks, changed-suite unit run on the minimum pin (`run_godot_tests.py --changed`, fail-closed to the full inventory), reference/oracle negative controls when tooling changes |
-| Qualify | `reference-baseline.yml` (this file) | merges to `main`, dispatch | the Chromium matrix on both pins: ownership probes, oracle launcher wave (differential traces, formal check recorded as `formal_skipped`), whole test inventory, transport witnesses |
-| Nightly | `nightly.yml` | schedule, dispatch | the Firefox ownership matrix and Firefox transport witness, the SpectatorSession model and the handshake TLA+ formal check |
-
-Composition is pinned by `scripts/tests/test_workflow_tiers.py`; the
-per-engine job checks stay in
-`scripts/reference/test_reference_baseline_workflow.py`. Package-acquisition
-retry wrappers and APT mirror preparation remain mandatory in every tier
-that installs packages. The handshake launcher gained `--formal off`, which
-records `formal_skipped` in its receipt; nightly runs the launcher with the
-default `--formal on`, so the model evidence keeps a real receipt instead of
-a silent skip. The Qualify path filter keeps the pre-tier trigger list, so a
-harness-only change (`scripts/tests/**`, `scripts/llm/**`) does not run the
-full matrix: the Gate tier runs the same linters and self-tests plus the
-reference and oracle negative controls for any tooling change, and a
-`scripts/tests` file cannot reach the engine-side matrix.
-
-Expected per-push cost: the Gate workflow targets roughly four minutes of
-wall time for traced changes (the fail-closed full-inventory fallback
-concentrates the whole unit wave on one runner and stays under its 30-minute
-budget), and the qualification matrix moves to one run per merge. The
-nightly workflow runs the moved axes once per day. GitHub-side evidence for
-the new baselines (Gate wall time, Qualify wall time per merge, nightly
-failure rate) accumulates from the first runs after this change; reproduce
-them with the same `gh run view` records as every section above.
-
-A merge queue gates every merge on the full qualification matrix: the
-`main merge queue and protection` ruleset requires the four Gate checks plus
-the `Qualification summary` context on each grouped merge candidate and
-permits merges only through the queue (squash, HEADGREEN grouping,
-30-minute check timeout, no bypass actors — break-glass means disabling the
-ruleset). `reference-baseline.yml` runs unconditionally on `merge_group`
-events and no longer runs on pushes to `main`, so the group run replaces the
-post-merge qualification and main is green by construction. The Gate
-workflow carries the `merge_group` trigger and the merge-group base SHA for
-the same reason. The queue was created and verified in #368.
+See [iteration measurements](iteration.md) for the current entry points, end-to-end
+timing baseline and acceptance procedure. The tables above are historical measurements
+of the workloads and job shapes identified in each section.
