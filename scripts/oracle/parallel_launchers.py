@@ -100,6 +100,11 @@ def run_wave(args, jobs, launchers):
                 for name, script in launchers.items()}
     if args.lane:
         commands['p2p-wrap'] += ['--wrap-part', str(args.lane)]
+        if 'p2p' in commands:
+            commands['p2p'].append('--mesh-only')
+        # The lifecycle cases and their process controls took 66s on the pilot's 4.7.2 pin.
+        if args.lane == 2:
+            commands['p2p-wrap'].append('--include-lifecycle')
     print(f'Running {len(launchers)} oracle launchers with {jobs} parallel subprocesses.', flush=True)
     results = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:

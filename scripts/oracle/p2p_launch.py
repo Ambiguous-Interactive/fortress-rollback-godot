@@ -143,7 +143,7 @@ def wrap_partition(part):
     return lanes[part - 1]
 
 
-def corpus(binary, selected=None, wrap_only=False, wrap_part=None, *, hints=None):
+def corpus(binary, selected=None, wrap_only=False, wrap_part=None, *, group=None, hints=None):
     """Schedules derive only from actual sent packet inventories, never request traces."""
     cases = {}
     if wrap_only:
@@ -153,7 +153,10 @@ def corpus(binary, selected=None, wrap_only=False, wrap_part=None, *, hints=None
         return cases
     if hints is None:
         hints = p2p_schedule.schedule_hints()
-    for name in [*case_names(), *p2p_lifecycle_corpus.NAMES]:
+    names = case_names() if group != 'lifecycle' else []
+    if group != 'mesh':
+        names.extend(p2p_lifecycle_corpus.NAMES)
+    for name in names:
         if selected is not None and selected != name:
             continue
         observe = p2p_schedule.builder_observer(binary, hints.get(name), source)
@@ -546,8 +549,13 @@ def main(wrap_only=False):
     group.add_argument('--case')
     if wrap_only:
         group.add_argument('--wrap-part', type=int, choices=range(1, 5))
+        parser.add_argument('--include-lifecycle', action='store_true', help='also run all lifecycle schedules with the same verified oracle')
+    else:
+        group.add_argument('--mesh-only', action='store_true', help='run the ordinary mesh corpus and its process controls')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/p2p-oracle')
     args = parser.parse_args()
+    if wrap_only and args.include_lifecycle and args.wrap_part is None:
+        parser.error('--include-lifecycle requires --wrap-part')
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'receipt.json'; receipt.unlink(missing_ok=True)
     identity = git_identity()
@@ -575,7 +583,10 @@ def main(wrap_only=False):
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
     wrap_part = getattr(args, 'wrap_part', None)
-    cases = corpus(binary, args.case, wrap_only=wrap_only, wrap_part=wrap_part)
+    mesh_only = not wrap_only and args.mesh_only
+    cases = corpus(binary, args.case, wrap_only=wrap_only, wrap_part=wrap_part, group='mesh' if mesh_only else None)
+    if wrap_only and args.include_lifecycle:
+        cases.update(corpus(binary, group='lifecycle'))
     if args.case:
         cases = {args.case: cases[args.case]}
     evidence = []
@@ -653,6 +664,7 @@ def main(wrap_only=False):
         'engine_identity': engine_identity, 'engine_path': str(engine),
         'binary_identity': binary_identity, 'execution_identities_unchanged': True,
         'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'default_features': False, 'features': [],
+        'mesh_only': mesh_only, 'includes_lifecycle_partition': wrap_only and args.include_lifecycle,
         'wrap_part': wrap_part, 'process_controls': process_evidence, 'cases': evidence}, indent=2) + '\n')
 
 

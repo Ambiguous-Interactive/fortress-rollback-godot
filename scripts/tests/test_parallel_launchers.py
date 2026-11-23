@@ -109,6 +109,21 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
         self.assertIn('pass beta', stdout)
         self.assertNotIn('FAIL', stdout)
 
+    def test_qualification_routes_each_p2p_group_once(self):
+        script = str(write_script(self.root, 'passing.py', PASS_SCRIPT))
+        table = {name: script for name in parallel_launchers.LAUNCHERS}
+        for lane in range(1, 5):
+            arguments = ['--godot', 'engine', '--results', str(self.results), '--lane', str(lane)]
+            status, log, _ = self.run_main(table, arguments)
+            self.assertEqual(status, 0, log)
+            wrap = (self.results / f'p2p-wrap-lane-{lane}' / 'argv.txt').read_text().splitlines()
+            self.assertEqual(wrap[wrap.index('--wrap-part') + 1], str(lane))
+            self.assertEqual('--include-lifecycle' in wrap, lane == 2)
+            mesh = self.results / f'p2p-lane-{lane}' / 'argv.txt'
+            self.assertEqual(mesh.exists(), lane == 1)
+            if mesh.exists():
+                self.assertIn('--mesh-only', mesh.read_text().splitlines())
+
     def test_failing_launcher_fails_run_and_later_launchers_still_join(self):
         table = {'alpha': str(write_script(self.root, 'alpha.py', PASS_SCRIPT)),
                  'beta': str(write_script(self.root, 'beta.py', FAIL_SCRIPT)),
