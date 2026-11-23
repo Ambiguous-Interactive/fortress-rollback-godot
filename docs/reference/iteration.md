@@ -40,7 +40,7 @@ python3 scripts/github/iteration_report.py --since "$ROLLOUT_UTC" \
 ```
 
 The report starts with queue ref creations and PR head revisions observed while each PR targeting main was open.
-Opening or reopening a PR starts a new sample at the current revision. The report joins Actions jobs by event, head repository, ref and SHA.
+Opening, reopening or retargeting an open PR onto main starts a sample at its current revision. The report joins Actions jobs by event, head repository, ref and SHA.
 Base repository activity cannot establish fork head history. An overlapping fork PR leaves an incomplete sample.
 A candidate with zero workflow runs also remains incomplete.
 It includes pickup, steps, upload, peak simultaneous runners, summed allocation, first failed step, and

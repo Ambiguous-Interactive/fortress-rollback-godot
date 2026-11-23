@@ -1,18 +1,16 @@
-# Reference Baseline job baseline
+# Historical qualification timings
 
-Every Reference Baseline job spends wall time on the same warm cache key. This
-file records that per-job time so a later change is compared against a table
-instead of against a single run.
+These measurements record the qualification workflow and cache configuration in use for each experiment.
 
 For current end-to-end targets, cost and measurement commands, see [iteration measurements](iteration.md).
 
 ## Historical measured baseline
 
-The workflow currently runs 48 jobs: 32 ownership parts (two engines, two
+The November 9 workflow ran 48 jobs: 32 ownership parts (two engines, two
 browsers, two phases, four interleaved suite parts), six SignalFish legs, eight
 Godot legs, the negative controls and the pinned Rust reference. The last
 unchanged-source `main` run and this repository's first paired-page run record
-the current shape:
+that job layout:
 
 Source: `main` run `42562496243` (squash commit `639e51f`, 2026-11-09) against
 candidate run `42570092471` (2026-11-09). Both used warm cache keys.
@@ -214,7 +212,7 @@ observed reduction in overall workflow time. The broader browser-room savings
 and consecutive warm-run target remain open in #164.
 
 
-## Current ownership wall-time partition
+## Earlier ownership wall-time partition
 
 Run [41394927982](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/41394927982)
 qualified main `1e4f96f161430e7c400ea4764c325f4e23e589b0` on 2026-11-02.
@@ -378,7 +376,7 @@ part 2 took 12m39s here against 10m20s in the earlier main run, and became the
 critical path). These are single-run comparisons of changing trees, not a
 noise-controlled benchmark; the per-job table remains the comparison point.
 
-## Current 24-job baseline and the parallel oracle suite
+## Historical 24-job baseline and the parallel oracle suite
 
 Run [42443776980](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42443776980)
 qualified main `5118de2405a2c440ff1db661319ac90f84025f17` on 2026-11-08: all 24
@@ -445,7 +443,7 @@ their transitive `scripts/reference` imports resolve. `handshake_formal.py`
 now inserts that path itself, so every oracle test file is import-order
 independent and per-file subprocess isolation is sound.
 
-## Current 28-job baseline and the whole-inventory shard jobs
+## Historical 28-job baseline and the whole-inventory shard jobs
 
 Run [42543205499](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42543205499)
 qualified main `488f6c101ab7a19b22f5a7d9489b16f5a7808826` on 2026-11-09: all 28
@@ -483,7 +481,7 @@ exactly once) and splits the ownership parts from two to four per phase. The
 workflow-contract tests keep the shard union and the ownership part union
 equal to the declared inventories, so no gate moves with the schedule.
 
-## Current 48-job baseline and the shard jobs
+## Historical 48-job baseline and the shard jobs
 
 PR #338's candidate run
 [42553118792](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42553118792)
