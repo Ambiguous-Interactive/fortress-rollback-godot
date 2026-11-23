@@ -25,6 +25,13 @@ The goals were a verified focused result in 10 seconds and a required hosted ver
   for the next partition adjustment. [Hosted trial](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45090341692)
 - Measuring only Actions runs can miss a required workflow that never starts. The
   [report](../../scripts/github/iteration_report.py) enumerates eligible revisions and then joins their required checks.
+- The first protected merge candidate passed all checks in 353 s and used 183.5 runner-minutes.
+  Replaying its slow ownership partition on four cores with two isolated Chromium processes
+  reduced browser time from 114 s to 59 s. All 152 ordered records matched across both repeats.
+  Transport jobs now overlap verified downloads with setup and balance measured page waves.
+  [First merge candidate](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45095685122)
+- Alternating 100 matched edit pairs on two filesystems gave p95 8.05 s on the host mount and
+  2.05 s on container-local storage. Both filesystems reported the same results for every pair.
 
 ## Prune ledger
 
