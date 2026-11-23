@@ -2,6 +2,7 @@
 import importlib.util
 import re
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -198,6 +199,27 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         self.assertTrue(set(transport.SPECTATORS) <= set(transport.PARTS))
         self.assertIn('online', transport.PARTS)
         self.assertIn('native', transport.PARTS)
+
+    def test_editor_lanes_launch_from_the_command_entry_point(self):
+        import qualification_transport as transport
+        manifest = transport.load_manifest()
+        cases = [('4.3', 'admission', 'signalfish_spectator_live.py', 6), ('4.7.2', 'native', 'signalfish_native_probes.py', 1)]
+        for version, part, launcher, count in cases:
+            with (self.subTest(part=part), tempfile.TemporaryDirectory() as temporary,
+                  patch.object(transport, 'CACHE', Path(temporary)), patch.object(sys, 'argv', ['qualification_transport.py', '--version', version, '--part', part]),
+                  patch.object(transport, 'load_manifest', return_value=manifest), patch.object(transport, 'fetch'),
+                  patch.object(transport, 'extract', return_value=Path(temporary) / 'verified-server'),
+                  patch.object(transport, 'prepare_editor', return_value=Path(temporary) / 'godot') as prepare,
+                  patch.object(transport.subprocess, 'run') as run):
+                transport.main()
+                prepare.assert_called_once_with(manifest, version)
+                self.assertEqual(run.call_count, count)
+                for call in run.call_args_list:
+                    command = call.args[0]
+                    self.assertEqual(Path(command[1]).name, launcher)
+                    self.assertEqual(command[command.index('--godot') + 1], str(Path(temporary) / 'godot'))
+                    self.assertEqual(command[command.index('--server-source') + 1], str(Path(temporary) / 'verified-server'))
+                    self.assertTrue(call.kwargs['check'])
 
     def test_parallel_browser_preparation_requires_each_pinned_archive(self):
         import qualification_transport as transport

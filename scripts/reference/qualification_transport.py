@@ -43,7 +43,7 @@ def prepare_browser_archives(data, version, arch):
             task.result()
 
 
-def run_lanes(args, server_source):
+def run_lanes(args, data, server_source):
     results = CACHE / 'results'
     build = CACHE / 'server-build'
     server = ['--server', str(build / 'target/debug/signal-fish-server'), '--server-source', str(server_source),
@@ -83,7 +83,7 @@ def main():
     pin = data['sources']['server']
     archive = fetch(pin['archive'], 'server.tar.gz')
     with tempfile.TemporaryDirectory(dir=CACHE) as temporary:
-        run_lanes(args, extract(archive, pin, Path(temporary)))
+        run_lanes(args, data, extract(archive, pin, Path(temporary)))
 
 
 if __name__ == '__main__':
