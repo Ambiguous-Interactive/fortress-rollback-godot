@@ -503,13 +503,12 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
 
     def test_direct_label_lists_bind_the_runner_tables(self):
         expected = sorted(set(webrtc_runner.ROOM_COUNTS) - {'mixed', 'mixed-default', 'mixed-close', 'recording-pressure'})
-        for name in ('reference-baseline.yml', 'nightly.yml'):
-            text = (ROOT / '.github/workflows' / name).read_text()
-            line = next((line for line in text.splitlines() if line.strip().startswith('labels=(')), None)
-            self.assertIsNotNone(line, f'{name} must name its direct labels')
-            start = text.index(line) + line.index('labels=(') + len('labels=(')
-            labels = text[start:text.index(')', start)].split()
-            self.assertEqual(sorted(labels), expected, f'{name} must run every direct label')
+        import qualification_transport
+        self.assertCountEqual([label for labels in qualification_transport.TRANSPORT.values() for label in labels], webrtc_runner.ROOM_COUNTS)
+        text = (ROOT / '.github/workflows/nightly.yml').read_text()
+        line = next(line for line in text.splitlines() if line.strip().startswith('labels=('))
+        start = text.index(line) + line.index('labels=(') + len('labels=(')
+        self.assertEqual(sorted(text[start:text.index(')', start)].split()), expected)
 
     def test_browser_launcher_routes_every_peer_drop_label(self):
         source = (ROOT / 'scripts/reference/browser/webrtc.cjs').read_text()

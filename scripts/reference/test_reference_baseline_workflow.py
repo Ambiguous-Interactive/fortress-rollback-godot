@@ -1,6 +1,7 @@
 """Value: keep the exported web probes on one leg without losing a check from either leg."""
 import importlib.util
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -12,12 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SUITES_CHECKS = ['scripts/reference/package_audit.py', 'scripts/reference/test_package_audit.py',
                  'scripts/reference/signalfish_probe.py', 'scripts/reference/test_godot_runner.py',
                  'scripts/reference/diagnostic_json.py']
-# The two shard legs together own the whole unit inventory exactly once; the second shard
-# also keeps the integration and determinism categories.
 TESTS_CHECKS = ['scripts/run_godot_tests.py', '--shard "$shard"']
 # The oracle leg keeps the differential launcher wave; the spectator model and the
 # handshake formal check are nightly-tier jobs (scripts/tests/test_workflow_tiers.py).
-ORACLES_CHECKS = ['scripts/oracle/parallel_launchers.py']
 # The runner's table owns the six upstream comparisons; a dropped entry would silently
 # remove its launch from CI, so the table itself is pinned here.
 RUNNER_LAUNCHERS = ['queue_launch.py', 'launch.py', 'replay_launch.py',
@@ -119,92 +117,73 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         self.assertNotEqual(mutant, text)
         self.assertNotEqual(web_probe_conditions(mutant), ["matrix.part == 'suites'"])
 
-    # Value: protects=both pinned engines and every leg; fails_when=the matrix loses a version or a part; seam=workflow text
-    def test_the_matrix_keeps_both_engines_and_both_legs(self):
-        block = '\n'.join(job_blocks(WORKFLOW.read_text(encoding='utf-8'))['godot'])
+    def test_godot_lanes_cover_each_pin_and_unit_suite_once(self):
+        text = WORKFLOW.read_text()
+        block = '\n'.join(job_blocks(text)['godot'])
         self.assertIn('version: ["4.3", "4.7.2"]', block)
-        self.assertIn('part: [suites, oracles, tests-1of2, tests-2of2]', block)
-
-    # Value: protects=both shard legs keep the whole unit inventory exactly once; fails_when=a shard drops or repeats suites; seam=workflow text and runner selector
-    def test_the_test_shards_cover_the_whole_unit_inventory_exactly_once(self):
-        text = WORKFLOW.read_text(encoding='utf-8')
-        block = job_blocks(text)['godot']
-        self.assertIn('part: [suites, oracles, tests-1of2, tests-2of2]', '\n'.join(block))
-        shard_steps = [step for step in godot_steps(text) if '--shard "$shard"' in command(step)]
-        self.assertEqual(len(shard_steps), 1)
-        self.assertEqual(shard_steps[0]['attributes'].get('if'), "startsWith(matrix.part, 'tests')")
-        self.assertIn('shard="${part#tests-}"', command(shard_steps[0]))
-        self.assertIn('--results ".cache/tests/runner-$version-$part.json"', command(shard_steps[0]))
-        self.assertIn('--category integration', command(shard_steps[0]))
-        self.assertIn('--category determinism', command(shard_steps[0]))
-        # Integration and determinism run on the declared last shard only; a shard
-        # count change must move this literal with the matrix.
-        self.assertIn('[[ "$shard" == 2of2 ]]', command(shard_steps[0]))
+        parts = re.search(r'part: \[(.*?)\]', block).group(1).split(', ')
+        self.assertCountEqual(parts, ['suites', 'integration', *[f'tests-{n}of3' for n in range(1, 4)],
+                                     *[f'oracle-{n}' for n in range(1, 5)]])
+        tests = shared_leg_commands(text, "startsWith(matrix.part, 'tests')")
+        for check in TESTS_CHECKS + ['shard="${part#tests-}"', '--results ".cache/tests/runner-$version-$part.json"']:
+            self.assertIn(check, tests)
         runner = importlib.util.spec_from_file_location('run_godot_tests_under_test', ROOT / 'scripts/run_godot_tests.py')
         module = importlib.util.module_from_spec(runner)
         runner.loader.exec_module(module)
         suites = module.discover('unit')
-        first = module.select_shard(suites, '1of2')
-        second = module.select_shard(suites, '2of2')
-        self.assertEqual(sorted(first + second), suites)
-        self.assertEqual(set(first) & set(second), set())
+        executed = [suite for n in range(1, 4) for suite in module.select_shard(suites, f'{n}of3')]
+        self.assertCountEqual(executed, suites)
         for invalid in ('0/2', '1/', '3/2', 'x/y', '1/2', '0of2', '3of2'):
             with self.subTest(shard=invalid), self.assertRaises(ValueError):
                 module.select_shard(suites, invalid)
 
-    # Value: protects=every check of all legs; fails_when=a leg loses native work; seam=workflow text
-    def test_every_leg_keeps_its_own_checks(self):
-        text = WORKFLOW.read_text(encoding='utf-8')
-        suites, oracles = leg_commands(text, 'suites'), leg_commands(text, 'oracles')
+    def test_every_godot_lane_keeps_its_checks_and_editor(self):
+        text = WORKFLOW.read_text()
         for check in SUITES_CHECKS:
-            with self.subTest(check=check):
-                self.assertIn(check, suites)
-        for check in ORACLES_CHECKS:
-            with self.subTest(check=check):
-                self.assertIn(check, oracles)
-        tests = shared_leg_commands(text, "startsWith(matrix.part, 'tests')")
-        for check in TESTS_CHECKS:
-            with self.subTest(check=check):
-                self.assertIn(check, tests)
-        runner = RUNNER.read_text(encoding='utf-8')
-        namespace = {'__name__': 'parallel_launchers_under_test', '__file__': str(RUNNER)}
-        exec(compile(runner, str(RUNNER), 'exec'), namespace)
-        self.assertTrue(set(RUNNER_LAUNCHERS) <= set(namespace['LAUNCHERS'].values()),
-                        'the active launcher table dropped a pinned upstream comparison')
-        # The mutant comments out one launcher entry; the active table loses it and
-        # this validation detects the omission.
-        mutant = runner.replace("    'p2p': 'p2p_launch.py',", "    # 'p2p': 'p2p_launch.py',")
-        self.assertNotEqual(mutant, runner)
-        mutant_namespace = {'__name__': 'parallel_launchers_mutant', '__file__': str(RUNNER)}
-        exec(compile(mutant, str(RUNNER), 'exec'), mutant_namespace)
-        self.assertFalse(set(RUNNER_LAUNCHERS) <= set(mutant_namespace['LAUNCHERS'].values()))
-        # The mutant drops the oracle trace comparison from the oracles leg.
-        mutant = text.replace('python3 scripts/oracle/parallel_launchers.py',
-                              'python3 scripts/oracle/parallel_launchers_disabled.py')
-        self.assertNotEqual(mutant, text)
-        self.assertNotIn('scripts/oracle/parallel_launchers.py', leg_commands(mutant, 'oracles'))
-        # The mutant drops one test shard leg, losing half the unit inventory.
-        mutant = text.replace('part: [suites, oracles, tests-1of2, tests-2of2]', 'part: [suites, oracles, tests-1of2]')
-        self.assertNotEqual(mutant, text)
-        self.assertEqual(leg_commands(mutant, 'tests-2of2'), '')
+            self.assertIn(check, leg_commands(text, 'suites'))
+        integration = leg_commands(text, 'integration')
+        self.assertIn('for case in default_single default_batched readiness_boundary aborted_wait', integration)
+        self.assertIn('--category integration --filter "$case"', integration)
+        self.assertIn('--category determinism', integration)
+        oracles = shared_leg_commands(text, "startsWith(matrix.part, 'oracle-')")
+        self.assertIn('scripts/oracle/parallel_launchers.py', oracles)
+        self.assertIn('--skip-formal --lane "${part#oracle-}"', oracles)
+        self.assertIn('scripts/reference/godot_smoke.py --version "${{ matrix.version }}"', leg_commands(text, 'oracle-4'))
+        prepare = shared_leg_commands(text, "matrix.part != 'suites' && matrix.part != 'oracle-4'")
+        self.assertIn("prepare_editor(load_manifest(), os.environ['VERSION'])", prepare)
 
-    # Value: protects=the pinned engine of the oracle leg; fails_when=the oracle launchers lose it; seam=workflow text
-    def test_the_oracle_leg_still_installs_the_pinned_engine(self):
-        text = WORKFLOW.read_text(encoding='utf-8')
-        oracles = leg_commands(text, 'oracles')
-        # The oracle launchers run the pinned editor, so the native probes stay in this leg.
-        self.assertIn('scripts/reference/godot_smoke.py', oracles)
-        self.assertIn('--version "${{ matrix.version }}"', oracles)
-        self.assertNotIn('--web', oracles)
-        # The mutant moves the native probes out of the oracle leg and leaves it without an engine.
-        mutant = text.replace(
-            '      - name: Execute the native engine probes for the oracle launchers\n'
-            '        # The oracle launchers need the pinned engine, so this leg keeps the native probes\n'
-            '        # and leaves the exported web probe to the suites leg.\n'
-            '        if: matrix.part == \'oracles\'\n'
-            '        run: python3 scripts/reference/godot_smoke.py --version "${{ matrix.version }}"\n', '')
-        self.assertNotEqual(mutant, text)
-        self.assertNotIn('scripts/reference/godot_smoke.py', leg_commands(mutant, 'oracles'))
+    def test_oracle_lanes_cover_every_comparison_and_wrap_case_once(self):
+        sys.path.insert(0, str(RUNNER.parent))
+        self.addCleanup(sys.path.remove, str(RUNNER.parent))
+        import parallel_launchers
+        import p2p_launch
+        lanes = parallel_launchers.QUALIFICATION_LANES
+        names = [name for lane in lanes for name in lane]
+        self.assertCountEqual(names, ['p2p', 'drop-history', 'replay', 'oracle', 'handshake', 'queue', 'sync-floor'])
+        self.assertCountEqual([parallel_launchers.LAUNCHERS[name] for name in names],
+                              [*RUNNER_LAUNCHERS, 'sync_floor_launch.py'])
+        self.assertEqual(parallel_launchers.LAUNCHERS['p2p-wrap'], 'p2p_wrap_launch.py')
+        wrap = [case for part in range(1, len(lanes) + 1) for case in p2p_launch.wrap_partition(part)]
+        self.assertCountEqual(wrap, p2p_launch.p2p_wrap.NAMES)
+
+    def test_relay_witnesses_share_the_producer_artifact_and_cover_all_cells(self):
+        import qualification_transport as transport
+        text = WORKFLOW.read_text()
+        server = '\n'.join(job_blocks(text)['server'])
+        relay = '\n'.join(job_blocks(text)['signalfish'])
+        self.assertIn('scripts/reference/signalfish_build_server.py', server)
+        self.assertIn('artifact: ${{ steps.publish.outputs.artifact-id }}', server)
+        self.assertIn('needs: server', relay)
+        self.assertIn('artifact-ids: ${{ needs.server.outputs.artifact }}', relay)
+        self.assertIn('qualification_transport.py --version "${{ matrix.version }}" --part "${{ matrix.part }}"', relay)
+        self.assertIn('version: ["4.3", "4.7.2"]', relay)
+        self.assertCountEqual(re.search(r'part: \[(.*?)\]', relay).group(1).split(', '), transport.PARTS)
+        self.assertCountEqual([label for labels in transport.TRANSPORT.values() for label in labels], transport.LABELS)
+        self.assertCountEqual([cell for cells in transport.SPECTATORS.values() for cell in cells],
+                              ['healthy', 'initial-state', 'room-identity', 'viewer-departure', 'host-departure', 'delayed-accept'])
+        self.assertTrue(set(transport.SPECTATORS) <= set(transport.PARTS))
+        self.assertIn('online', transport.PARTS)
+        self.assertIn('native', transport.PARTS)
 
     # Value: protects=the published artifacts of every leg; fails_when=the upload step disappears; seam=workflow text
     def test_every_leg_still_publishes_its_artifacts(self):
