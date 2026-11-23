@@ -151,10 +151,11 @@ jobs:
         if: matrix.part == 'suites'
         run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
       - name: Restore the pinned editor
+        if: matrix.part != 'suites'
         uses: actions/cache@v6.1.0
         with:
           path: .cache/reference/downloads/Godot_v${{ matrix.version }}-stable_linux.x86_64.zip
-          key: editor-v1-${{ runner.arch }}-${{ matrix.version }}-${{ hashFiles('docs/reference/pins.json') }}
+          key: reference-editor-v1-${{ matrix.version }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
       - name: Restore verified oracle downloads and crates
         if: startsWith(matrix.part, 'oracle-')
         uses: actions/cache@v6.1.0
@@ -165,15 +166,18 @@ jobs:
             .cache/reference/cargo/registry/cache
             .cache/reference/cargo/registry/index
           key: oracle-v3-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/oracle/rust/Cargo.lock') }}
-      - name: Restore verified web tools
+      - name: Restore the pinned editor, Chromium and Web templates
         if: matrix.part == 'suites'
-        uses: actions/cache@v6.1.0
+        uses: ./.github/actions/reference-browser-cache
         with:
-          path: |
-            .cache/reference/downloads/*export_templates.tpz
-            .cache/reference/downloads/chromium-*.zip
-            .cache/reference/downloads/*.tar.gz
-          key: qualification-web-v1-${{ runner.arch }}-${{ matrix.version }}-${{ hashFiles('docs/reference/pins.json') }}
+          version: ${{ matrix.version }}
+          browser: chromium
+      - name: Restore verified source archives
+        if: matrix.part == 'suites'
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: .cache/reference/downloads/*.tar.gz
+          key: transport-sources-v1-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
       - name: Install pinned browser runner and operating system dependencies
         if: matrix.part == 'suites'
         run: |
@@ -378,19 +382,17 @@ jobs:
           path: .cache/reference/downloads/*.tar.gz
           key: transport-sources-v1-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
       - name: Restore the pinned editor
+        if: matrix.part == 'native'
         uses: actions/cache@v6.1.0
         with:
           path: .cache/reference/downloads/Godot_v${{ matrix.version }}-stable_linux.x86_64.zip
-          key: editor-v1-${{ runner.arch }}-${{ matrix.version }}-${{ hashFiles('docs/reference/pins.json') }}
-      - name: Restore verified Chromium and export templates
+          key: reference-editor-v1-${{ matrix.version }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
+      - name: Restore the pinned editor, Chromium and Web templates
         if: matrix.part != 'native'
-        uses: actions/cache@v6.1.0
+        uses: ./.github/actions/reference-browser-cache
         with:
-          path: |
-            .cache/reference/downloads/*export_templates.tpz
-            .cache/reference/downloads/chromium-*.zip
-            .cache/reference/downloads/*.tar.gz
-          key: qualification-web-v1-${{ runner.arch }}-${{ matrix.version }}-${{ hashFiles('docs/reference/pins.json') }}
+          version: ${{ matrix.version }}
+          browser: chromium
       - name: Select Ubuntu HTTPS mirror alternatives
         if: matrix.part != 'native'
         run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt

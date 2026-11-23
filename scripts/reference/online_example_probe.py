@@ -785,6 +785,7 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
     documented_export = root / ('documented-export-' + version)
     documented_export.mkdir()
     installed['sdk'] = project / 'addons/signal_fish'
+    installed['web_templates'] = template_target
     before_sdk_import = inventory(installed)
     with timings.measure('sdk_import'):
         run(command + ['--editor', '--quit'], environment, output / f'{version}-sdk-import.log')
@@ -804,6 +805,7 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
     executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish', 'examples': project / 'examples',
                 'bridge': project / 'bridge.gd', 'diagnostic_cli': project / 'diagnose_trace.gd', 'project': project / 'project.godot', 'scene': project / 'main.tscn',
                 'preset': project / 'export_presets.cfg', 'license': project / 'LICENSE', 'certificate': certificate, 'private_key': private_key}
+    executed['web_templates'] = template_target
     frozen = inventory(executed)
     with timings.measure('import'):
         run(command + ['--editor', '--quit'], environment, output / f'{version}-import.log')
