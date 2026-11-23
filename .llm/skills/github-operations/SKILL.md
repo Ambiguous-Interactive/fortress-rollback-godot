@@ -133,12 +133,14 @@ with `gh --body-file`; preserve actual newlines. Secret values stay in process
 environment or existing `gh` configuration throughout the operation.
 Pass generated REST bodies as JSON on stdin with `gh api --input -`. Check the
 endpoint's body limit separately from the operating system's argument limit.
-Verify uploaded evidence before posting a summary that links to it. A rerun
-can remove an earlier artifact even when each attempt uses a different name
-and does not overwrite. Record the checkout, inputs and replay command in
-the summary. When the exact evidence digest recurs, preserve live links and
-update an existing trusted comment only after confirming its artifact is gone.
-Authorization and network errors do not prove absence.
+Download the upload's exact artifact ID and compare the raw ZIP with its
+GitHub SHA-256 before publishing a link. A rerun can remove an earlier
+artifact even when each attempt uploads a different name. Record the checkout,
+inputs and replay command in the summary. When the same evidence digest
+recurs, preserve live links. For a missing link, serialize the bot publisher
+and re-read its comment immediately before an in-place edit. An issue comment
+PATCH has no atomic precondition. Authorization and network errors do not
+prove artifact absence.
 
 ## Evidence and retry boundaries
 
