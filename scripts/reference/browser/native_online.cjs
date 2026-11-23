@@ -107,7 +107,12 @@ function instrumentNativeWire(tagWebKitSends) {
   const increment = (counts, uuid) => counts.set(uuid, (counts.get(uuid) ?? 0) + 1);
   const ufrag = description => description?.sdp.match(/^a=ice-ufrag:([\w+/]+)\r?$/m)?.[1];
   function receive(route, reports, peer, packet) {
-    if (packet.kind === 5 && reports.get(peer)?.delete(packet.token)) controlRoundTrips[route]++;
+    if (packet.kind !== 5) return;
+    const tokens = reports.get(peer);
+    if (tokens?.get(packet.token)) {
+      tokens.set(packet.token, false);
+      controlRoundTrips[route]++;
+    }
   }
   function send(route, reports, peer, emit, data, packet) {
     if (!packet) return emit(data);
@@ -116,11 +121,11 @@ function instrumentNativeWire(tagWebKitSends) {
     if (!holdAll && packet.kind !== inputKind) {
       const sent = emit(data);
       if (reports && packet.kind === 4 && packet.token !== null) {
-        if (!reports.has(peer)) reports.set(peer, new Set());
-        const pending = reports.get(peer);
-        if (pending.has(packet.token)) return sent;
-        if (pending.size === pendingReportLimit[route]) pending.delete(pending.values().next().value);
-        pending.add(packet.token);
+        if (!reports.has(peer)) reports.set(peer, new Map());
+        const tokens = reports.get(peer);
+        if (tokens.has(packet.token)) return sent;
+        if (tokens.size === pendingReportLimit[route]) tokens.delete(tokens.keys().next().value);
+        tokens.set(packet.token, true);
       }
       return sent;
     }
@@ -374,8 +379,9 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
       throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} close snapshot failed`, { cause: reason })),
         'WebKit close snapshots failed');
     }
+    if (clock() >= deadline) break;
     const links = snapshots.map(entry => entry.value.links);
-    if (sampleClock && clock() < deadline) {
+    if (sampleClock) {
       report.clocks = report.clocks.map((bound, index) => intersectClock(bound, snapshots[index].value.bound));
     }
     report.proofs = errors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks));

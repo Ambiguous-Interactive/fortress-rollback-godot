@@ -130,6 +130,9 @@ for (const expiry of [false, true]) {
     socket.message({data: relay(3, 1, packet(5, 200))});
     socket.message({data: relay(3, 1, packet(5, 200))});
     assert.equal(wire.status().control_round_trips.relay, 2);
+    socket.send(relay(1, 3, packet(4, 200)));
+    socket.message({data: relay(3, 1, packet(5, 200))});
+    assert.equal(wire.status().control_round_trips.relay, 2);
 
     for (let i = 0; i <= 256; i++) socket.send(relay(1, 4, packet(4, i)));
     socket.message({data: relay(4, 1, packet(5, 0))});
@@ -396,6 +399,7 @@ let now = 25;
   now = 25;
   await assert.rejects(waitForCloseProofs([lateReply, sender], initial, warning, report, { clocks, clock, delay: pause }),
     /WebKit close evidence deadline/);
+  assert.deepEqual(report.proofs, []);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
