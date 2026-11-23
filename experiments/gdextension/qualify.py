@@ -90,6 +90,7 @@ def main():
                     response = self.tick(payload)
                 except Exception as error:
                     result["error"] = str(error)
+                    result["timed_out"] = isinstance(error, TimeoutError)
                     response = {"done": True}
                 data = json.dumps(response).encode()
                 self.send_response(200)
@@ -181,9 +182,12 @@ def main():
         while not result.get("done") and "error" not in result and (child is None or child.poll() is None) and time.monotonic() < deadline:
             server.handle_request()
         if "error" in result or not result.get("done"):
+            cause = result.get("error", "no completion")
+            if "error" in result and not result.get("timed_out"):
+                raise SystemExit(cause)
             detail = {"slot": args.slot, "control": args.control, "verified": result.get("verified", False),
                       "last_exchange": last_exchange}
-            raise SystemExit(result.get("error", f"no completion after {ticks} ticks {json.dumps(detail)}"))
+            raise SystemExit(f"{cause} after {ticks} ticks {json.dumps(detail)}")
         if child is not None and not args.browser and child.wait(timeout=10) != 0:
             raise SystemExit("exported game exited unsuccessfully")
         print(json.dumps(result))

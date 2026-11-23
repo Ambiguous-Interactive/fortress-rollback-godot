@@ -54,6 +54,10 @@ the archive.
   direct links were still opening. The direct-only fixture now establishes full
   physical connectivity before entering the production start path and still
   requires zero relay sends. The missing-link cell keeps the production grace.
+- Review found that a reference peer timeout returned before the new
+  diagnostic. A local bridge with a peer that stopped answering reproduced
+  `reference peer did not answer`. That timeout now retains the last complete
+  exchange. The gameplay negative controls keep their original diagnostics.
 
 ## Prune ledger
 
