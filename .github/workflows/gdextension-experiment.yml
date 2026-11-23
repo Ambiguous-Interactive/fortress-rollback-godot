@@ -1,5 +1,8 @@
 name: Qualify Fortress GDExtension
-run-name: Qualify Fortress GDExtension (${{ inputs.qualification || 'platforms' }})
+run-name: >-
+  Qualify Fortress GDExtension
+  (${{ inputs.qualification == 'platforms' && inputs.cell && inputs.cell != 'all' && 'chromium' || inputs.qualification || 'platforms'
+  }}${{ inputs.cell && inputs.cell != 'all' && format(' / {0}', inputs.cell) || '' }})
 on:
   workflow_dispatch:
     inputs:
@@ -8,6 +11,11 @@ on:
         type: choice
         default: platforms
         options: [platforms, chromium, firefox, webkit, chromium-firefox, chromium-webkit, firefox-webkit]
+      cell:
+        description: One Web browser room, or all rooms for qualification
+        type: choice
+        default: all
+        options: [all, 'mesh:2', 'mesh:4', 'mesh:8', 'mesh-startup:4', 'mesh-close:4', 'relay:2', 'relay:4', 'relay:8']
   push:
     branches: [experiment/upstream-gdextension, experiment/upstream-gdextension-landing]
     paths:
@@ -23,7 +31,9 @@ jobs:
       fail-fast: false
       matrix:
         version: ["4.3", "4.7.2"]
-        target: ${{ fromJSON(inputs.qualification && inputs.qualification != 'platforms' && '["web"]' || '["linux","windows","macos","android","ios","web"]') }}
+        target: >-
+          ${{ fromJSON((inputs.cell && inputs.cell != 'all' || inputs.qualification && inputs.qualification != 'platforms')
+          && '["web"]' || '["linux","windows","macos","android","ios","web"]') }}
     runs-on: ${{ fromJSON('{"web":"ubuntu-24.04","linux":"ubuntu-24.04","windows":"windows-2025","macos":"macos-15","android":"ubuntu-24.04","ios":"macos-15"}')[matrix.target] }}
     timeout-minutes: 70
     defaults:
@@ -143,6 +153,7 @@ jobs:
         if: matrix.target == 'web'
         env:
           BROWSER_PAIR: ${{ inputs.qualification == 'platforms' && 'chromium' || inputs.qualification || 'chromium' }}
+          NATIVE_BROWSER_CELL: ${{ inputs.cell }}
         run: |
           python scripts/reference/fetch.py
           server_source=".cache/reference/$(jq -r .sources.server.root docs/reference/pins.json)"
@@ -159,8 +170,12 @@ jobs:
             export FORTRESS_XDOTOOL_EXECUTABLE="$(command -v xdotool)"
           fi
           output=".cache/native-experiment/${{ matrix.version }}/web"
+          cell_args=()
+          if [[ "${NATIVE_BROWSER_CELL:-all}" != all ]]; then
+            cell_args=(--cell "$NATIVE_BROWSER_CELL")
+          fi
           xvfb-run -a -s '-screen 0 1920x1080x24' python scripts/reference/native_online_probe.py --version "${{ matrix.version }}" \
-            --browser-pair "$BROWSER_PAIR" --addon "$output/addon.zip" --output "$output/native-online"
+            --browser-pair "$BROWSER_PAIR" --addon "$output/addon.zip" --output "$output/native-online" "${cell_args[@]}"
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:

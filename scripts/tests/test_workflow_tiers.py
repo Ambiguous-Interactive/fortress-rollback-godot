@@ -9,6 +9,8 @@ fails here. The full engine-job checks stay in
 jobs run in which tier.
 """
 import re
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -66,6 +68,36 @@ def active_lines(text):
 
 
 class WorkflowTierTests(unittest.TestCase):
+
+    def test_native_browser_dispatch_can_focus_one_room(self):
+        workflow = active_lines(read(WORKFLOWS / 'gdextension-experiment.yml'))
+        self.assertRegex(workflow, r"cell:\n +description: .+\n +type: choice\n +default: all")
+        self.assertIn("format(' / {0}', inputs.cell)", workflow.partition('\non:')[0])
+        declared = re.search(r'^ +options: \[all, (.+)\]$', workflow, re.MULTILINE)
+        self.assertIsNotNone(declared)
+        runner = ROOT / 'scripts/reference/native_online_probe.py'
+        help_text = subprocess.check_output([sys.executable, str(runner), '--help'], text=True)
+        choices = re.search(r'--cell \{([^}]+)\}', help_text)
+        self.assertIsNotNone(choices)
+        self.assertCountEqual(re.findall(r"'([^']+)'", declared[1]), choices[1].split(','))
+        platform = '\n'.join(job_blocks(workflow)['platform'])
+        self.assertIn("(inputs.cell && inputs.cell != 'all' || inputs.qualification", platform)
+        self.assertIn("NATIVE_BROWSER_CELL: ${{ inputs.cell }}", platform)
+        selector = platform.split('          cell_args=()', 1)[1].split('      - uses:', 1)[0]
+        selector = selector.replace('${{ matrix.version }}', '4.3')
+        run = 'xvfb-run() { printf "%s\\n" "$@"; }\ncell_args=()' + selector
+        for cell in ('', 'all', 'relay:8', 'mesh-startup:4'):
+            with self.subTest(cell=cell):
+                result = subprocess.run(
+                    ['bash', '-eu', '-c', run],
+                    env={'NATIVE_BROWSER_CELL': cell, 'BROWSER_PAIR': 'firefox', 'output': 'test-output'},
+                    check=True, capture_output=True, text=True,
+                )
+                arguments = result.stdout.splitlines()
+                self.assertEqual(arguments[arguments.index('--browser-pair') + 1], 'firefox')
+                expected = [] if cell in ('', 'all') else [cell]
+                self.assertEqual([value for flag, value in zip(arguments, arguments[1:]) if flag == '--cell'], expected)
+                self.assertEqual(arguments.count('--cell'), len(expected))
 
     def test_reference_tiers_have_no_pull_request_trigger(self):
         # The Gate workflow owns per-push and pull-request runs and the merge

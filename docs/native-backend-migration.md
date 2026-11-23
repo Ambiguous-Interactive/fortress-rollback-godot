@@ -55,6 +55,17 @@ routes to exercise the upstream disconnect timeout with the SDK roster intact.
 Automatic direct restoration requires a replacement link within the same room
 and plan. [SignalFish SDK #585](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/585) tracks that dependency.
 
+To isolate a hosted browser failure on both Godot pins, select the room in the
+manual workflow dispatch.
+
+```sh
+gh workflow run gdextension-experiment.yml -f qualification=chromium-webkit -f cell=relay:8
+```
+
+The run name identifies the browser profile and room. Keep the default `cell=all`
+for full browser qualification. Selecting one room with the default platform
+profile runs that room in Chromium on Web.
+
 ## Protocol and saved data
 
 Native gameplay packets use the codec in the [pinned upstream crate](reference/pins.json).
