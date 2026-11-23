@@ -59,11 +59,11 @@ jobs:
           # what is installed.
           cache: npm
           cache-dependency-path: scripts/reference/browser/package-lock.json
-      - name: Restore verified reference downloads
-        uses: actions/cache@v6.1.0
+      - uses: ./.github/actions/reference-browser-cache
         with:
-          path: .cache/reference/downloads
-          key: reference-ownership-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
+          version: ${{ matrix.version }}
+          browser: ${{ matrix.browser }}
+          legacy-ownership-cache: "true"
       - name: Select Ubuntu HTTPS mirror alternatives
         run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
       - name: Install pinned browser runner and operating system dependencies
@@ -123,6 +123,12 @@ jobs:
           node-version: "26.12.1"
           cache: npm
           cache-dependency-path: scripts/reference/browser/package-lock.json
+      - name: Warm Chromium for merge candidates on main
+        if: matrix.version == '4.3' && matrix.part == 'direct'
+        uses: actions/cache@v6.1.0
+        with:
+          path: .cache/reference/downloads/chromium-*-x86_64.zip
+          key: reference-chromium-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
       - name: Restore verified transport downloads and crates
         uses: actions/cache@v6.1.0
         with:

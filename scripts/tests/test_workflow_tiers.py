@@ -29,8 +29,8 @@ ACQUISITION = re.compile(r'playwright install-deps|apt-get install -y')
 QUALIFY_ACQUISITIONS = 4
 NIGHTLY_ACQUISITIONS = 6
 # The qualify ownership matrix keeps the whole Chromium axis: both engine pins,
-# both phases, four interleaved suite parts.
-QUALIFY_CHROMIUM_PARTS = 16
+# both phases, five minimum-pin parts and four current-pin parts.
+QUALIFY_CHROMIUM_PARTS = 18
 # The nightly ownership matrix owns the Firefox axis with the same shape.
 NIGHTLY_FIREFOX_PARTS = 16
 

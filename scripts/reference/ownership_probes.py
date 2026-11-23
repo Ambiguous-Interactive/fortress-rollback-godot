@@ -17,6 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fetch import CACHE, ROOT, digest, fetch, load_manifest, prepare_zip
 from local_ownership import claim
+from ownership_schedule import minimum_chromium_cost, minimum_chromium_parts
+from web_templates import web_template_archive
 from replay_download import CONTROL_DIAGNOSTICS, validate_controls, validate_downloads
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -626,12 +628,16 @@ def chromium_seconds(suite, phase='negative'):
 
 def select_suites(part, chromium_phase=None):
     """Keep the alias control in every part and the receipt inventory in suite order."""
-    if type(part) is not str or part not in ('all', '1', '2', '3', '4'):
+    five = isinstance(part, str) and re.fullmatch(r'[1-5]of5', part)
+    if type(part) is not str or (part not in ('all', '1', '2', '3', '4') and not five):
         raise ValueError('invalid ownership suite part')
     ordered = sorted(EXPECTED)
     if part == 'all':
         return {suite: EXPECTED[suite] for suite in ordered}
-    if chromium_phase is None:
+    if five:
+        groups = minimum_chromium_parts([s for s in ordered if s != ALIAS_CONTROL], chromium_phase, DOWNLOAD_SUITE)
+        selected = groups[int(part[0]) - 1]
+    elif chromium_phase is None:
         selected = ordered[int(part) - 1::4]
     else:
         groups = [[] for _ in range(4)]
@@ -807,7 +813,8 @@ def rejected_state(progress):
 
 
 def source_inventory():
-    helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+    helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/ownership_schedule.py', 'scripts/reference/web_templates.py',
+               'scripts/reference/browser/ownership.cjs',
                'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
                'scripts/reference/browser/replay_chooser.cjs',
                'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
@@ -826,7 +833,7 @@ def verify_sources(expected):
             raise ValueError(f'ownership source changed during execution: {filename}')
 
 
-HELPER_MODULES = ('fetch', 'local_ownership', 'replay_download', 'receipt_arguments', 'godot_smoke',
+HELPER_MODULES = ('fetch', 'ownership_schedule', 'web_templates', 'local_ownership', 'replay_download', 'receipt_arguments', 'godot_smoke',
                   'run', 'owned_process', 'host_capacity', 'browser.webrtc_matrix', 'browser.webrtc_import',
                   'signalfish_probe')
 
@@ -1001,7 +1008,7 @@ def main():
         parser.add_argument('--browser', choices=['chromium', 'firefox'], default='chromium')
         parser.add_argument('--phase', choices=['both', 'negative', 'positive'], default='both')
         parser.add_argument('--balance-chromium', action='store_true', help='balance Chromium parts using hosted suite and replay download times')
-        parser.add_argument('--suite-part', choices=['all', '1', '2', '3', '4'], default='all')
+        parser.add_argument('--suite-part', choices=['all', '1', '2', '3', '4', *[f'{n}of5' for n in range(1, 6)]], default='all')
         pins = load_manifest()['godot']
         parser.add_argument('--version', choices=list(dict.fromkeys([pins['minimum'], pins['current_stable']])))
         try:
@@ -1014,6 +1021,8 @@ def main():
             parser.error('--browser firefox requires --web')
         if args.balance_chromium and (not args.web or args.browser != 'chromium' or args.suite_part == 'all'):
             parser.error('--balance-chromium requires a Chromium Web suite part')
+        if args.suite_part.endswith('of5') and (not args.balance_chromium or args.version != pins['minimum'] or args.phase == 'both'):
+            parser.error('five ownership partitions require one balanced minimum-pin Chromium phase')
         results = CACHE / 'results'
         # One local run at a time owns these paths, and the browser part needs a
         # responsive host: a local test wave would otherwise starve it and turn a
@@ -1227,7 +1236,11 @@ def run_probes(args, results):
             # its 180-second bound rather than being killed mid-run.
             native_started = time.monotonic()
             wave = ThreadPoolExecutor(max_workers=native_workers)
-            launch_order = sorted(ordered_suites, key=lambda suite: -chromium_seconds(suite)) if args.balance_chromium else ordered_suites
+            launch_order = ordered_suites
+            if args.suite_part.endswith('of5'):
+                launch_order = sorted(ordered_suites, key=lambda suite: -minimum_chromium_cost(suite, args.phase)[0])
+            elif args.balance_chromium:
+                launch_order = sorted(ordered_suites, key=lambda suite: -chromium_seconds(suite))
             futures = {suite: wave.submit(native_suite_task, suite) for suite in launch_order}
             try:
                 outcomes = [futures[suite].result() for suite in ordered_suites]
@@ -1257,7 +1270,7 @@ def run_probes(args, results):
                       'staged_inventory': staged_frozen, 'editor_inventory': editor_frozen, 'timings': timings}
             if args.web:
                 template_name = f'Godot_v{version}-stable_export_templates.tpz'
-                templates = fetch(data['artifacts'][template_name], template_name, args.offline)
+                templates = web_template_archive(data['artifacts'][template_name], template_name, args.offline, CACHE, fetch)
                 template_dir = Path(environment['XDG_DATA_HOME']) / 'godot/export_templates' / (version + '.stable')
                 template_dir.mkdir(parents=True, exist_ok=True)
                 with zipfile.ZipFile(templates) as package:

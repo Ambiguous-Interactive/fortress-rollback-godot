@@ -179,27 +179,19 @@ class OwnershipBatchTests(unittest.TestCase):
     # a phase or part or its command ignores selection; why_new=tiers split by browser; seam=none
     def test_chromium_ci_declares_both_parts_and_passes_the_selector(self):
         workflow = (probes.ROOT / '.github/workflows/reference-baseline.yml').read_text()
-        pattern = (r'version: "([^"]+)", browser: chromium, phase: (negative|positive), suite_part: "([1-4])", '
-                   r'suffix: " (negative|positive) part ([1-4])", part_suffix: "(-(?:negative|positive)-part-[1-4])"')
+        pattern = (r'version: "([^"]+)", browser: chromium, phase: (negative|positive), suite_part: "(\d(?:of5)?)", '
+                   r'suffix: " (negative|positive) part (\d)", part_suffix: "(-(?:negative|positive)-part-\d)"')
         rows = re.findall(pattern, workflow)
-        expected = {(version, phase, part, phase, part, f'-{phase}-part-{part}')
-                    for version in ('4.3', '4.7.2')
-                    for phase in ('negative', 'positive') for part in ('1', '2', '3', '4')}
-        self.assertEqual(set(rows), expected)
-        self.assertEqual(len(rows), 16)
-        # The Firefox rows moved to the nightly workflow and carry the same
-        # partition and phase coverage with the compact part suffix, which must
-        # agree with each row's declared part so artifact names stay unique;
-        # dropping one row must fail like Chromium.
+        expected = {(version, phase, f'{part}of5' if version == '4.3' else str(part), phase, str(part), f'-{phase}-part-{part}')
+                    for version in ('4.3', '4.7.2') for phase in ('negative', 'positive')
+                    for part in range(1, 6 if version == '4.3' else 5)}
+        self.assertCountEqual(rows, expected)
+        self.assertIn("matrix.phase == 'negative' && matrix.suite_part == '1of5'", workflow)
         nightly = (probes.ROOT / '.github/workflows/nightly.yml').read_text()
         firefox = re.findall(r'version: "([^"]+)", browser: firefox, phase: (negative|positive), suite_part: "([1-4])", '
                              r'suffix: " (negative|positive) part ([1-4])", part_suffix: "-part-([1-4])"', nightly)
-        self.assertEqual({row[:5] for row in firefox}, {(version, phase, part, phase, part)
-                                                        for version, phase, part, _, _, _ in expected})
-        self.assertEqual({(version, phase, part, suffix) for version, phase, part, _, _, suffix in firefox},
-                         {(version, phase, part, part)
-                          for version, phase, part, _, _, _ in expected})
-        self.assertEqual(len(firefox), 16)
+        self.assertCountEqual(firefox, [(version, phase, n, phase, n, n) for version in ('4.3', '4.7.2')
+                                      for phase in ('negative', 'positive') for n in ('1', '2', '3', '4')])
         for tier in (workflow, nightly):
             self.assertIn('--phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"',
                           tier.split('python3 scripts/reference/ownership_probes.py', 1)[1])

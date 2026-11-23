@@ -96,7 +96,8 @@ class OwnershipRejectionFixture(unittest.TestCase):
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
         root = directory / 'root'
         cache = directory / 'cache'
-        files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+        files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/ownership_schedule.py', 'scripts/reference/web_templates.py',
+                                'scripts/reference/browser/ownership.cjs',
                                 'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
                                 'scripts/reference/browser/replay_chooser.cjs',
                                 'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
@@ -162,7 +163,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
 
         # The native wave overlaps per-suite engine children, so a fault keys on
         # the suite identity it names instead of a global call order.
-        native_suites = sorted(probes.select_suites(suite_part))
+        native_suites = sorted(probes.select_suites(suite_part, (phase or 'both') if balance_chromium else None))
         faulted_native_suite = native_suites[1] if len(native_suites) > 1 else None
 
         def run(command, environment, log, timeout=180):

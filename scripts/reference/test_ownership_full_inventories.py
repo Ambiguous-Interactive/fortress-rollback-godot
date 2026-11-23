@@ -63,6 +63,21 @@ class OwnershipFullInventoryTests(OwnershipRejectionFixture):
             self.assertEqual('replay_download_controls' in record, phase == 'positive')
             self.assertEqual('replay_download_seconds' in record['timings'], phase == 'positive')
 
+    def test_minimum_chromium_parts_execute_exact_native_and_browser_members(self):
+        for phase in ('positive', 'negative'):
+            groups = [probes.select_suites(f'{part}of5', phase) for part in range(1, 6)]
+            self.assertEqual(set().union(*groups), set(probes.EXPECTED))
+            for suite in probes.EXPECTED:
+                self.assertEqual(sum(suite in group for group in groups), 5 if suite == probes.ALIAS_CONTROL else 1)
+            results = self.scenario(expected=None, version='4.3', phase=phase, suite_part='5of5', balance_chromium=True)
+            received = json.loads((results / 'ownership.json').read_text())
+            selected = groups[4]
+            self.assertEqual(received['suites_requested'], {s: sorted(cases) for s, cases in selected.items()})
+            record, = received['records']
+            self.assertEqual(record['native'], record['browser']['result'])
+            self.assertEqual(record['native']['count'], sum(map(len, selected.values())))
+            self.assertEqual(len([g for g in groups if probes.DOWNLOAD_SUITE in g]), 1)
+
     # Value: protects=complete declared phase receipts; fails_when=missing controls or foreign pins publish; why_new=per-batch validation omits phase inventory; seam=none
     def test_completed_phase_inventory_rejects_missing_foreign_and_alias_phases(self):
         records = [{'engine_version': '4.3', 'negative_control': negative} for negative in (True, False)]
