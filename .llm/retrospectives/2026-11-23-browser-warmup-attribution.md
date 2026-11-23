@@ -10,6 +10,7 @@ Native relay warmup and WebKit close evidence on both Godot pins. Prior hosted p
 | --- | --- |
 | A profile can fail before the cell needed for diagnosis. | Hosted WebKit run 45251679399 passed two Godot 4.3 rooms, failed eight-player mesh and emitted no relay receipt. The focused dispatch test exercises the actual Bash arguments and compares the workflow choices with the runner CLI. |
 | Lifetime receive counts do not establish liveness near expiry. | The expired Chromium–Firefox pages received more than 1,000 addressed packets each from all seven peers. Chromium–WebKit's expired page received 359. All three still expired before the hold. |
+| The reproduced warmup expiry had different queue conditions per page. | In the local Chromium–WebKit Godot 4.3 room, Chromium pages 2 and 4 expired before the hold. Their final ticks began with zero and 423 queued socket packets respectively. The configured drain budget was 256. |
 | Timestamp-only reads did not tighten WebKit close bounds. | Isolated Godot 4.3 and 4.7.2 WebKit rooms emitted 237 tagged sends and left seven unproved. Nine smaller serialized reads took 90.570–279.008 ms and recovered zero tags. |
 | Packaged Web evidence has a host-specific editor dependency. | The x86-64 hosted archive failed the local ARM64 import with `No GDExtension library found for current OS and architecture (linux.arm64)`. The complete ARM64 archives reached the real browser runs. |
 

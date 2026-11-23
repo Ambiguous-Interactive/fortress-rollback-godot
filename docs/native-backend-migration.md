@@ -66,6 +66,14 @@ The run name identifies the browser profile and room. Keep the default `cell=all
 for full browser qualification. Selecting one room with the default platform
 profile runs that room in Chromium on Web.
 
+Eight-player relay receipts include warmup checkpoints from each browser.
+A checkpoint records exact sampled quality-report bytes at browser receipt,
+SDK delivery, and native enqueue on the same page clock. Its recipient,
+observation interval, queue samples, and cutoff remain available if the final
+renderer read times out. A missing observation can reflect sampling, eviction,
+or the end of observation. Identical repeated bytes can obscure per-packet
+latency. Native enqueue represents accepted input to the native socket queue.
+
 ## Protocol and saved data
 
 Native gameplay packets use the codec in the [pinned upstream crate](reference/pins.json).
