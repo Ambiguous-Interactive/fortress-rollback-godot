@@ -41,6 +41,14 @@ the archive.
   both peers' most recent frame and confirmation observations. The fixture
   reported Godot and Rust at frame 0 with confirmation at -1. The Linux
   exported matrix and stall witness still completed on both pins.
+- A 4.7.2 browser wave physically closed a channel, then observed local frames
+  38, 35, 39, and 39. The fixed 40-frame prefix no longer included the required
+  later samples from every slot. The witness extends its confirmed comparison
+  from 40 through the observed boundary, with a 128-frame recording cap.
+  A delayed observation control captured frames 50, 47, 44, and 44. It compared
+  52 canonical frames and every peer reported `disconnected` after the terminal
+  interruption. The [browser witness guide](../skills/testing/references/browser-integration.md)
+  records the boundary and correction rule.
 
 ## Prune ledger
 

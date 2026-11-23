@@ -28,6 +28,8 @@ BROWSER = ROOT / 'scripts/reference/browser'
 EXTENSION = 'addons/fortress_native/fortress.gdextension'
 TEMPLATE = 'web_dlink_nothreads_release.zip'
 REPORT = 'native-online.json'
+MIN_COMPARED_FRAMES = 40
+HISTORY_LIMIT = 128
 
 
 def install_addon(project, archive):
@@ -95,6 +97,25 @@ def create_server_config(source, route, port):
     return config
 
 
+def validate_cell(evidence, mode, players):
+    required_frames = MIN_COMPARED_FRAMES
+    if mode != 'mesh-startup':
+        boundary = evidence['afterClose' if mode == 'mesh-close' else 'stalled']
+        indices = set()
+        for peer in boundary:
+            index, frame = peer['index'], peer['frame']
+            if type(index) is not int or type(frame) is not int or not 0 <= frame <= HISTORY_LIMIT - 2:
+                raise ValueError(f'invalid post-fault frame boundary: {mode}:{players}')
+            indices.add(index)
+            required_frames = max(required_frames, frame + 2)
+        if len(boundary) != players or indices != set(range(players)):
+            raise ValueError(f'incomplete post-fault frame boundary: {mode}:{players}')
+    compared_frames = evidence.get('compared_frames')
+    if (evidence.get('passed') is not True or evidence.get('route') != mode or evidence.get('players') != players
+            or type(compared_frames) is not int or compared_frames != required_frames):
+        raise ValueError(f'incomplete browser evidence: {mode}:{players}')
+
+
 def play_cells(cells, export, environment, server_source, server_binary, output):
     results = []
     for route in ('mesh', 'relay'):
@@ -112,9 +133,7 @@ def play_cells(cells, export, environment, server_source, server_binary, output)
                     mode, players = cell.split(':')
                     command = ['node', str(BROWSER / 'native_online.cjs'), str(export), f'ws://127.0.0.1:{port}/v3/ws', mode, players]
                     evidence = json.loads(run_browser(command, environment, output / f'{mode}-{players}.log', rooms=1))
-                    if (evidence.get('passed') is not True or evidence.get('route') != mode
-                            or evidence.get('players') != int(players) or evidence.get('compared_frames') != 40):
-                        raise ValueError(f'incomplete browser evidence: {cell}')
+                    validate_cell(evidence, mode, int(players))
                     results.append(evidence)
                     print(f'{cell} passed', flush=True)
                 server.verify_live()

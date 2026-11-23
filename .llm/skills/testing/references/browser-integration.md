@@ -157,3 +157,9 @@ capacity. Retained/send counts alone can pass while every comparison is skipped.
 
 Observe resource construction separately from child creation, so teardown checks
 also include abandoned connections that never created channels.
+
+In live rollback witnesses, keep the base history prefix and extend comparison
+through samples taken after the observed fault boundary. Bound retained history
+and reject a receipt if its comparison cannot cover every endpoint within that
+bound. After observing confirmation, require a successful advance before
+capturing corrected snapshots.

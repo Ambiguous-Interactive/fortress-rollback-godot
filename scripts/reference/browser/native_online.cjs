@@ -142,7 +142,14 @@ function instrumentNativeWire() {
   };
 }
 
-function compareHistory(peers) {
+function historyThrough(peers) {
+  // Each observed frame is the next sample. Compare at least one later sample from every slot.
+  const frames = Math.max(HISTORY_FRAMES, ...peers.map(peer => peer.frame + 2));
+  assert.ok(peers.every(peer => frames <= peer.history_limit), 'post-fault samples exceeded the recorded history limit');
+  return frames;
+}
+
+function compareHistory(peers, frames = HISTORY_FRAMES) {
   const ordered = [...peers].sort((first, second) => first.slot - second.slot);
   assert.deepEqual(ordered.map(peer => peer.slot), peers.map((_, index) => index), 'slots must cover the frozen roster');
   assert.equal(new Set(peers.map(peer => peer.uuid)).size, peers.length, 'each page must own a distinct player');
@@ -150,7 +157,7 @@ function compareHistory(peers) {
   assert.match(peers[0].session_id, /^[0-9a-f]{32}$/);
   assert.equal(new Set(peers.map(peer => peer.room_id)).size, 1, 'all peers must be in the same SignalFish room');
   assert.ok(peers[0].room_id);
-  for (let frame = 0; frame < HISTORY_FRAMES; frame++) {
+  for (let frame = 0; frame < frames; frame++) {
     const expected = ordered.map(peer => frame >= GATE_FRAME && frame % 2 === 0 ? 0 : INPUTS[peer.index][0]);
     for (const peer of peers) {
       assert.deepEqual(peer.rows[frame], expected, `input row at frame ${frame}, slot ${peer.slot}`);
@@ -248,6 +255,7 @@ async function run(root, endpoint, mode, players) {
     await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
       && window.fortressNative.confirmed >= frame, GATE_FRAME, 45000)));
     let armed, stalled, direct, afterClose;
+    let comparedFrames = HISTORY_FRAMES;
     if (liveClose) {
       phase = 'physical channel close';
       direct = await observe();
@@ -255,13 +263,12 @@ async function run(root, endpoint, mode, players) {
         assert.deepEqual(peer.relay_peers, [], 'the room must begin on direct links');
         assert.ok(peer.wire.counts.mesh > 0 && peer.wire.counts.relay === 0);
         assert.equal(peer.wire.rtc.filter(([id, state]) => id === 3 && state === 'open').length, players - 1);
-        assert.ok(peer.frame < HISTORY_FRAMES, 'physical close must affect the compared history');
       }
       await command(pages[0], 'close_link', { uuid: joined[1].uuid });
       await Promise.all(pages.slice(0, 2).map(page => wait(page, count => window.fortressNativeWire.status().rtc
         .filter(([id, state]) => id === 3 && state === 'closed').length === count, 1)));
       afterClose = await observe();
-      assert.ok(afterClose.every(peer => peer.frame < HISTORY_FRAMES - 1), 'the last compared inputs must be sampled after the physical close');
+      comparedFrames = historyThrough(afterClose);
     }
     if (!mixed) {
       phase = 'prediction stall';
@@ -277,24 +284,28 @@ async function run(root, endpoint, mode, players) {
           && window.fortressNative.prediction >= threshold.frame && window.fortressNativeWire.status().held[threshold.route] > 0),
       { route, stalls: armed[index].stalls, frame: GATE_FRAME }, 45000)));
       stalled = await observe();
-      for (const [index, peer] of stalled.entries()) {
+      for (const peer of stalled) {
         assert.equal(peer.state, 'playing', peer.message);
-        assert.ok(armed[index].frame < HISTORY_FRAMES, 'gate must affect the compared history');
       }
+      comparedFrames = historyThrough(stalled);
       await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.release())));
       phase = 'corrected history';
       await Promise.all(pages.map((page, index) => wait(page, target => window.fortressNative.state === 'playing'
         && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores,
-      { frame: HISTORY_FRAMES, restores: stalled[index].restores }, 45000)));
+      { frame: comparedFrames, restores: stalled[index].restores }, 45000)));
     } else {
       phase = 'mixed confirmed history';
       await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
-        && window.fortressNative.confirmed >= frame, HISTORY_FRAMES)));
+        && window.fortressNative.confirmed >= frame, comparedFrames)));
     }
+    // A waiting step can publish confirmation before dispatching a correction.
+    const confirmedHistory = await observe();
+    await Promise.all(pages.map((page, index) => wait(page, frame => window.fortressNative.state === 'playing'
+      && window.fortressNative.frame > frame, confirmedHistory[index].frame)));
     await Promise.all(pages.map(page => page.evaluate(() => { window.fortressNativeCapture = true; })));
-    await Promise.all(pages.map(page => wait(page, () => !!window.fortressNative.snapshots?.[40])));
+    await Promise.all(pages.map(page => wait(page, frame => !!window.fortressNative.snapshots?.[frame], comparedFrames)));
     const peers = await observe();
-    compareHistory(peers);
+    compareHistory(peers, comparedFrames);
     const other = route === 'mesh' ? 'relay' : 'mesh';
     for (const peer of peers) {
       assert.equal(peer.movement_errors, 0, 'game must respond to every observed input');
@@ -320,7 +331,7 @@ async function run(root, endpoint, mode, players) {
           assert.ok(peer.wire.rtc.every(([id, state, sent, received], index) => id !== 3 || state !== 'open'
             || (sent > afterClose[peer.index].wire.rtc[index][2] && received > afterClose[peer.index].wire.rtc[index][3])),
           'each unaffected channel must exchange gameplay after the close');
-          if (peer.index === 0) assert.ok(peer.closed_channel_frame < HISTORY_FRAMES, 'physical close must precede confirmed history');
+          if (peer.index === 0) assert.ok(peer.closed_channel_frame < comparedFrames, 'physical close must precede confirmed history');
         }
         continue;
       }
@@ -379,7 +390,8 @@ async function run(root, endpoint, mode, players) {
       return window.fortressNative.state === 'offline' && sockets.every(state => state === WebSocket.CLOSED)
         && rtc.every(([, state]) => state === 'closed');
     })));
-    result = { passed: true, route: mode, players, compared_frames: HISTORY_FRAMES, bootstrap_ms, armed, stalled, direct, afterClose, peers, interruption, terminal, after };
+    result = { passed: true, route: mode, players, compared_frames: comparedFrames, bootstrap_ms, armed, stalled,
+      direct, afterClose, peers, interruption, terminal, after };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map(page => page.evaluate(() => ({

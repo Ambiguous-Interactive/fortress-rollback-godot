@@ -10,7 +10,7 @@ const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
 const GATE_FRAME: int = 12
-const HISTORY_FRAMES: int = 40
+const HISTORY_LIMIT: int = 128
 
 
 class ObservedGame:
@@ -53,7 +53,7 @@ class ObservedGame:
 			var dy: int = int(bool(buttons & DOWN)) - int(bool(buttons & UP))
 			if x[player] != clampi(positions_x[player] + 2 * dx, 20, 460) or y[player] != clampi(positions_y[player] + 2 * dy, 20, 280):
 				movement_errors += 1
-		if input_frame < HISTORY_FRAMES:
+		if input_frame < HISTORY_LIMIT:
 			rows[str(input_frame)] = row
 			snapshots[str(frame)] = canonical_bytes().hex_encode()
 		return true
@@ -142,6 +142,7 @@ func _process(_delta: float) -> void:
 		"command_code": command_code,
 		"frame": match_status.current_frame,
 		"confirmed": match_status.confirmed_frame,
+		"history_limit": HISTORY_LIMIT,
 		"reason": match_status.reason,
 		"terminated": match_status.lifecycle == Types.Lifecycle.TERMINATED,
 		"turns": lobby.turns,

@@ -368,6 +368,23 @@ class ReferenceContracts(unittest.TestCase):
                     native_online_runner.main()
             self.assertIn('4.3.stable.cold-test', (output / 'version.log').read_text())
 
+    def test_native_online_requires_the_post_fault_history_and_all_peers(self):
+        # Value: protects=receipt covers each peer's post-fault samples; fails_when=short prefix, duplicate peer or excess accepted; why_new=variable prefix; seam=receipt
+        for frames, indices, count, expected in (
+                ([36, 36, 39, 39], [0, 1, 2, 3], 41, None),
+                ([36, 36, 39, 39], [0, 1, 2, 3], 40, 'incomplete browser evidence'),
+                ([126, 126, 126, 126], [0, 1, 2, 3], 128, None),
+                ([126, 126, 126, 127], [0, 1, 2, 3], 129, 'invalid post-fault frame boundary'),
+                ([39, 39, 39, 39], [0, 1, 2, 2], 41, 'incomplete post-fault frame boundary')):
+            with self.subTest(frames=frames, indices=indices, count=count):
+                evidence = {'passed': True, 'route': 'mesh-close', 'players': 4, 'compared_frames': count,
+                            'afterClose': [{'index': index, 'frame': frame} for index, frame in zip(indices, frames)]}
+                if expected is None:
+                    native_online_runner.validate_cell(evidence, 'mesh-close', 4)
+                else:
+                    with self.assertRaisesRegex(ValueError, expected):
+                        native_online_runner.validate_cell(evidence, 'mesh-close', 4)
+
     def test_native_online_invalidates_receipt_before_manifest_load(self):
         # Value: a missing or malformed pins file cannot leave a stale browser qualification result.
         for error in (FileNotFoundError, json.JSONDecodeError):
