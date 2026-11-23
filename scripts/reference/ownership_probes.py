@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fetch import CACHE, ROOT, digest, fetch, load_manifest, prepare_zip
 from local_ownership import claim
-from ownership_schedule import minimum_chromium_cost, minimum_chromium_parts
+from ownership_schedule import chromium_page_wave, minimum_chromium_cost, minimum_chromium_parts
 from web_templates import web_template_archive
 from replay_download import CONTROL_DIAGNOSTICS, validate_controls, validate_downloads
 
@@ -635,7 +635,7 @@ def select_suites(part, chromium_phase=None):
     if part == 'all':
         return {suite: EXPECTED[suite] for suite in ordered}
     if five:
-        groups = minimum_chromium_parts([s for s in ordered if s != ALIAS_CONTROL], chromium_phase, DOWNLOAD_SUITE)
+        groups = minimum_chromium_parts([s for s in ordered if s != ALIAS_CONTROL], chromium_phase, DOWNLOAD_SUITE, ALIAS_CONTROL)
         selected = groups[int(part[0]) - 1]
     elif chromium_phase is None:
         selected = ordered[int(part) - 1::4]
@@ -1090,9 +1090,7 @@ def run_probes(args, results):
     chromium_phase = args.phase if args.balance_chromium else None
     selected = select_suites(args.suite_part, chromium_phase)
     suites_requested = {suite: sorted(cases) for suite, cases in selected.items()}
-    # The native wave overlaps fresh per-suite engine processes; browser pages
-    # stay serial because they need a responsive host. Another owner of the
-    # host-capacity lease keeps the wave serial instead of competing with it.
+    # Both waves honor the host-capacity lease. The native and Web waves never overlap.
     native_workers = host_capacity.worker_count(min(os.cpu_count() or 1, 4))
     if any(version not in (data['godot']['minimum'], data['godot']['current_stable']) for version in versions_requested):
         raise ValueError('requested ownership engine is not pinned')
@@ -1238,7 +1236,7 @@ def run_probes(args, results):
             wave = ThreadPoolExecutor(max_workers=native_workers)
             launch_order = ordered_suites
             if args.suite_part.endswith('of5'):
-                launch_order = sorted(ordered_suites, key=lambda suite: -minimum_chromium_cost(suite, args.phase)[0])
+                launch_order = sorted(ordered_suites, key=lambda suite: -minimum_chromium_cost(suite)[0])
             elif args.balance_chromium:
                 launch_order = sorted(ordered_suites, key=lambda suite: -chromium_seconds(suite))
             futures = {suite: wave.submit(native_suite_task, suite) for suite in launch_order}
@@ -1296,8 +1294,11 @@ def run_probes(args, results):
                     page_suites = firefox_pages(ordered_suites, native_seconds)
                 else:
                     page_suites = [ordered_suites[offset:offset + 4] for offset in range(0, len(ordered_suites), 4)]
-                timings['browser_pages'] = []
-                for batch_index, suites in enumerate(page_suites):
+
+                def execute_batch(batch_index):
+                    suites = page_suites[batch_index]
+                    page_timings = []
+                    identity = None
                     case_names = [None]
                     native_suite = None
                     if args.browser == 'firefox' and suites == [PEER_PARITY_SUITE]:
@@ -1320,11 +1321,11 @@ def run_probes(args, results):
                             verify_staged(project, staged_frozen)
                             verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
                             browser = json.loads(output)
-                            browser_identity = validate_browser(browser, browser_identity, args.browser, data)
+                            identity = validate_browser(browser, identity, args.browser, data)
                             validate(browser['result'], any(negative_suite(suite, negative) for suite in suites),
                                      {suite: EXPECTED[suite] if case_name is None else {case_name} for suite in suites})
                             pages.append(browser['result'])
-                            timings['browser_pages'].append({'suites': suites, 'case': case_name, 'seconds': round(time.monotonic() - page_started, 3)})
+                            page_timings.append({'suites': suites, 'case': case_name, 'seconds': round(time.monotonic() - page_started, 3)})
                         except Exception:
                             # The browser watchdog rejected the run. Its inventory of
                             # page and engine errors, and the progress the page
@@ -1345,6 +1346,18 @@ def run_probes(args, results):
                         except ValueError:
                             reject(started, 'failed', alive=False, errors=['incomplete or divergent ownership case pages'])
                             raise
+                    return browser, page_timings
+
+                # Each Chromium process owns its browser profile, server, port, deadline and log. All trees are read-only here.
+                # Both workers finish before the download controls can mutate an export. Firefox owns a display and stays serial.
+                workers = 2 if args.balance_chromium and native_workers >= 2 and len(os.sched_getaffinity(0)) >= 4 else 1
+                browser_started = time.monotonic()
+                completed = chromium_page_wave(page_suites, native_seconds, execute_batch, workers)
+                timings['browser_wave_seconds'] = round(time.monotonic() - browser_started, 3)
+                timings['browser_pages'] = []
+                for suites, (browser, page_timings) in zip(page_suites, completed):
+                    browser_identity = validate_browser(browser, browser_identity, args.browser, data)
+                    timings['browser_pages'].extend(page_timings)
                     browser_batches.append((suites, browser['result']))
                 browser['result'] = aggregate_native(browser_batches, negative, selected)
                 if not same_json(browser['result'], native):

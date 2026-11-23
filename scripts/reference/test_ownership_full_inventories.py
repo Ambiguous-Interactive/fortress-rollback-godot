@@ -78,6 +78,12 @@ class OwnershipFullInventoryTests(OwnershipRejectionFixture):
             self.assertEqual(record['native']['count'], sum(map(len, selected.values())))
             self.assertEqual(len([g for g in groups if probes.DOWNLOAD_SUITE in g]), 1)
 
+    def test_balanced_chromium_runtime_mutation_rejects_the_active_wave(self):
+        results = self.scenario(expected=ValueError, version='4.3', phase='positive', suite_part='5of5',
+                                balance_chromium=True, runtime_fault='browser')
+        self.assertFalse((results / 'ownership.json').exists())
+        self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')
+
     # Value: protects=complete declared phase receipts; fails_when=missing controls or foreign pins publish; why_new=per-batch validation omits phase inventory; seam=none
     def test_completed_phase_inventory_rejects_missing_foreign_and_alias_phases(self):
         records = [{'engine_version': '4.3', 'negative_control': negative} for negative in (True, False)]
