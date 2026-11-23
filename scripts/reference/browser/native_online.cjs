@@ -35,6 +35,7 @@ function instrumentNativeWire(tagWebKitSends) {
   const resources = { rtc: [], sockets: [] };
   const ice = new Map();
   let session, localUuid;
+  let observingDeparture = false;
   let holding = false;
   let holdAll = false;
   let armed = false;
@@ -110,6 +111,13 @@ function instrumentNativeWire(tagWebKitSends) {
     totalBytes += owned.byteLength;
     held[route]++;
   }
+  const instant = () => Math.round(performance.now() * 1000);
+  const closeConnection = RTCPeerConnection.prototype.close;
+  RTCPeerConnection.prototype.close = function() {
+    const result = closeConnection.call(this);
+    if (observingDeparture && this.signalingState === 'closed' && ice.has(this)) ice.get(this).closedAt ??= instant();
+    return result;
+  };
   const createChannel = RTCPeerConnection.prototype.createDataChannel;
   RTCPeerConnection.prototype.createDataChannel = function(label, options) {
     if (!ice.has(this)) {
@@ -142,14 +150,14 @@ function instrumentNativeWire(tagWebKitSends) {
     resources.rtc.push(record);
     const nativeSend = channel.send;
     // WebKit reports a native send rejection on the calling stack without throwing.
-    const emit = tagWebKitSends
-      ? new Function('send', 'channel', `return function fortressNativeSend_${index}(bytes) { send.call(channel, bytes); }`)(nativeSend, channel)
-      : bytes => nativeSend.call(channel, bytes);
+    const tagged = name => new Function('send', 'channel', `return function ${name}(bytes) { send.call(channel, bytes); }`)(nativeSend, channel);
+    const emit = tagWebKitSends ? tagged(`fortressNativeSend_${index}`) : bytes => nativeSend.call(channel, bytes);
     channel.send = data => {
       const view = nativeBytes(data);
       const packet = channel.id === 3 && view && matches(view, 0) ? nativePacket(view) : null;
       return send('mesh', channelReports, channel, bytes => {
-        emit(bytes);
+        if (tagWebKitSends && observingDeparture) tagged(`fortressNativeSend_${index}_${instant()}`)(bytes);
+        else emit(bytes);
         if (packet) record.sent++;
       }, data, packet);
     };
@@ -200,6 +208,7 @@ function instrumentNativeWire(tagWebKitSends) {
     meshOpen(peers) {
       return resources.rtc.filter(({channel, connection}) => channel.readyState === 'open' && connection.connectionState === 'connected').length === peers * 3;
     },
+    observeDeparture() { observingDeparture = true; return instant(); },
     arm(all = false) {
       if (!armed) {
         armed = true;
@@ -236,7 +245,8 @@ function instrumentNativeWire(tagWebKitSends) {
           record.remote = ufrag(record.connection.remoteDescription) ?? record.remote;
         }
         return { index: record.index, local: record.local, remote: record.remote, closeAborts: record.closeAborts,
-          closed: record.channel.readyState === 'closed', connectionClosed: record.connection.signalingState === 'closed' };
+          closed: record.channel.readyState === 'closed', connectionClosed: record.connection.signalingState === 'closed',
+          closedAt: ice.get(record.connection).closedAt ?? null };
       });
       return { armed, holding, hold_ms: holdMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
         control_round_trips: { ...controlRoundTrips },
@@ -249,11 +259,13 @@ function instrumentNativeWire(tagWebKitSends) {
 }
 
 function reportedChannel(stack) {
-  const frames = [...(stack ?? '').matchAll(/^\s*at (?:Object\.)?fortressNativeSend_(\d+) \(/gm)];
-  return frames.length === 1 ? Number(frames[0][1]) : null;
+  const frames = [...(stack ?? '').matchAll(/^\s*at (?:Object\.)?fortressNativeSend_(\d+)(?:_(\d+))? \(/gm)];
+  if (frames.length !== 1) return { channel: null, sentAt: null };
+  const [, channel, sentAt] = frames[0];
+  return { channel: Number(channel), sentAt: sentAt === undefined ? null : Number(sentAt) };
 }
 
-function receivedClose(pageIndex, index, before, closedByPage, closer = null) {
+function receivedClose(pageIndex, index, before, closedByPage, closer = null, timing = {}) {
   const link = before.find(peer => peer.index === index);
   if (!link?.local || !link.remote || link.closed) return false;
   const counterparts = closedByPage.flatMap((links, owner) => owner === pageIndex ? [] : links
@@ -262,9 +274,14 @@ function receivedClose(pageIndex, index, before, closedByPage, closer = null) {
   if (counterparts.length !== 1) return false;
   const counterpart = counterparts[0];
   const confirmedClose = closer === null ? counterpart.connectionClosed : counterpart.owner === closer && counterpart.closed;
+  const senderClock = timing.clocks?.[pageIndex];
+  const closerClock = timing.clocks?.[counterpart.owner];
+  // Compare the earliest possible send with the latest possible close.
+  const sentAfterClose = senderClock && closerClock && Number.isSafeInteger(timing.sentAt) && Number.isSafeInteger(counterpart.closedAt)
+    && timing.sentAt + senderClock.offsetMin - counterpart.closedAt - closerClock.offsetMax >= 2000;
   return confirmedClose
     && closedByPage[pageIndex].some(peer => peer.index === index && peer.local === link.local && peer.remote === link.remote
-      && (closer === null ? peer.closeAborts > link.closeAborts : peer.closed));
+      && (closer === null ? peer.closeAborts > link.closeAborts || sentAfterClose : peer.closed));
 }
 
 function historyThrough(peers) {
@@ -318,6 +335,7 @@ async function run(root, endpoint, mode, players, browserPair) {
   let result;
   let phase = 'launch';
   let sequence = 0;
+  let departureClocks;
   const wait = async (page, condition, argument = null, timeout = 30000) => {
     const handle = await page.waitForFunction(condition, argument, { timeout });
     await handle.dispose();
@@ -335,18 +353,23 @@ async function run(root, endpoint, mode, players, browserPair) {
   }), index)));
   async function verifyCloseErrors(before, closer = null) {
     if (!closeErrors.length) return undefined;
+    const takeLinks = () => Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.status().sctp)));
+    const verified = ({ index, channel, sentAt }, links) =>
+      receivedClose(index, channel, before[index].wire.sctp, links, closer, { sentAt, clocks: departureClocks });
+    let closedByPage = await takeLinks();
+    const pending = closeErrors.filter(error => !verified(error, closedByPage));
     // A channel close resets the stream. Peer teardown can also report an SCTP abort.
-    await Promise.all(closeErrors.map(({ index, channel }) => {
+    await Promise.all(pending.map(({ index, channel }) => {
       const link = before[index].wire.sctp.find(link => link.index === channel);
       assert.ok(link, `WebKit send failure for peer ${index} lacked a sending channel`);
       return wait(pages[index], ({ channel, aborts, streamClose }) => window.fortressNativeWire.status().sctp
         .some(link => link.index === channel && (streamClose ? link.closed : link.closeAborts > aborts)),
       { channel, aborts: link.closeAborts, streamClose: closer !== null }, DIAGNOSTIC_MS);
     }));
-    const closedByPage = await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.status().sctp)));
-    for (const { index, channel } of closeErrors) {
-      assert.ok(receivedClose(index, channel, before[index].wire.sctp, closedByPage, closer),
-        `WebKit send failure for peer ${index} channel ${channel} lacked confirmation on the expected closed link`);
+    if (pending.length) closedByPage = await takeLinks();
+    for (const error of closeErrors) {
+      assert.ok(verified(error, closedByPage),
+        `WebKit send failure for peer ${error.index} channel ${error.channel} lacked confirmation on the expected closed link`);
     }
     return closedByPage;
   }
@@ -368,7 +391,7 @@ async function run(root, endpoint, mode, players, browserPair) {
         const departure = route === 'mesh' && phase === 'departure' && index < players - 1;
         const webkitSend = name === 'webkit' && error.name === '' && error.message === WEBKIT_CLOSED_STREAM;
         const errorList = webkitSend && (physicalClose || departure) ? closeErrors : errors;
-        errorList.push({ index, phase, text: String(error), channel: webkitSend ? reportedChannel(error.stack) : null });
+        errorList.push({ index, phase, text: String(error), ...(webkitSend ? reportedChannel(error.stack) : {}) });
       });
       page.on('console', message => {
         const text = message.text();
@@ -525,6 +548,19 @@ async function run(root, endpoint, mode, players, browserPair) {
         assert.equal(peer.wire.held.relay > 0, peer.index < 2, 'relay gameplay for the closed pair must also be held');
       }
     } else {
+      if (route === 'mesh' && browserPair.includes('webkit')) {
+        departureClocks = await Promise.all(pages.map(async page => {
+          let bound;
+          // Keep the tightest round trip. Each window is measured on the same controller clock.
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const start = Math.floor(performance.now() * 1000);
+            const sample = await page.evaluate(() => window.fortressNativeWire.observeDeparture());
+            const end = Math.ceil(performance.now() * 1000);
+            if (!bound || end - start < bound.offsetMax - bound.offsetMin) bound = { offsetMin: start - sample, offsetMax: end - sample };
+          }
+          return bound;
+        }));
+      }
       phase = 'departure';
       const departing = pages.at(-1);
       await command(departing, 'leave');
@@ -558,7 +594,7 @@ async function run(root, endpoint, mode, players, browserPair) {
         && rtc.every(([, state]) => state === 'closed');
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
-      direct, afterClose, peers, interruption, terminal, after, closeErrors, closeLinks };
+      direct, afterClose, peers, interruption, terminal, after, closeErrors, closeLinks, departureClocks };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({

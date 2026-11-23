@@ -107,9 +107,11 @@ for (const expiry of [false, true]) {
 const assert = require('node:assert/strict');
 const { reportedChannel, receivedClose } = require(process.argv[1]);
 const frame = '    at fortressNativeSend_5 (:5:27)';
-assert.equal(reportedChannel('Error sending binary data\n' + frame), 5);
-assert.equal(reportedChannel(frame + '\n' + frame), null);
-assert.equal(reportedChannel('at unrelated (:5:27)'), null);
+assert.deepEqual(reportedChannel('Error sending binary data\n' + frame), {channel:5, sentAt:null});
+assert.deepEqual(reportedChannel(frame + '\n' + frame), {channel:null, sentAt:null});
+assert.deepEqual(reportedChannel('at unrelated (:5:27)'), {channel:null, sentAt:null});
+assert.deepEqual(reportedChannel('    at fortressNativeSend_5_1795419840003000 (:5:27)'),
+  {channel:5, sentAt:1795419840003000});
 const counterpart = {local:'closing', remote:'survivor', closed:true, connectionClosed:true};
 const link = {index:5, local:'survivor', remote:'closing', closeAborts:1, closed:false};
 const other = {index:8, local:'same-page', remote:'another-peer', closeAborts:0};
@@ -119,6 +121,12 @@ assert.ok(receivedClose(1, 5, [link, other], closed));
 const streamClosed = [[{...counterpart, connectionClosed:false}], [{...link, closed:true}, other]];
 assert.ok(receivedClose(1, 5, [link, other], streamClosed, 0));
 assert.ok(!receivedClose(1, 5, [link, other], streamClosed));
+const timed = [[{...counterpart, closedAt:30000}], [{...link, closed:true}, other]];
+const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
+assert.ok(receivedClose(1, 5, [link, other], timed, null, {sentAt:47300, clocks}));
+assert.ok(!receivedClose(1, 5, [link, other], timed, null, {sentAt:44000, clocks}));
+assert.ok(!receivedClose(1, 5, [link, other], timed, null, {sentAt:47199, clocks}));
+assert.ok(!receivedClose(1, 5, [link, other], timed, null, {sentAt:64000}));
 assert.ok(!receivedClose(1, 5, [link, other], [[counterpart], [link, other]], 0));
 assert.ok(!receivedClose(1, 5, [link, other], [[], closed[1], [counterpart]], 0));
 assert.ok(!receivedClose(1, null, [link, other], closed));
