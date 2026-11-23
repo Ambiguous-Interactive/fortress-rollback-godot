@@ -77,7 +77,9 @@ def verify_engine(engine, data, offline):
     if platform.system() != 'Linux' or arch is None:
         raise ValueError('native spectator witness supports Linux arm64/x86_64')
     actual = digest(engine)
-    for version in [data['godot']['minimum'], data['godot']['current_stable']]:
+    versions = [data['godot']['minimum'], data['godot']['current_stable']]
+    # Try the editor's own archive first. The digest comparison below decides its identity.
+    for version in sorted(versions, key=lambda pin: engine.name != f'Godot_v{pin}-stable_linux.{arch}'):
         name = f'Godot_v{version}-stable_linux.{arch}'
         archive = fetch(data['artifacts'][name + '.zip'], name + '.zip', offline)
         with zipfile.ZipFile(archive) as package, package.open(name) as member:

@@ -21,6 +21,22 @@ def run(cmd, environment, log, timeout=180):
     return output
 
 
+def prepare_editor(data, version, offline=False):
+    if version not in (data['godot']['minimum'], data['godot']['current_stable']):
+        raise ValueError('only pinned engine versions are accepted')
+    arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
+    if arch is None or platform.system() != 'Linux':
+        raise ValueError('editor bootstrap supports Linux arm64/x86_64 only')
+    name = f'Godot_v{version}-stable_linux.{arch}.zip'
+    archive = fetch(data['artifacts'][name], name, offline)
+    directory = CACHE / 'editors' / version
+    directory.mkdir(parents=True, exist_ok=True)
+    prepare_zip(archive, directory, executable_members=(name[:-4],))
+    editor = directory / name[:-4]
+    editor.chmod(0o755)
+    return editor
+
+
 def main():
     parser = ReceiptParser(description=__doc__, receipt='godot-baseline.json', output=CACHE / 'results')
     parser.add_argument('--offline', action='store_true')
@@ -38,13 +54,8 @@ def main():
     if any(version not in pinned for version in args.version or []):
         parser.error('only pinned engine versions are accepted')
     for version in [version for version in pinned if version in (args.version or pinned)]:
-        name = f'Godot_v{version}-stable_linux.{arch}.zip'
-        archive = fetch(data['artifacts'][name], name, args.offline)
-        directory = CACHE / 'editors' / version
-        directory.mkdir(parents=True, exist_ok=True)
-        prepare_zip(archive, directory, executable_members=(name[:-4],))
-        editor = directory / name[:-4]
-        editor.chmod(0o755)
+        editor = prepare_editor(data, version, args.offline)
+        name = editor.name + '.zip'
         environment = os.environ.copy()
         environment['XDG_DATA_HOME'] = str(CACHE / 'godot-data')
         actual = run([str(editor), '--version'], environment, results / f'godot-{version}-version.log').strip()
