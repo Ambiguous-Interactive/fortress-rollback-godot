@@ -258,6 +258,8 @@ def render_comment(source, entry, latest, report, report_digest, archive_digest,
         f'candidate archive sha256: `{archive_digest}`',
         '',
     ]
+    if artifact_url:
+        heading += [f'Full per-path classification is in `{source}.json`. [Download report artifact]({artifact_url})', '']
     summary = drift.summarize(report)
     details = [
         '```',
@@ -273,16 +275,13 @@ def render_comment(source, entry, latest, report, report_digest, archive_digest,
         return comment.decode('utf-8')
 
     overview = summary.partition('\n')[0]
-    receipt = f'Full per-path classification is in `{source}.json` in the reporter output.'
-    if artifact_url:
-        receipt = f'Full per-path classification is in `{source}.json`. [Download report artifact]({artifact_url})'
+    local_receipt = [] if artifact_url else ['', f'Full per-path classification is in `{source}.json` in the reporter output.']
     return '\n'.join(heading + [
         overview,
         '',
         f'- Paths requiring review: {len(report["requires_review"])}',
         f'- Ledger-unmapped paths: {len(report["ledger_unmapped"])}',
-        '',
-        receipt,
+        *local_receipt,
         '',
     ])
 
@@ -359,6 +358,10 @@ def read_staged_report(path, source, entry):
             or not isinstance(archive_digest, str) or not SHA256_PATTERN.fullmatch(archive_digest)):
         raise ToolingError(f'{path.name}: staged report digest is invalid')
     validate_revision(report.get('candidate_revision'))
+    if not isinstance(report.get('drift'), bool) or any(
+        not isinstance(report.get(key), list) for key in ('records', 'requires_review', 'ledger_unmapped')
+    ):
+        raise ToolingError(f'{path.name}: staged report classification is invalid')
     return report
 
 
@@ -368,22 +371,29 @@ def publish_report(report, entry, issues, carrier, today, identity, artifact_url
     latest = report['candidate_revision']
     report_digest = report['report_digest']
     identity = identity if identity is not None else issues.current_login()
+    if carrier:
+        number = carrier['number']
+        recorded = [comment_digest(item['body']) for item in issues.list_comments(number)
+                    if f'<!-- {REPORT_PREFIX}:{source} -->' in item['body'] and item.get('author') == identity]
+        if report_digest in recorded:
+            return 'digest-known', number
+
+    try:
+        comment = render_comment(source, entry, latest, report, report_digest,
+                                 report['candidate_archive_sha256'], today, artifact_url)
+    except (KeyError, TypeError) as error:
+        raise ToolingError(f'{source}: cannot render report classification: {error}') from error
     body = render_body(source, entry, latest, report_digest, today)
-    number = carrier['number'] if carrier else issues.create_issue(f'Upstream drift report: {source}', body)
-
-    recorded = [comment_digest(item['body']) for item in issues.list_comments(number)
-                if f'<!-- {REPORT_PREFIX}:{source} -->' in item['body'] and item.get('author') == identity]
-    if report_digest in recorded:
-        return 'digest-known', number
-
-    action = 'commented' if carrier else 'created'
-    if carrier and carrier['state'] != 'open':
-        issues.update_issue(number, state='open')
-        action = 'reopened'
-    if carrier and carrier['body'] != body:
-        issues.update_issue(number, body=body)
-    comment = render_comment(source, entry, latest, report, report_digest,
-                             report['candidate_archive_sha256'], today, artifact_url)
+    if carrier:
+        action = 'commented'
+        if carrier['state'] != 'open':
+            issues.update_issue(number, state='open')
+            action = 'reopened'
+        if carrier['body'] != body:
+            issues.update_issue(number, body=body)
+    else:
+        number = issues.create_issue(f'Upstream drift report: {source}', body)
+        action = 'created'
     issues.add_comment(number, comment)
     return action, number
 
@@ -403,7 +413,7 @@ def main_with_args(argv):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--stage', action='store_true', help='write JSON reports to a fresh output directory without accessing GitHub issues')
     mode.add_argument('--publish-staged', action='store_true', help='publish existing staged JSON without reclassifying')
-    parser.add_argument('--artifact-url', help='uploaded staged JSON for oversized observations')
+    parser.add_argument('--artifact-url', help='link to the artifact containing the staged reports')
     parser.add_argument('--reporting-identity', metavar='LOGIN',
                         help='the identity this run reports as; omit to resolve it through `gh api user`. '
                              'The scheduled workflow passes github-actions[bot] because the Actions '

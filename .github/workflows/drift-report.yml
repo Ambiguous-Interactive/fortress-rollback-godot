@@ -45,14 +45,22 @@ jobs:
           name: drift-reports-${{ github.run_attempt }}
           path: ${{ runner.temp }}/drift-report/*.json
           if-no-files-found: ignore
-      - name: Publish drift observations
+      - name: Download the uploaded reports
+        id: receipt
         if: ${{ !cancelled() && steps.evidence.outcome == 'success' && steps.evidence.outputs.artifact-url != '' }}
+        uses: actions/download-artifact@v8.0.2
+        with:
+          artifact-ids: ${{ steps.evidence.outputs.artifact-id }}
+          path: ${{ runner.temp }}/drift-publish
+      - name: Publish drift observations
+        if: ${{ !cancelled() && steps.receipt.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_URL: ${{ steps.evidence.outputs.artifact-url }}
+          RECEIPT_PATH: ${{ steps.receipt.outputs.download-path }}
         run: |
           python3 scripts/reference/drift_report.py --publish-staged --artifact-url "$ARTIFACT_URL" \
-            --summary "$GITHUB_STEP_SUMMARY" --output "$RUNNER_TEMP/drift-report" \
+            --summary "$GITHUB_STEP_SUMMARY" --output "$RECEIPT_PATH" \
             --reporting-identity github-actions[bot]
       - name: Failure summary
         if: failure()
@@ -60,7 +68,7 @@ jobs:
           {
             echo '### Drift report failed'
             echo
-            echo 'See the failed step for source errors or artifact upload details.'
+            echo 'See the failed step for source or artifact errors.'
             echo 'Successful observations remain on their carrier issues.'
             echo 'Fix the reported error and rerun before making a decision about drift.'
           } >> "$GITHUB_STEP_SUMMARY"

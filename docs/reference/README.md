@@ -222,8 +222,8 @@ upstream archive only when a later fetch verifies it.
 An observation that exceeds the issue comment budget keeps its counts and
 digests in the issue. Read every changed path and affected test in
 `<source>.json` inside the linked artifact or in the local `--output` directory.
-The workflow stages all successful reports, uploads them under an attempt-specific
-artifact name, and publishes from those staged files after upload succeeds.
+The workflow uploads successful reports under an attempt-specific artifact name.
+It downloads that exact artifact by ID and publishes from the verified copy.
 When the artifact expires, use the workflow run named in its URL to find the
 checkout revision. Use that revision's pins and ledger and compare the two
 revisions in the comment with the classifier procedure above. The suite covers oversized observations,

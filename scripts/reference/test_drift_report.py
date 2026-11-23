@@ -602,12 +602,30 @@ class DriftReportTests(unittest.TestCase):
             code = drift_report.main_with_args([*argv, *staged, '--stage'])
         self.assertEqual(code, 1)
         self.assertFalse(fake.issues)
+        output = self.output.with_name('partial')
+        artifact_url = 'https://github.com/example/fortress/actions/runs/1/artifacts/2'
+        publish = [*argv, *staged, '--publish-staged', '--artifact-url', artifact_url]
         with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
              patch.object(drift_report, 'resolve_latest', self.fail):
-            code = drift_report.main_with_args([*argv, *staged, '--publish-staged', '--artifact-url',
-                                                'https://github.com/example/fortress/actions/runs/1/artifacts/2'])
+            code = drift_report.main_with_args(publish)
         self.assertEqual(code, 0)
         self.assertEqual([issue['title'] for issue in fake.issues.values()], ['Upstream drift report: sdk'])
+        self.assertIn(artifact_url, next(iter(fake.comments.values()))[0]['body'])
+
+        fake = FakeIssues()
+        sdk_receipt = json.loads((output / 'sdk.json').read_text(encoding='utf-8'))
+        manifest = json.loads(self.pins.read_text(encoding='utf-8'))
+        fortress_entry = manifest['sources']['fortress']
+        malformed = dict(sdk_receipt, source='fortress', repository=fortress_entry['repository'],
+                         reviewed_revision=fortress_entry['revision'], records=None)
+        malformed['report_digest'] = drift_report.observation_digest(malformed)
+        (output / 'fortress.json').write_text(json.dumps(malformed), encoding='utf-8')
+        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+             patch.object(drift_report, 'resolve_latest', self.fail):
+            code = drift_report.main_with_args(publish)
+        self.assertEqual(code, 1)
+        self.assertEqual([issue['title'] for issue in fake.issues.values()], ['Upstream drift report: sdk'])
+        self.assertIn(artifact_url, next(iter(fake.comments.values()))[0]['body'])
 
 
 class GhIssueClientTests(unittest.TestCase):
