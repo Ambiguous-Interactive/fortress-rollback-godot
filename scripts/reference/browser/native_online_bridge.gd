@@ -3,6 +3,8 @@ extends Node
 # Value: protects=callback correction and departure; fails_when=rows diverge or simulation continues after leave; why_new=legacy uses a different protocol; seam=browser sends
 const Scene = preload("res://examples/online/online.tscn")
 const Lobby = preload("res://examples/online/lobby.gd")
+const Match = preload("res://examples/online/match.gd")
+const RelayEnvelope = preload("res://addons/fortress_rollback/transport/signalfish_relay_envelope.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
@@ -59,6 +61,35 @@ class ObservedGame:
 		return true
 
 
+class ObservedMatch:
+	extends Match
+
+	var warmup_wire: JavaScriptObject
+	var warmup_session: PackedByteArray
+	var warmup_recipient: PackedByteArray
+
+	func observe_sdk(sender: String, encoding: int, bytes: PackedByteArray) -> void:
+		if warmup_wire == null or encoding != 1 or bytes.size() != RelayEnvelope.HEADER_BYTES + 46:
+			return
+		if (bytes[RelayEnvelope.HEADER_BYTES + 30] & 3) != 0 or bytes.slice(37, 53) != warmup_recipient:
+			return
+		var envelope: RelayEnvelope.Decoded = RelayEnvelope.decode(bytes, 46)
+		if envelope.code == RelayEnvelope.R.Code.OK and envelope.sender == sender and envelope.session == warmup_session:
+			_record("sdk", sender, envelope.payload, -1)
+
+	func _receive_native(sender: String, bytes: PackedByteArray) -> int:
+		var code: int = super._receive_native(sender, bytes)
+		_record("native", sender, bytes, code)
+		return code
+
+	func _record(stage: String, sender: String, bytes: PackedByteArray, code: int) -> void:
+		if warmup_wire == null or bytes.size() != 46 or (bytes[30] & 3) != 0:
+			return
+		# Match the pinned native quality report and retain its exact tagged bytes.
+		if bytes.decode_u32(16) == 0x000252f5 and bytes.decode_u32(24) == 4 and bytes.slice(0, 16) == warmup_session:
+			warmup_wire.recordWarmup(stage, sender, bytes.hex_encode(), code)
+
+
 class ObservedLobby:
 	extends Lobby
 
@@ -72,12 +103,14 @@ class ObservedLobby:
 	var failure_tick_callbacks: PackedInt32Array = []
 	var wait_for_full_mesh: bool = false
 	var started_on_full_mesh: bool = false
-	var _engine_mesh_open: bool = false
-	var _last_play_tick_us: int = -1
 	var play_tick_gap_peak_us: int = 0
 	var sdk_receive_peak: int = 0
 	var relay_receive_peak: int = 0
 	var relay_send_peak: int = 0
+	var warmup_wire: JavaScriptObject
+	var _engine_mesh_open: bool = false
+	var _last_play_tick_us: int = -1
+	var _next_warmup_tick_us: int = 0
 
 	func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:
 		if transport_wait_started < 0:
@@ -125,15 +158,16 @@ class ObservedLobby:
 		turns += 1
 		var previous_state: String = state
 		var callbacks: PackedInt32Array = []
+		var available: int = -1
+		var budget: int = -1
 		if state == "playing":
 			if _last_play_tick_us >= 0:
 				play_tick_gap_peak_us = maxi(play_tick_gap_peak_us, now_us - _last_play_tick_us)
 			_last_play_tick_us = now_us
-			# The pinned SDK transport owns the socket adapter and exposes no receive queue getter.
-			var transport: RefCounted = client.get("transport")
-			var socket: RefCounted = transport.get("_peer")
-			if socket != null:
-				sdk_receive_peak = maxi(sdk_receive_peak, socket.call("get_available_packet_count"))
+			available = _sdk_packets()
+			sdk_receive_peak = maxi(sdk_receive_peak, available)
+			if warmup_wire != null:
+				budget = int(client.get("transport").get("max_packets_per_poll"))
 			var relay_status: Dictionary = game_match.relay.status()
 			relay_receive_peak = maxi(relay_receive_peak, relay_status.received_packets)
 			relay_send_peak = maxi(relay_send_peak, relay_status.pending_packets)
@@ -145,6 +179,16 @@ class ObservedLobby:
 		super.tick(now_us, buttons)
 		if state == "failed" and previous_state == "playing":
 			failure_tick_callbacks = callbacks
+		if warmup_wire != null and available >= 0 and (available >= budget or now_us >= _next_warmup_tick_us or state == "failed"):
+			var remaining: int = _sdk_packets() if state == "playing" else -1
+			warmup_wire.recordWarmupTick(available, remaining, budget, Time.get_ticks_usec() - now_us, state == "failed")
+			_next_warmup_tick_us = now_us + 250000
+
+	func _sdk_packets() -> int:
+		# The pinned SDK transport owns the socket adapter and exposes no receive queue getter.
+		var transport: RefCounted = client.get("transport")
+		var socket: RefCounted = transport.get("_peer")
+		return int(socket.call("get_available_packet_count")) if socket != null else -1
 
 
 var scene: Node2D
@@ -154,6 +198,7 @@ var command_code: Error = OK
 var session_id: String = ""
 var uuid: String = ""
 var room_id: String = ""
+var warmup_match: ObservedMatch
 var blocked_uuid: String = ""
 var closed_channel_state: int = -1
 var closed_channel_frame: int = -1
@@ -175,6 +220,13 @@ func _process(_delta: float) -> void:
 			command_id = int(value.id)
 			_command(value)
 	var match_status: Types.Status = lobby.game_match.status()
+	if warmup_match != null and (lobby.state == "failed" or match_status.confirmed_frame >= GATE_FRAME):
+		lobby.warmup_wire.finishWarmup("failed" if lobby.state == "failed" else "gate")
+		if is_instance_valid(lobby.client):
+			lobby.client.disconnect("game_data_binary_received", warmup_match.observe_sdk)
+		warmup_match.warmup_wire = null
+		lobby.warmup_wire = null
+		warmup_match = null
 	var game: ObservedGame = lobby.observations
 	var result: Dictionary = {
 		"state": lobby.state,
@@ -261,6 +313,15 @@ func _command(value: Dictionary) -> void:
 			if lobby.client == null or lobby.backend != "native":
 				command_code = ERR_UNAVAILABLE
 				return
+			if bool(value.get("trace_warmup", false)):
+				if lobby.state != "connecting":
+					command_code = ERR_UNAVAILABLE
+					return
+				warmup_match = ObservedMatch.new()
+				lobby.warmup_wire = JavaScriptBridge.get_interface("fortressNativeWire")
+				warmup_match.warmup_wire = lobby.warmup_wire
+				lobby.game_match = warmup_match
+				lobby.client.connect("game_data_binary_received", warmup_match.observe_sdk)
 			lobby.observations = ObservedGame.new(int(value.players))
 			lobby.game_match.game = lobby.observations
 		"ready":
@@ -271,7 +332,12 @@ func _command(value: Dictionary) -> void:
 			uuid = lobby.game_match.membership.local_uuid()
 			session_id = lobby.game_match.membership.handshake_message().session_id.hex_encode()
 			room_id = lobby.client.call("get_room_id")
-			JavaScriptBridge.eval("window.fortressNativeWire.bind(...%s)" % JSON.stringify([session_id, uuid]))
+			var roster: PackedStringArray = []
+			if warmup_match != null:
+				roster = lobby.game_match.membership.roster()
+				warmup_match.warmup_session = session_id.hex_decode()
+				warmup_match.warmup_recipient = uuid.replace("-", "").hex_decode()
+			JavaScriptBridge.eval("window.fortressNativeWire.bind(...%s)" % JSON.stringify([session_id, uuid, roster]))
 		"block_startup":
 			blocked_uuid = str(value.uuid)
 			lobby.client.connect("session_plan", _close_link, CONNECT_ONE_SHOT)

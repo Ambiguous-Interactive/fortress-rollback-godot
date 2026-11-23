@@ -12,6 +12,110 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_native_relay_warmup_preserves_stages_with_cutoff_and_eviction(self):
+        # Value: protects=exact staged warmup attribution; fails_when=missing SDK or rolled-out packets appear complete; seam=raw socket and staged observers
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire } = require(process.argv[1]);
+const local = '11'.repeat(16), remote = '22'.repeat(16), other = '33'.repeat(16);
+const bytes = n => {
+  const result = Buffer.alloc(46);
+  result.set([0xf5, 0x52, 2, 0], 16);
+  result[24] = 4;
+  result[45] = n;
+  return result;
+};
+const raw = (socket, payload, recipient = local, sender = remote) => {
+  const frame = Buffer.alloc(57 + payload.length);
+  frame.set([70, 83, 82, 49, 1]);
+  frame.set(Buffer.from(sender + recipient, 'hex'), 21);
+  frame.writeUInt32LE(payload.length, 53);
+  frame.set(payload, 57);
+  socket.message({data: frame});
+};
+class Socket {
+  addEventListener(name, listener) { this[name] = listener; }
+}
+let time = 1;
+const window = {}, checkpoints = [];
+const realm = {
+  window, performance: {now: () => time}, console: {debug: value => checkpoints.push(value)},
+  Uint8Array, ArrayBuffer, DataView, WebSocket: Socket, RTCPeerConnection: class {},
+};
+runInNewContext(`(${instrumentNativeWire})(false, 'warmup ')`, realm);
+const socket = new window.WebSocket();
+const wire = window.fortressNativeWire;
+wire.bind('00'.repeat(16), local, [local, remote]);
+const sample = (stage, value, code = -1) => wire.recordWarmup(stage, remote, value.toString('hex'), code);
+raw(socket, bytes(90), other);
+raw(socket, bytes(91), local, other);
+const excluded = bytes(92);
+excluded[30] = 1;
+raw(socket, excluded);
+const quality = bytes(0);
+raw(socket, quality);
+const identicalToken = Buffer.from(quality);
+identicalToken[28] = 1;
+time = 2;
+sample('sdk', identicalToken);
+time = 3;
+sample('native', quality, 6);
+time = 4;
+sample('native', quality, 0);
+let [link] = wire.warmupStatus().links;
+assert.equal(link.sender, remote);
+assert.deepEqual(link.packets.map(packet => packet.payload).join(), [quality, identicalToken].map(b => b.toString('hex')).join());
+const [rawRecord, sdkRecord] = link.packets;
+// Missing SDK evidence stays absent even if the native enqueue was observed with the same payload.
+assert.equal(rawRecord.raw_ms, 1);
+assert.equal(rawRecord.sdk_ms, null);
+assert.equal(rawRecord.native.first_code, 6);
+assert.equal(rawRecord.native.attempts, 2);
+assert.equal(rawRecord.native.accepted_ms, 4);
+assert.equal(sdkRecord.raw_ms, null);
+assert.equal(sdkRecord.sdk_ms, 2);
+assert.equal(sdkRecord.native, null);
+for (let i = 1; i < 30; i++) {
+  time = i + 10;
+  raw(socket, bytes(i));
+}
+time = 50;
+sample('sdk', bytes(8));
+sample('native', bytes(8), 0);
+sample('sdk', bytes(29));
+sample('native', bytes(29), 0);
+wire.recordWarmupTick(300, 44, 256, 1000, false);
+[link] = wire.warmupStatus().links;
+assert.equal(link.packets.length, 24);
+assert.equal(link.evicted, 7);
+assert.equal(link.unretained.sdk, 1);
+assert.equal(link.unretained.native, 1);
+assert.equal(link.packets.some(packet => packet.payload === bytes(8).toString('hex')), false);
+assert.equal(link.packets[23].sdk_ms, 50);
+assert.equal(link.packets[23].native.accepted_ms, 50);
+const wireBeforeCutoff = wire.status();
+wire.finishWarmup('gate');
+const cutoff = JSON.stringify(wire.warmupStatus());
+assert.equal(JSON.stringify(JSON.parse(checkpoints.at(-1).slice('warmup '.length))), cutoff);
+assert.equal(wire.warmupStatus().cutoff.at_ms, 50);
+assert.equal(wire.warmupStatus().ticks[0].budget, 256);
+time = 51;
+raw(socket, bytes(30));
+sample('sdk', bytes(30));
+sample('native', bytes(30), 0);
+wire.recordWarmupTick(1200, 0, 256, 1000, true);
+wire.finishWarmup('failed');
+assert.equal(JSON.stringify(wire.warmupStatus()), cutoff);
+const after = wire.status();
+assert.equal(after.armed, false);
+assert.equal(after.deferredClose, false);
+assert.equal(after.held.relay, wireBeforeCutoff.held.relay);
+assert.equal(after.relaySenders[remote], wireBeforeCutoff.relaySenders[remote] + 1);
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_native_input_and_terminal_holds_have_distinct_liveness(self):
         # Value: protects=physical input/control hold; fails_when=control blocked in recovery or leaks during expiry; seam=browser send and receive
         script = r"""
