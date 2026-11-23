@@ -12,6 +12,21 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_native_webkit_abort_must_belong_to_the_departing_connection(self):
+        # Value: protects=departure attribution; fails_when=another link excuses the warning; seam=browser receipt validator
+        script = r"""
+const assert = require('node:assert/strict');
+const { receivedDepartureAbort } = require(process.argv[1]);
+const leaving = {local:'departing', remote:'survivor', closeAborts:0};
+const expected = {local:'survivor', remote:'departing', closeAborts:0};
+const other = {local:'same-page', remote:'another-peer', closeAborts:0};
+assert.ok(receivedDepartureAbort([expected, other], [{...expected, closeAborts:1}, other], [leaving]));
+assert.ok(!receivedDepartureAbort([expected, other], [expected, {...other, closeAborts:1}], [leaving]));
+assert.ok(!receivedDepartureAbort([expected, expected], [{...expected, closeAborts:1}], [leaving]));
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_real_entrypoints_finish_cleanup_and_keep_original_and_cleanup_errors(self):
         scratch = ROOT / '.cache/scratch'
         scratch.mkdir(parents=True, exist_ok=True)
@@ -31,6 +46,10 @@ const create=http.createServer;
 http.createServer=function(...args){const server=create.apply(this,args);
   server.on('close',()=>cleanupLog('server closed'));return server;};
 https.createServer=(_options,listener)=>http.createServer(listener);
+if(process.env.FAIL_NATIVE_HANG==='1'){
+  const timeout=global.setTimeout;
+  global.setTimeout=(callback,delay,...args)=>timeout(callback,Math.min(delay,20),...args);
+}
 """, encoding='utf-8')
             package = directory / 'playwright.cjs'
             package.write_text(r"""
@@ -41,6 +60,14 @@ if(process.env.FAIL_CUSTOM_INSPECT==='1'&&process.env.CUSTOM_INSPECT_ON_GOTO!=='
 let launched=0;
 module.exports.chromium={launch:async()=>{
   const index=launched++;
+  if(process.env.FAIL_NATIVE_HANG==='1'){
+    const pending=()=>new Promise(()=>{});
+    const page={on(){},addInitScript:async()=>{},goto:async()=>{throw Error('PRIMARY_FAILURE');},evaluate:pending};
+    const browser={browserType:()=>({name:()=> 'chromium'}),version:()=> 'fixture',
+      close:async()=>cleanupLog('browser closed 0'),newContext:async()=>context};
+    const context={browser:()=>browser,newPage:async()=>page,close:pending};
+    return browser;
+  }
   const page={on(){},addInitScript:async()=>{},goto:async()=>{},evaluate:async()=>({})};
   const context={newPage:async()=>{if(index===1)throw Error('PRIMARY_FAILURE');return page;},close:async()=>{
     await new Promise(resolve=>setTimeout(resolve,index===1?60:1));cleanupLog('context closed '+index);
@@ -66,7 +93,8 @@ module.exports.chromium={launch:async()=>{
                      ('webrtc', True, False, True), ('webrtc', True, True, True),
                      ('online-opaque', True, False, False), ('webrtc-opaque', True, False, False),
                      *[(name+'-inspect', True, False, False) for name in ['smoke', 'ownership', 'online', 'webrtc', 'spectator']],
-                     ('ownership-diagnostic', False, False, False), ('ownership-diagnostic', False, True, True)]
+                     ('ownership-diagnostic', False, False, False), ('ownership-diagnostic', False, True, True),
+                     ('native_online', True, False, False)]
             for name, primary, browser_failure, context_failure in cases:
                 opaque = name.endswith('-opaque')
                 custom_inspect = name.endswith('-inspect')
@@ -78,10 +106,13 @@ module.exports.chromium={launch:async()=>{
                                'FAIL_PRIMARY': str(int(primary)), 'FAIL_OPAQUE': str(int(opaque)),
                                'FAIL_CUSTOM_INSPECT': str(int(custom_inspect)), 'CUSTOM_INSPECT_ON_GOTO': str(int(custom_inspect and name == 'smoke')),
                                'FAIL_OWNERSHIP_DIAGNOSTIC': str(int(diagnostic)),
+                               'FAIL_NATIVE_HANG': str(int(name == 'native_online')),
                                'FAIL_BROWSER': str(int(browser_failure)), 'FAIL_CONTEXT': str(int(context_failure)),
                                'FORTRESS_OWNERSHIP_BROWSER': 'chromium', 'FORTRESS_BROWSER_PAIR': '["chromium","chromium"]'}
                 command = ['node', '--require', str(preload), str(ROOT / 'scripts/reference/browser' / (name + '.cjs')), str(directory)]
                 command += [json.dumps(['res://tests/unit/test_alpha.gd'])] if name == 'ownership' else ['ws://127.0.0.1:12345/v3/ws']
+                if name == 'native_online':
+                    command += ['mesh', '2']
                 with self.subTest(name=name, primary=primary, browser_failure=browser_failure, context_failure=context_failure):
                     # Match sibling Node controls: allow hosted startup scheduling while still bounding hangs.
                     child = subprocess.run(command, env=environment, capture_output=True, encoding='utf-8', timeout=10)
@@ -121,6 +152,10 @@ module.exports.chromium={launch:async()=>{
                         self.assertIn('browser closed 1', log.read_text())
                         if browser_failure:
                             self.assertIn('BROWSER_FAILURE_1', child.stderr)
+                    if name == 'native_online':
+                        self.assertIn('native peer 0 diagnostics deadline', child.stderr)
+                        self.assertIn('native context 0 close deadline', child.stderr)
+                        self.assertIn('browser closed 0', log.read_text())
                     if not (primary or browser_failure or context_failure or diagnostic):
                         json.loads(child.stdout)
 

@@ -84,7 +84,8 @@ The native archive installs the GDScript runtime and the platform extension toge
 The SignalFish SDK and example projects are separate inputs. See the [installation instructions](../experiments/gdextension/README.md#install-and-use).
 Qualify physical devices and signing under [#452](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/452) before claiming mobile release support.
 Qualify real 2/4/8-peer browser rooms, Linux Chromium, Firefox, WebKit and mixed browsers against [#39](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39) and [#44](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/44).
-The single-threaded Web experiment establishes extension loading and mixed-peer rollback.
+The [playable Web qualification](experiments/upstream-binding.md#playable-web-rooms) runs the installed native addon through actual SignalFish rooms.
+The single-threaded Web experiment establishes extension loading and rollback against a standalone Rust peer.
 
 For each claimed behavior, link evidence at the affected roadmap issue before superseding its acceptance criteria.
 Use the pinned upstream tests for engine behavior and retain Godot tests for request order, the language boundary, transports, and compatibility with saved artifacts.

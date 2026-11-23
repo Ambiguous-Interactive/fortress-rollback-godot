@@ -1,19 +1,44 @@
 const assert = require('node:assert/strict');
 const { setImmediate: flush } = require('node:timers/promises');
 const { createHost } = require('./online_host.cjs');
+const { placeFirefox } = require('./webrtc_display.cjs');
+const { boundedRoom } = require('./webrtc_watchdog.cjs');
 
 const INPUTS = [[1, ['KeyA']], [2, ['KeyD']], [4, ['KeyW']], [8, ['KeyS']],
   [5, ['KeyA', 'KeyW']], [6, ['KeyD', 'KeyW']], [9, ['KeyA', 'KeyS']], [10, ['KeyD', 'KeyS']]];
 const GATE_FRAME = 12;
 const HISTORY_FRAMES = 40;
 const PAGE_BOOT_MS = 60000;
+const DIAGNOSTIC_MS = 5000;
+const CLOSE_MS = 10000;
+const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
+
+function browserOptions(name) {
+  const executablePath = process.env[`FORTRESS_${name.toUpperCase()}_EXECUTABLE`];
+  if (!executablePath) throw new Error(`missing executable for ${name}`);
+  switch (name) {
+    case 'chromium':
+      return { executablePath, headless: true,
+        args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+          '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] };
+    case 'firefox':
+      return { executablePath, headless: false,
+        firefoxUserPrefs: { 'webgl.force-enabled': true, 'webgl.disabled': false, 'toolkit.shutdown.fastShutdownStage': 0 } };
+    case 'webkit':
+      return { executablePath, headless: false };
+  }
+  throw new Error(`unknown browser ${name}`);
+}
 
 function instrumentNativeWire() {
   const active = [];
   const resources = { rtc: [], sockets: [] };
+  const ice = new Map();
   let session, localUuid;
   let holding = false;
   let armed = false;
+  let holdStarted = null;
+  let holdEnded = null;
   let totalBytes = 0;
   let released = 0;
   const counts = { mesh: 0, relay: 0 };
@@ -38,6 +63,7 @@ function instrumentNativeWire() {
     return null;
   }
   const increment = (counts, uuid) => counts.set(uuid, (counts.get(uuid) ?? 0) + 1);
+  const ufrag = description => description?.sdp.match(/^a=ice-ufrag:([\w+/]+)\r?$/m)?.[1];
   function send(route, emit, data, isGame) {
     if (!isGame) return emit(data);
     counts[route]++;
@@ -50,8 +76,25 @@ function instrumentNativeWire() {
   }
   const createChannel = RTCPeerConnection.prototype.createDataChannel;
   RTCPeerConnection.prototype.createDataChannel = function(label, options) {
+    if (!ice.has(this)) {
+      const record = { state: this.iceConnectionState, gathering: this.iceGatheringState, host: 0, srflx: 0, prflx: 0, relay: 0, other: 0, mdns: 0 };
+      ice.set(this, record);
+      this.addEventListener('iceconnectionstatechange', () => {
+        if (this.iceConnectionState !== 'closed') record.state = this.iceConnectionState;
+      });
+      this.addEventListener('icegatheringstatechange', () => { record.gathering = this.iceGatheringState; });
+      this.addEventListener('icecandidate', ({ candidate }) => {
+        if (!candidate?.candidate) return;
+        const [, address, type] = candidate.candidate.match(/^candidate:\S+ \S+ \S+ \S+ (\S+) \S+ typ (\S+)/) ?? [];
+        record[['host', 'srflx', 'prflx', 'relay'].includes(type) ? type : 'other']++;
+        if (address?.endsWith('.local')) record.mdns++;
+      });
+    }
     const channel = createChannel.call(this, label, options);
-    const record = { channel, connection: this, sent: 0, received: 0 };
+    const record = { channel, connection: this, sent: 0, received: 0, local: null, remote: null, closeAborts: 0 };
+    channel.addEventListener('error', ({ error }) => {
+      if (channel.id === 3 && error?.errorDetail === 'sctp-failure' && error.message === 'User-Initiated Abort, reason=Close called') record.closeAborts++;
+    });
     channel.addEventListener('message', ({ data }) => {
       const view = nativeBytes(data);
       if (channel.id === 3 && view && matches(view, 0)) record.received++;
@@ -112,6 +155,7 @@ function instrumentNativeWire() {
       if (!armed) {
         armed = true;
         holding = true;
+        holdStarted = performance.now();
       }
     },
     release() {
@@ -122,6 +166,7 @@ function instrumentNativeWire() {
         released++;
       }
       active.length = 0;
+      holdEnded = performance.now();
     },
     // Let every peer report native expiry before a socket close can cause a room-departure event.
     holdTerminal() {
@@ -134,12 +179,29 @@ function instrumentNativeWire() {
       deferredClose();
     },
     status() {
-      return { armed, holding, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
+      const holdMs = holdStarted === null ? null : Math.round((holdEnded ?? performance.now()) - holdStarted);
+      const sctp = resources.rtc.filter(({channel}) => channel.id === 3).map(record => {
+        if ((!record.local || !record.remote) && record.connection.signalingState !== 'closed') {
+          record.local = ufrag(record.connection.localDescription) ?? record.local;
+          record.remote = ufrag(record.connection.remoteDescription) ?? record.remote;
+        }
+        return { local: record.local, remote: record.remote, closeAborts: record.closeAborts };
+      });
+      return { armed, holding, hold_ms: holdMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
         relayRecipients: Object.fromEntries(relayRecipients), relaySenders: Object.fromEntries(relaySenders),
+        ice: [...ice.values()], sctp,
         rtc: resources.rtc.map(({channel, sent, received}) => [channel.id, channel.readyState, sent, received]),
         sockets: resources.sockets.map(socket => socket.readyState) };
     },
   };
+}
+
+function receivedDepartureAbort(before, after, departing) {
+  const expected = before.filter(({local, remote}) => local && remote
+    && departing.some(peer => peer.local === remote && peer.remote === local));
+  if (expected.length !== 1) return false;
+  const link = expected[0];
+  return after.some(peer => peer.local === link.local && peer.remote === link.remote && peer.closeAborts > link.closeAborts);
 }
 
 function historyThrough(peers) {
@@ -167,17 +229,18 @@ function compareHistory(peers, frames = HISTORY_FRAMES) {
   }
 }
 
-async function closeAll(items, close) {
-  const settled = await Promise.allSettled(items.map(item => Promise.resolve().then(() => close(item))));
+async function closeAll(items, close, kind) {
+  const settled = await Promise.allSettled(items.map((item, index) =>
+    boundedRoom(() => close(item), CLOSE_MS, `native ${kind} ${index} close`)));
   return settled.filter(result => result.status === 'rejected').map(result => result.reason);
 }
 
-async function run(root, endpoint, mode, players) {
+async function run(root, endpoint, mode, players, browserPair) {
   const startup = mode === 'mesh-startup';
   const liveClose = mode === 'mesh-close';
   const mixed = startup || liveClose;
   const route = mixed ? 'mesh' : mode;
-  const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
+  const playwright = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY);
   const origin = `https://127.0.0.1:${server.address().port}`;
   const socketEndpoint = `wss://127.0.0.1:${server.address().port}/v3/ws`;
@@ -185,8 +248,10 @@ async function run(root, endpoint, mode, players) {
   const bootstrap_ms = [];
   const contexts = [];
   const errors = [];
+  const departureErrors = [];
   const failures = [];
-  let browser;
+  const browsers = [];
+  const browserPeers = [];
   let result;
   let phase = 'launch';
   let sequence = 0;
@@ -206,16 +271,24 @@ async function run(root, endpoint, mode, players) {
     index, ...window.fortressNative, wire: window.fortressNativeWire.status()
   }), index)));
   try {
-    browser = await chromium.launch({ executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE, headless: true,
-      args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-        '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] });
+    for (const name of browserPair) browsers.push(await playwright[name].launch(browserOptions(name)));
     for (let index = 0; index < players; index++) {
       const started = performance.now();
-      const context = await browser.newContext({ ignoreHTTPSErrors: true });
+      const browser = browsers[index % browsers.length];
+      const name = browser.browserType().name();
+      const viewport = name === 'chromium' ? { width: 480, height: 360 } : undefined;
+      const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport });
       contexts.push(context);
       const page = await context.newPage();
       pages.push(page);
-      page.on('pageerror', error => errors.push({ index, phase, text: String(error) }));
+      const display = name === 'firefox' ? await placeFirefox(page, index) : null;
+      browserPeers.push({ index, name, version: browser.version(), display });
+      page.on('pageerror', error => {
+        const expectedClosure = phase === 'departure' && route === 'mesh' && index < players - 1
+          && name === 'webkit' && error.name === '' && error.message === WEBKIT_CLOSED_STREAM;
+        const errorList = expectedClosure ? departureErrors : errors;
+        errorList.push({ index, phase, text: String(error) });
+      });
       page.on('console', message => {
         const text = message.text();
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push({ index, phase, text });
@@ -387,6 +460,11 @@ async function run(root, endpoint, mode, players) {
       for (const key of ['frame', 'confirmed', 'reason', 'terminal_detail', 'message', 'game_frame', 'saves', 'restores', 'advances'])
         assert.equal(peer[key], before[key], `terminal ${key} changed for survivor ${index}`);
     }
+    for (const { index } of departureErrors) {
+      assert.ok(receivedDepartureAbort(peers[index].wire.sctp, after[index].wire.sctp, peers.at(-1).wire.sctp),
+        `WebKit send failure for survivor ${index} lacked an observed SCTP abort on the departing link`);
+    }
+    phase = 'teardown';
     if (liveClose) await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.releaseTerminal())));
     await Promise.all(survivors.map(page => command(page, 'leave')));
     await Promise.all(pages.map(page => wait(page, () => {
@@ -394,23 +472,24 @@ async function run(root, endpoint, mode, players) {
       return window.fortressNative.state === 'offline' && sockets.every(state => state === WebSocket.CLOSED)
         && rtc.every(([, state]) => state === 'closed');
     })));
-    result = { passed: true, route: mode, players, compared_frames: comparedFrames, bootstrap_ms, armed, stalled,
-      direct, afterClose, peers, interruption, terminal, after };
+    result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
+      direct, afterClose, peers, interruption, terminal, after, departureErrors };
   } catch (error) {
     failures.push(error);
-    const states = await Promise.allSettled(pages.map(page => page.evaluate(() => ({
+    const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
       ...window.fortressNative, wire: window.fortressNativeWire?.status()
-    }))));
-    console.error(JSON.stringify({ phase, bootstrap_ms, errors, states }));
+    })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
+    const diagnostics = states.map(state => state.status === 'fulfilled' ? state : { status: state.status, reason: String(state.reason) });
+    console.error(JSON.stringify({ phase, browser_peers: browserPeers, bootstrap_ms, errors, departureErrors, states: diagnostics }));
   } finally {
-    failures.push(...await closeAll(contexts, context => context.close()));
-    if (browser) failures.push(...await closeAll([browser], owner => owner.close()));
+    failures.push(...await closeAll(contexts, context => context.close(), 'context'));
+    failures.push(...await closeAll(browsers, owner => owner.close(), 'browser'));
     for (const { socket, upstream } of proxyPairs) {
       socket.destroy();
       upstream.destroy();
     }
     failures.push(...await closeAll([server], owner => new Promise((resolve, reject) =>
-      owner.close(error => error ? reject(error) : resolve()))));
+      owner.close(error => error ? reject(error) : resolve())), 'host'));
   }
   await flush();
   if (errors.length) failures.push(new Error(JSON.stringify(errors)));
@@ -419,14 +498,18 @@ async function run(root, endpoint, mode, players) {
 }
 
 if (require.main === module) {
-  const [root, endpoint, route, size] = process.argv.slice(2);
-  if (!(['mesh-startup', 'mesh-close'].includes(route) && size === '4') && !(['mesh', 'relay'].includes(route) && ['2', '4', '8'].includes(size))) {
-    console.error('usage: native_online.cjs EXPORT ENDPOINT mesh|relay 2|4|8, or mesh-startup|mesh-close 4');
+  const [root, endpoint, route, size, profile = 'chromium'] = process.argv.slice(2);
+  const browserPair = profile.split('-');
+  const validPair = browserPair.length <= 2 && new Set(browserPair).size === browserPair.length
+    && browserPair.every(name => ['chromium', 'firefox', 'webkit'].includes(name));
+  const validRoom = (['mesh-startup', 'mesh-close'].includes(route) && size === '4') || (['mesh', 'relay'].includes(route) && ['2', '4', '8'].includes(size));
+  if (!validRoom || !validPair) {
+    console.error('usage: native_online.cjs EXPORT ENDPOINT mesh|relay 2|4|8, or mesh-startup|mesh-close 4, with optional browser pair');
     process.exitCode = 1;
-  } else run(root, endpoint, route, Number(size)).then(result => console.log(JSON.stringify(result))).catch(error => {
+  } else run(root, endpoint, route, Number(size), browserPair).then(result => console.log(JSON.stringify(result))).catch(error => {
     console.error(error);
     process.exitCode = 1;
   });
 }
 
-module.exports = { compareHistory, instrumentNativeWire };
+module.exports = { compareHistory, instrumentNativeWire, receivedDepartureAbort };

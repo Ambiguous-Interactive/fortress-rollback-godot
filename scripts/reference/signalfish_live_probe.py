@@ -53,13 +53,13 @@ def source_inventory(root):
     return result
 
 
-def wait_ready(server, port):
+def wait_ready(server, port, address='127.0.0.1'):
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         if server.poll() is not None:
             raise ValueError('local server exited before readiness')
         try:
-            with socket.create_connection(('127.0.0.1', port), timeout=0.25):
+            with socket.create_connection((address, port), timeout=0.25):
                 return
         except OSError:
             time.sleep(0.05)

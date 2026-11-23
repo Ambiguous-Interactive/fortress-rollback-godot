@@ -77,6 +77,10 @@ runtime path when its replacement passes acceptance. Retain the end-to-end
 tests for supported behavior. The epics below track the existing port until
 their acceptance criteria are met or explicitly superseded.
 
+Qualify clean Web installs in [playable browser rooms](docs/experiments/upstream-binding.md#playable-web-rooms)
+at 2, 4 and 8 peers on both Godot pins. Keep native WebRTC and SignalFish relay
+acceptance tied to confirmed input, canonical state and observed routes.
+
 ## Milestone map
 
 | Epic | Work and acceptance gate |
