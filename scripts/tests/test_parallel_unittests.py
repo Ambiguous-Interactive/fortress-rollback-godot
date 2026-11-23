@@ -76,6 +76,15 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertIn('FAIL test_slow.py', completed.stdout)
         self.assertIn('per-file timeout', completed.stdout)
 
+    def test_durations_only_change_order(self):
+        names = ['test_a.py', 'test_b.py']
+        profile = self.directory / 'durations.json'
+        for document in ('{}', 'invalid', '{"tests": []}', '{"tests": {"test_b.py": -1}}'):
+            profile.write_text(document)
+            self.assertEqual(parallel_unittests.ordered_files(names, profile, 'tests'), names)
+        profile.write_text('{"tests": {"test_b.py": 20, "retired.py": 90}}')
+        self.assertEqual(parallel_unittests.ordered_files(names, profile, 'tests'), names[::-1])
+
     def test_pattern_excludes_helper_modules(self):
         self.passing()
         self.write('helper.py', 'raise SystemExit("helper modules must never execute")\n')

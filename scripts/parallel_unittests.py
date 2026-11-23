@@ -11,6 +11,7 @@ exactly once and exited zero; timeouts and crashes are failures.
 import argparse
 import concurrent.futures
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -23,6 +24,18 @@ def discover(start: Path, pattern: str) -> list[str]:
     if not files:
         raise ValueError(f'no test files match {pattern} under {start}')
     return files
+
+
+def ordered_files(files: list[str], profile: Path, family: str) -> list[str]:
+    """Missing observations fall back to the discovery order for equal weights."""
+    try:
+        weights = json.loads(profile.read_text())[family]
+    except (OSError, ValueError, KeyError, TypeError):
+        return files
+    if not isinstance(weights, dict):
+        return files
+    valid = {key: seconds for key, seconds in weights.items() if type(seconds) in (float, int) and 0 < seconds <= 3600 and math.isfinite(seconds)}
+    return sorted(files, key=lambda name: -valid.get(name, 1))
 
 
 def run_file(root: Path, start: Path, name: str, timeout: float, top_level: Path | None = None) -> dict:
@@ -61,9 +74,8 @@ def main() -> int:
         return subprocess.call([sys.executable, '-m', 'unittest', 'discover', '-s', str(start), '-t', str(args.top_level),
                                 '-p', args.pattern, '-v'], cwd=root)
     files = discover(start, args.pattern)
-    profiles = json.loads(Path(__file__).with_name('unittest_durations.json').read_text())
-    weights = profiles.get(start.name, {}) if start.parent == root / 'scripts' else {}
-    files.sort(key=lambda name: -weights.get(name, 1))
+    if start.parent == root / 'scripts':
+        files = ordered_files(files, Path(__file__).with_name('unittest_durations.json'), start.name)
     cpus = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count() or 1
     jobs = max(1, min(args.jobs, cpus, len(files)))
     print(f'Running {len(files)} test files from {start} with {jobs} parallel subprocesses.')
