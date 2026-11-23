@@ -366,6 +366,42 @@ class ReceiptControls(unittest.TestCase):
                     except ProcessLookupError:
                         pass
 
+    def test_verified_full_shard_requires_every_listed_case_in_both_processes(self) -> None:
+        suites = RUNNER.discover("unit")
+        suite = suites[0]
+        result = valid_result()
+        result["records"][0]["suite"] = suite
+        second = copy.deepcopy(result["records"][0])
+        second["case"] = "second"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            engine, output, omit = root / "engine", root / "result.json", root / "omit"
+            program = (
+                "import json,pathlib,sys\n"
+                "if '--version' in sys.argv: print('test-engine');sys.exit(0)\n"
+                "if '--list-cases' in sys.argv:\n"
+                f" print('FORTRESS_TEST_CASES '+json.dumps({{ {suite!r}: ['pass', 'second'] }}));sys.exit(0)\n"
+                f"result = {result!r}\n"
+                f"if not pathlib.Path({str(omit)!r}).exists(): result['records'].append({second!r})\n"
+                "result['count'] = len(result['records'])\n"
+                "print('FORTRESS_TEST_RESULT '+json.dumps(result))\n"
+            )
+            write_executable(engine, program)
+            args = [sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", str(engine), "--verify-inventory",
+                    "--shard", f"1of{len(suites)}", "--jobs", "2", "--durations", str(root / "times"), "--results", str(output)]
+            env = dict(os.environ, FORTRESS_HOST_CAPACITY_DIR=str(root / "capacity"))
+            for missing in (False, True):
+                if missing:
+                    omit.touch()
+                execution = subprocess.run(args, env=env, capture_output=True, timeout=60)
+                report = json.loads(output.read_text())
+                self.assertEqual(execution.returncode, int(missing), report.get("failure"))
+                self.assertEqual(report["case_inventory"], {suite: ["pass", "second"]})
+                first, second_run = report["runs"]
+                self.assertEqual(first["result"], second_run["result"])
+                self.assertEqual(first["result"]["count"], 1 if missing else 2)
+                self.assertEqual(first.get("failure"), "case_inventory_mismatch" if missing else None)
+
     # Value: protects=inventory loading has its own budget; fails_when=combined discovery consumes a shard timeout; why_new=fast listings hide the regression; seam=scripted engine
     def test_filtered_inventory_has_independent_budget(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
