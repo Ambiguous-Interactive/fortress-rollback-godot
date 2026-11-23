@@ -44,6 +44,14 @@ LAUNCHERS = {
     'sync-floor': 'sync_floor_launch.py',
 }
 
+# Each lane runs one disjoint share of the wrap fixtures beside its other launchers.
+QUALIFICATION_LANES = (
+    ('p2p',),
+    ('drop-history',),
+    ('replay',),
+    ('oracle', 'handshake', 'queue', 'sync-floor'),
+)
+
 TAIL_LINES = 200
 
 # Launcher spawns in flight, registered before their process starts, so an
@@ -80,23 +88,25 @@ def _on_terminate(signum, _frame):
     raise SystemExit(128 + signum)
 
 
-def run_wave(args, jobs):
+def run_wave(args, jobs, launchers):
     """Run every launcher in the bounded pool and return the per-launcher results."""
     outputs = {name: (args.results / f'{name}-{args.suffix}' if args.suffix else args.results / name)
-               for name in LAUNCHERS}
+               for name in launchers}
     logs = {name: (args.results / f'launcher-{args.suffix}-{name}.log' if args.suffix
                    else args.results / f'launcher-{name}.log')
-            for name in LAUNCHERS}
+            for name in launchers}
     commands = {name: launcher_command(name, ORACLE_DIR / script, args.godot, outputs[name],
                                        skip_formal=args.skip_formal)
-                for name, script in LAUNCHERS.items()}
-    print(f'Running {len(LAUNCHERS)} oracle launchers with {jobs} parallel subprocesses.', flush=True)
+                for name, script in launchers.items()}
+    if args.lane:
+        commands['p2p-wrap'] += ['--wrap-part', str(args.lane)]
+    print(f'Running {len(launchers)} oracle launchers with {jobs} parallel subprocesses.', flush=True)
     results = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
         pending = {}
         try:
             pending = {pool.submit(run_launcher, name, commands[name], logs[name], args.timeout): name
-                       for name in LAUNCHERS}
+                       for name in launchers}
             for future in concurrent.futures.as_completed(pending):
                 name = pending[future]
                 try:
@@ -106,7 +116,7 @@ def run_wave(args, jobs):
                               'error': f'{type(error).__name__}: {error}'}
                 results[name] = result
                 mark = 'pass' if result['returncode'] == 0 else 'FAIL'
-                print(f'[{len(results)}/{len(LAUNCHERS)}] {mark} {name} {result["seconds"]:.1f}s', flush=True)
+                print(f'[{len(results)}/{len(launchers)}] {mark} {name} {result["seconds"]:.1f}s', flush=True)
         except BaseException:
             # Fence queued launches and terminate every active launcher group:
             # an interruption must not block on engines that keep running while
@@ -198,8 +208,17 @@ def main() -> int:
                         help='per-launcher bound in seconds; 0 keeps the workflow job timeout as the only bound')
     parser.add_argument('--skip-formal', action='store_true',
                         help='pass --formal off to the handshake launcher; the nightly workflow owns the model evidence')
+    parser.add_argument('--lane', type=int, choices=range(1, len(QUALIFICATION_LANES) + 1),
+                        help='run this qualification lane and its disjoint wrap fixture partition')
     args = parser.parse_args()
-    jobs = max(1, min(args.jobs, len(LAUNCHERS)))
+    launchers = LAUNCHERS
+    if args.lane:
+        args.suffix = '-'.join(filter(None, (args.suffix, f'lane-{args.lane}')))
+        inventory = [name for lane in QUALIFICATION_LANES for name in lane] + ['p2p-wrap']
+        if sorted(inventory) != sorted(LAUNCHERS):
+            raise ValueError('qualification lanes must cover every oracle launcher exactly once')
+        launchers = {name: LAUNCHERS[name] for name in (*QUALIFICATION_LANES[args.lane - 1], 'p2p-wrap')}
+    jobs = max(1, min(args.jobs, len(launchers)))
     # Every main() run is a fresh wave: a leftover abort from a caught
     # interruption must not refuse the next run in the same process.
     _abort.clear()
@@ -224,10 +243,10 @@ def main() -> int:
     # returns when the wave ends, however it ends.
     previous_term = signal.signal(signal.SIGTERM, _on_terminate)
     try:
-        results, logs = run_wave(args, jobs)
+        results, logs = run_wave(args, jobs, launchers)
     finally:
         signal.signal(signal.SIGTERM, previous_term)
-    failed = [name for name in LAUNCHERS if results[name]['returncode'] != 0]
+    failed = [name for name in launchers if results[name]['returncode'] != 0]
     for name in failed:
         result = results[name]
         print(f'--- {name} exited {result["returncode"]}'
@@ -239,7 +258,7 @@ def main() -> int:
         else:
             print(f'--- {name} produced no log ---')
     summed = sum(result['seconds'] for result in results.values())
-    print(f'Parallel oracle launchers: {len(LAUNCHERS)} launchers, {len(failed)} failed; '
+    print(f'Parallel oracle launchers: {len(launchers)} launchers, {len(failed)} failed; '
           f'summed process time {summed:.1f}s.')
     return int(bool(failed))
 

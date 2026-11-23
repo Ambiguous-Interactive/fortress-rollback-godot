@@ -23,6 +23,7 @@ import p2p_recovery
 import p2p_capacity
 import p2p_shrink
 import p2p_wrap
+import p2p_schedule
 
 PREFIX = 'FORTRESS_P2P_RESULT '
 
@@ -80,7 +81,7 @@ def minimized(scenario):
     return scenario
 
 
-def case_builders(binary):
+def case_builders(binary, observe=source):
     """The committed schedule corpus as an ordered name -> zero-arg builder table.
 
     One table owns both the launcher's executed case set and the published
@@ -91,35 +92,35 @@ def case_builders(binary):
     builders = {}
     for players in range(2, 9):
         for delay in (0, 2):
-            builders[f'mesh_{players}_delay_{delay}'] = partial(build_case, binary, players, delay, 'ordinary')
+            builders[f'mesh_{players}_delay_{delay}'] = partial(build_case, binary, players, delay, 'ordinary', observe=observe)
     for players in (2, 4, 8):
         for mode in ('loss', 'reorder', 'stall', 'retry'):
-            builders[f'mesh_{players}_{mode}'] = partial(build_case, binary, players, 0, mode)
+            builders[f'mesh_{players}_{mode}'] = partial(build_case, binary, players, 0, mode, observe=observe)
     # The maximum comparable prediction window: the ordinary cases hold the deepest configured
     # rollback boundary, and the stall schedule that exceeds window four instead recovers through
     # a six-frame prediction run, so both the threshold refusal and the deep recovery path compare.
     for players in (2, 4, 8):
-        builders[f'mesh_{players}_window_8'] = partial(build_case, binary, players, 0, 'ordinary', window=8)
-    builders['mesh_2_window_8_stall'] = partial(build_case, binary, 2, 0, 'stall', window=8)
+        builders[f'mesh_{players}_window_8'] = partial(build_case, binary, players, 0, 'ordinary', window=8, observe=observe)
+    builders['mesh_2_window_8_stall'] = partial(build_case, binary, 2, 0, 'stall', window=8, observe=observe)
     # Explicit multi-local endpoint layouts: couch co-op machines owning several local slots.
     for name, (layout, mode) in LAYOUT_CASES.items():
-        builders[name] = partial(build_layout_case, binary, layout, mode)
+        builders[name] = partial(build_layout_case, binary, layout, mode, observe=observe)
     # Per-machine construction delays: heterogeneous starting schedules under one shared pin.
     for name, (players, delays, mode) in DELAY_PROFILES.items():
-        builders[name] = partial(build_case, binary, players, 0, mode, delays=delays)
-    builders['mesh_4_couch_delays_2_0'] = partial(build_layout_case, binary, [2, 2], 'ordinary', delays=[2, 0])
+        builders[name] = partial(build_case, binary, players, 0, mode, delays=delays, observe=observe)
+    builders['mesh_4_couch_delays_2_0'] = partial(build_layout_case, binary, [2, 2], 'ordinary', delays=[2, 0], observe=observe)
     # The profile-plus-raise differential and its pinned minimized regression schedule.
-    builders['mesh_2_delays_2_0_raise'] = partial(build_case, binary, 2, 0, 'delay_profile_raise', delays=[2, 0])
+    builders['mesh_2_delays_2_0_raise'] = partial(build_case, binary, 2, 0, 'delay_profile_raise', delays=[2, 0], observe=observe)
     for name, scenario in MINIMIZED_PROFILES.items():
         builders[name] = partial(minimized, scenario)
     # Non-default input widths: the minimum width, wide 32-byte rows under a loss fault,
     # and the combined maximum profile (window eight, width 32, eight peers).
     for name, (players, mode, window, width) in WIDTH_CASES.items():
-        builders[name] = partial(build_case, binary, players, 0, mode, window=window, width=width)
+        builders[name] = partial(build_case, binary, players, 0, mode, window=window, width=width, observe=observe)
     for name, (players, delay, mode) in DELAY_CASES.items():
-        builders[name] = partial(build_case, binary, players, delay, mode)
-    builders[p2p_recovery.NAME] = partial(p2p_recovery.build, binary, source)
-    builders[p2p_capacity.NAME] = partial(p2p_capacity.build, binary, source)
+        builders[name] = partial(build_case, binary, players, delay, mode, observe=observe)
+    builders[p2p_recovery.NAME] = partial(p2p_recovery.build, binary, observe)
+    builders[p2p_capacity.NAME] = partial(p2p_capacity.build, binary, observe)
     return builders
 
 
@@ -128,23 +129,40 @@ def case_names():
     return list(case_builders(None))
 
 
-def corpus(binary, selected=None, wrap_only=False):
+def wrap_partition(part):
+    if part is None:
+        return p2p_wrap.NAMES
+    # The hosted 2..8-peer floods took 6..102 seconds. Fixture bytes track their operation counts.
+    lanes = [[] for _ in range(4)]
+    loads = [0] * len(lanes)
+    sizes = {name: (FIXTURES / (name + '.json')).stat().st_size for name in p2p_wrap.NAMES}
+    for name in sorted(sizes, key=lambda name: (-sizes[name], name)):
+        lane = min(range(len(lanes)), key=loads.__getitem__)
+        lanes[lane].append(name)
+        loads[lane] += sizes[name]
+    return lanes[part - 1]
+
+
+def corpus(binary, selected=None, wrap_only=False, wrap_part=None, *, hints=None):
     """Schedules derive only from actual sent packet inventories, never request traces."""
     cases = {}
     if wrap_only:
-        for name in p2p_wrap.NAMES:
+        for name in wrap_partition(wrap_part):
             if selected is None or selected == name:
                 cases[name] = wrap_fixture(name)
         return cases
-    for name, build in case_builders(binary).items():
-        if selected is None or selected == name:
-            cases[name] = build()
-    # Long ring-wrap runs live in the dedicated wrap launcher's fixture corpus; the
-    # main launcher runs them only when --case names one explicitly, so the wave
-    # never pays the wrap differential twice.
+    if hints is None:
+        hints = p2p_schedule.schedule_hints()
+    for name in [*case_names(), *p2p_lifecycle_corpus.NAMES]:
+        if selected is not None and selected != name:
+            continue
+        observe = p2p_schedule.builder_observer(binary, hints.get(name), source)
+        if name in p2p_lifecycle_corpus.NAMES:
+            cases[name] = p2p_lifecycle_corpus.build(binary, observe, name)
+        else:
+            cases[name] = case_builders(binary, observe)[name]()
     if selected in p2p_wrap.NAMES:
         cases[selected] = wrap_fixture(selected)
-    cases.update(p2p_lifecycle_corpus.corpus(binary, source, selected))
     return cases
 
 
@@ -195,7 +213,7 @@ WIDTH_CASES = {'mesh_2_width_1': (2, 'ordinary', 4, 1), 'mesh_4_width_1_loss': (
                'mesh_4_width_32': (4, 'ordinary', 4, 32), 'mesh_8_width_32_window_8': (8, 'ordinary', 8, 32)}
 
 
-def build_layout_case(binary, layout, mode, delays=None):
+def build_layout_case(binary, layout, mode, delays=None, *, observe=source):
     """Schedules where machines own several local slots: step ops address one slot, and a
     machine's advance happens on the op that completes its row. The stall case withholds the
     couch machine's flights so the solo machine runs its prediction window out through the
@@ -217,7 +235,7 @@ def build_layout_case(binary, layout, mode, delays=None):
         nonlocal now, latest
         now += 1; scenario['operations'].append(dict(kind=kind, now_us=now, **kwargs))
         if refresh:
-            latest = source(binary, scenario)
+            latest = observe(binary, scenario)
     def step(slot):
         frame = next((r['frame_after'] for r in reversed(latest['records']) if r['peer'] == owner[slot]), 0) if latest else 0
         append('step', peer=slot, bytes=((frame + 1) * (slot + 1) * 17).to_bytes(4, 'little').hex())
@@ -235,7 +253,7 @@ def build_layout_case(binary, layout, mode, delays=None):
                     withheld.append(p['id'])
                     continue
                 append('deliver', refresh=False, packet=p['id'])
-            latest = source(binary, scenario)
+            latest = observe(binary, scenario)
     for frame in range(6):
         # Stall rounds four and five step only the starved machine, so both machines hold
         # four predicted frames before the release and converge again through the recovery.
@@ -247,7 +265,7 @@ def build_layout_case(binary, layout, mode, delays=None):
     if mode == 'stall':
         for p in reversed(withheld):
             append('deliver', refresh=False, packet=p)
-            latest = source(binary, scenario)
+            latest = observe(binary, scenario)
         for frame in range(2):
             for slots in machines:
                 for slot in slots:
@@ -259,7 +277,7 @@ def build_layout_case(binary, layout, mode, delays=None):
     return scenario
 
 
-def build_case(binary, players, delay, mode, window=4, width=4, delays=None):
+def build_case(binary, players, delay, mode, window=4, width=4, delays=None, *, observe=source):
     scenario = {'format': 1, 'players': players, 'input_delay': delay, 'max_prediction': window, 'operations': []}
     if width != 4:
         scenario['input_width'] = width
@@ -270,7 +288,7 @@ def build_case(binary, players, delay, mode, window=4, width=4, delays=None):
         nonlocal now, latest
         now += 1; scenario['operations'].append(dict(kind=kind, now_us=now, **kwargs))
         if refresh:
-            latest = source(binary, scenario)
+            latest = observe(binary, scenario)
     def step(peer):
         frame = next((r['frame_after'] for r in reversed(latest['records']) if r['peer'] == peer), 0) if latest else 0
         head = ((frame + 1) * (peer + 1) * 17) % 256 ** width
@@ -285,7 +303,7 @@ def build_case(binary, players, delay, mode, window=4, width=4, delays=None):
         append('step', peer=peer, bytes=payload.hex())
     def change(peer, delay):
         nonlocal latest
-        scenario['operations'].append({'kind': 'delay', 'peer': peer, 'delay': delay}); latest = source(binary, scenario)
+        scenario['operations'].append({'kind': 'delay', 'peer': peer, 'delay': delay}); latest = observe(binary, scenario)
     def flush(reverse=False, lose=False):
         nonlocal latest
         while True:
@@ -299,7 +317,7 @@ def build_case(binary, players, delay, mode, window=4, width=4, delays=None):
                 if lose and (p['id'] % 3 == 1 if mode == 'delay_loss' else p['id'] < players * (players - 1) + 1):
                     continue
                 append('deliver', refresh=False, packet=p['id'])
-            latest = source(binary, scenario)
+            latest = observe(binary, scenario)
     if mode in {'stall', 'delay_stall'}:
         for _ in range(6):
             step(0)
@@ -503,7 +521,8 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
 
 def source_files():
     return [*(ROOT / 'addons/fortress_rollback/core').glob('*.gd'), *(ROOT / 'addons/fortress_rollback/protocol').glob('*.gd'),
-        *(ROOT / 'tests/oracle').glob('*.gd'), *Path(__file__).parent.glob('*.py'), *FIXTURES.glob('*'), ROOT / 'scripts/oracle/rust/src/bin/p2p.rs',
+        *(ROOT / 'tests/oracle').glob('*.gd'), *Path(__file__).parent.glob('*.py'), *FIXTURES.glob('*'),
+        *p2p_schedule.HINTS.parent.glob(p2p_schedule.HINTS.name), ROOT / 'scripts/oracle/rust/src/bin/p2p.rs',
         ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock', ROOT / 'docs/reference/pins.json',
         *(ROOT / 'scripts/reference').glob('*.py')]
 
@@ -523,7 +542,10 @@ def main(wrap_only=False):
     parser = ReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--offline', action='store_true')
-    parser.add_argument('--case')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--case')
+    if wrap_only:
+        group.add_argument('--wrap-part', type=int, choices=range(1, 5))
     parser.add_argument('--output', type=Path, default=CACHE / 'results/p2p-oracle')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -552,7 +574,8 @@ def main(wrap_only=False):
     binary_identity = executable_identity(binary)
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
-    cases = corpus(binary, args.case, wrap_only=wrap_only)
+    wrap_part = getattr(args, 'wrap_part', None)
+    cases = corpus(binary, args.case, wrap_only=wrap_only, wrap_part=wrap_part)
     if args.case:
         cases = {args.case: cases[args.case]}
     evidence = []
@@ -630,7 +653,7 @@ def main(wrap_only=False):
         'engine_identity': engine_identity, 'engine_path': str(engine),
         'binary_identity': binary_identity, 'execution_identities_unchanged': True,
         'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'default_features': False, 'features': [],
-        'process_controls': process_evidence, 'cases': evidence}, indent=2) + '\n')
+        'wrap_part': wrap_part, 'process_controls': process_evidence, 'cases': evidence}, indent=2) + '\n')
 
 
 if __name__ == '__main__':
