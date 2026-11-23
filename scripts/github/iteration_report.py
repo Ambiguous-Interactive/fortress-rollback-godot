@@ -3,6 +3,7 @@ import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from functools import partial
 import json
 import math
 from pathlib import Path
@@ -117,6 +118,72 @@ def ref_sha(events, clock):
     return sha if sha and sha.strip('0') else None
 
 
+TIMELINE = """
+query($owner:String!, $name:String!, $number:Int!, $endCursor:String) {
+  repository(owner:$owner, name:$name) { pullRequest(number:$number) {
+    baseRefName closedAt
+    timelineItems(first:100, after:$endCursor, itemTypes:[
+      BASE_REF_CHANGED_EVENT, AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT, CLOSED_EVENT, REOPENED_EVENT
+    ]) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        __typename
+        ... on BaseRefChangedEvent { createdAt previous:previousRefName current:currentRefName }
+        ... on AutomaticBaseChangeSucceededEvent { createdAt previous:oldBase current:newBase }
+        ... on ClosedEvent { createdAt }
+        ... on ReopenedEvent { createdAt }
+      }
+    }
+  } }
+}
+"""
+
+
+def pull_timeline(repo, pr):
+    owner, name = repo.split('/')
+    raw = subprocess.check_output(['gh', 'api', 'graphql', '--paginate', '--slurp', '-f', 'query=' + TIMELINE,
+                                   '-f', 'owner=' + owner, '-f', 'name=' + name, '-F', 'number=' + str(pr['number'])])
+    pages = [page['data']['repository']['pullRequest'] for page in json.loads(raw)]
+    # A mutation between pages cannot establish which base or lifecycle the assembled history describes.
+    if (not pages or any(not p or p['baseRefName'] != pages[0]['baseRefName'] or p['closedAt'] != pages[0]['closedAt'] for p in pages)
+            or pages[-1]['timelineItems']['pageInfo']['hasNextPage']):
+        return pr, None
+    return dict(pr, base={'ref': pages[0]['baseRefName']}, closed_at=pages[0]['closedAt']), [e for p in pages for e in p['timelineItems']['nodes']]
+
+
+def main_periods(pr, events):
+    """Yield intervals when the PR was both open and targeted main, or a gap for contradictory timeline evidence."""
+    if events is None or any(not e or not e.get('createdAt') for e in events):
+        return [(pr['created_at'], pr['closed_at'], 'base_history_unavailable')]
+    events = sorted(events, key=lambda e: e['createdAt'])
+    base = pr['base']['ref']
+    changes = [e for e in events if e['__typename'] in ('BaseRefChangedEvent', 'AutomaticBaseChangeSucceededEvent')]
+    for change in reversed(changes):
+        if not base or change.get('current') != base or not change.get('previous'):
+            return [(pr['created_at'], pr['closed_at'], 'base_history_unavailable')]
+        base = change['previous']
+    opened = True
+    start = pr['created_at'] if base == 'main' else None
+    intervals = []
+    for e in events:
+        action = e['__typename']
+        if action == 'ClosedEvent':
+            opened = False
+        elif action == 'ReopenedEvent':
+            opened = True
+        else:
+            base = e['current']
+        if opened and base == 'main':
+            if start is None:
+                start = e['createdAt']
+        elif start is not None:
+            intervals.append((start, e['createdAt'], None))
+            start = None
+    if start is not None:
+        intervals.append((start, pr['closed_at'], None))
+    return intervals
+
+
 def eligible(repo, since, activity, pulls):
     """Enumerate qualifying ref creations and open PR heads before consulting workflow runs."""
     refs = defaultdict(list)
@@ -141,29 +208,19 @@ def eligible(repo, since, activity, pulls):
             owner = repo
         ref = 'refs/heads/' + head['ref']
         events = refs[ref] if owner == repo else []
-        opened = pr['created_at']
-        transitions = list(transitions)
-        if pr['closed_at'] and (pr['closed_at'], 'closed') not in transitions:
-            transitions.append((pr['closed_at'], 'closed'))
-        for clock, action in [*sorted(transitions, key=lambda pair: pair[0]), (None, 'end')]:
-            if action == 'reopened':
-                opened = clock
-                continue
-            if opened is None:
+        for opened, clock, gap in main_periods(pr, transitions):
+            if clock is not None and ts(clock) <= ts(since):
                 continue
             periods[owner, ref].append((opened, clock, pr['number']))
-            if clock is None or ts(clock) >= ts(since):
-                if owner != repo:
-                    # Base-repository activity cannot enumerate pushes on a deleted or foreign fork.
-                    observed = opened if ts(opened) >= ts(since) else since
-                    add('pull_request', owner, ref, head['sha'], observed, pr['number'], 'fork_ref_history_unavailable', clock)
-                else:
-                    sha = ref_sha(events, opened)
-                    add('pull_request', owner, ref, sha, opened, pr['number'], None if sha else 'opening_head_unavailable', clock)
-                    for e in events:
-                        if opened <= e['timestamp'] and (clock is None or e['timestamp'] < clock) and e['activity_type'] in ('push', 'force_push', 'branch_creation'):
-                            add('pull_request', owner, ref, e['after'], e['timestamp'], pr['number'], closed=clock)
-            opened = None
+            if gap or owner != repo:
+                observed = opened if ts(opened) >= ts(since) else since
+                add('pull_request', owner, ref, head['sha'], observed, pr['number'], gap or 'fork_ref_history_unavailable', clock)
+                continue
+            sha = ref_sha(events, opened)
+            add('pull_request', owner, ref, sha, opened, pr['number'], None if sha else 'opening_head_unavailable', clock)
+            for e in events:
+                if opened <= e['timestamp'] and (clock is None or e['timestamp'] < clock) and e['activity_type'] in ('push', 'force_push', 'branch_creation'):
+                    add('pull_request', owner, ref, e['after'], e['timestamp'], pr['number'], closed=clock)
     return list(heads.values()), refs, periods
 
 
@@ -213,13 +270,10 @@ def collect(repo, since, until):
     if not required:
         raise ValueError('no required check contexts reported by the main branch rules')
     activity = items('activity?per_page=100&time_period=month')
-    prs = [pr for pr in items('pulls?state=all&base=main&sort=updated&direction=desc&per_page=100')
+    prs = [pr for pr in items('pulls?state=all&sort=updated&direction=desc&per_page=100')
            if ts(pr['created_at']) <= ts(until) and (not pr['closed_at'] or ts(pr['closed_at']) >= ts(since))]
-    def timeline(pr):
-        changes = items(f"issues/{pr['number']}/timeline?per_page=100")
-        return pr, [(e['created_at'], e['event']) for e in changes if e['event'] in ('closed', 'reopened')]
     with ThreadPoolExecutor(max_workers=6) as pool:
-        rows, refs, periods = eligible(repo, since, activity, list(pool.map(timeline, prs)))
+        rows, refs, periods = eligible(repo, since, activity, pool.map(partial(pull_timeline, repo), prs))
     runs = {}
     # A head at the window boundary can start its workflows later. Read through collection time
     # in short ranges to stay within the Actions API's 1,000-result ceiling.

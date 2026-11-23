@@ -47,8 +47,9 @@ class IterationReportTests(unittest.TestCase):
             return dict(timestamp=STAMP % clock, before=before, after=after, ref=branch, activity_type=action)
         activity = [event(1, '0', 'a', action='branch_creation'), event(6, 'a', 'b'), event(9, 'b', 'c'),
                     event(15, 'c', 'd'), event(18, '0', 'x', QUEUE + 'pr-1', 'branch_creation')]
-        pr = dict(number=1, created_at=STAMP % 4, closed_at=None, head=dict(ref='feature', repo={'full_name': repo}, sha='d'))
-        rows, _, periods = eligible(repo, STAMP % 0, activity, [(pr, [(STAMP % 8, 'closed'), (STAMP % 13, 'reopened')])])
+        pr = dict(number=1, base={'ref': 'main'}, created_at=STAMP % 4, closed_at=None, head=dict(ref='feature', repo={'full_name': repo}, sha='d'))
+        changes = [dict(createdAt=STAMP % 8, __typename='ClosedEvent'), dict(createdAt=STAMP % 13, __typename='ReopenedEvent')]
+        rows, _, periods = eligible(repo, STAMP % 0, activity, [(pr, changes)])
         self.assertEqual([(r['sha'], r['start']) for r in rows], [('x', STAMP % 18), ('a', STAMP % 4), ('b', STAMP % 6), ('c', STAMP % 13), ('d', STAMP % 15)])
         def run(number, clock, sha, branch='feature', owner=repo):
             return dict(id=number, event='pull_request', head_repository={'full_name': owner}, head_branch=branch, head_sha=sha, created_at=STAMP % clock)
@@ -59,9 +60,54 @@ class IterationReportTests(unittest.TestCase):
         for r in rows[:1] + rows[2:4]:
             self.assertEqual(candidate(r['start'], {'Gate'}, r['runs'])['outcome'], 'incomplete')
 
+    def test_retargeting_opens_and_closes_only_the_main_intervals(self):
+        from github.iteration_report import attach_runs, eligible
+        repo, ref = 'org/repo', 'refs/heads/topic'
+        activity = [dict(activity_type='push', ref=ref, before=str(c - 1), after=str(c), timestamp=STAMP % c) for c in (1, 5, 9, 14)]
+        pr = dict(number=7, created_at=STAMP % 3, closed_at=None, head=dict(ref='topic', repo={'full_name': repo}, sha='14'))
+        for event, before, after, expected in (
+                ('BaseRefChangedEvent', 'main', 'release', [('1', 3), ('5', 5)]),
+                ('AutomaticBaseChangeSucceededEvent', 'release', 'main', [('5', 8), ('9', 9), ('14', 14)])):
+            with self.subTest(event=event):
+                change = dict(__typename=event, createdAt=STAMP % 8, previous=before, current=after)
+                rows, _, periods = eligible(repo, STAMP % 0, activity, [(dict(pr, base={'ref': after}), [change])])
+                self.assertEqual([(r['sha'], r['start']) for r in rows], [(sha, STAMP % t) for sha, t in expected])
+                runs = [dict(id=t, event='pull_request', head_repository={'full_name': repo}, head_branch='topic', head_sha='5',
+                             created_at=STAMP % t, pull_requests=[{'number': 7}]) for t in (6, 8, 10)]
+                attach_runs(rows, runs, repo, periods)
+                owner = next(r for r in rows if r['sha'] == '5')
+                self.assertEqual(owner['runs'], [6] if before == 'main' else [8, 10])
+
+    def test_paginated_base_timeline_keeps_previous_and_new_target(self):
+        import json
+        from unittest.mock import patch
+        from github.iteration_report import main_periods, pull_timeline
+        pr = dict(number=7, created_at=STAMP % 1, closed_at=None, base={'ref': 'release'})
+        events = [dict(__typename='BaseRefChangedEvent', createdAt=STAMP % 3, previous='main', current='release'),
+                  dict(__typename='AutomaticBaseChangeSucceededEvent', createdAt=STAMP % 8, previous='release', current='main')]
+        def page(index):
+            result = dict(timelineItems=dict(pageInfo={'hasNextPage': index == 0}, nodes=[events[index]]), baseRefName='main', closedAt=None)
+            return dict(data=dict(repository=dict(pullRequest=result)))
+        with patch('github.iteration_report.subprocess.check_output', return_value=json.dumps([page(0), page(1)])) as api:
+            updated, changes = pull_timeline('org/repo', pr)
+        self.assertIn('--paginate', api.call_args.args[0])
+        self.assertEqual(main_periods(updated, changes), [(STAMP % 1, STAMP % 3, None), (STAMP % 8, None, None)])
+
+    def test_unknown_base_history_prevents_a_passing_denominator(self):
+        from github.iteration_report import eligible
+        repo = 'org/repo'
+        pr = dict(number=7, base={'ref': 'release'}, created_at=STAMP % 0, closed_at=None,
+                  head=dict(ref='topic', repo={'full_name': repo}, sha='abc'))
+        change = dict(__typename='BaseRefChangedEvent', createdAt=STAMP % 2, previous='main', current='elsewhere')
+        for events in ([change], [None], None):
+            rows, _, _ = eligible(repo, STAMP % 1, [], [(pr, events)])
+            gap, = rows
+            self.assertEqual((gap['coverage_gap'], gap['observed_at'], gap['start']), ('base_history_unavailable', STAMP % 1, None))
+            self.assertEqual(candidate(gap['start'], {'Gate'}, [job('Gate', 1, 2, 'success')])['outcome'], 'incomplete')
+
     def test_fork_activity_cannot_be_inferred_from_same_named_base_ref(self):
         from github.iteration_report import eligible
-        info = dict(number=1, created_at=STAMP % 1, closed_at=None, head=dict(ref='topic', sha='a', repo={'full_name': 'fork/project'}))
+        info = dict(number=1, base={'ref': 'main'}, created_at=STAMP % 1, closed_at=None, head=dict(ref='topic', sha='a', repo={'full_name': 'fork/project'}))
         activity = [dict(activity_type='push', ref='refs/heads/topic', before='0', after='a', timestamp=STAMP % 2)]
         rows, _, _ = eligible('base/project', STAMP % 0, activity, [(info, [])])
         self.assertEqual(len(rows), 1)
@@ -111,6 +157,7 @@ class IterationReportTests(unittest.TestCase):
             elif endpoint == 'rules/branches/main':
                 page = [dict(type='required_status_checks', parameters={'required_status_checks': [{'context': 'Gate'}]})]
             elif endpoint.startswith('pulls?'):
+                self.assertNotIn('base=', endpoint)
                 page = []
             elif endpoint.startswith('actions/workflows/'):
                 page = dict(total_count=0, workflow_runs=[])
