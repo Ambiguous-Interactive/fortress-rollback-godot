@@ -131,6 +131,10 @@ Use `gh api` for REST or GraphQL capability gaps, with authenticated pagination.
 For multiline bodies, use structured MCP arguments or an owned temporary file
 with `gh --body-file`; preserve actual newlines. Secret values stay in process
 environment or existing `gh` configuration throughout the operation.
+Pass generated REST bodies as JSON on stdin with `gh api --input -`. Check the
+endpoint's body limit separately from the operating system's argument limit.
+Upload full evidence before posting a summary that links to it, and preserve
+the linked artifact across workflow attempts.
 
 ## Evidence and retry boundaries
 
