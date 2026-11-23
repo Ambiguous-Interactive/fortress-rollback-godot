@@ -37,6 +37,8 @@ function instrumentNativeWire(tagWebKitSends) {
   let session, localUuid;
   let observingDeparture = false;
   let holding = false;
+  let releasingRelay = false;
+  let releaseEnded = null;
   let holdAll = false;
   let armed = false;
   let holdStarted = null;
@@ -102,7 +104,7 @@ function instrumentNativeWire(tagWebKitSends) {
   function send(route, reports, peer, emit, data, packet) {
     if (!packet) return emit(data);
     counts[route]++;
-    if (!holding) return emit(data);
+    if (!holding && !releasingRelay) return emit(data);
     if (!holdAll && packet.kind !== inputKind) {
       const sent = emit(data);
       if (reports && packet.kind === 4 && packet.token !== null) {
@@ -114,7 +116,7 @@ function instrumentNativeWire(tagWebKitSends) {
       }
       return sent;
     }
-    if (active.length >= 1024 || totalBytes + data.byteLength > 1024 * 1024) throw new Error('native packet hold exceeded bounds');
+    if (held.mesh + held.relay >= 1024 || totalBytes + data.byteLength > 1024 * 1024) throw new Error('native packet hold exceeded bounds');
     const owned = nativeBytes(data).slice();
     active.push(() => emit(owned));
     totalBytes += owned.byteLength;
@@ -207,7 +209,9 @@ function instrumentNativeWire(tagWebKitSends) {
   nativeSocket.prototype.send = function(data) {
     const packet = relayAddresses(data);
     return send('relay', socketReports.get(this), packet?.recipient, bytes => {
+      if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) throw new Error('native relay socket closed before release send');
       socketSend.call(this, bytes);
+      if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) throw new Error('native relay socket closed during release send');
       if (packet && packet.sender === localUuid) {
         increment(relayRecipients, packet.recipient);
         bufferedBytesPeak = Math.max(bufferedBytesPeak, this.bufferedAmount);
@@ -233,15 +237,22 @@ function instrumentNativeWire(tagWebKitSends) {
         holdStarted = performance.now();
       }
     },
-    release() {
+    async release() {
       if (!holding || !active.length) throw new Error('native packet hold did not take effect');
       holding = false;
-      for (const emit of active) {
-        emit();
-        released++;
-      }
-      active.length = 0;
+      releasingRelay = held.relay > 0;
       holdEnded = performance.now();
+      // Each relay send fans out to the room. Keep originals ahead of newly sampled inputs.
+      const batchSize = releasingRelay ? 16 : active.length;
+      while (active.length > 0) {
+        for (const emit of active.splice(0, batchSize)) {
+          emit();
+          released++;
+        }
+        if (active.length > 0) await new Promise(resolve => requestAnimationFrame(resolve));
+      }
+      releasingRelay = false;
+      releaseEnded = performance.now();
     },
     // Let every peer report native expiry before a socket close can cause a room-departure event.
     holdTerminal() {
@@ -269,7 +280,8 @@ function instrumentNativeWire(tagWebKitSends) {
       });
       const first = Math.max(0, qualityEventCount - qualityEventLimit);
       const events = Array.from(qualityEvents, (_, i) => qualityEvents[(first + i) % qualityEventLimit]);
-      return { armed, holding, hold_ms: holdMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
+      const releaseMs = holdEnded === null ? null : Math.round((releaseEnded ?? performance.now()) - holdEnded);
+      return { armed, holding, hold_ms: holdMs, release_ms: releaseMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
         control_round_trips: { ...controlRoundTrips },
         relayRecipients: Object.fromEntries(relayRecipients), relaySenders: Object.fromEntries(relaySenders),
         relay_trace: { buffered_bytes_peak: bufferedBytesPeak, broadcasts: relayBroadcasts, events, event_count: qualityEventCount },
@@ -506,8 +518,9 @@ async function run(root, endpoint, mode, players, browserPair) {
         assert.equal(peer.state, 'playing', peer.message);
       }
       comparedFrames = historyThrough(stalled);
-      await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.release())));
       phase = 'corrected history';
+      await Promise.all(pages.map((page, index) => boundedRoom(() => page.evaluate(() => window.fortressNativeWire.release()),
+        45000, `native peer ${index} input release`)));
       await Promise.all(pages.map((page, index) => wait(page, target => window.fortressNative.state === 'playing'
         && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores,
       { frame: comparedFrames, restores: stalled[index].restores }, 45000)));
@@ -562,7 +575,8 @@ async function run(root, endpoint, mode, players, browserPair) {
       assert.ok(before.frame > GATE_FRAME && before.confirmed < before.frame - 1, 'gate must force prediction beyond confirmation');
       assert.ok(before.wire.holding && before.wire.held[route] > 0, 'native bytes must be held on the selected physical route');
       assert.ok(before.wire.control_round_trips[route] > 0, 'native control must make a round trip on the selected route during the input hold');
-      assert.ok(!peer.wire.holding && peer.wire.totalBytes > 0 && peer.wire.released === peer.wire.held[route], 'held originals must be released');
+      assert.ok(!peer.wire.holding && peer.wire.totalBytes > 0 && peer.wire.released === peer.wire.held[route]
+        && peer.wire.released >= before.wire.held[route], 'held originals must be released');
       assert.equal(peer.wire.counts[other], 0, 'native traffic must use the selected physical route');
       if (route === 'mesh') assert.equal(peer.wire.rtc.filter(([id, state]) => id === 3 && state === 'open').length, players - 1);
       else assert.deepEqual(peer.wire.rtc, [], 'initial relay must avoid WebRTC channel creation');

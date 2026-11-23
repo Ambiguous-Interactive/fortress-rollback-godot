@@ -122,6 +122,72 @@ for (const expiry of [false, true]) {
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
+    def test_native_relay_release_drains_originals_in_order_while_control_passes(self):
+        # Value: protects=bounded FIFO recovery on the real socket hook; fails_when=release bursts or overtakes; seam=browser send
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire } = require(process.argv[1]);
+const released = [], turns = [];
+class Socket {
+  static OPEN = 1;
+  readyState = Socket.OPEN;
+  bufferedAmount = 0;
+  addEventListener() {}
+  send(bytes) { released.push(bytes.at(-1)); }
+}
+const realm = { window: {}, performance, Uint8Array, ArrayBuffer, DataView, WebSocket: Socket,
+  RTCPeerConnection: class {}, requestAnimationFrame(callback) { turns.push(callback); } };
+runInNewContext(`(${instrumentNativeWire})()`, realm);
+const wire = realm.window.fortressNativeWire;
+wire.bind('00'.repeat(16), '01'.repeat(16));
+const socket = new realm.window.WebSocket();
+const relay = (kind, value) => {
+  const bytes = new Uint8Array(57 + (kind === 4 ? 46 : 29));
+  bytes.set([70, 83, 82, 49, 1]);
+  bytes.fill(1, 21, 37);
+  bytes.fill(2, 37, 53);
+  new DataView(bytes.buffer).setUint32(53, bytes.length - 57, true);
+  bytes.set([0xf5, 0x52, 2, 0, 1, 0, 0, 0, kind, 0, 0, 0], 73);
+  bytes[bytes.length - 1] = value;
+  return bytes;
+};
+async function run() {
+  wire.arm();
+  for (let i = 0; i < 33; i++) socket.send(relay(2, i));
+  const recovery = wire.release();
+  assert.equal(released.length, 16);
+  socket.send(relay(2, 33));
+  socket.send(relay(4, 99));
+  assert.deepEqual(released.slice(-2), [15, 99]);
+  assert.equal(turns.length, 1);
+  while (turns.length) {
+    turns.shift()();
+    await Promise.resolve();
+  }
+  await recovery;
+  assert.deepEqual(released.filter(value => value !== 99), Array.from({length: 34}, (_, i) => i));
+  assert.equal(wire.status().released, 34);
+  assert.equal(wire.status().holding, false);
+  assert.equal(wire.status().held.relay, 34);
+  socket.send(relay(2, 34));
+  assert.equal(released.at(-1), 34);
+  const stopped = { ...realm, window: {}, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
+  runInNewContext(`(${instrumentNativeWire})()`, stopped);
+  const stoppedWire = stopped.window.fortressNativeWire;
+  const stoppedSocket = new stopped.window.WebSocket();
+  stoppedWire.bind('00'.repeat(16), '01'.repeat(16));
+  stoppedWire.arm();
+  stoppedSocket.send(relay(2, 55));
+  stoppedSocket.readyState = 3;
+  await assert.rejects(stoppedWire.release(), /closed before release send/);
+  assert.equal(stoppedWire.status().released, 0);
+}
+const timer = setTimeout(() => { throw new Error('release did not settle'); }, 1000);
+run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
     def test_native_webkit_abort_must_belong_to_the_reported_closed_link(self):
         # Value: protects=departure attribution; fails_when=another link excuses the warning; seam=browser receipt validator
         script = r"""
