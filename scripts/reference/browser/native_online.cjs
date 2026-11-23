@@ -54,9 +54,9 @@ function instrumentNativeWire() {
   const matches = (bytes, offset) => session && offset + session.length < bytes.length
     && session.every((byte, index) => bytes[offset + index] === byte);
   const inputKind = 2;
-  function nativePacket(bytes, offset) {
+  function nativePacket(bytes) {
     // The pinned Fortress codec uses an eight-byte header and a little-endian u32 body tag.
-    const at = offset + session.length;
+    const at = session.length;
     if (bytes.length < at + 12 || bytes[at] !== 0xf5 || bytes[at + 1] !== 0x52 || bytes[at + 2] !== 2 || bytes[at + 3] !== 0) {
       throw new Error('native gameplay wire header differs from the pinned codec');
     }
@@ -75,8 +75,11 @@ function instrumentNativeWire() {
     for (let index = 0; index + 73 < view.length; index++) {
       if (view[index] === 70 && view[index + 1] === 83 && view[index + 2] === 82 && view[index + 3] === 49
           && view[index + 4] === 1 && matches(view, index + 5) && matches(view, index + 57)) {
+        const payload = index + 57;
+        const size = new DataView(view.buffer, view.byteOffset + index + 53, 4).getUint32(0, true);
+        if (size > view.length - payload) throw new Error('native relay payload exceeds its envelope');
         return { sender: hex(view.subarray(index + 21, index + 37)), recipient: hex(view.subarray(index + 37, index + 53)),
-          ...nativePacket(view, index + 57) };
+          ...nativePacket(view.subarray(payload, payload + size)) };
       }
     }
     return null;
@@ -132,14 +135,14 @@ function instrumentNativeWire() {
       const view = nativeBytes(data);
       if (channel.id === 3 && view && matches(view, 0)) {
         record.received++;
-        receive('mesh', channelReports, channel, nativePacket(view, 0));
+        receive('mesh', channelReports, channel, nativePacket(view));
       }
     });
     resources.rtc.push(record);
     const nativeSend = channel.send;
     channel.send = data => {
       const view = nativeBytes(data);
-      const packet = channel.id === 3 && view && matches(view, 0) ? nativePacket(view, 0) : null;
+      const packet = channel.id === 3 && view && matches(view, 0) ? nativePacket(view) : null;
       return send('mesh', channelReports, channel, bytes => {
         nativeSend.call(channel, bytes);
         if (packet) record.sent++;

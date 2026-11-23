@@ -50,11 +50,13 @@ for (const expiry of [false, true]) {
   const wire = window.fortressNativeWire;
   const local = '01'.repeat(16);
   const relay = (sender, recipient, data) => {
-    const envelope = new Uint8Array(57 + data.length);
+    const envelope = new Uint8Array(57 + data.length + 3);
     envelope.set([70, 83, 82, 49, 1]);
     envelope.fill(sender, 21, 37);
     envelope.fill(recipient, 37, 53);
+    new DataView(envelope.buffer).setUint32(53, data.length, true);
     envelope.set(data, 57);
+    envelope.set([0xa1, 0x73, 0x01], 57 + data.length);
     return envelope;
   };
   wire.bind('00'.repeat(16), local);
