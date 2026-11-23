@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { setImmediate: flush } = require('node:timers/promises');
+const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
 const { createHost } = require('./online_host.cjs');
 const { placeFirefox } = require('./webrtc_display.cjs');
 const { boundedRoom } = require('./webrtc_watchdog.cjs');
@@ -312,6 +312,32 @@ function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, cl
   return evidence;
 }
 
+async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks, clock = () => performance.now(), delay = pause } = {}) {
+  if (!errors.length) return undefined;
+  report.proofs = [];
+  const deadline = clock() + DIAGNOSTIC_MS;
+  while (clock() < deadline) {
+    const snapshots = await Promise.allSettled(pages.map((page, index) =>
+      boundedRoom(() => page.evaluate(() => window.fortressNativeWire.status().sctp),
+        Math.max(0, Math.ceil(deadline - clock())), `native peer ${index} close snapshot`)));
+    const failed = snapshots.flatMap((entry, index) => entry.status === 'rejected' ? [{ index, reason: entry.reason }] : []);
+    report.snapshotErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
+    if (failed.length) {
+      throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} close snapshot failed`, { cause: reason })),
+        'WebKit close snapshots failed');
+    }
+    const links = snapshots.map(entry => entry.value);
+    report.proofs = errors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, clocks));
+    for (const proof of report.proofs) assert.ok(proof.before, `WebKit send failure for peer ${proof.index} lacked a sending channel`);
+    const remaining = deadline - clock();
+    if (remaining <= 0) break;
+    if (report.proofs.every(proof => proof.proof)) return links;
+    await delay(Math.min(25, remaining));
+  }
+  const pending = [...new Set(report.proofs.filter(proof => !proof.proof).map(proof => `peer ${proof.index} channel ${proof.channel}`))];
+  throw new Error(`WebKit close evidence deadline${pending.length ? ` for ${pending.join(', ')}` : ''}`);
+}
+
 function historyThrough(peers) {
   // Each observed frame is the next sample. Compare at least one later sample from every slot.
   const frames = Math.max(HISTORY_FRAMES, ...peers.map(peer => peer.frame + 2));
@@ -364,8 +390,8 @@ async function run(root, endpoint, mode, players, browserPair) {
   let phase = 'launch';
   let sequence = 0;
   let departureClocks;
-  let closeProofs;
   let stalled;
+  const closeReport = {};
   const wait = async (page, condition, argument = null, timeout = 30000) => {
     const handle = await page.waitForFunction(condition, argument, { timeout });
     await handle.dispose();
@@ -381,29 +407,6 @@ async function run(root, endpoint, mode, players, browserPair) {
   const observe = (group = pages) => Promise.all(group.map((page, index) => page.evaluate(index => ({
     index, ...window.fortressNative, wire: window.fortressNativeWire.status()
   }), index)));
-  async function verifyCloseErrors(before, closer = null) {
-    if (!closeErrors.length) return undefined;
-    const takeLinks = async () => {
-      const links = await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.status().sctp)));
-      closeProofs = closeErrors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, departureClocks));
-      return links;
-    };
-    let closedByPage = await takeLinks();
-    const pending = closeProofs.filter(error => !error.proof);
-    // A channel close resets the stream. Peer teardown can also report an SCTP abort.
-    await Promise.all(pending.map(({ index, channel, before: link }) => {
-      assert.ok(link, `WebKit send failure for peer ${index} lacked a sending channel`);
-      return wait(pages[index], ({ channel, aborts, streamClose }) => window.fortressNativeWire.status().sctp
-        .some(link => link.index === channel && (streamClose ? link.closed : link.closeAborts > aborts)),
-      { channel, aborts: link.closeAborts, streamClose: closer !== null }, DIAGNOSTIC_MS);
-    }));
-    if (pending.length) closedByPage = await takeLinks();
-    for (const error of closeProofs) {
-      assert.ok(error.proof,
-        `WebKit send failure for peer ${error.index} channel ${error.channel} lacked confirmation on the expected closed link`);
-    }
-    return closedByPage;
-  }
   try {
     for (const name of browserPair) browsers.push(await playwright[name].launch(browserOptions(name)));
     for (let index = 0; index < players; index++) {
@@ -424,6 +427,7 @@ async function run(root, endpoint, mode, players, browserPair) {
         const errorList = webkitSend && (physicalClose || departure) ? closeErrors : errors;
         errorList.push({ index, phase, text: String(error), ...(webkitSend ? reportedChannel(error.stack) : {}) });
       });
+      page.on('crash', () => errors.push({ index, phase, text: 'Renderer crashed' }));
       page.on('console', message => {
         const text = message.text();
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push({ index, phase, text });
@@ -479,7 +483,7 @@ async function run(root, endpoint, mode, players, browserPair) {
       afterClose = await observe();
       comparedFrames = historyThrough(afterClose);
       phase = 'mixed confirmed history';
-      closeLinks = await verifyCloseErrors(direct, 0);
+      closeLinks = await waitForCloseProofs(pages, direct, closeErrors, closeReport, { closer: 0 });
     }
     if (!mixed) {
       phase = 'prediction stall';
@@ -615,7 +619,7 @@ async function run(root, endpoint, mode, players, browserPair) {
         assert.equal(peer[key], before[key], `terminal ${key} changed for survivor ${index}`);
     }
     phase = 'teardown';
-    if (!liveClose) closeLinks = await verifyCloseErrors(peers);
+    if (!liveClose) closeLinks = await waitForCloseProofs(pages, peers, closeErrors, closeReport, { clocks: departureClocks });
     if (liveClose) await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.releaseTerminal())));
     await Promise.all(survivors.map(page => command(page, 'leave')));
     await Promise.all(pages.map(page => wait(page, () => {
@@ -632,7 +636,8 @@ async function run(root, endpoint, mode, players, browserPair) {
     })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
     const diagnostics = states.map(state => state.status === 'fulfilled' ? state : { status: state.status, reason: String(state.reason) });
     console.error(JSON.stringify({
-      phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, departureClocks, closeProofs, stalled, states: diagnostics
+      phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, departureClocks, closeProofs: closeReport.proofs,
+      closeSnapshotErrors: closeReport.snapshotErrors, stalled, states: diagnostics
     }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
@@ -665,4 +670,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { closeEvidence, compareHistory, instrumentNativeWire, reportedChannel };
+module.exports = { closeEvidence, compareHistory, instrumentNativeWire, reportedChannel, waitForCloseProofs };

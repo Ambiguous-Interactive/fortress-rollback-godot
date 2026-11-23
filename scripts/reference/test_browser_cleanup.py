@@ -198,6 +198,56 @@ assert.equal(stream.proof, 'stream-close');
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
+    def test_native_webkit_close_rechecks_the_remote_page_without_an_abort(self):
+        # Value: protects=late reciprocal close; fails_when=only sender abort is retried or missing snapshots excuse an error; seam=room verifier
+        script = r"""
+const assert = require('node:assert/strict');
+const { waitForCloseProofs } = require(process.argv[1]);
+const before = {index:17, local:'survivor', remote:'leaver', closeAborts:0, closed:false};
+const reciprocal = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
+const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
+const sample = links => ({ evaluate: async () => links() });
+const initial = [{wire:{sctp:[reciprocal]}}, {wire:{sctp:[before]}}];
+const warning = [{index:1, channel:17, sentAt:47200}];
+const sender = sample(() => [before]);
+
+(async () => {
+  let rounds = 0;
+  let now = 0;
+  const clock = () => now;
+  const pause = async ms => { now += ms; };
+  const report = {};
+  const late = sample(() => ++rounds === 1 ? [{...reciprocal, connectionClosed:false, closedAt:null}] : [reciprocal]);
+  assert.deepEqual(await waitForCloseProofs([late, sender], initial, warning, report, { clocks, clock, delay: pause }), [[reciprocal], [before]]);
+  assert.equal(rounds, 2);
+  assert.equal(report.proofs[0].proof, 'clock-order');
+
+  now = 0;
+  let attempts = 0;
+  const ambiguous = sample(() => { attempts++; return [{...reciprocal, closedAt:30001}]; });
+  const expire = async () => { now = 5000; };
+  await assert.rejects(waitForCloseProofs([ambiguous, sender], initial, warning, report, { clocks, clock, delay: expire }),
+    /WebKit close evidence deadline .*peer 1 channel 17/);
+  assert.equal(attempts, 1);
+  assert.equal(report.proofs[0].minimumGapUs, 1999);
+  assert.equal(report.proofs[0].proof, null);
+
+  now = 0;
+  const crashed = { evaluate: async () => { throw Error('Page crashed'); } };
+  await assert.rejects(waitForCloseProofs([late, crashed], initial, warning, report, { clocks, clock, delay: pause }),
+    error => error instanceof AggregateError && error.errors[0].message.includes('peer 1') && error.errors[0].cause.message === 'Page crashed');
+  assert.deepEqual(report.snapshotErrors, [{index:1, reason:'Error: Page crashed'}]);
+  assert.deepEqual(report.proofs, []);
+
+  const lateReply = sample(() => { now = 5000; return [reciprocal]; });
+  now = 0;
+  await assert.rejects(waitForCloseProofs([lateReply, sender], initial, warning, report, { clocks, clock, delay: pause }),
+    /WebKit close evidence deadline/);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_real_entrypoints_finish_cleanup_and_keep_original_and_cleanup_errors(self):
         scratch = ROOT / '.cache/scratch'
         scratch.mkdir(parents=True, exist_ok=True)
