@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from export import CACHE, HERE, ROOT, SCRATCH, prepared_editor
+from export import CACHE, HERE, SCRATCH, prepared_editor
 
 
 def run(command):
@@ -35,7 +35,6 @@ def main():
         project = Path(tmp)
         (project / "project.godot").write_text('config_version=5\n[application]\nconfig/name="Benchmark"\n')
         shutil.copy(HERE / "bench.gd", project)
-        shutil.copytree(ROOT / "addons/fortress_rollback", project / "addons/fortress_rollback")
         with zipfile.ZipFile(scratch / version / "linux/addon.zip") as archive:
             archive.extractall(project)
         (project / ".godot").mkdir()

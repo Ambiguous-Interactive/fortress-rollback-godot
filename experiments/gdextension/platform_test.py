@@ -41,8 +41,7 @@ def editor(data, version):
 def qualify_driver(binary, addon):
     with tempfile.TemporaryDirectory(dir=SCRATCH) as directory:
         project = Path(directory)
-        for relative in ("addons/fortress_rollback", "examples/offline"):
-            shutil.copytree(ROOT / relative, project / relative)
+        shutil.copytree(ROOT / "examples/offline", project / "examples/offline")
         with zipfile.ZipFile(addon) as package:
             package.extractall(project)
         (project / "project.godot").write_text('config_version=5\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n')

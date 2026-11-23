@@ -105,6 +105,9 @@ For distributable archives, compare against an explicit required runtime invento
 A clean import can succeed after an entire optional subsystem was omitted. Delete
 a required subsystem and add an unknown development script as negative controls;
 both must fail before constructing a successful candidate.
+Install the shipped archive as the sole source of its addon directories in a
+clean acceptance project. Copying a runtime from the checkout while separately
+installing a native library lets a binary-only package pass the game witness.
 Exercise serialized corruption through the installed decoder and player. A mutant that
 disables a validation-status getter proves reporting only; bypass the actual comparison
 and require the corrupted-recording check to fail before claiming validation coverage.

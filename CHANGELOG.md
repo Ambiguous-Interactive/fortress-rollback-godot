@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add the GDScript runtime to each prebuilt native addon archive so both addon directories install together. [Installation guide](experiments/gdextension/README.md#install-and-use)
+
 - Measure PR and merge-queue validation from the branch update through the required verdict, including reruns. [Iteration measurements](docs/reference/iteration.md)
 
 - Add an opt-in upstream Fortress backend to the online example. Install the native addon to try 2–8-player WebRTC or relay rooms. [Setup guide](docs/online-example.md#try-the-native-backend)

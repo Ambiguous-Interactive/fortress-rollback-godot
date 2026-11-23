@@ -39,11 +39,13 @@ def install_sdk(project, sdk):
     shutil.copytree(source, project / 'addons/signal_fish')
 
 
-def create_project(project, source=ROOT):
+def create_project(project, source=ROOT, *, include_runtime=True):
     if project.exists() and any(project.iterdir()):
         raise ValueError('destination must be an empty directory')
     project.mkdir(parents=True, exist_ok=True)
-    for directory in ('addons/fortress_rollback', 'examples/offline', 'examples/online'):
+    if include_runtime:
+        shutil.copytree(source / 'addons/fortress_rollback', project / 'addons/fortress_rollback')
+    for directory in ('examples/offline', 'examples/online'):
         shutil.copytree(source / directory, project / directory)
     game = Path('examples/integration/game.gd')
     (project / game).parent.mkdir(parents=True, exist_ok=True)

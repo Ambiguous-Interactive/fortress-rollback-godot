@@ -2,7 +2,7 @@
 """Export the installed native online example and qualify live SignalFish rooms."""
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
 import shutil
 import socket
@@ -22,6 +22,7 @@ from signalfish_probe import inventory
 
 sys.path.insert(0, str(ROOT / 'scripts'))
 import host_capacity  # noqa: E402
+from package_addon import ADDON, snapshot as runtime_snapshot  # noqa: E402
 
 CELLS = tuple(f'{route}:{count}' for route in ('mesh', 'relay') for count in (2, 4, 8)) + ('mesh-startup:4', 'mesh-close:4')
 BROWSER = ROOT / 'scripts/reference/browser'
@@ -30,13 +31,29 @@ TEMPLATE = 'web_dlink_nothreads_release.zip'
 REPORT = 'native-online.json'
 
 
-def install_extension(project, archive):
-    addon_folder = Path(EXTENSION).parent
+def install_addon(project, archive):
+    addon_folder = PurePosixPath(EXTENSION).parent
+    runtime_folder = PurePosixPath(ADDON.as_posix())
+    if any((project / directory).exists() for directory in (addon_folder, runtime_folder)):
+        raise ValueError('native addon directories must be absent before installation')
+    runtime = runtime_snapshot(ROOT)
     with zipfile.ZipFile(archive) as package:
-        members = [Path(item.filename) for item in package.infolist() if not item.is_dir()]
-        if len(set(members)) != len(members) or any(not member.is_relative_to(addon_folder) or '..' in member.parts for member in members):
+        entries = package.infolist()
+        names = [PurePosixPath(entry.filename) for entry in entries]
+        if len(set(names)) != len(names) or any(
+                name.as_posix() != entry.orig_filename.removesuffix('/') or '..' in name.parts or '\\' in entry.filename
+                or not (name.is_relative_to(addon_folder) or name.is_relative_to(runtime_folder))
+                for name, entry in zip(names, entries)):
             raise ValueError('native archive must contain only distinct addon files')
-        if Path(EXTENSION) not in members or not any(member.suffix == '.wasm' for member in members):
+        files = {name for name, entry in zip(names, entries) if not entry.is_dir()}
+        installed_runtime = {entry.filename for name, entry in zip(names, entries) if name.is_relative_to(runtime_folder)}
+        if installed_runtime != runtime.keys():
+            raise ValueError(f'native archive runtime differs: missing {sorted(runtime.keys() - installed_runtime)}, '
+                             f'extra {sorted(installed_runtime - runtime.keys())}')
+        for name, data in runtime.items():
+            if package.read(name) != data:
+                raise ValueError(f'native archive runtime differs at {name}')
+        if PurePosixPath(EXTENSION) not in files or not any(name.suffix == '.wasm' and name.is_relative_to(addon_folder) for name in files):
             raise ValueError('native archive needs a manifest and a Web side module')
         package.extractall(project)
     (project / '.godot').mkdir()
@@ -46,9 +63,9 @@ def install_extension(project, archive):
 def stage_export(root, output, editor, templates, sdk, addon, environment):
     project, export = root / 'game', root / 'web'
     export.mkdir()
-    create_project(project)
+    create_project(project, include_runtime=False)
     install_sdk(project, sdk)
-    install_extension(project, addon)
+    install_addon(project, addon)
     shutil.copyfile(BROWSER / 'native_online_bridge.gd', project / 'bridge.gd')
     config = project / 'project.godot'
     config.write_text(config.read_text().replace('res://examples/online/online.tscn', 'res://bridge.tscn'), encoding='utf-8')
@@ -110,7 +127,7 @@ def main():
     parser.add_argument('--version', help='pinned Godot version, defaults to current stable')
     parser.add_argument('--cell', action='append', choices=CELLS)
     parser.add_argument('--cache', type=Path, default=ROOT / '.cache/reference')
-    parser.add_argument('--addon', type=Path, required=True, help='locally built Web addon archive for this revision')
+    parser.add_argument('--addon', type=Path, required=True, help='complete Web addon archive for this revision')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     output, cache, addon = args.output.resolve(), args.cache.resolve(), args.addon.resolve()

@@ -17,6 +17,7 @@ import urllib.error
 import run as rust_runner
 import godot_smoke as godot_runner
 import native_online_probe as native_online_runner
+from package_addon import snapshot as runtime_snapshot
 
 from fetch import MANIFEST, fetch, load_manifest, sources
 from run import semantic
@@ -295,6 +296,42 @@ class ReferenceContracts(unittest.TestCase):
                     self.assertFalse((results / report_name).exists(), 'prior success survived failed rerun')
                     self.assertFalse((results / owned_log).exists(), 'prior runner log survived failed rerun')
                     self.assertEqual((results / other_log).read_text(), 'OTHER_RUNNER')
+
+    def test_native_online_installs_complete_addon_from_archive(self):
+        # Value: protects=Web export installs the distributed runtime; fails_when=checkout masks an incomplete archive; why_new=previous staging copied scripts; seam=archive
+        extension = {'addons/fortress_native/fortress.gdextension': b'manifest',
+                     'addons/fortress_native/fortress.wasm': b'binary'}
+        runtime = runtime_snapshot(native_online_runner.ROOT)
+        script = 'addons/fortress_rollback/core/native_driver.gd'
+        for fault in ('none', 'binary-only', 'missing-script', 'changed-script', 'extra-file', 'extra-directory'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                project = root / 'project'
+                project.mkdir()
+                addon = root / 'addon.zip'
+                members = extension.copy()
+                if fault != 'binary-only':
+                    members.update(runtime)
+                if fault == 'missing-script':
+                    del members[script]
+                if fault == 'changed-script':
+                    members[script] = b'changed'
+                if fault == 'extra-file':
+                    members['addons/fortress_rollback/dev.gd'] = b'development only'
+                if fault == 'extra-directory':
+                    members['addons/fortress_rollback/dev-only/'] = b''
+                with zipfile.ZipFile(addon, 'w') as archive:
+                    for name, data in members.items():
+                        archive.writestr(name, data)
+                if fault == 'none':
+                    native_online_runner.install_addon(project, addon)
+                    self.assertEqual((project / script).read_bytes(), runtime[script])
+                    with self.assertRaisesRegex(ValueError, 'native addon directories must be absent'):
+                        native_online_runner.install_addon(project, addon)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'native archive runtime differs'):
+                        native_online_runner.install_addon(project, addon)
+                    self.assertFalse((project / 'addons').exists())
 
     def test_native_online_invalidates_receipt_before_manifest_load(self):
         # Value: a missing or malformed pins file cannot leave a stale browser qualification result.
