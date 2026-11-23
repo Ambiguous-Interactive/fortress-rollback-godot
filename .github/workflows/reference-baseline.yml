@@ -1,5 +1,7 @@
 name: Reference Baseline
-on: workflow_dispatch
+on:
+  push:
+    branches: [experiment/iteration-ownership-and-units]
 permissions:
   contents: read
 jobs:
