@@ -31,6 +31,13 @@ class IterationReportTests(unittest.TestCase):
         self.assertEqual(summary(rows)['p95_s'], 300)
         self.assertFalse(summary(rows)['target_verified'])
 
+    def test_seven_minute_ceiling_counts_individual_completed_breaches(self):
+        rows = [dict(outcome='success', elapsed_s=t, runner_s=1) for t in [299, 300, 419, 420]]
+        self.assertEqual(summary(rows)['ceiling_breaches'], 1)
+        self.assertFalse(summary(rows)['p95_ceiling_verified'])
+        self.assertTrue(summary(rows[:3] * 14)['p95_ceiling_verified'])
+        self.assertFalse(summary(rows * 10)['p95_ceiling_verified'])
+
     def test_runner_budget_accounts_for_the_change_mix(self):
         def row(tooling, seconds):
             return dict(event='pull_request', tooling_controls=tooling, runner_s=seconds, outcome='success')

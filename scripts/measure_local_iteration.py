@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure verified local edits in a temporary detached worktree. Print a summary and retain one JSONL row per completed command."""
 import argparse
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import math
@@ -134,9 +134,11 @@ def main():
     parser.add_argument("--revision", default="HEAD", help="committed revision to measure")
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--output", type=Path, help="new JSONL output file (default: unique path under .cache/scratch)")
-    parser.add_argument("--control", type=Path, help="compare matching edited bytes and case results against the first five rows of a prior study")
+    comparison = parser.add_mutually_exclusive_group()
+    comparison.add_argument("--compare-revision", help="run the same edit on a control revision, alternating order on each pair")
+    comparison.add_argument("--control", type=Path, help="compare matching edited bytes and case results against the first five rows of a prior study")
     args = parser.parse_args()
-    if args.count < 1 or (args.control and args.count < len(EDITS)):
+    if args.count < 1 or ((args.control or args.compare_revision) and args.count < len(EDITS)):
         parser.error("count must be positive and cover all five edits for a paired comparison")
     control = []
     if args.control:
@@ -149,20 +151,37 @@ def main():
     output = args.output or Path(tempfile.mkdtemp(dir=SCRATCH, prefix="iteration-study-")) / "samples.jsonl"
     output.parent.mkdir(parents=True, exist_ok=True)
     elapsed = []
+    by_command = {}
+    lease_waits = 0
+    control_lease_waits = 0
     paired = []
-    with output.open("x", encoding="utf-8") as rows, worktree(commit, environment) as tree:
+    with output.open("x", encoding="utf-8") as rows, ExitStack() as trees:
+        tree = trees.enter_context(worktree(commit, environment))
+        if args.compare_revision:
+            base = git(ROOT, environment, "rev-parse", "--verify", "--end-of-options", args.compare_revision + "^{commit}")
+            base_tree = trees.enter_context(worktree(base, environment))
         for index in range(args.count):
+            prior = control[index] if index < len(control) else None
+            if args.compare_revision and index % 2 == 0:
+                prior = sample(base_tree, environment, base, index)
             row = sample(tree, environment, commit, index)
-            if index < len(control):
-                prior = control[index]
+            if args.compare_revision and index % 2 == 1:
+                prior = sample(base_tree, environment, base, index)
+            if prior is not None:
                 fields = ("index", "command", "red", "cold_durations", "engine_sha256", "edit_sha256", "result_sha256")
                 require(all(prior[key] == row[key] for key in fields), f"control sample {index} described a different workload or result")
                 paired.append([prior["seconds"], row["seconds"]])
+                control_lease_waits += prior["contended"]
             elapsed.append(row["seconds"])
+            by_command.setdefault(row["command"][1], []).append(row["seconds"])
+            lease_waits += row["contended"]
+            if args.compare_revision:
+                row["control"] = prior
             print(json.dumps(row, sort_keys=True), file=rows, flush=True)
-    summary = {"revision": commit, "output": str(output), **summarize(elapsed)}
+    summary = {"revision": commit, "output": str(output), **summarize(elapsed), "lease_waits": lease_waits,
+               "by_command": {name: summarize(values) for name, values in by_command.items()}}
     if paired:
-        summary.update(pairs=paired, paired_median_delta=statistics.median(after - before for before, after in paired))
+        summary.update(control_lease_waits=control_lease_waits, pairs=paired, paired_median_delta=statistics.median(after - before for before, after in paired))
     print(json.dumps(summary, sort_keys=True))
 
 
