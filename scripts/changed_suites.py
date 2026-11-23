@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ("addons", "tests", "examples", "scripts")
 SCANNED = (".gd", ".tscn", ".tres", ".json", ".cfg")
 CLASS_NAME = re.compile(r"(?m)^(?:@\w+\s+)*class_name\s+(\w+)")
-LITERAL = re.compile(r"""(?P<quote>["'])(?P<value>[^"'\n]*)(?P=quote)""")
+LITERAL = re.compile(r"""(?P<quote>["'])(?P<value>(?:\\[^\n]|(?!(?P=quote))[^\\\n])*)(?P=quote)""")
 ACCESS = re.compile(r"(?:(?<![\w])(?:pre)?load|\.(?:change_scene_to_file|change_dir|load_from_file)|ResourceLoader\.\w+"
                     r"|FileAccess\.(?!get_open_error\b)\w+|DirAccess\.(?:open|get_\w+_at|dir_exists_absolute))\s*\(\s*")
 # These exact source versions have indirect reads of user files, supervisor output, SDK constants or selected suite paths.

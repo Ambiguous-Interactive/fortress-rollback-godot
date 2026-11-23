@@ -83,6 +83,15 @@ class SelectTests(unittest.TestCase):
                 self.assertEqual(select([suite], [path, "docs/example.json"], root), [suite])
             for path in ("scripts/new_agent.py", "scripts/reference/new_settings.cfg", "addons/data.unknown", "project.godot"):
                 self.assertEqual(selection([suite], [path], root)["reason"], "unknown_input")
+            # Both a scene and a constant can name a file with an apostrophe inside double quotes.
+            resource = r"res://addons/reader's/\u0061.gd"
+            for relative, code in (("scripts/reference/bridge.gd", f'const PATH = "{resource}"\nfunc read():\n load(PATH)'),
+                                   ("examples/reader.tscn", f'[ext_resource path="{resource}"]')):
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_text(code)
+                (root / suite[6:]).write_text(f'const Resource = preload("res://{relative}")')
+                self.assertEqual(selection([suite], ["addons/reader's/a.gd"], root)["reason"], "unresolved_resource")
+            (root / suite[6:]).write_text(files[suite[6:]])
             for expression in ('load(dynamic_path)', 'ResourceLoader.load_threaded_request(path)',
                                'FileAccess.get_file_as_string(path)', 'FileAccess.get_sha256(path)', 'Image.load_from_file(path)',
                                'DirAccess.dir_exists_absolute(path)', 'config.load(path)', 'load("res://scenes/" + filename)',
