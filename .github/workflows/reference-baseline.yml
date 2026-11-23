@@ -174,12 +174,6 @@ jobs:
         with:
           version: ${{ matrix.version }}
           browser: chromium
-      - name: Restore verified source archives
-        if: matrix.part == 'suites'
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: .cache/reference/downloads/*.tar.gz
-          key: transport-sources-v1-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
       - name: Install pinned browser runner and operating system dependencies
         if: matrix.part == 'suites'
         run: |
@@ -335,6 +329,8 @@ jobs:
           name: relay-server-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             .cache/reference/server-build/
+            .cache/reference/downloads/sdk.tar.gz
+            .cache/reference/downloads/server.tar.gz
             ${{ steps.build.outputs.tool_bin }}/cargo
             ${{ steps.build.outputs.tool_bin }}/rustc
           if-no-files-found: error
@@ -378,11 +374,6 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           echo "$RECEIPT_SHA  .cache/reference/server-build/build-receipt.json" | sha256sum --check --strict
           chmod 755 .cache/reference/server-build/target/debug/signal-fish-server
-      - name: Restore verified source archives
-        uses: actions/cache@v6.1.0
-        with:
-          path: .cache/reference/downloads/*.tar.gz
-          key: transport-sources-v1-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
       - name: Restore the pinned editor
         if: matrix.part == 'native'
         uses: actions/cache@v6.1.0
@@ -401,10 +392,15 @@ jobs:
       - name: Install pinned browser runner and operating system dependencies
         if: matrix.part != 'native'
         run: |
+          python3 scripts/reference/qualification_transport.py --version "${{ matrix.version }}" --part "${{ matrix.part }}" --prepare-browser &
+          preparing=$!
+          trap 'kill "$preparing" 2>/dev/null || true' EXIT
           mkdir -p .cache/reference/browser
           cp scripts/reference/browser/package*.json .cache/reference/browser/
           npm ci --ignore-scripts --prefix .cache/reference/browser
           bash scripts/reference/retry_apt_fetch.sh .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
+          wait "$preparing"
+          trap - EXIT
       - name: Verify transport witnesses on the pinned engine
         run: python3 scripts/reference/qualification_transport.py --version "${{ matrix.version }}" --part "${{ matrix.part }}"
       - uses: actions/upload-artifact@v7.0.2

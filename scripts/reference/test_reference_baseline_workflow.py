@@ -3,6 +3,7 @@ import importlib.util
 import re
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -181,6 +182,10 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         self.assertIn('${{ steps.build.outputs.tool_bin }}/cargo', server)
         self.assertIn('${{ steps.build.outputs.tool_bin }}/rustc', server)
         self.assertIn('.cache/reference/server-build/', server)
+        for archive in ('sdk.tar.gz', 'server.tar.gz'):
+            self.assertIn('.cache/reference/downloads/' + archive, server)
+        self.assertIn('--prepare-browser &', relay)
+        self.assertLess(relay.index('wait "$preparing"'), relay.index('Verify transport witnesses'))
         self.assertIn('path: .cache/reference\n', relay)
         self.assertIn('needs: server', relay)
         self.assertIn('artifact-ids: ${{ needs.server.outputs.artifact }}', relay)
@@ -193,6 +198,20 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         self.assertTrue(set(transport.SPECTATORS) <= set(transport.PARTS))
         self.assertIn('online', transport.PARTS)
         self.assertIn('native', transport.PARTS)
+
+    def test_parallel_browser_preparation_requires_each_pinned_archive(self):
+        import qualification_transport as transport
+        data = transport.load_manifest()
+        for item in ('chromium-', 'linux.x86_64', 'templates'):
+            with self.subTest(item=item):
+                def fetch_archive(pin, name, *unused):
+                    self.assertEqual(pin, data['artifacts'][name])
+                    if item in name:
+                        raise ValueError('rejected archive ' + name)
+                with (patch.object(transport, 'fetch', side_effect=fetch_archive),
+                      patch.object(transport, 'web_template_archive', side_effect=fetch_archive)):
+                    with self.assertRaisesRegex(ValueError, 'rejected archive'):
+                        transport.prepare_browser_archives(data, '4.3', 'x86_64')
 
     # Value: protects=the published artifacts of every leg; fails_when=the upload step disappears; seam=workflow text
     def test_every_leg_still_publishes_its_artifacts(self):
