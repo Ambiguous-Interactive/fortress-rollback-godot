@@ -131,6 +131,7 @@ class WorkflowTierTests(unittest.TestCase):
             self.assertIn(source, detect)
         self.assertIn('0000000000000000000000000000000000000000', detect)
         self.assertIn('base="unavailable"', detect)
+        self.assertIn('.github/actions', detect)
         self.assertIn('scripts=true', detect)
         self.assertIn('set -o pipefail', detect)
 

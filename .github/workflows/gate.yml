@@ -89,7 +89,7 @@ jobs:
             base="unavailable"
           fi
           echo "base=$base" >> "$GITHUB_OUTPUT"
-          if ! list="$(git diff --name-only "$base...HEAD" -- scripts Makefile \
+          if ! list="$(git diff --name-only "$base...HEAD" -- scripts Makefile .github/actions \
               .github/workflows/gate.yml .github/workflows/reference-baseline.yml \
               .github/workflows/nightly.yml 2>/dev/null)"; then
             # An unresolvable base is the suspicious case itself: run the controls.
