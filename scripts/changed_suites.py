@@ -105,6 +105,8 @@ def inputs(path: str, text: str) -> tuple[set[str], bool]:
     opaque = False
     for match in LITERAL.finditer(text):
         value = match["value"]
+        if path == "project.godot":
+            value = value.removeprefix("*")  # Godot's global autoload notation.
         if value.startswith("res://"):
             target = value[6:]
             # A formatted string depends on everything under its last known directory.
@@ -150,8 +152,9 @@ def selection(suites: list[str], changed: list[str], root: Path, old_names=froze
         return receipt("no_changes", [])
     if any(p.startswith("tests/runner/") for p in relevant):
         return receipt("runner_changed", suites)
-    texts = {p: (root / p).read_text(encoding="utf-8") for p in (paths if paths is not None else sources_in(root))
-             if PurePosixPath(p).suffix in SCANNED and (root / p).is_file()}
+    available = set(paths if paths is not None else sources_in(root))
+    texts = {p: (root / p).read_text(encoding="utf-8") for p in available
+             if (p == "project.godot" or PurePosixPath(p).suffix in SCANNED) and (root / p).is_file()}
     classes = defaultdict(set)
     for p, text in texts.items():
         if p.endswith(".gd"):
@@ -162,6 +165,11 @@ def selection(suites: list[str], changed: list[str], root: Path, old_names=froze
     reached = set(relevant)
     for p, text in texts.items():
         used, opaque = inputs(p, text)
+        for target in used:
+            # A binary scene/resource or an unsupported authored format can contain unobserved references.
+            suffix = PurePosixPath(target).suffix
+            if suffix and suffix not in SCANNED and (target in available or suffix in (".res", ".scn")):
+                opaque = True
         if opaque:
             opaque_paths.add(p)
         words = set(re.findall(r"\w+", text))
@@ -190,9 +198,9 @@ def selection(suites: list[str], changed: list[str], root: Path, old_names=froze
         return seen
 
     suite_paths = {s.removeprefix("res://") for s in suites}
-    runner = "tests/runner/run_tests.gd"
+    global_inputs = {"tests/runner/run_tests.gd", "project.godot"}
     for path in sorted(opaque_paths):
-        if consumers([path]).intersection(suite_paths | {runner}):
+        if consumers([path]).intersection(suite_paths | global_inputs):
             return receipt("unresolved_resource", suites, path=path)
     for p in sorted(relevant):
         if p == "scripts/unit_suite_seconds.json":
@@ -205,7 +213,7 @@ def selection(suites: list[str], changed: list[str], root: Path, old_names=froze
             continue
         return receipt("unknown_input", suites, path=p)
     affected = consumers(reached)
-    if runner in affected:
+    if global_inputs.intersection(affected):
         return receipt("runner_dependency", suites)
     selected = [s for s in suites if s.removeprefix("res://") in affected]
     if selected:

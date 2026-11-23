@@ -89,6 +89,18 @@ class SelectTests(unittest.TestCase):
                     (root / "scripts/reference/bridge.gd").write_text(expression)
                     self.assertEqual(selection([suite], ["scripts/oracle/p2p_lifecycle.py"], root)["reason"], "unresolved_resource")
 
+    def test_opaque_resource_and_project_autoload_reach_the_full_inventory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            (root / "scripts/global.gd").write_text('const G = preload("res://scripts/transitive.gd")')
+            (root / "project.godot").write_text('[autoload]\nGlobal="*res://scripts/global.gd"')
+            self.assertEqual(selection(SUITES, ["scripts/transitive.gd"], root)["suites"], SUITES)
+            (root / "project.godot").unlink()
+            suite = "res://observes.gd"
+            (root / "observes.gd").write_text('const NODE = preload("res://scripts/opaque.scn")')
+            self.assertEqual(selection([suite], ["scripts/another.gd"], root)["reason"], "unresolved_resource")
+
     def test_directory_operations_cover_new_descendants_with_either_spelling(self):
         suite = "res://test.gd"
         with tempfile.TemporaryDirectory() as directory:
