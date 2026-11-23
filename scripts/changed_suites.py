@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ("addons", "tests", "examples", "scripts")
 SCANNED = (".gd", ".tscn", ".tres", ".json", ".cfg")
 CLASS_NAME = re.compile(r"(?m)^(?:@\w+\s+)*class_name\s+(\w+)")
-LITERAL = re.compile(r"""(?P<quote>["'])(?P<value>(?:\\[^\n]|(?!(?P=quote))[^\\\n])*)(?P=quote)""")
+LITERAL = re.compile(r""""[^"\\\n]*(?:\\[^\n][^"\\\n]*)*"|'[^'\\\n]*(?:\\[^\n][^'\\\n]*)*'""")
 ACCESS = re.compile(r"(?:(?<![\w])(?:pre)?load|\.(?:change_scene_to_file|change_dir|load_from_file)|ResourceLoader\.\w+"
                     r"|FileAccess\.(?!get_open_error\b)\w+|DirAccess\.(?:open|get_\w+_at|dir_exists_absolute))\s*\(\s*")
 # These exact source versions have indirect reads of user files, supervisor output, SDK constants or selected suite paths.
@@ -105,8 +105,11 @@ def bound_argument(text: str, offset: int, constants: dict) -> bool:
 def inputs(path: str, text: str) -> tuple[set[str], bool]:
     used = set()
     opaque = False
-    for match in LITERAL.finditer(text):
-        value = match["value"]
+    # Numeric fixtures contain many quoted fields but no resource spellings. A relative
+    # resource needs a dot, a URI needs ://, and serialized scenes can escape both.
+    if not path.endswith(".gd") and "." not in text and "://" not in text and "\\" not in text:
+        return used, opaque
+    for value in {match[0][1:-1] for match in LITERAL.finditer(text)}:
         if "\\" in value:
             # An escaped resource spelling is not a proven edge. Serialized resources can also encode the entire URI.
             if ("://" in value or PurePosixPath(value).suffix in SCANNED
@@ -128,7 +131,7 @@ def inputs(path: str, text: str) -> tuple[set[str], bool]:
         elif value.startswith("uid://"):
             # Scenes usually also give a resource path, but a UID can resolve independently.
             opaque = True
-        elif PurePosixPath(value).suffix in SCANNED and "://" not in value:
+        elif "." in value and "://" not in value and PurePosixPath(value).suffix in SCANNED:
             used.update((posixpath.normpath(value), posixpath.normpath(posixpath.join(posixpath.dirname(path), value))))
     if path.endswith(".gd"):
         opaque |= bool(re.search(r"\.source_code\s*=", text))
@@ -137,9 +140,11 @@ def inputs(path: str, text: str) -> tuple[set[str], bool]:
             arg = LITERAL.match(text, match.end())
             if not arg:
                 opaque |= not bound_argument(text, match.end(), constants)
-            elif "\\" in arg["value"]:
+                continue
+            value = arg[0][1:-1]
+            if "\\" in value:
                 opaque = True
-            elif not arg["value"].startswith(("res://", "user://")) and PurePosixPath(arg["value"]).suffix not in SCANNED:
+            elif not value.startswith(("res://", "user://")) and PurePosixPath(value).suffix not in SCANNED:
                 opaque = True
             elif not text[arg.end():].lstrip().startswith((",", ")")):
                 # A computed suffix can escape a literal directory through parent components.
@@ -172,6 +177,9 @@ def selection(suites: list[str], changed: list[str], root: Path, old_names=froze
     dependents = defaultdict(set)
     opaque_paths = set()
     reached = set(relevant)
+    # Current and removed class prefixes let numeric fixtures skip identifier tokenization.
+    old_names = set(old_names)
+    prefixes = {name[:4] for name in classes.keys() | old_names}
     for p, text in texts.items():
         used, opaque = inputs(p, text)
         for target in used:
@@ -181,7 +189,7 @@ def selection(suites: list[str], changed: list[str], root: Path, old_names=froze
                 opaque = True
         if opaque:
             opaque_paths.add(p)
-        words = set(re.findall(r"\w+", text))
+        words = set(re.findall(r"\w+", text)) if any(prefix in text for prefix in prefixes) else set()
         for name in words.intersection(classes):
             used.update(classes[name])
         if words.intersection(old_names):

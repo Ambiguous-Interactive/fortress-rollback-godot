@@ -23,7 +23,7 @@ def git(root: Path, *arguments: str) -> str:
 
 def source_paths(root: Path) -> list[str]:
     paths = git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z").split("\0")
-    return sorted({name for name in paths if name and not EXCLUDED.intersection(Path(name).parts)})
+    return sorted({name for name in paths if name and not EXCLUDED.intersection(name.split("/"))})
 
 
 @contextmanager
@@ -139,16 +139,17 @@ class SourceSnapshot:
 
     def verify_image(self) -> None:
         names = []
-        pending = [self.path]
+        pending = [""]
         while pending:
-            with os.scandir(pending.pop()) as entries:
+            directory = pending.pop()
+            with os.scandir(self.path / directory) as entries:
                 for entry in entries:
                     if entry.name in EXCLUDED:
                         continue
+                    name = directory + "/" + entry.name if directory else entry.name
                     if entry.is_dir(follow_symlinks=False):
-                        pending.append(entry.path)
+                        pending.append(name)
                     else:
-                        name = Path(entry.path).relative_to(self.path).as_posix()
                         if not entry.is_file(follow_symlinks=False) or name not in self.files:
                             raise ValueError("snapshot_changed")
                         names.append(name)
