@@ -35,8 +35,9 @@ and add `--route relay` to host a relay-only room.
 Native mode uses four-byte inputs and fixed zero input delay. The room ends
 when membership changes or the upstream session reports a terminal failure.
 In a WebRTC room, a closed direct link can continue over relay while the other
-links stay direct. Rebuilding a closed link within the same room is tracked in
-[SignalFish SDK #585](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/585).
+links stay direct. The pinned SignalFish SDK rebuilds the closed link in the
+same room. When the replacement opens, the affected pair returns to WebRTC.
+Older SDK installations keep affected traffic on relay until the match ends.
 The native example gives the SignalFish WebSocket a bounded 1 MiB receive ring
 to absorb broadcast bursts in larger rooms.
 Use the GDScript mode for recording, delay adjustment and the legacy diagnostic
@@ -76,11 +77,11 @@ Close the editor/game before adding files. Download and verify the optional SDK,
 then install only its addon directory, including its license:
 
 ```sh
-curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/db7d30f228d8d564adcb2eb38d5983bf6b9877ac -o "$TOOLS_DIR/sdk.tar.gz"
-echo "0854f8c778a118defe95bd8887e227c8bc8c194c54d2e501c6d74094fa43ec12  $TOOLS_DIR/sdk.tar.gz" | sha256sum -c -
+curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/2b66860cc4778d649af3e0c845edce3980985c1b -o "$TOOLS_DIR/sdk.tar.gz"
+echo "85fc96daf806f69cc4d0d560a052c39923e064c8072f20ad64166d33515ef34f  $TOOLS_DIR/sdk.tar.gz" | sha256sum -c -
 tar -xzf "$TOOLS_DIR/sdk.tar.gz" -C "$TOOLS_DIR"
 python3 scripts/reference/online_install.py --project "$EXAMPLE_DIR" \
-  --sdk "$TOOLS_DIR/signal-fish-client-godot-db7d30f228d8d564adcb2eb38d5983bf6b9877ac"
+  --sdk "$TOOLS_DIR/signal-fish-client-godot-2b66860cc4778d649af3e0c845edce3980985c1b"
 "$GODOT" --headless --path "$EXAMPLE_DIR" --editor --quit
 ```
 

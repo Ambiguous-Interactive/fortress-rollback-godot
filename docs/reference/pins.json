@@ -14,13 +14,13 @@
     },
     "sdk": {
       "repository": "https://github.com/Ambiguous-Interactive/signal-fish-client-godot",
-      "revision": "8e1475ed12a618fb41660bd1c8a1b0c934dee77f",
+      "revision": "2b66860cc4778d649af3e0c845edce3980985c1b",
       "archive": {
-        "url": "https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/8e1475ed12a618fb41660bd1c8a1b0c934dee77f",
-        "digest": "8d12230afbce797186872dd30114452154e0b1c5b5bca19eb14e4baad145f46e",
+        "url": "https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/2b66860cc4778d649af3e0c845edce3980985c1b",
+        "digest": "85fc96daf806f69cc4d0d560a052c39923e064c8072f20ad64166d33515ef34f",
         "algorithm": "sha256"
       },
-      "root": "signal-fish-client-godot-8e1475ed12a618fb41660bd1c8a1b0c934dee77f"
+      "root": "signal-fish-client-godot-2b66860cc4778d649af3e0c845edce3980985c1b"
     },
     "server": {
       "repository": "https://github.com/Ambiguous-Interactive/signal-fish-server",

@@ -48,12 +48,14 @@ room namespace includes the pinned backend, input and game schema, room size
 and initial route. Both byte routes add the same 16-byte room/roster tag.
 The raw binding used for stock Rust interoperability carries no room tag.
 
-The exported four-player recovery cases begin with one direct link unavailable
-or close it after the match starts. Each case compares at least 40 confirmed input rows
-and canonical snapshots, including samples after the close. The live-close case then withholds gameplay on both
-routes to exercise the upstream disconnect timeout with the SDK roster intact.
-Automatic direct restoration requires a replacement link within the same room
-and plan. [SignalFish SDK #585](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/585) tracks that dependency.
+The exported four-player cases cover a missing startup link, a sustained
+gameplay outage and a temporary direct close. Each compares at least 40
+confirmed input rows and canonical snapshots. The sustained outage holds
+gameplay on both routes until native disconnect while the SDK roster stays
+intact. The temporary close holds replacement signaling while the pair
+exchanges gameplay over relay. Once released, a fresh reciprocal channel
+carries gameplay over WebRTC without changing the accepted plan or room.
+Unaffected links stay direct throughout.
 
 To isolate a hosted browser failure on both Godot pins, select the room in the
 manual workflow dispatch.

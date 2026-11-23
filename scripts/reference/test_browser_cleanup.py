@@ -12,6 +12,30 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_native_recovery_checks_cumulative_relay_routes(self):
+        # Value: protects=healthy links stay direct; fails_when=transient relay on a healthy link is overlooked; seam=recovery receipt
+        script = r"""
+const assert = require('node:assert/strict');
+const { assertStableRoom } = require(process.argv[1]);
+
+const direct = ['local', 'affected', 'healthy-a', 'healthy-b'].map(uuid => ({
+  uuid, state: 'playing', started_on_full_mesh: true, plan_events: 1, sdk_roster: ['local', 'affected', 'healthy-a', 'healthy-b'],
+}));
+const peers = direct.map((peer, index) => {
+  const counterpart = direct[1 - index]?.uuid.replaceAll('-', '');
+  const relay = counterpart ? { [counterpart]: 1 } : {};
+  return { ...peer, relay_peers: [], wire: { sockets: [1], relayRecipients: { ...relay }, relaySenders: { ...relay } } };
+});
+assert.doesNotThrow(() => assertStableRoom(direct, peers));
+peers[0].wire.relayRecipients.healthya = 1;
+assert.throws(() => assertStableRoom(direct, peers), /relay must stay within the recovering pair/);
+delete peers[0].wire.relayRecipients.healthya;
+peers[1].wire.relaySenders.healthyb = 1;
+assert.throws(() => assertStableRoom(direct, peers), /relay must stay within the recovering pair/);
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_recovery.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_native_relay_warmup_preserves_stages_with_cutoff_and_eviction(self):
         # Value: protects=exact staged warmup attribution; fails_when=missing SDK or rolled-out packets appear complete; seam=raw socket and staged observers
         script = r"""
