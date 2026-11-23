@@ -217,11 +217,16 @@ identity produced the observation, so a maintainer run after a scheduled bot
 re-observes once before settling quiet. The candidate
 archive's sha256 is recorded in each observation, not proven: the download is
 bound to the codeload URL over TLS, and a recorded digest is proven to be the
-upstream archive only when a later fetch verifies it. The suite drives
-the whole flow against fake adapters — creation, digest-quiet repeats,
-reopen-not-duplicate, duplicate-carrier refusal, resolver and archive-binding
-failures and a real `gh api` argument contract — before the schedule runs it
-for real.
+upstream archive only when a later fetch verifies it.
+
+An observation that exceeds the issue comment budget keeps its counts and
+digests in the issue. Read every changed path and affected test in
+`<source>.json` inside the linked run's `drift-reports` artifact or in the local
+`--output` directory. When the artifact expires, use the run's checkout revision
+for the same pins and ledger, and compare the two revisions in the comment
+with the classifier procedure above. The suite covers oversized observations,
+digest-quiet repeats, carrier adoption, resolver and archive-binding failures,
+and the `gh api` JSON input contract.
 
 ## Coverage certification
 

@@ -18,7 +18,7 @@ concurrency:
   # create, so the group (not the read-before-write dedup) is what prevents
   # that here. An out-of-group manual run racing the workflow can still produce
   # two carriers; the next run then fails closed and names both until a human
-  # closes the duplicate.
+  # removes the duplicate's identity marker.
   group: drift-report
   cancel-in-progress: false
 
@@ -36,15 +36,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 scripts/reference/drift_report.py --summary "$GITHUB_STEP_SUMMARY" \
-            --reporting-identity github-actions[bot]
+            --reporting-identity github-actions[bot] --output "$RUNNER_TEMP/drift-report" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Upload complete drift reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: drift-reports
+          path: ${{ runner.temp }}/drift-report/*.json
+          if-no-files-found: ignore
+          overwrite: true
       - name: Failure summary
         if: failure()
         run: |
           {
             echo '### Drift report failed'
             echo
-            echo 'A tooling error (resolver, download, archive binding or issue write) failed at'
-            echo 'least one source. Per-source reasons are printed above; partial results stay'
-            echo 'recorded on their carrier issues. Fix the named error and rerun — a failed'
-            echo 'report is never interpreted as no drift.'
+            echo 'See the failed step for source errors or artifact upload details.'
+            echo 'Successful observations remain on their carrier issues.'
+            echo 'Fix the reported error and rerun before making a decision about drift.'
           } >> "$GITHUB_STEP_SUMMARY"

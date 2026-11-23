@@ -33,7 +33,7 @@ no-drift report.
 Usage:
     python3 scripts/reference/drift_report.py [--source NAME]... [--latest NAME=SHA]...
         [--pins PATH] [--ledger PATH] [--cache DIR] [--output DIR] [--repo OWNER/REPO]
-        [--summary FILE]
+        [--summary FILE] [--run-url URL]
 
 Exit codes: 0 every source reported or no-op, 1 at least one source failed.
 """
@@ -60,6 +60,7 @@ from fetch import digest
 ROOT = Path(__file__).resolve().parents[2]
 MARKER_PREFIX = 'fortress-drift-report'
 REPORT_PREFIX = 'fortress-drift-report-comment'
+MAX_COMMENT_BYTES = 65_536
 # One pinned upstream tar.gz holds tens of megabytes; anything larger is not a
 # candidate archive, so the download refuses instead of filling the disk.
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
@@ -162,9 +163,13 @@ class GhIssueClient:
     def __init__(self, repo):
         self.repo = repo
 
-    def _api(self, args):
+    def _api(self, args, fields=None):
+        payload = None
+        if fields is not None:
+            args = [*args, '--input', '-']
+            payload = json.dumps(fields, ensure_ascii=False)
         try:
-            result = subprocess.run(['gh', 'api', *args], capture_output=True, encoding='utf-8',
+            result = subprocess.run(['gh', 'api', *args], input=payload, capture_output=True, encoding='utf-8',
                                     timeout=GH_TIMEOUT, check=False)
         except subprocess.TimeoutExpired as error:
             raise ToolingError(f'gh api timed out after {GH_TIMEOUT}s: {args}') from error
@@ -183,27 +188,20 @@ class GhIssueClient:
                  'body': item.get('body') or ''} for item in issues]
 
     def create_issue(self, title, body):
-        created = json.loads(self._api(['-X', 'POST', f'repos/{self.repo}/issues',
-                                        '-f', f'title={title}', '-f', f'body={body}']))
+        created = json.loads(self._api(['-X', 'POST', f'repos/{self.repo}/issues'],
+                                       {'title': title, 'body': body}))
         return created['number']
 
     def update_issue(self, number, body=None, state=None):
-        fields = []
-        if body is not None:
-            fields.append(f'body={body}')
-        if state is not None:
-            fields.append(f'state={state}')
-        flat = []
-        for field in fields:
-            flat += ['-f', field]
-        self._api(['-X', 'PATCH', f'repos/{self.repo}/issues/{number}', *flat])
+        fields = {key: value for key, value in (('body', body), ('state', state)) if value is not None}
+        self._api(['-X', 'PATCH', f'repos/{self.repo}/issues/{number}'], fields)
 
     def list_comments(self, number):
         return [{'author': (item.get('user') or {}).get('login') or '', 'body': item.get('body') or ''}
                 for item in self._paged(f'repos/{self.repo}/issues/{number}/comments?per_page=100')]
 
     def add_comment(self, number, body):
-        self._api(['-X', 'POST', f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={body}'])
+        self._api(['-X', 'POST', f'repos/{self.repo}/issues/{number}/comments'], {'body': body})
 
     def current_login(self):
         """The identity this run reports as; digest evidence is trusted only from it."""
@@ -246,27 +244,47 @@ def render_body(source, entry, latest, report_digest, today):
     ]) + '\n'
 
 
-def render_comment(source, entry, latest, report, report_digest, archive_digest, today):
-    """One observation comment: its digest identity plus the full per-path classification."""
+def render_comment(source, entry, latest, report, report_digest, archive_digest, today, run_url=None):
+    """Keep a readable observation within GitHub's body limit and retain its digest."""
     affected = [f"`{record['path']}`: " + ', '.join(f'`{test}`' for test in record['ledger']['port_test_ids'])
                 for record in report['records']
                 if isinstance(record['ledger'], dict) and record['ledger'].get('port_test_ids')]
-    lines = [
+    heading = [
         f'<!-- {REPORT_PREFIX}:{source} -->',
         f'## Observation {today}: `{entry["revision"]}` → `{latest}`',
         '',
         f'report-digest: `{report_digest}`',
         f'candidate archive sha256: `{archive_digest}`',
         '',
+    ]
+    summary = drift.summarize(report)
+    details = [
         '```',
-        drift.summarize(report),
+        summary,
         '```',
         '',
         f'Requires review: {", ".join(f"`{path}`" for path in report["requires_review"]) or "none"}.',
         f'Ledger-unmapped paths: {", ".join(f"`{path}`" for path in report["ledger_unmapped"]) or "none"}.',
         f'Affected port tests: {"; ".join(affected) or "none"}.',
     ]
-    return '\n'.join(lines) + '\n'
+    comment = ('\n'.join(heading + details) + '\n').encode('utf-8', errors='backslashreplace')
+    if len(comment) <= MAX_COMMENT_BYTES:
+        return comment.decode('utf-8')
+
+    overview = summary.partition('\n')[0]
+    receipt = f'Full per-path classification is in `{source}.json` in the reporter output.'
+    if run_url:
+        receipt = (f'Full per-path classification is in `{source}.json` in the `drift-reports` artifact. '
+                   f'[Workflow run]({run_url})')
+    return '\n'.join(heading + [
+        overview,
+        '',
+        f'- Paths requiring review: {len(report["requires_review"])}',
+        f'- Ledger-unmapped paths: {len(report["ledger_unmapped"])}',
+        '',
+        receipt,
+        '',
+    ])
 
 
 def comment_digest(comment_body):
@@ -277,7 +295,7 @@ def comment_digest(comment_body):
     return None
 
 
-def report_source(source, entry, latest, cache, output, issues, ledger, today, identity=None):
+def report_source(source, entry, latest, cache, output, issues, ledger, today, identity=None, run_url=None):
     """One source: bind both trees, classify, then update the single carrier issue.
 
     The reviewed tree is extracted from the digest-verified pinned archive that
@@ -338,7 +356,6 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today, i
         output.mkdir(parents=True, exist_ok=True)
         (output / f'{source}.json').write_text(report_bytes, encoding='utf-8')
         body = render_body(source, entry, latest, report_digest, today)
-        comment = render_comment(source, entry, latest, report, report_digest, archive_digest, today)
         if not carriers:
             number = issues.create_issue(f'Upstream drift report: {source}', body)
             action = 'created'
@@ -358,6 +375,7 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today, i
                 action = 'reopened'
             if carriers and carriers[0]['body'] != body:
                 issues.update_issue(number, body=body)
+            comment = render_comment(source, entry, latest, report, report_digest, archive_digest, today, run_url)
             issues.add_comment(number, comment)
         else:
             # The state was already observed and recorded: no reopen, no body
@@ -379,6 +397,7 @@ def main_with_args(argv):
     parser.add_argument('--repo', default=os.environ.get('GITHUB_REPOSITORY'),
                         help='owner/repo for the issue stream (defaults to GITHUB_REPOSITORY)')
     parser.add_argument('--summary', type=Path, help='append one markdown line per source here')
+    parser.add_argument('--run-url', help='workflow run with the full JSON reports for oversized observations')
     parser.add_argument('--reporting-identity', metavar='LOGIN',
                         help='the identity this run reports as; omit to resolve it through `gh api user`. '
                              'The scheduled workflow passes github-actions[bot] because the Actions '
@@ -420,7 +439,7 @@ def main_with_args(argv):
         try:
             latest = overrides.get(name) or resolve_latest(entry)
             result = report_source(name, entry, latest, args.cache, args.output, issues, ledger, today,
-                                   identity=args.reporting_identity)
+                                   identity=args.reporting_identity, run_url=args.run_url)
             results.append(result)
             if result['issue'] is not None:
                 review = len(result.get('requires_review') or [])
