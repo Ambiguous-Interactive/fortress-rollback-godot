@@ -11,6 +11,7 @@ const HISTORY_FRAMES = 40;
 const PAGE_BOOT_MS = 60000;
 const DIAGNOSTIC_MS = 5000;
 const CLOSE_MS = 10000;
+const CLOSE_CLOCK_POST_SAMPLES = 4;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 
 function browserOptions(name) {
@@ -49,13 +50,17 @@ function instrumentNativeWire(tagWebKitSends) {
   const counts = { mesh: 0, relay: 0 };
   const relayRecipients = new Map();
   const relaySenders = new Map();
-  const qualityEvents = [];
+  const qualityEvents = { send: [], receive: [] };
+  const qualityEventCounts = { send: 0, receive: 0 };
   const qualityEventLimit = 256;
   let qualityEventCount = 0;
   let bufferedBytesPeak = 0;
   let relayBroadcasts = 0;
   const held = { mesh: 0, relay: 0 };
   const controlRoundTrips = { mesh: 0, relay: 0 };
+  // The pinned protocol sends one report per peer at intervals above 200 ms.
+  // Keep enough relay tokens for the 45-second stall witness despite FIFO delay.
+  const pendingReportLimit = { mesh: 16, relay: 256 };
   const channelReports = new Map();
   const socketReports = new WeakMap();
   const nativeBytes = bytes => bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
@@ -95,12 +100,19 @@ function instrumentNativeWire(tagWebKitSends) {
   }
   function traceRelayQuality(direction, peer, { kind, token }) {
     if (token === null) return;
-    qualityEvents[qualityEventCount++ % qualityEventLimit] = { direction, peer, kind, token, at_ms: performance.now() };
+    // A delayed burst of incoming traffic must leave the outgoing reports available for correlation.
+    const index = qualityEventCounts[direction]++ % qualityEventLimit;
+    qualityEvents[direction][index] = { sequence: qualityEventCount++, direction, peer, kind, token, at_ms: performance.now() };
   }
   const increment = (counts, uuid) => counts.set(uuid, (counts.get(uuid) ?? 0) + 1);
   const ufrag = description => description?.sdp.match(/^a=ice-ufrag:([\w+/]+)\r?$/m)?.[1];
   function receive(route, reports, peer, packet) {
-    if (packet.kind === 5 && reports.get(peer)?.delete(packet.token)) controlRoundTrips[route]++;
+    if (packet.kind !== 5) return;
+    const tokens = reports.get(peer);
+    if (tokens?.get(packet.token)) {
+      tokens.set(packet.token, false);
+      controlRoundTrips[route]++;
+    }
   }
   function send(route, reports, peer, emit, data, packet) {
     if (!packet) return emit(data);
@@ -109,11 +121,11 @@ function instrumentNativeWire(tagWebKitSends) {
     if (!holdAll && packet.kind !== inputKind) {
       const sent = emit(data);
       if (reports && packet.kind === 4 && packet.token !== null) {
-        if (!reports.has(peer)) reports.set(peer, new Set());
-        const pending = reports.get(peer);
-        // Reports are spaced by 200 ms. Keep 16 to cover delayed or out-of-order replies.
-        if (pending.size === 16) pending.delete(pending.values().next().value);
-        pending.add(packet.token);
+        if (!reports.has(peer)) reports.set(peer, new Map());
+        const tokens = reports.get(peer);
+        if (tokens.has(packet.token)) return sent;
+        if (tokens.size === pendingReportLimit[route]) tokens.delete(tokens.keys().next().value);
+        tokens.set(packet.token, true);
       }
       return sent;
     }
@@ -232,7 +244,7 @@ function instrumentNativeWire(tagWebKitSends) {
     meshOpen(peers) {
       return resources.rtc.filter(({channel, connection}) => channel.readyState === 'open' && connection.connectionState === 'connected').length === peers * 3;
     },
-    observeDeparture() { observingDeparture = true; return instant(); },
+    observeDeparture() { observingDeparture = true; return window.crossOriginIsolated ? instant() : null; },
     arm(all = false) {
       if (!armed) {
         armed = true;
@@ -283,13 +295,14 @@ function instrumentNativeWire(tagWebKitSends) {
           closed: record.channel.readyState === 'closed', connectionClosed: record.connection.signalingState === 'closed',
           closedAt: ice.get(record.connection).closedAt ?? null };
       });
-      const first = Math.max(0, qualityEventCount - qualityEventLimit);
-      const events = Array.from(qualityEvents, (_, i) => qualityEvents[(first + i) % qualityEventLimit]);
+      const events = [...qualityEvents.send, ...qualityEvents.receive].sort((a, b) => a.sequence - b.sequence)
+        .map(({ direction, peer, kind, token, at_ms }) => ({ direction, peer, kind, token, at_ms }));
       const releaseMs = holdEnded === null ? null : Math.round((releaseEnded ?? performance.now()) - holdEnded);
       return { armed, holding, hold_ms: holdMs, release_ms: releaseMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
         control_round_trips: { ...controlRoundTrips },
         relayRecipients: Object.fromEntries(relayRecipients), relaySenders: Object.fromEntries(relaySenders),
-        relay_trace: { buffered_bytes_peak: bufferedBytesPeak, broadcasts: relayBroadcasts, events, event_count: qualityEventCount },
+        relay_trace: { buffered_bytes_peak: bufferedBytesPeak, broadcasts: relayBroadcasts, events,
+          event_count: qualityEventCount, direction_counts: { ...qualityEventCounts } },
         ice: [...ice.values()], sctp,
         rtc: resources.rtc.map(({channel, sent, received}) => [channel.id, channel.readyState, sent, received]),
         sockets: resources.sockets.map(socket => socket.readyState) };
@@ -302,6 +315,19 @@ function reportedChannel(stack) {
   if (frames.length !== 1) return { channel: null, sentAt: null };
   const [, channel, sentAt] = frames[0];
   return { channel: Number(channel), sentAt: sentAt === undefined ? null : Number(sentAt) };
+}
+
+function clockWindow(start, end, sampledAt) {
+  if (!Number.isSafeInteger(sampledAt) || sampledAt < 0) return null;
+  // The isolated browser clocks coarsen by up to 20 us. Allow for two reads and integer rounding.
+  return { offsetMin: start - sampledAt - 41, offsetMax: end - sampledAt + 41 };
+}
+
+function intersectClock(previous, sample) {
+  if (!previous || !sample) return null;
+  const offsetMin = Math.max(previous.offsetMin, sample.offsetMin);
+  const offsetMax = Math.min(previous.offsetMax, sample.offsetMax);
+  return offsetMin <= offsetMax ? { offsetMin, offsetMax } : null;
 }
 
 function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, closer = null, clocks) {
@@ -332,19 +358,33 @@ function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, cl
 async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks, clock = () => performance.now(), delay = pause } = {}) {
   if (!errors.length) return undefined;
   report.proofs = [];
+  report.clocks = clocks;
+  let rounds = 0;
   const deadline = clock() + DIAGNOSTIC_MS;
   while (clock() < deadline) {
+    const sampleClock = Boolean(report.clocks) && rounds++ < CLOSE_CLOCK_POST_SAMPLES;
     const snapshots = await Promise.allSettled(pages.map((page, index) =>
-      boundedRoom(() => page.evaluate(() => window.fortressNativeWire.status().sctp),
-        Math.max(0, Math.ceil(deadline - clock())), `native peer ${index} close snapshot`)));
+      boundedRoom(async () => {
+        const start = Math.floor(clock() * 1000);
+        const { links, sampledAt } = await page.evaluate(timed => ({
+          sampledAt: timed && window.crossOriginIsolated ? Math.round(performance.now() * 1000) : null,
+          links: window.fortressNativeWire.status().sctp,
+        }), sampleClock);
+        const end = Math.ceil(clock() * 1000);
+        return { links, bound: sampleClock ? clockWindow(start, end, sampledAt) : null };
+      }, Math.max(0, Math.ceil(deadline - clock())), `native peer ${index} close snapshot`)));
     const failed = snapshots.flatMap((entry, index) => entry.status === 'rejected' ? [{ index, reason: entry.reason }] : []);
     report.snapshotErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
     if (failed.length) {
       throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} close snapshot failed`, { cause: reason })),
         'WebKit close snapshots failed');
     }
-    const links = snapshots.map(entry => entry.value);
-    report.proofs = errors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, clocks));
+    if (clock() >= deadline) break;
+    const links = snapshots.map(entry => entry.value.links);
+    if (sampleClock) {
+      report.clocks = report.clocks.map((bound, index) => intersectClock(bound, snapshots[index].value.bound));
+    }
+    report.proofs = errors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks));
     for (const proof of report.proofs) assert.ok(proof.before, `WebKit send failure for peer ${proof.index} lacked a sending channel`);
     const remaining = deadline - clock();
     if (remaining <= 0) break;
@@ -623,12 +663,13 @@ async function run(root, endpoint, mode, players, browserPair) {
       if (route === 'mesh' && browserPair.includes('webkit')) {
         departureClocks = await Promise.all(pages.map(async page => {
           let bound;
-          // Keep the tightest round trip. Each window is measured on the same controller clock.
+          // Every round trip brackets the same page offset on the controller's clock.
           for (let attempt = 0; attempt < 3; attempt++) {
             const start = Math.floor(performance.now() * 1000);
             const sample = await page.evaluate(() => window.fortressNativeWire.observeDeparture());
             const end = Math.ceil(performance.now() * 1000);
-            if (!bound || end - start < bound.offsetMax - bound.offsetMin) bound = { offsetMin: start - sample, offsetMax: end - sample };
+            const measured = clockWindow(start, end, sample);
+            bound = attempt === 0 ? measured : intersectClock(bound, measured);
           }
           return bound;
         }));
@@ -666,7 +707,8 @@ async function run(root, endpoint, mode, players, browserPair) {
         && rtc.every(([, state]) => state === 'closed');
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
-      direct, afterClose, peers, interruption, terminal, after, closeErrors, closeLinks, departureClocks };
+      direct, afterClose, peers, interruption, terminal, after, closeErrors, closeLinks,
+      departureClocks: closeReport.clocks ?? departureClocks, closeProofs: closeReport.proofs };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
@@ -674,7 +716,8 @@ async function run(root, endpoint, mode, players, browserPair) {
     })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
     const diagnostics = states.map(state => state.status === 'fulfilled' ? state : { status: state.status, reason: String(state.reason) });
     console.error(JSON.stringify({
-      phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, departureClocks, closeProofs: closeReport.proofs,
+      phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, departureClocks: closeReport.clocks ?? departureClocks,
+      closeProofs: closeReport.proofs,
       closeSnapshotErrors: closeReport.snapshotErrors, stalled, states: diagnostics
     }));
   } finally {

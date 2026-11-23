@@ -33,17 +33,20 @@ no-drift report.
 Usage:
     python3 scripts/reference/drift_report.py [--source NAME]... [--latest NAME=SHA]...
         [--pins PATH] [--ledger PATH] [--cache DIR] [--output DIR] [--repo OWNER/REPO]
-        [--summary FILE] [--stage | --publish-staged --artifact-url URL]
+        [--summary FILE] [--stage | --publish-staged --artifact-archive ZIP
+           --artifact-url URL --artifact-id ID --run-id ID --checkout-sha SHA]
 
 Exit codes: 0 every source reported or no-op, 1 at least one source failed.
 """
 import argparse
 import hashlib
 import http.client
+import io
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -51,6 +54,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import drift
@@ -61,6 +65,9 @@ ROOT = Path(__file__).resolve().parents[2]
 MARKER_PREFIX = 'fortress-drift-report'
 REPORT_PREFIX = 'fortress-drift-report-comment'
 MAX_COMMENT_BYTES = 65_536
+MAX_GITHUB_ID = (1 << 63) - 1
+MAX_REPORT_ARTIFACT_BYTES = 64 * 1024 * 1024
+ACTIONS_REPORTER = 'github-actions[bot]'
 # One pinned upstream tar.gz holds tens of megabytes; anything larger is not a
 # candidate archive, so the download refuses instead of filling the disk.
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
@@ -68,6 +75,11 @@ DOWNLOAD_ATTEMPTS = 4
 GH_TIMEOUT = 120
 REVISION_PATTERN = re.compile(r'[0-9a-f]{40}\Z')
 SHA256_PATTERN = re.compile(r'[0-9a-f]{64}\Z')
+ARTIFACT_URL_PATTERN = re.compile(
+    r'https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/actions/runs/([0-9]+)/artifacts/([0-9]+)'
+)
+HTTP_STATUS_PATTERN = re.compile(r'HTTP/[0-9.]+ ([0-9]{3})(?: .+)?')
+
 
 
 class ToolingError(Exception):
@@ -161,21 +173,33 @@ def download_archive(entry, revision, destination_dir):
 class GhIssueClient:
     """The real GitHub issues adapter over authenticated `gh api` calls."""
 
-    def __init__(self, repo):
+    def __init__(self, repo, hostname=None):
         self.repo = repo
+        self.host_args = ['--hostname', hostname] if hostname else []
 
-    def _api(self, args, fields=None):
+    def _api(self, args, fields=None, allow_missing=False):
         payload = None
         if fields is not None:
             args = [*args, '--input', '-']
             payload = json.dumps(fields, ensure_ascii=False)
+        if allow_missing:
+            args = [*args, '--include']
         try:
-            result = subprocess.run(['gh', 'api', *args], input=payload, capture_output=True, encoding='utf-8',
+            result = subprocess.run(['gh', 'api', *self.host_args, *args], input=payload, capture_output=True, encoding='utf-8',
                                     timeout=GH_TIMEOUT, check=False)
         except subprocess.TimeoutExpired as error:
             raise ToolingError(f'gh api timed out after {GH_TIMEOUT}s: {args}') from error
+        if allow_missing:
+            headers, separator, body = result.stdout.partition('\n\n')
+            status = HTTP_STATUS_PATTERN.fullmatch(headers.partition('\n')[0])
+            if separator and status and status[1] == '404' and result.returncode == 1:
+                return None
         if result.returncode != 0:
             raise ToolingError(f'gh api failed ({result.returncode}): {result.stderr.strip()}')
+        if allow_missing:
+            if not separator or not status or status[1] != '200':
+                raise ToolingError('gh api did not return artifact HTTP metadata')
+            return body
         return result.stdout
 
     def _paged(self, path):
@@ -197,17 +221,51 @@ class GhIssueClient:
         fields = {key: value for key, value in (('body', body), ('state', state)) if value is not None}
         self._api(['-X', 'PATCH', f'repos/{self.repo}/issues/{number}'], fields)
 
+    @staticmethod
+    def _comment_snapshot(item):
+        return {'id': item['id'], 'author': (item.get('user') or {}).get('login') or '', 'body': item.get('body') or '',
+                'updated_at': item.get('updated_at')}
+
     def list_comments(self, number):
-        return [{'author': (item.get('user') or {}).get('login') or '', 'body': item.get('body') or ''}
-                for item in self._paged(f'repos/{self.repo}/issues/{number}/comments?per_page=100')]
+        return [self._comment_snapshot(item) for item in self._paged(f'repos/{self.repo}/issues/{number}/comments?per_page=100')]
+
+    def read_comment(self, comment_id):
+        return self._comment_snapshot(json.loads(self._api([f'repos/{self.repo}/issues/comments/{comment_id}'])))
 
     def add_comment(self, number, body):
         self._api(['-X', 'POST', f'repos/{self.repo}/issues/{number}/comments'], {'body': body})
 
+    def update_comment(self, comment_id, body):
+        self._api(['-X', 'PATCH', f'repos/{self.repo}/issues/comments/{comment_id}'], {'body': body})
+
+    def artifact_metadata(self, artifact, checkout_sha=None):
+        run_id, artifact_id = artifact
+        response = self._api([f'repos/{self.repo}/actions/artifacts/{artifact_id}'], allow_missing=True)
+        if response is None:
+            return None
+        item = json.loads(response)
+        run = item.get('workflow_run') if isinstance(item, dict) else None
+        if (not isinstance(run, dict) or run.get('id') != run_id or item.get('id') != artifact_id
+                or not isinstance(item.get('expired'), bool) or (checkout_sha and run.get('head_sha') != checkout_sha)):
+            raise ToolingError(f'artifact {artifact_id} metadata does not match the observation link')
+        return None if item['expired'] else item
+
+    def artifact_live(self, artifact):
+        return self.artifact_metadata(artifact) is not None
+
+    def artifact_digest(self, artifact, checkout_sha):
+        metadata = self.artifact_metadata(artifact, checkout_sha)
+        if metadata is None:
+            raise ToolingError('the downloaded drift artifact is no longer available')
+        digest_field = metadata.get('digest')
+        if not isinstance(digest_field, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', digest_field):
+            raise ToolingError('the downloaded drift artifact has no verified GitHub SHA-256')
+        return digest_field.removeprefix('sha256:')
+
     def current_login(self):
         """The identity this run reports as; digest evidence is trusted only from it."""
         try:
-            result = subprocess.run(['gh', 'api', 'user', '--jq', '.login'], capture_output=True,
+            result = subprocess.run(['gh', 'api', *self.host_args, 'user', '--jq', '.login'], capture_output=True,
                                     encoding='utf-8', timeout=GH_TIMEOUT, check=False)
         except subprocess.TimeoutExpired as error:
             raise ToolingError(f'identity resolution timed out after {GH_TIMEOUT}s') from error
@@ -245,7 +303,49 @@ def render_body(source, entry, latest, report_digest, today):
     ]) + '\n'
 
 
-def render_comment(source, entry, latest, report, report_digest, archive_digest, today, artifact_url=None):
+def github_id(value):
+    if isinstance(value, str) and re.fullmatch(r'[1-9][0-9]{0,18}', value):
+        value = int(value)
+    return value if type(value) is int and 0 < value <= MAX_GITHUB_ID else None
+
+
+def artifact_link(repo, url):
+    match = ARTIFACT_URL_PATTERN.fullmatch(url)
+    if match and match[1].casefold() == repo.casefold():
+        run_id, artifact_id = map(github_id, match.group(2, 3))
+        if run_id and artifact_id:
+            return run_id, artifact_id
+        raise ToolingError('artifact URL contains an invalid run or artifact ID')
+    return None
+
+
+def artifact_line_prefix(source):
+    return f'Full per-path classification is in `{source}.json`. [Download report artifact]('
+
+
+def replay_lines(source, latest, report_digest, checkout_sha):
+    return [
+        f'Check out `{checkout_sha}` and run this command to reproduce the report. Compare `report_digest` in the resulting JSON.',
+        '',
+        '```sh',
+        f'python3 scripts/reference/drift_report.py --stage --source {shlex.quote(source)} \\',
+        f'  --latest {shlex.quote(f"{source}={latest}")} --output ".cache/results/replay-{report_digest[:12]}"',
+        '```',
+    ]
+
+
+def has_replay(after_link, report):
+    lines = after_link.replace('\r\n', '\n').split('\n')
+    if len(lines) < 3 or lines[:2] != ['', '']:
+        return False
+    checkout = re.match(r'Check out `([0-9a-f]{40})` ', lines[2])
+    if not checkout:
+        return False
+    expected = replay_lines(report['source'], report['candidate_revision'], report['report_digest'], checkout[1])
+    return lines[2:2 + len(expected)] == expected
+
+
+def render_comment(source, entry, latest, report, report_digest, archive_digest, today, artifact_url=None, checkout_sha=None):
     """Keep a readable observation within GitHub's body limit and retain its digest."""
     affected = [f"`{record['path']}`: " + ', '.join(f'`{test}`' for test in record['ledger']['port_test_ids'])
                 for record in report['records']
@@ -259,7 +359,8 @@ def render_comment(source, entry, latest, report, report_digest, archive_digest,
         '',
     ]
     if artifact_url:
-        heading += [f'Full per-path classification is in `{source}.json`. [Download report artifact]({artifact_url})', '']
+        heading += [f'{artifact_line_prefix(source)}{artifact_url})', '',
+                    *replay_lines(source, latest, report_digest, checkout_sha), '']
     summary = drift.summarize(report)
     details = [
         '```',
@@ -347,42 +448,114 @@ def stage_report(source, entry, latest, cache, path, ledger):
     return report
 
 
-def read_staged_report(path, source, entry):
-    report = json.loads(path.read_text(encoding='utf-8'))
+def verified_artifact_reports(path, expected_digest, names):
+    with path.open('rb') as archive:
+        data = archive.read(MAX_REPORT_ARTIFACT_BYTES + 1)
+    if len(data) > MAX_REPORT_ARTIFACT_BYTES or hashlib.sha256(data).hexdigest() != expected_digest:
+        raise ToolingError('the downloaded drift archive does not match the GitHub artifact SHA-256')
+    filenames = {f'{name}.json' for name in names}
+    reports = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        members = [item for item in archive.infolist() if item.filename in filenames]
+        if len({item.filename for item in members}) != len(members):
+            raise ToolingError('the downloaded drift artifact contains duplicate report names')
+        if sum(item.file_size for item in members) > MAX_REPORT_ARTIFACT_BYTES:
+            raise ToolingError('the downloaded drift reports exceed the size limit')
+        for item in members:
+            reports[item.filename] = archive.read(item)
+    return reports
+
+
+def read_staged_report(data, source, entry):
+    report = json.loads(data)
     if not isinstance(report, dict) or (
             report.get('schema_version'), report.get('source'), report.get('repository'), report.get('reviewed_revision')
     ) != (1, source, entry['repository'], entry['revision']):
-        raise ToolingError(f'{path.name}: staged report does not match its pinned source')
+        raise ToolingError(f'{source}.json: staged report does not match its pinned source')
     archive_digest = report.get('candidate_archive_sha256')
     if (report.get('report_digest') != observation_digest(report)
             or not isinstance(archive_digest, str) or not SHA256_PATTERN.fullmatch(archive_digest)):
-        raise ToolingError(f'{path.name}: staged report digest is invalid')
+        raise ToolingError(f'{source}.json: staged report digest is invalid')
     validate_revision(report.get('candidate_revision'))
     if not isinstance(report.get('drift'), bool) or any(
         not isinstance(report.get(key), list) for key in ('records', 'requires_review', 'ledger_unmapped')
     ):
-        raise ToolingError(f'{path.name}: staged report classification is invalid')
+        raise ToolingError(f'{source}.json: staged report classification is invalid')
     return report
 
 
-def publish_report(report, entry, issues, carrier, today, identity, artifact_url):
-    """Publish one observation unless this identity already recorded its digest."""
+def refresh_artifact_link(report, comment, issues, artifact_url, checkout_sha):
+    comment_id = comment['id']
+    if type(comment_id) is not int or not github_id(comment_id):
+        raise ToolingError('cannot refresh a drift observation without a valid comment ID')
+    source = report['source']
+    prefix = artifact_line_prefix(source)
+    body = comment['body']
+    # Only the canonical header is eligible for mutation. A lookalike in a
+    # quote, code fence, or HTML comment is not the reporter's rendered link.
+    header = (
+        r'(?:DISCLOSURE: LLM-GENERATED TEXT\r?\n\r?\n)?'
+        + re.escape(f'<!-- {REPORT_PREFIX}:{source} -->') + r'\r?\n'
+        + r'## Observation [0-9]{4}-[0-9]{2}-[0-9]{2}: `[0-9a-f]{40}` → `[0-9a-f]{40}`\r?\n\r?\n'
+        + re.escape(f"report-digest: `{report['report_digest']}`") + r'\r?\n'
+        + r'candidate archive sha256: `(?P<archive>[0-9a-f]{64})`\r?\n\r?\n'
+    )
+    match = re.match(header + rf'(?P<link>{re.escape(prefix)}(?P<url>[^\r\n)]*)\))(?=\r?\n|$)', body)
+    if not match:
+        if prefix in body:
+            raise ToolingError('the drift artifact link is outside the canonical observation header')
+        return False
+    old = artifact_link(issues.repo, match['url'])
+    if old is None or old == artifact_link(issues.repo, artifact_url) or issues.artifact_live(old):
+        return False
+
+    if match['archive'] != report['candidate_archive_sha256']:
+        raise ToolingError('staged archive SHA-256 does not match the prior drift observation')
+
+    link_start, link_end = match.span('link')
+    after_link = body[link_end:]
+    updated_line = f'{prefix}{artifact_url})'
+    if not has_replay(after_link, report):
+        newline = '\r\n' if after_link.startswith('\r\n') else '\n'
+        updated_line += newline * 2 + newline.join(replay_lines(source, report['candidate_revision'], report['report_digest'], checkout_sha))
+    replacement = body[:link_start] + updated_line + after_link
+    if len(replacement.encode('utf-8')) > MAX_COMMENT_BYTES:
+        raise ToolingError('refreshed drift observation exceeds the comment body limit')
+    # The issue-comment endpoint has no conditional PATCH. Hosted writers
+    # share one concurrency group, and this snapshot catches earlier edits.
+    if issues.read_comment(comment_id) != comment:
+        raise ToolingError('the drift observation changed before its artifact link could be refreshed')
+    issues.update_comment(comment_id, replacement)
+    return True
+
+
+def publish_report(report, entry, issues, carrier, today, identity, artifact_url, checkout_sha):
+    """Publish or refresh the observation for this reporting identity."""
     source = report['source']
     latest = report['candidate_revision']
     report_digest = report['report_digest']
     identity = identity if identity is not None else issues.current_login()
+    def render():
+        try:
+            return render_comment(source, entry, latest, report, report_digest,
+                                  report['candidate_archive_sha256'], today, artifact_url, checkout_sha)
+        except (KeyError, TypeError) as error:
+            raise ToolingError(f'{source}: cannot render report classification: {error}') from error
+
     if carrier:
         number = carrier['number']
-        recorded = [comment_digest(item['body']) for item in issues.list_comments(number)
-                    if f'<!-- {REPORT_PREFIX}:{source} -->' in item['body'] and item.get('author') == identity]
-        if report_digest in recorded:
+        matching = [item for item in issues.list_comments(number)
+                    if f'<!-- {REPORT_PREFIX}:{source} -->' in item['body'] and item.get('author') == identity
+                    and comment_digest(item['body']) == report_digest]
+        if matching:
+            if artifact_url:
+                if len(matching) != 1:
+                    raise ToolingError('multiple trusted drift observations have the same digest')
+                if refresh_artifact_link(report, matching[0], issues, artifact_url, checkout_sha):
+                    return 'artifact-refreshed', number
             return 'digest-known', number
 
-    try:
-        comment = render_comment(source, entry, latest, report, report_digest,
-                                 report['candidate_archive_sha256'], today, artifact_url)
-    except (KeyError, TypeError) as error:
-        raise ToolingError(f'{source}: cannot render report classification: {error}') from error
+    comment = render()
     body = render_body(source, entry, latest, report_digest, today)
     if carrier:
         action = 'commented'
@@ -413,11 +586,13 @@ def main_with_args(argv):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--stage', action='store_true', help='write JSON reports to a fresh output directory without accessing GitHub issues')
     mode.add_argument('--publish-staged', action='store_true', help='publish existing staged JSON without reclassifying')
+    parser.add_argument('--artifact-archive', type=Path, help='GitHub artifact ZIP downloaded by ID')
     parser.add_argument('--artifact-url', help='link to the artifact containing the staged reports')
+    parser.add_argument('--artifact-id', help='ID of the uploaded and downloaded artifact')
+    parser.add_argument('--run-id', help='ID of the workflow run that uploaded the artifact')
+    parser.add_argument('--checkout-sha', help='checkout revision used to classify the staged reports')
     parser.add_argument('--reporting-identity', metavar='LOGIN',
-                        help='the identity this run reports as; omit to resolve it through `gh api user`. '
-                             'The scheduled workflow passes github-actions[bot] because the Actions '
-                             'installation token cannot resolve the authenticated user (HTTP 403).')
+                        help='override the local reporting identity; omit to resolve it through gh api user')
     args = parser.parse_args(argv)
     if args.summary is not None and args.summary == Path(''):
         # An unset environment variable expands to an empty argument, which
@@ -436,15 +611,33 @@ def main_with_args(argv):
     unknown = [name for name in names if name not in pins['sources']]
     if unknown:
         raise ToolingError(f'pins manifest has no source named: {", ".join(unknown)}')
-    if args.publish_staged != bool(args.artifact_url) or (args.publish_staged and overrides):
-        raise ToolingError('--publish-staged requires --artifact-url and cannot use --latest')
+    hosted_args = (args.artifact_archive, args.artifact_url, args.artifact_id, args.run_id, args.checkout_sha)
+    if args.publish_staged and (not all(hosted_args) or overrides or args.reporting_identity is not None):
+        raise ToolingError('--publish-staged requires artifact provenance and disallows --latest and --reporting-identity')
+    if not args.publish_staged and any(hosted_args):
+        raise ToolingError('artifact provenance options require --publish-staged')
     if not args.stage and (args.repo is None or not args.repo.strip()):
         raise ToolingError('--repo is required when GITHUB_REPOSITORY is unset')
+    artifact = None
+    if args.publish_staged:
+        validate_revision(args.checkout_sha)
+        artifact = artifact_link(args.repo, args.artifact_url)
+        if artifact is None or artifact != (github_id(args.run_id), github_id(args.artifact_id)):
+            raise ToolingError('--artifact-url must match --repo, --run-id and --artifact-id')
+
     if args.reporting_identity is not None and not args.reporting_identity.strip():
         # An empty identity would own no comments, so every run would
         # re-observe: refuse it instead of silently degrading the cadence.
         raise ToolingError('--reporting-identity must name a login when present')
-    issues = None if args.stage else GhIssueClient(args.repo)
+    issues = None if args.stage else GhIssueClient(args.repo, hostname='github.com' if artifact else None)
+    staged_reports = {}
+    if artifact:
+        try:
+            expected_digest = issues.artifact_digest(artifact, args.checkout_sha)
+            staged_reports = verified_artifact_reports(args.artifact_archive, expected_digest, names)
+        except (ToolingError, ValueError, OSError, zipfile.BadZipFile) as error:
+            print(f'drift report: {error}', file=sys.stderr)
+            return 1
     if args.stage:
         args.output.mkdir(parents=True)
 
@@ -460,9 +653,9 @@ def main_with_args(argv):
         path = args.output / f'{name}.json'
         try:
             if args.publish_staged:
-                if not path.exists():
+                if path.name not in staged_reports:
                     continue
-                report = read_staged_report(path, name, entry)
+                report = read_staged_report(staged_reports[path.name], name, entry)
                 carrier = find_carrier(name, issues)
             else:
                 latest = overrides.get(name) or resolve_latest(entry)
@@ -473,7 +666,7 @@ def main_with_args(argv):
                 print(f'{name}: noop (latest is the reviewed pin)')
                 continue
             action, issue = ('staged', None) if args.stage else publish_report(
-                report, entry, issues, carrier, today, args.reporting_identity, args.artifact_url)
+                report, entry, issues, carrier, today, ACTIONS_REPORTER if artifact else args.reporting_identity, args.artifact_url, args.checkout_sha)
             result = {'source': name, 'action': action, 'latest': report['candidate_revision'],
                       'requires_review': report['requires_review']}
             results.append(result)

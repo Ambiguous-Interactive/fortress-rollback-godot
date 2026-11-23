@@ -224,9 +224,12 @@ digests in the issue. Read every changed path and affected test in
 `<source>.json` inside the linked artifact or in the local `--output` directory.
 The workflow uploads successful reports under an attempt-specific artifact name.
 It downloads that exact artifact by ID and publishes from the verified copy.
-When the artifact expires, use the workflow run named in its URL to find the
-checkout revision. Use that revision's pins and ledger and compare the two
-revisions in the comment with the classifier procedure above. The suite covers oversized observations,
+Each hosted observation includes the checkout revision and a command pinned
+to the upstream candidate. Use them to regenerate the JSON and compare
+`report_digest` after the artifact expires or a rerun drops it. A repeat of
+the exact digest preserves a working link. If GitHub confirms that the
+linked artifact is absent, the reporter updates the same authored comment
+with the new verified artifact. The suite covers oversized observations,
 digest-quiet repeats, carrier adoption, resolver and archive-binding failures,
 and the `gh api` JSON input contract.
 

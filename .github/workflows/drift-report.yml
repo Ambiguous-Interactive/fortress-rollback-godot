@@ -12,6 +12,7 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: read
 
 concurrency:
   # Serialize runs: two racing processes could both see zero carriers and both
@@ -48,21 +49,20 @@ jobs:
       - name: Download the uploaded reports
         id: receipt
         if: ${{ !cancelled() && steps.evidence.outcome == 'success' && steps.evidence.outputs.artifact-url != '' }}
-        uses: actions/download-artifact@v8.0.2
-        with:
-          artifact-ids: ${{ steps.evidence.outputs.artifact-id }}
-          path: ${{ runner.temp }}/drift-publish
-          merge-multiple: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.evidence.outputs.artifact-id }}
+        run: gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$RUNNER_TEMP/drift-reports.zip"
       - name: Publish drift observations
         if: ${{ !cancelled() && steps.receipt.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT_URL: ${{ steps.evidence.outputs.artifact-url }}
-          RECEIPT_PATH: ${{ steps.receipt.outputs.download-path }}
+          ARTIFACT_ID: ${{ steps.evidence.outputs.artifact-id }}
         run: |
           python3 scripts/reference/drift_report.py --publish-staged --artifact-url "$ARTIFACT_URL" \
-            --summary "$GITHUB_STEP_SUMMARY" --output "$RECEIPT_PATH" \
-            --reporting-identity github-actions[bot]
+            --artifact-id "$ARTIFACT_ID" --run-id "$GITHUB_RUN_ID" --checkout-sha "$GITHUB_SHA" \
+            --artifact-archive "$RUNNER_TEMP/drift-reports.zip" --summary "$GITHUB_STEP_SUMMARY"
       - name: Failure summary
         if: failure()
         run: |

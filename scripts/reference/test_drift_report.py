@@ -12,6 +12,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
@@ -21,6 +22,7 @@ import drift_report
 OLD_SHA = 'a' * 40
 NEW_SHA = 'b' * 40
 NEWER_SHA = 'c' * 40
+CHECKOUT_SHA = 'f' * 40
 REPOSITORY = 'https://github.com/example/fortress'
 
 OLD_FILES = {'src/session.rs': 'pub fn step() -> u32 { 7 }\n', 'docs/guide.md': '# Guide\n'}
@@ -55,6 +57,8 @@ def make_archive(files, root, destination):
 
 
 class FakeIssues:
+    repo = 'example/fortress'
+
     def __init__(self, carriers=(), identity='reporter'):
         self.identity = identity
         self.issues = {}
@@ -88,8 +92,18 @@ class FakeIssues:
     def list_comments(self, number):
         return [dict(comment) for comment in self.comments[number]]
 
+    def read_comment(self, comment_id):
+        return next(dict(comment) for comments in self.comments.values() for comment in comments if comment['id'] == comment_id)
+
+    def artifact_live(self, artifact):
+        return True
+
+    def artifact_digest(self, artifact, checkout_sha):
+        return self.receipt_digest
+
     def add_comment(self, number, body, author=None):
-        self.comments[number].append({'author': author or self.identity, 'body': body})
+        comment_id = 1 + sum(map(len, self.comments.values()))
+        self.comments[number].append({'id': comment_id, 'author': author or self.identity, 'body': body})
 
 
 class DriftReportTests(unittest.TestCase):
@@ -123,6 +137,15 @@ class DriftReportTests(unittest.TestCase):
         self.candidate[revision] = make_archive(files, f'{stem}-{revision}',
                                                 Path(self._root.name) / f'candidate-{revision}.tar.gz')
 
+    def hosted_archive(self, directory, fake):
+        receipt = directory.with_suffix('.zip')
+        with zipfile.ZipFile(receipt, 'w') as archive:
+            for report in sorted(directory.glob('*.json')):
+                archive.write(report, report.name)
+        fake.receipt_digest = hashlib.sha256(receipt.read_bytes()).hexdigest()
+        fake.identity = drift_report.ACTIONS_REPORTER
+        return str(receipt)
+
     def run_report(self, latest, issues=None, resolve=None, override=True, extra=()):
         fake = issues if issues is not None else FakeIssues()
 
@@ -134,7 +157,15 @@ class DriftReportTests(unittest.TestCase):
         if override:
             argv += ['--latest', f'fortress={latest}']
         argv += list(extra)
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+        if '--publish-staged' in argv:
+            url = argv[argv.index('--artifact-url') + 1]
+            for flag, value in (('--run-id', url.split('/')[-3]), ('--artifact-id', url.split('/')[-1]), ('--checkout-sha', CHECKOUT_SHA)):
+                if flag not in argv:
+                    argv += [flag, value]
+            if '--artifact-archive' not in argv:
+                directory = Path([value for flag, value in zip(argv, argv[1:]) if flag == '--output'][-1])
+                argv += ['--artifact-archive', self.hosted_archive(directory, fake)]
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'download_archive', fake_download), \
              patch.object(drift_report, 'resolve_latest', resolve or (lambda entry: latest)):
             code = drift_report.main_with_args(argv)
@@ -208,7 +239,9 @@ class DriftReportTests(unittest.TestCase):
                 self.assertIn(f"report-digest: `{receipt['report_digest']}`", body)
                 self.assertIn(receipt['candidate_archive_sha256'], body)
                 if hosted:
-                    self.assertIn(NEWER_SHA, body)
+                    self.assertIn(CHECKOUT_SHA, body)
+                    self.assertIn('--stage --source fortress', body)
+                    self.assertIn(f'--latest fortress={NEWER_SHA}', body)
                     self.assertNotIn(NEW_SHA, body)
                     self.assertEqual((failed_output / 'fortress.json').read_bytes(), failed_receipt)
                 code, _ = invoke()
@@ -220,6 +253,156 @@ class DriftReportTests(unittest.TestCase):
                     code, _ = invoke()
                     self.assertEqual(code, 1)
                     self.assertEqual(len(fake.comments[number]), 1)
+
+    # Value: protects=same digest keeps one downloadable observation; fails_when=404 memoizes a missing link; why_new=existing repeats keep the artifact; seam=none
+    def test_hosted_repeat_repairs_only_a_confirmed_missing_link(self):
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        base = 'https://github.com/example/fortress/actions/runs/42/artifacts/'
+        stage, _ = self.run_report(NEW_SHA, extra=['--stage'])
+        self.assertEqual(stage, 0)
+
+        def publish(fake, url):
+            return self.run_report(None, issues=fake, resolve=self.fail, override=False,
+                                   extra=['--publish-staged', '--artifact-url', url])[0]
+
+        for old_state in ('absent', 'blockquote', 'legacy', 'hidden-replay', 'unicode-replay', 'hidden-link',
+                          'fenced-link', 'prior-checkout', 'live', 'forbidden', 'network-error', 'foreign-host', 'foreign-repo',
+                          'invalid-id', 'different-digest', 'foreign-author', 'replacement-absent', 'same-id-missing',
+                          'archive-mismatch', 'oversize', 'edited', 'duplicate', 'comment-id-out-of-range', 'artifact-id-out-of-range'):
+            with self.subTest(old_state=old_state):
+                fake = FakeIssues()
+                self.assertEqual(publish(fake, base + '21'), 0)
+                number = next(iter(fake.issues))
+                recorded, = fake.comments[number]
+                if old_state == 'foreign-host':
+                    recorded['body'] = recorded['body'].replace('github.com', 'github.com.evil.invalid')
+                if old_state == 'foreign-repo':
+                    recorded['body'] = recorded['body'].replace('/example/fortress/', '/example/other/')
+                if old_state == 'different-digest':
+                    report = json.loads((self.output / 'fortress.json').read_text(encoding='utf-8'))
+                    recorded['body'] = recorded['body'].replace(report['report_digest'], 'd' * 64)
+                if old_state == 'foreign-author':
+                    recorded['author'] = 'different-bot'
+                if old_state == 'invalid-id':
+                    recorded['body'] = recorded['body'].replace(base + '21', base + '21%2f22')
+                if old_state == 'blockquote':
+                    artifact_line = next(line for line in recorded['body'].splitlines() if base + '21' in line)
+                    recorded['body'] += f'\n> Human quote: {artifact_line}\n'
+                if old_state == 'prior-checkout':
+                    recorded['body'] = recorded['body'].replace(CHECKOUT_SHA, 'a' * 40)
+                if old_state == 'artifact-id-out-of-range':
+                    recorded['body'] = recorded['body'].replace(base + '21', base + str(1 << 63))
+                if old_state in ('legacy', 'hidden-replay', 'unicode-replay', 'hidden-link', 'fenced-link'):
+                    start = recorded['body'].index('Check out ')
+                    end = recorded['body'].index('\n```\n', start) + len('\n```\n\n')
+                    old_replay = recorded['body'][start:end]
+                    recorded['body'] = recorded['body'][:start] + recorded['body'][end:]
+                    recorded['body'] += '\nHuman note that must survive.\n'
+                    if old_state == 'unicode-replay':
+                        recorded['body'] = recorded['body'][:start] + old_replay.rstrip('\n').replace('\n', '\u2028') + '\n\n' + recorded['body'][start:]
+                    if old_state in ('hidden-link', 'fenced-link'):
+                        link_start = recorded['body'].rindex('Full per-path classification')
+                        opening, closing = ('<!--', '-->') if old_state == 'hidden-link' else ('~~~md', '~~~')
+                        recorded['body'] = recorded['body'][:link_start] + opening + '\n' + recorded['body'][link_start:start] + closing + '\n' + recorded['body'][start:]
+                    if old_state == 'hidden-replay':
+                        recorded['body'] += f'<!--\n{old_replay}-->\n'
+                if old_state == 'archive-mismatch':
+                    recorded['body'] = '\n'.join(
+                        'candidate archive sha256: `' + 'd' * 64 + '`' if line.startswith('candidate archive sha256: ') else line
+                        for line in recorded['body'].split('\n')
+                    )
+                if old_state == 'oversize':
+                    recorded['body'] += 'h' * (65_536 - len(recorded['body'].encode('utf-8')))
+                if old_state == 'duplicate':
+                    fake.add_comment(number, recorded['body'])
+                if old_state == 'comment-id-out-of-range':
+                    recorded['id'] = 1 << 63
+                original = dict(recorded)
+                reads = []
+                changed = False
+
+                def artifact_live(artifact):
+                    reads.append(artifact)
+                    self.assertEqual(artifact, (42, 21))
+                    if old_state in ('forbidden', 'network-error'):
+                        raise drift_report.ToolingError(old_state)
+                    return old_state == 'live'
+
+                def artifact_digest(artifact, checkout_sha):
+                    reads.append(artifact)
+                    self.assertEqual(checkout_sha, CHECKOUT_SHA)
+                    expected = {'oversize': 100, 'same-id-missing': 21}.get(old_state, 22)
+                    self.assertEqual(artifact, (42, expected))
+                    if old_state in ('replacement-absent', 'same-id-missing'):
+                        raise drift_report.ToolingError(old_state)
+                    return fake.receipt_digest
+
+                def read_comment(comment_id):
+                    nonlocal changed
+                    self.assertEqual(comment_id, original['id'])
+                    if old_state == 'edited':
+                        recorded['body'] += '\nConcurrent human change.\n'
+                        changed = True
+                    return dict(recorded)
+
+                def update_comment(comment_id, body):
+                    self.assertEqual(comment_id, original['id'])
+                    recorded['body'] = body
+
+                fake.artifact_live = artifact_live
+                fake.artifact_digest = artifact_digest
+                fake.read_comment = read_comment
+                fake.update_comment = update_comment
+                suffix = {'oversize': '100', 'same-id-missing': '21'}.get(old_state, '22')
+                failed = old_state in ('forbidden', 'network-error', 'replacement-absent', 'same-id-missing',
+                                       'archive-mismatch', 'oversize', 'edited', 'duplicate', 'comment-id-out-of-range',
+                                       'artifact-id-out-of-range', 'hidden-link', 'fenced-link')
+                self.assertEqual(publish(fake, base + suffix), int(failed))
+                self.assertEqual(len(fake.comments[number]), 2 if old_state in ('different-digest', 'foreign-author', 'duplicate') else 1)
+                self.assertEqual(reads[0], (42, int(suffix)))
+                if old_state in ('absent', 'blockquote', 'prior-checkout'):
+                    self.assertEqual(recorded['body'], original['body'].replace(base + '21', base + '22', 1))
+                    self.assertEqual(reads, [(42, 22), (42, 21)])
+                    self.assertEqual(recorded['id'], original['id'])
+                    self.assertEqual(recorded['author'], original['author'])
+                elif old_state in ('legacy', 'hidden-replay', 'unicode-replay'):
+                    archive_line = f'{base}22)\n\nCheck out `{CHECKOUT_SHA}`'
+                    self.assertIn(archive_line, recorded['body'])
+                    self.assertIn('--output ".cache/results/replay-', recorded['body'])
+                    self.assertIn('\n\n```sh\npython3', recorded['body'])
+                    self.assertIn(f'--latest fortress={NEW_SHA}', recorded['body'])
+                    self.assertIn('Human note that must survive.', recorded['body'])
+                    if old_state == 'hidden-replay':
+                        self.assertTrue(recorded['body'].endswith(f'<!--\n{old_replay}-->\n'))
+                elif old_state == 'edited':
+                    self.assertTrue(changed)
+                    self.assertEqual(recorded['body'], original['body'] + '\nConcurrent human change.\n')
+                else:
+                    self.assertEqual(recorded, original)
+                    lookup = old_state in ('live', 'forbidden', 'network-error', 'archive-mismatch', 'oversize')
+                    self.assertEqual(reads[1:], [(42, 21)] if lookup else [])
+
+    # Value: protects=downloaded receipt binds to workflow inputs; fails_when=URL alone chooses evidence; why_new=existing coverage assumes matched IDs; seam=none
+    def test_hosted_publication_requires_live_artifact_bound_to_run_and_upload(self):
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        self.assertEqual(self.run_report(NEW_SHA, extra=['--stage'])[0], 0)
+        url = 'https://github.com/example/fortress/actions/runs/42/artifacts/21'
+        args = ['--publish-staged', '--artifact-url', url]
+        fake = FakeIssues()
+
+        for flag, value in (('--run-id', '43'), ('--artifact-id', '22'), ('--run-id', str(1 << 63))):
+            with self.subTest(flag=flag, value=value), self.assertRaisesRegex(drift_report.ToolingError, 'must match'):
+                self.run_report(None, issues=fake, override=False, extra=[*args, flag, value])
+        with patch.object(fake, 'artifact_digest', side_effect=drift_report.ToolingError('missing')) as lookup:
+            self.assertEqual(self.run_report(None, issues=fake, override=False, extra=args)[0], 1)
+        lookup.assert_called_once_with((42, 21), CHECKOUT_SHA)
+
+        wrong_digest = 'f' * 64
+        with patch.object(fake, 'artifact_digest', return_value=wrong_digest):
+            self.assertEqual(self.run_report(None, issues=fake, override=False, extra=args)[0], 1)
+        with self.assertRaisesRegex(drift_report.ToolingError, 'disallows'):
+            self.run_report(None, issues=fake, override=False, extra=[*args, '--reporting-identity', 'human'])
+        self.assertFalse(fake.issues)
 
     def test_repeated_observation_of_the_same_state_is_noise_free(self):
         self.prepare_candidate(NEW_SHA, NEW_FILES)
@@ -535,7 +718,7 @@ class DriftReportTests(unittest.TestCase):
         fake = FakeIssues()
         argv = ['--pins', str(self.pins), '--cache', str(self.cache), '--output', str(self.output),
                 '--repo', 'example/fortress']
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'download_archive', download), \
              patch.object(drift_report, 'resolve_latest', timing_out_resolve):
             code = drift_report.main_with_args(argv)
@@ -585,7 +768,7 @@ class DriftReportTests(unittest.TestCase):
         fake = FakeIssues()
         argv = ['--pins', str(self.pins), '--cache', str(self.cache), '--output', str(self.output),
                 '--repo', 'example/fortress']
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'download_archive', download), \
              patch.object(drift_report, 'resolve_latest', resolve):
             code = drift_report.main_with_args(argv)
@@ -596,7 +779,7 @@ class DriftReportTests(unittest.TestCase):
 
         fake = FakeIssues()
         staged = ['--output', str(self.output.with_name('partial'))]
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'download_archive', download), \
              patch.object(drift_report, 'resolve_latest', resolve):
             code = drift_report.main_with_args([*argv, *staged, '--stage'])
@@ -604,8 +787,10 @@ class DriftReportTests(unittest.TestCase):
         self.assertFalse(fake.issues)
         output = self.output.with_name('partial')
         artifact_url = 'https://github.com/example/fortress/actions/runs/1/artifacts/2'
-        publish = [*argv, *staged, '--publish-staged', '--artifact-url', artifact_url]
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+        publish = [*argv, *staged, '--publish-staged', '--artifact-url', artifact_url,
+                   '--run-id', '1', '--artifact-id', '2', '--checkout-sha', CHECKOUT_SHA,
+                   '--artifact-archive', self.hosted_archive(output, fake)]
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'resolve_latest', self.fail):
             code = drift_report.main_with_args(publish)
         self.assertEqual(code, 0)
@@ -620,7 +805,8 @@ class DriftReportTests(unittest.TestCase):
                          reviewed_revision=fortress_entry['revision'], records=None)
         malformed['report_digest'] = drift_report.observation_digest(malformed)
         (output / 'fortress.json').write_text(json.dumps(malformed), encoding='utf-8')
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+        self.hosted_archive(output, fake)
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'resolve_latest', self.fail):
             code = drift_report.main_with_args(publish)
         self.assertEqual(code, 1)
@@ -629,7 +815,7 @@ class DriftReportTests(unittest.TestCase):
 
 
 class GhIssueClientTests(unittest.TestCase):
-    def run_client(self, argv_responses, call):
+    def run_client(self, argv_responses, call, hostname=None):
         """Drive one client method against scripted `gh api` responses."""
         calls = []
 
@@ -638,7 +824,7 @@ class GhIssueClientTests(unittest.TestCase):
             stdout, code = argv_responses[len(calls) - 1]
             return subprocess.CompletedProcess(command, code, stdout, 'boom')
 
-        client = drift_report.GhIssueClient('example/fortress')
+        client = drift_report.GhIssueClient('example/fortress', hostname=hostname)
         with patch.object(drift_report.subprocess, 'run', fake_run):
             result = call(client)
         return result, calls
@@ -668,20 +854,51 @@ class GhIssueClientTests(unittest.TestCase):
             client.update_issue(7, body=body)
             client.update_issue(7, state='open')
             client.add_comment(7, body)
+            client.update_comment(8, body)
             client.list_comments(7)
             return number
 
-        result, calls = self.run_client([(created, 0), ('{}', 0), ('{}', 0), ('{}', 0), ('[]', 0)], exercise)
+        result, calls = self.run_client([(created, 0), ('{}', 0), ('{}', 0), ('{}', 0), ('{}', 0), ('[]', 0)], exercise)
         self.assertEqual(result, 7)
-        for (argv, payload), (method, path, fields) in zip(calls[:4], [
+        for (argv, payload), (method, path, fields) in zip(calls[:5], [
             ('POST', 'issues', {'title': 'Upstream drift report: fortress', 'body': body}),
             ('PATCH', 'issues/7', {'body': body}),
             ('PATCH', 'issues/7', {'state': 'open'}),
             ('POST', 'issues/7/comments', {'body': body}),
+            ('PATCH', 'issues/comments/8', {'body': body}),
         ], strict=True):
             with self.subTest(method=method, path=path, fields=fields):
                 self.assertEqual(argv, ['gh', 'api', '-X', method, f'repos/example/fortress/{path}', '--input', '-'])
                 self.assertEqual(json.loads(payload), fields)
+
+    # Value: protects=only authenticated artifact absence permits repair; fails_when=auth errors look missing; why_new=issue reads ignore HTTP status; seam=none
+    def test_only_artifact_http_404_or_expired_metadata_reports_absence(self):
+        good = {'id': 21, 'expired': False, 'workflow_run': {'id': 42, 'head_sha': CHECKOUT_SHA}}
+        for label, response, code, result in (
+            ('present', good, 200, True),
+            ('expired', {**good, 'expired': True}, 200, False),
+            ('absent', {'message': 'Not Found'}, 404, False),
+            ('wrong run', {**good, 'workflow_run': {'id': 43}}, 200, None),
+            ('wrong checkout', {**good, 'workflow_run': {'id': 42, 'head_sha': NEWER_SHA}}, 200, None),
+            ('forbidden', {'message': 'Forbidden'}, 403, None),
+            ('network', {}, None, None),
+        ):
+            with self.subTest(label=label):
+                stdout = f'HTTP/2.0 {code} response\nContent-Type: application/json\n\n{json.dumps(response)}' if code else ''
+                responses = [(stdout, int(code != 200))]
+
+                def get_artifact(client):
+                    return client.artifact_metadata((42, 21), CHECKOUT_SHA) is not None
+
+                if result is None:
+                    with self.assertRaises(drift_report.ToolingError):
+                        self.run_client(responses, get_artifact, hostname='github.com')
+                else:
+                    found, calls = self.run_client(responses, get_artifact, hostname='github.com')
+                    self.assertEqual(found, result)
+                    self.assertEqual(calls, [
+                        (['gh', 'api', '--hostname', 'github.com', 'repos/example/fortress/actions/artifacts/21', '--include'], None)
+                    ])
 
     def test_a_failed_gh_call_raises_a_named_tooling_error(self):
         with self.assertRaises(drift_report.ToolingError) as caught:
@@ -705,7 +922,7 @@ class GhIssueClientTests(unittest.TestCase):
     def test_the_reporting_identity_is_resolved_and_validated(self):
         result, calls = self.run_client([('gh-bot\n', 0)], lambda client: client.current_login())
         self.assertEqual(result, 'gh-bot')
-        self.assertIn('user', calls[0][0])
+        self.assertEqual(calls[0][0], ['gh', 'api', 'user', '--jq', '.login'])
 
         import subprocess
 
