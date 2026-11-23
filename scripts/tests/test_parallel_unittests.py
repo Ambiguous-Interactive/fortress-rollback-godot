@@ -83,6 +83,20 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertNotIn('helper.py', completed.stdout)
 
+    def test_package_relative_imports_and_nested_discovery(self):
+        package = self.directory / 'sample'
+        nested = package / 'nested'
+        nested.mkdir(parents=True)
+        for directory in (package, nested):
+            (directory / '__init__.py').touch()
+        (package / 'helper.py').write_text('ANSWER = 42\n')
+        (nested / 'test_nested.py').write_text(
+            'from ..helper import ANSWER\nimport unittest\n'
+            'class Nested(unittest.TestCase):\n    def test_marker(self): self.fail(str(ANSWER))\n')
+        completed = run_runner('--start-dir', str(package), '--top-level', str(self.directory))
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertIn('AssertionError: 42', completed.stderr)
+
     def test_discovery_without_matches_raises(self):
         with self.assertRaises(ValueError):
             parallel_unittests.discover(self.directory, 'test_*.py')

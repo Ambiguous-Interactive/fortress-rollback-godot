@@ -36,7 +36,7 @@ jobs:
           python-version: "3.15.2"
 
       - name: Tooling self-tests
-        run: python3 -m unittest discover -s scripts/tests -t scripts -v
+        run: make test-llm
 
       - name: Source line widths
         run: make lint-source
@@ -158,18 +158,63 @@ jobs:
           path: .cache/tests/latest.json
           if-no-files-found: error
 
-  controls:
-    name: Reference and oracle negative controls
+  control-work:
+    name: Run ${{ matrix.family }} controls
+    needs: detect
+    if: github.event_name == 'merge_group' || needs.detect.outputs.scripts == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    needs: detect
-    if: needs.detect.outputs.scripts == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        family: [reference, oracle]
     steps:
       - uses: actions/checkout@v7.0.1
-
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.15.2"
+      - run: make test-${{ matrix.family }}
 
-      - run: make test-reference
-      - run: make test-oracle
+  controls:
+    name: Reference and oracle negative controls
+    needs: [detect, control-work]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Verify control results for this candidate
+        env:
+          DETECT: ${{ needs.detect.result }}
+          CHANGED: ${{ needs.detect.outputs.scripts }}
+          WORK: ${{ needs.control-work.result }}
+        run: |
+          test "$DETECT" = success
+          if [[ "$GITHUB_EVENT_NAME" == merge_group || "$CHANGED" == true ]]; then
+            test "$WORK" = success
+          else
+            test "$CHANGED" = false && test "$WORK" = skipped
+          fi
+
+  qualify:
+    name: Qualification matrix
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/reference-baseline.yml
+
+  qualification:
+    name: Qualification summary
+    needs: [controls, qualify]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Verify required qualification evidence
+        env:
+          CONTROLS: ${{ needs.controls.result }}
+          MATRIX: ${{ needs.qualify.result }}
+        run: |
+          test "$CONTROLS" = success
+          if [[ "$GITHUB_EVENT_NAME" == merge_group ]]; then
+            test "$MATRIX" = success
+          else
+            test "$MATRIX" = skipped
+          fi

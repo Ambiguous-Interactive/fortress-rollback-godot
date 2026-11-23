@@ -45,7 +45,7 @@ lint-llm:
 
 ## Run the harness tooling self-tests
 test-llm:
-	$(PY) -m unittest discover -s scripts/tests -t scripts
+	$(PY) scripts/parallel_unittests.py --start-dir scripts/tests --top-level scripts --jobs 4
 
 ## Reference fetch/inventory negative controls (no network or downloaded tools)
 test-reference:

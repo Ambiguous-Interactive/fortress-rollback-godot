@@ -1,20 +1,9 @@
 name: Reference Baseline
 
-# Qualify tier: the full Chromium verification matrix (both pinned engines,
-# ownership probes, oracle launchers, browser transport witnesses and the whole
-# test inventory). The merge queue requires the Qualification summary check on
-# every grouped merge candidate, so this workflow runs there unconditionally;
-# workflow_dispatch keeps it available on demand. The per-push Gate workflow
-# keeps the fast loop; nightly.yml owns the axes that moved out of this matrix.
-
+# Gate calls the full Chromium matrix on the merge candidate. Manual runs
+# also execute the reference and oracle controls that Gate owns on candidates.
 on:
-  merge_group:
-    types: [checks_requested]
-  # GitHub refuses to enqueue a PR until every required context reports on the
-  # PR head, so pull requests run this workflow too: every heavy family skips
-  # on that event and only the eligibility summary reports (a skipped need is
-  # not a failure). The queue group run is the real gate.
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -24,7 +13,7 @@ jobs:
   contracts:
     name: Reference negative controls
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     # Both full suites took over ten minutes together; reserve setup and teardown time.
     timeout-minutes: 15
     steps:
@@ -38,7 +27,6 @@ jobs:
   rust:
     name: Pinned Rust reference
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
@@ -75,7 +63,6 @@ jobs:
   ownership:
     name: Native and Chromium snapshot ownership ${{ matrix.version }}${{ matrix.suffix }}
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -144,7 +131,6 @@ jobs:
   godot:
     name: Godot ${{ matrix.version }} and Chromium ${{ matrix.part }}
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
     # The oracles wave's critical path stays bounded by design: the committed
     # wrap-flood fixtures (#379) keep the quadratic builders out of CI and the
     # wave runs the wrap corpus in its own launcher beside p2p, but the family
@@ -269,7 +255,6 @@ jobs:
   signalfish:
     name: SignalFish relay and Chromium WebRTC ${{ matrix.version }} ${{ matrix.part }}
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -406,21 +391,17 @@ jobs:
           if-no-files-found: error
 
   qualification:
-    # The single required context the merge queue gates on: one stable name
-    # instead of every matrix job's display name, so a rename cannot hang the
-    # queue. always() makes this job run and fail when a family failed; a
-    # skipped required check would count as passing, which would defeat the
-    # gate.
-    name: Qualification summary
+    name: Verify qualification families
     needs: [contracts, rust, ownership, godot, signalfish]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Report the qualification tree result
+        env:
+          FAMILIES: ${{ toJSON(needs) }}
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
-            echo "::error::A qualification job family failed or was cancelled: ${{ join(needs.*.result, ' ') }}"
-            exit 1
-          fi
-          echo "All qualification job families reported success."
+          contracts=skipped
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then contracts=success; fi
+          jq -e --arg contracts "$contracts" \
+            'all(to_entries[]; .value.result == (if .key == "contracts" then $contracts else "success" end))' <<< "$FAMILIES"

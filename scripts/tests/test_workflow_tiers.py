@@ -97,7 +97,7 @@ class WorkflowTierTests(unittest.TestCase):
         harness = '\n'.join(blocks['harness'])
         for check in ('check_llm_file_lengths.py', 'generate_llm_index.py --check',
                       'generate_skill_stubs.py --check', 'lint_llm_instructions.py',
-                      'make lint-source', 'unittest discover -s scripts/tests'):
+                      'make lint-source', 'make test-llm'):
             with self.subTest(check=check):
                 self.assertIn(check, harness)
         # The unit gate runs the changed-suite selector on the minimum pin only.
@@ -106,11 +106,15 @@ class WorkflowTierTests(unittest.TestCase):
         self.assertIn('--changed', unit)
         self.assertNotIn('4.7.2', unit)
         self.assertIn('fetch-depth: 0', unit)
-        # Tooling negative controls run only when tooling changed (fail-closed detect).
+        workers = '\n'.join(blocks['control-work'])
+        self.assertIn("needs.detect.outputs.scripts == 'true'", workers)
+        self.assertIn("github.event_name == 'merge_group'", workers)
+        self.assertIn('family: [reference, oracle]', workers)
+        self.assertIn('make test-${{ matrix.family }}', workers)
         controls = '\n'.join(blocks['controls'])
-        self.assertIn("needs.detect.outputs.scripts == 'true'", controls)
-        self.assertIn('make test-reference', controls)
-        self.assertIn('make test-oracle', controls)
+        self.assertIn('needs: [detect, control-work]', controls)
+        self.assertIn('if: always()', controls)
+        self.assertIn('test "$WORK" = success', controls)
 
     def test_gate_base_resolution_fails_closed_in_both_jobs(self):
         # detect and unit-fast carry the same base-resolution contract: an empty
@@ -141,40 +145,36 @@ class WorkflowTierTests(unittest.TestCase):
         for moved in ('firefox', 'xvfb', 'java', 'spectator_launch', 'schedule:', 'push:'):
             with self.subTest(moved=moved):
                 self.assertNotIn(moved, text)
-        # The pull_request trigger exists only so the eligibility summary can
-        # report on the PR head (GitHub refuses to enqueue a PR until every
-        # required context reports); every heavy family must skip that event.
-        self.assertIn('pull_request:', active_lines(read(QUALIFY)))
-        for family in ('contracts', 'rust', 'ownership', 'godot', 'signalfish'):
-            block = '\n'.join(job_blocks(text)[family])
-            with self.subTest(family=family):
-                self.assertIn("if: github.event_name != 'pull_request'", block)
+        # Group candidates call the same matrix the dispatch entry point runs.
+        self.assertIn('workflow_call:', active_lines(read(QUALIFY)))
+        self.assertIn('workflow_dispatch:', active_lines(read(QUALIFY)))
+        self.assertNotIn('pull_request:', active_lines(read(QUALIFY)))
+        self.assertNotIn('merge_group:', active_lines(read(QUALIFY)))
         self.assertEqual(text.count('browser: chromium'), QUALIFY_CHROMIUM_PARTS)
         self.assertIn('pair: [chromium]', text)
         self.assertIn("--skip-formal", text)
         self.assertNotIn('--formal off', text)
 
     def test_qualification_summary_gates_the_merge_queue(self):
-        # The queue requires one stable context name instead of every matrix
-        # job's display name, so a rename cannot hang the queue. The summary
-        # must run unconditionally (always(): a skipped required check counts
-        # as passing) and fail when any family failed or was cancelled, and it
-        # must need every family, or a family could silently leave the gate.
-        text = read(QUALIFY)
-        self.assertIn('merge_group:', text)
-        self.assertIn('types: [checks_requested]', text)
-        block = '\n'.join(job_blocks(text)['qualification'])
-        self.assertIn('name: Qualification summary', block)
-        # The summary reports on pull requests too (the enqueue ticket), so it
-        # must NOT be gated off that event like its families are.
-        self.assertNotIn("if: github.event_name != 'pull_request'", block)
-        self.assertIn('if: always()', block)
+        gate = job_blocks(read(GATE))
+        caller = '\n'.join(gate['qualify'])
+        self.assertIn("if: github.event_name == 'merge_group'", caller)
+        self.assertIn('uses: ./.github/workflows/reference-baseline.yml', caller)
+        summary = '\n'.join(gate['qualification'])
+        for fragment in ('name: Qualification summary', 'needs: [controls, qualify]', 'if: always()',
+                         'test "$CONTROLS" = success', 'test "$MATRIX" = success'):
+            self.assertIn(fragment, summary)
+        blocks = job_blocks(read(QUALIFY))
+        dispatch = '\n'.join(blocks['contracts'])
+        self.assertIn("if: github.event_name == 'workflow_dispatch'", dispatch)
+        for family in ('reference', 'oracle'):
+            self.assertIn(f'make test-{family}', dispatch)
+        verify = '\n'.join(blocks['qualification'])
+        self.assertIn('if: always()', verify)
         for family in ('contracts', 'rust', 'ownership', 'godot', 'signalfish'):
-            with self.subTest(family=family):
-                self.assertRegex(block, rf'needs: \[[a-z, ]*{family}')
-        self.assertIn("contains(needs.*.result, 'failure')", block)
-        self.assertIn("contains(needs.*.result, 'cancelled')", block)
-        self.assertIn('exit 1', block)
+            self.assertRegex(verify, rf'needs: \[[-a-z, ]*{family}')
+        self.assertIn('toJSON(needs)', verify)
+        self.assertIn('all(to_entries[]; .value.result == (if .key == "contracts" then $contracts else "success" end))', verify)
 
     def test_gate_acquires_no_system_packages(self):
         # The fast tier is pure Python plus the manifest-fetched editor: an apt
