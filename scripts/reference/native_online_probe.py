@@ -3,7 +3,6 @@
 import json
 import os
 from pathlib import Path, PurePosixPath
-import platform
 import shutil
 import socket
 import sys
@@ -14,7 +13,7 @@ from browser.owned_server import OwnedServer
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_runner import run_browser
 from fetch import ROOT, digest, load_manifest
-from godot_smoke import run
+from godot_smoke import prepare_editor, run
 from online_install import create_project, install_sdk, server_config
 from receipt_arguments import ReceiptParser
 from run import begin_results
@@ -145,16 +144,16 @@ def main():
     for variable in ('FORTRESS_PLAYWRIGHT_PACKAGE', 'FORTRESS_CHROMIUM_EXECUTABLE'):
         if not environment.get(variable):
             parser.error(f'{variable} must name the installed browser tool')
-    arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}[platform.machine()]
     stem = f'Godot_v{args.version}-stable'
-    editor = cache / f'editors/{args.version}/{stem}_linux.{arch}'
+    editor = prepare_editor(manifest, args.version, offline=True, cache=cache)
     templates = cache / f'downloads/{stem}_export_templates.tpz'
     sdk_pin, server_pin = (manifest['sources'][kind] for kind in ('sdk', 'server'))
     sdk, server_source = (cache / pin['root'] for pin in (sdk_pin, server_pin))
     server_binary = cache / f"server-target/{server_pin['revision']}/debug/signal-fish-server"
     files = {'editor': editor, 'templates': templates, 'addon': addon, 'server': server_binary,
              'server_config': server_source / 'config.example.json', 'chromium': Path(environment['FORTRESS_CHROMIUM_EXECUTABLE']),
-             'runner': Path(__file__), 'client': BROWSER / 'native_online.cjs', 'host': BROWSER / 'online_host.cjs',
+             'runner': Path(__file__), 'editor_setup': BROWSER.parent / 'godot_smoke.py', 'artifact_helper': BROWSER.parent / 'fetch.py',
+             'client': BROWSER / 'native_online.cjs', 'host': BROWSER / 'online_host.cjs',
              'bridge': BROWSER / 'native_online_bridge.gd', 'sdk': sdk / 'addons/signal_fish',
              'runtime': ROOT / 'addons/fortress_rollback', 'example': ROOT / 'examples'}
     frozen = inventory(files)

@@ -29,6 +29,12 @@ the archive.
   source snapshot controls hit their 30-second process limit, and two runner
   controls reported `source_changed`. These controls share the host lease and
   read the checkout, so run them after the browser wave with the sources frozen.
+- The first hosted Web jobs failed on both pins with `FileNotFoundError` at
+  `.cache/reference/editors/<version>`. The platform exporter prepared its editor
+  in another cache and the room witness expected an unpacked binary. The cold
+  cache control now puts only the pinned ZIP in the selected cache, then executes
+  the extracted editor's version command. The witness shares the pinned editor
+  preparation path with the other reference tools.
 
 ## Prune ledger
 

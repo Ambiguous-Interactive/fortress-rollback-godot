@@ -333,6 +333,41 @@ class ReferenceContracts(unittest.TestCase):
                         native_online_runner.install_addon(project, addon)
                     self.assertFalse((project / 'addons').exists())
 
+    def test_native_online_prepares_pinned_editor_from_archive(self):
+        # Value: protects=cold Web workers start Godot; fails_when=runner assumes the editor is unpacked; why_new=local cache hides it; seam=editor version subprocess
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            cache, output = root / 'cache', root / 'results'
+            downloads = cache / 'downloads'
+            downloads.mkdir(parents=True)
+            arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}[godot_runner.platform.machine()]
+            editor = f'Godot_v4.3-stable_linux.{arch}'
+            archive = downloads / (editor + '.zip')
+            with zipfile.ZipFile(archive, 'w') as package:
+                package.writestr(editor, '#!/bin/sh\necho 4.3.stable.cold-test\n')
+            templates = downloads / 'Godot_v4.3-stable_export_templates.tpz'
+            templates.write_bytes(b'template fixture')
+            manifest = load_manifest()
+            for artifact in (archive, templates):
+                pin = manifest['artifacts'][artifact.name]
+                pin['digest'] = hashlib.new(pin['algorithm'], artifact.read_bytes()).hexdigest()
+
+            def run_tool(command, environment, log):
+                if command[0] != 'openssl':
+                    return engine_command(command, environment, log)
+
+            argv = ['runner', '--version', '4.3', '--cache', str(cache), '--addon', str(root / 'addon.zip'), '--output', str(output)]
+            with (patch.object(sys, 'argv', argv),
+                  patch.dict(os.environ, FORTRESS_PLAYWRIGHT_PACKAGE='unused', FORTRESS_CHROMIUM_EXECUTABLE='unused'),
+                  patch.object(native_online_runner, 'load_manifest', return_value=manifest),
+                  patch.object(native_online_runner, 'inventory', side_effect=lambda files: files['editor'].read_bytes()),
+                  patch.object(native_online_runner, 'run', side_effect=run_tool),
+                  patch.object(native_online_runner, 'stage_export', side_effect=RuntimeError('editor ready'))):
+                self.assertFalse((cache / 'editors').exists())
+                with self.assertRaisesRegex(RuntimeError, 'editor ready'):
+                    native_online_runner.main()
+            self.assertIn('4.3.stable.cold-test', (output / 'version.log').read_text())
+
     def test_native_online_invalidates_receipt_before_manifest_load(self):
         # Value: a missing or malformed pins file cannot leave a stale browser qualification result.
         for error in (FileNotFoundError, json.JSONDecodeError):

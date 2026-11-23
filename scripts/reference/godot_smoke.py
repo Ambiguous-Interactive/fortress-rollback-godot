@@ -21,15 +21,17 @@ def run(cmd, environment, log, timeout=180):
     return output
 
 
-def prepare_editor(data, version, offline=False):
+def prepare_editor(data, version, offline=False, *, cache=None):
     if version not in (data['godot']['minimum'], data['godot']['current_stable']):
         raise ValueError('only pinned engine versions are accepted')
     arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
     if arch is None or platform.system() != 'Linux':
         raise ValueError('editor bootstrap supports Linux arm64/x86_64 only')
+    if cache is None:
+        cache = CACHE
     name = f'Godot_v{version}-stable_linux.{arch}.zip'
-    archive = fetch(data['artifacts'][name], name, offline)
-    directory = CACHE / 'editors' / version
+    archive = fetch(data['artifacts'][name], name, offline, cache)
+    directory = cache / 'editors' / version
     directory.mkdir(parents=True, exist_ok=True)
     prepare_zip(archive, directory, executable_members=(name[:-4],))
     editor = directory / name[:-4]
