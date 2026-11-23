@@ -27,6 +27,7 @@ class IterationReportTests(unittest.TestCase):
 
     def test_nearest_rank_p95_and_strict_target(self):
         rows = [dict(outcome='success', elapsed_s=time, runner_s=1) for time in [280] * 37 + [300] * 3]
+        self.assertIsNone(summary(rows[:-1])['p95_s'])
         self.assertEqual(summary(rows)['p95_s'], 300)
         self.assertFalse(summary(rows)['target_verified'])
 

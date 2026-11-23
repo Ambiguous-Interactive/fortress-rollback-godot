@@ -83,9 +83,9 @@ def candidate(origin, required, jobs, *, event=None, non_tooling=False):
 def summary(rows):
     # Superseded heads stay visible but have no completed validation verdict.
     times = sorted(r['elapsed_s'] for r in rows if r['outcome'] in ('success', 'failure') and r['elapsed_s'] is not None)
-    p95 = times[math.ceil(.95*len(times))-1] if times else None
+    p95 = times[math.ceil(.95*len(times))-1] if len(times) >= 40 else None
     counts = Counter(r['outcome'] for r in rows)
-    return dict(outcomes=counts, completed=len(times), p95_s=p95, target_verified=len(times) >= 40 and p95 < 300 and not counts['incomplete'],
+    return dict(outcomes=counts, completed=len(times), p95_s=p95, target_verified=p95 is not None and p95 < 300 and not counts['incomplete'],
                 total_runner_minutes=round(sum(r['runner_s'] for r in rows)/60, 2))
 
 
