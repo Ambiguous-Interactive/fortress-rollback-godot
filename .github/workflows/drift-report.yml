@@ -12,6 +12,7 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: read
 
 concurrency:
   # Serialize runs: two racing processes could both see zero carriers and both
@@ -61,7 +62,7 @@ jobs:
           RECEIPT_PATH: ${{ steps.receipt.outputs.download-path }}
         run: |
           python3 scripts/reference/drift_report.py --publish-staged --artifact-url "$ARTIFACT_URL" \
-            --summary "$GITHUB_STEP_SUMMARY" --output "$RECEIPT_PATH" \
+            --checkout-sha "$GITHUB_SHA" --summary "$GITHUB_STEP_SUMMARY" --output "$RECEIPT_PATH" \
             --reporting-identity github-actions[bot]
       - name: Failure summary
         if: failure()

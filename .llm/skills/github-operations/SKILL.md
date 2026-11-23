@@ -133,8 +133,12 @@ with `gh --body-file`; preserve actual newlines. Secret values stay in process
 environment or existing `gh` configuration throughout the operation.
 Pass generated REST bodies as JSON on stdin with `gh api --input -`. Check the
 endpoint's body limit separately from the operating system's argument limit.
-Upload full evidence before posting a summary that links to it, and preserve
-the linked artifact across workflow attempts.
+Verify uploaded evidence before posting a summary that links to it. A rerun
+can remove an earlier artifact even when each attempt uses a different name
+and does not overwrite. Record the checkout, inputs and replay command in
+the summary. When the exact evidence digest recurs, preserve live links and
+update an existing trusted comment only after confirming its artifact is gone.
+Authorization and network errors do not prove absence.
 
 ## Evidence and retry boundaries
 

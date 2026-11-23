@@ -33,7 +33,7 @@ no-drift report.
 Usage:
     python3 scripts/reference/drift_report.py [--source NAME]... [--latest NAME=SHA]...
         [--pins PATH] [--ledger PATH] [--cache DIR] [--output DIR] [--repo OWNER/REPO]
-        [--summary FILE] [--stage | --publish-staged --artifact-url URL]
+        [--summary FILE] [--stage | --publish-staged --artifact-url URL --checkout-sha SHA]
 
 Exit codes: 0 every source reported or no-op, 1 at least one source failed.
 """
@@ -44,6 +44,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -68,6 +69,11 @@ DOWNLOAD_ATTEMPTS = 4
 GH_TIMEOUT = 120
 REVISION_PATTERN = re.compile(r'[0-9a-f]{40}\Z')
 SHA256_PATTERN = re.compile(r'[0-9a-f]{64}\Z')
+ARTIFACT_URL_PATTERN = re.compile(
+    r'https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/actions/runs/([1-9][0-9]{0,18})/artifacts/([1-9][0-9]{0,18})'
+)
+HTTP_STATUS_PATTERN = re.compile(r'HTTP/[0-9.]+ ([0-9]{3})(?: .+)?')
+
 
 
 class ToolingError(Exception):
@@ -164,18 +170,29 @@ class GhIssueClient:
     def __init__(self, repo):
         self.repo = repo
 
-    def _api(self, args, fields=None):
+    def _api(self, args, fields=None, allow_missing=False):
         payload = None
         if fields is not None:
             args = [*args, '--input', '-']
             payload = json.dumps(fields, ensure_ascii=False)
+        if allow_missing:
+            args = [*args, '--include']
         try:
-            result = subprocess.run(['gh', 'api', *args], input=payload, capture_output=True, encoding='utf-8',
+            result = subprocess.run(['gh', 'api', '--hostname', 'github.com', *args], input=payload, capture_output=True, encoding='utf-8',
                                     timeout=GH_TIMEOUT, check=False)
         except subprocess.TimeoutExpired as error:
             raise ToolingError(f'gh api timed out after {GH_TIMEOUT}s: {args}') from error
+        if allow_missing:
+            headers, separator, body = result.stdout.partition('\n\n')
+            status = HTTP_STATUS_PATTERN.fullmatch(headers.partition('\n')[0])
+            if separator and status and status[1] == '404' and result.returncode == 1:
+                return None
         if result.returncode != 0:
             raise ToolingError(f'gh api failed ({result.returncode}): {result.stderr.strip()}')
+        if allow_missing:
+            if not separator or not status or status[1] != '200':
+                raise ToolingError('gh api did not return artifact HTTP metadata')
+            return body
         return result.stdout
 
     def _paged(self, path):
@@ -198,16 +215,31 @@ class GhIssueClient:
         self._api(['-X', 'PATCH', f'repos/{self.repo}/issues/{number}'], fields)
 
     def list_comments(self, number):
-        return [{'author': (item.get('user') or {}).get('login') or '', 'body': item.get('body') or ''}
+        return [{'id': item['id'], 'author': (item.get('user') or {}).get('login') or '', 'body': item.get('body') or ''}
                 for item in self._paged(f'repos/{self.repo}/issues/{number}/comments?per_page=100')]
 
     def add_comment(self, number, body):
         self._api(['-X', 'POST', f'repos/{self.repo}/issues/{number}/comments'], {'body': body})
 
+    def update_comment(self, comment_id, body):
+        self._api(['-X', 'PATCH', f'repos/{self.repo}/issues/comments/{comment_id}'], {'body': body})
+
+    def artifact_live(self, artifact, checkout_sha=None):
+        run_id, artifact_id = artifact
+        response = self._api([f'repos/{self.repo}/actions/artifacts/{artifact_id}'], allow_missing=True)
+        if response is None:
+            return False
+        item = json.loads(response)
+        run = item.get('workflow_run') if isinstance(item, dict) else None
+        if (not isinstance(run, dict) or run.get('id') != run_id or item.get('id') != artifact_id
+                or not isinstance(item.get('expired'), bool) or (checkout_sha and run.get('head_sha') != checkout_sha)):
+            raise ToolingError(f'artifact {artifact_id} metadata does not match the observation link')
+        return not item['expired']
+
     def current_login(self):
         """The identity this run reports as; digest evidence is trusted only from it."""
         try:
-            result = subprocess.run(['gh', 'api', 'user', '--jq', '.login'], capture_output=True,
+            result = subprocess.run(['gh', 'api', '--hostname', 'github.com', 'user', '--jq', '.login'], capture_output=True,
                                     encoding='utf-8', timeout=GH_TIMEOUT, check=False)
         except subprocess.TimeoutExpired as error:
             raise ToolingError(f'identity resolution timed out after {GH_TIMEOUT}s') from error
@@ -245,7 +277,18 @@ def render_body(source, entry, latest, report_digest, today):
     ]) + '\n'
 
 
-def render_comment(source, entry, latest, report, report_digest, archive_digest, today, artifact_url=None):
+def artifact_link(repo, url):
+    match = ARTIFACT_URL_PATTERN.fullmatch(url)
+    if match and match[1].casefold() == repo.casefold():
+        return int(match[2]), int(match[3])
+    return None
+
+
+def artifact_line_prefix(source):
+    return f'Full per-path classification is in `{source}.json`. [Download report artifact]('
+
+
+def render_comment(source, entry, latest, report, report_digest, archive_digest, today, artifact_url=None, checkout_sha=None):
     """Keep a readable observation within GitHub's body limit and retain its digest."""
     affected = [f"`{record['path']}`: " + ', '.join(f'`{test}`' for test in record['ledger']['port_test_ids'])
                 for record in report['records']
@@ -259,7 +302,17 @@ def render_comment(source, entry, latest, report, report_digest, archive_digest,
         '',
     ]
     if artifact_url:
-        heading += [f'Full per-path classification is in `{source}.json`. [Download report artifact]({artifact_url})', '']
+        heading += [
+            f'{artifact_line_prefix(source)}{artifact_url})',
+            '',
+            f'Check out `{checkout_sha}` and run this command to reproduce the report. Compare `report_digest` in the resulting JSON.',
+            '',
+            '```sh',
+            f'python3 scripts/reference/drift_report.py --stage --source {shlex.quote(source)} \\',
+            f'  --latest {shlex.quote(f"{source}={latest}")} --output ".cache/results/replay-{report_digest[:12]}"',
+            '```',
+            '',
+        ]
     summary = drift.summarize(report)
     details = [
         '```',
@@ -365,24 +418,51 @@ def read_staged_report(path, source, entry):
     return report
 
 
-def publish_report(report, entry, issues, carrier, today, identity, artifact_url):
-    """Publish one observation unless this identity already recorded its digest."""
+def refresh_artifact_link(source, comment, issues, artifact_url, checkout_sha, render):
+    prefix = artifact_line_prefix(source)
+    body = comment['body']
+    lines = [line for line in body.splitlines() if line.startswith(prefix) and line.endswith(')')]
+    if len(lines) != 1:
+        return False
+    old_line = lines[0]
+    old = artifact_link(issues.repo, old_line[len(prefix):-1])
+    new = artifact_link(issues.repo, artifact_url)
+    if old is None or old == new or issues.artifact_live(old):
+        return False
+    if not issues.artifact_live(new, checkout_sha):
+        raise ToolingError('the replacement drift artifact is no longer available')
+    comment_id = comment['id']
+    if type(comment_id) is not int or comment_id <= 0:
+        raise ToolingError('cannot refresh a drift observation without a valid comment ID')
+    replacement = body.replace(old_line, f'{prefix}{artifact_url})', 1)
+    issues.update_comment(comment_id, replacement if len(replacement.encode('utf-8')) <= MAX_COMMENT_BYTES else render())
+    return True
+
+
+def publish_report(report, entry, issues, carrier, today, identity, artifact_url, checkout_sha):
+    """Publish or refresh the observation for this reporting identity."""
     source = report['source']
     latest = report['candidate_revision']
     report_digest = report['report_digest']
     identity = identity if identity is not None else issues.current_login()
+    def render():
+        try:
+            return render_comment(source, entry, latest, report, report_digest,
+                                  report['candidate_archive_sha256'], today, artifact_url, checkout_sha)
+        except (KeyError, TypeError) as error:
+            raise ToolingError(f'{source}: cannot render report classification: {error}') from error
+
     if carrier:
         number = carrier['number']
-        recorded = [comment_digest(item['body']) for item in issues.list_comments(number)
-                    if f'<!-- {REPORT_PREFIX}:{source} -->' in item['body'] and item.get('author') == identity]
-        if report_digest in recorded:
+        matching = [item for item in issues.list_comments(number)
+                    if f'<!-- {REPORT_PREFIX}:{source} -->' in item['body'] and item.get('author') == identity
+                    and comment_digest(item['body']) == report_digest]
+        if matching:
+            if artifact_url and len(matching) == 1 and refresh_artifact_link(source, matching[0], issues, artifact_url, checkout_sha, render):
+                return 'artifact-refreshed', number
             return 'digest-known', number
 
-    try:
-        comment = render_comment(source, entry, latest, report, report_digest,
-                                 report['candidate_archive_sha256'], today, artifact_url)
-    except (KeyError, TypeError) as error:
-        raise ToolingError(f'{source}: cannot render report classification: {error}') from error
+    comment = render()
     body = render_body(source, entry, latest, report_digest, today)
     if carrier:
         action = 'commented'
@@ -414,6 +494,7 @@ def main_with_args(argv):
     mode.add_argument('--stage', action='store_true', help='write JSON reports to a fresh output directory without accessing GitHub issues')
     mode.add_argument('--publish-staged', action='store_true', help='publish existing staged JSON without reclassifying')
     parser.add_argument('--artifact-url', help='link to the artifact containing the staged reports')
+    parser.add_argument('--checkout-sha', help='checkout revision used to classify the staged reports')
     parser.add_argument('--reporting-identity', metavar='LOGIN',
                         help='the identity this run reports as; omit to resolve it through `gh api user`. '
                              'The scheduled workflow passes github-actions[bot] because the Actions '
@@ -436,10 +517,16 @@ def main_with_args(argv):
     unknown = [name for name in names if name not in pins['sources']]
     if unknown:
         raise ToolingError(f'pins manifest has no source named: {", ".join(unknown)}')
-    if args.publish_staged != bool(args.artifact_url) or (args.publish_staged and overrides):
-        raise ToolingError('--publish-staged requires --artifact-url and cannot use --latest')
+    if (args.publish_staged != bool(args.artifact_url) or args.publish_staged != bool(args.checkout_sha)
+            or (args.publish_staged and overrides)):
+        raise ToolingError('--publish-staged requires --artifact-url and --checkout-sha and cannot use --latest')
     if not args.stage and (args.repo is None or not args.repo.strip()):
         raise ToolingError('--repo is required when GITHUB_REPOSITORY is unset')
+    if args.publish_staged:
+        validate_revision(args.checkout_sha)
+        if artifact_link(args.repo, args.artifact_url) is None:
+            raise ToolingError('--artifact-url must name a GitHub Actions artifact in --repo')
+
     if args.reporting_identity is not None and not args.reporting_identity.strip():
         # An empty identity would own no comments, so every run would
         # re-observe: refuse it instead of silently degrading the cadence.
@@ -473,7 +560,7 @@ def main_with_args(argv):
                 print(f'{name}: noop (latest is the reviewed pin)')
                 continue
             action, issue = ('staged', None) if args.stage else publish_report(
-                report, entry, issues, carrier, today, args.reporting_identity, args.artifact_url)
+                report, entry, issues, carrier, today, args.reporting_identity, args.artifact_url, args.checkout_sha)
             result = {'source': name, 'action': action, 'latest': report['candidate_revision'],
                       'requires_review': report['requires_review']}
             results.append(result)

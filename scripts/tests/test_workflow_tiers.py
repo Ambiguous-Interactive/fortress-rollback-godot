@@ -298,6 +298,8 @@ class DriftReportWorkflowTests(unittest.TestCase):
         # The Actions installation token cannot resolve `gh api user` (HTTP
         # 403), so the scheduled run names its reporting identity explicitly.
         self.assertIn('--reporting-identity github-actions[bot]', active)
+        self.assertIn('  actions: read', active)
+        self.assertIn('--checkout-sha "$GITHUB_SHA"', active)
 
 
     # Value: protects=observations link uploaded evidence; fails_when=publish precedes upload or reruns replace receipts; why_new=only trigger checks; seam=none
