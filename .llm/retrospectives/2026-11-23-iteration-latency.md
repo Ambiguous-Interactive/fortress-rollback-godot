@@ -18,6 +18,8 @@ The goals were a verified focused result in 10 seconds and a required hosted ver
   A fake engine with a missing case and a seeded failure in a real spectator suite exercise these paths.
 - Listing many suites in one Godot 4.3 process produced teardown errors. Listing suites separately preserved a clean exit.
   Four partitions matched all 869 historical case records, including their state bytes and assertion outcomes.
+- A real PR head reported all five required checks in 231 s using 12.72 runner-minutes.
+  [PR Gate](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45091081449)
 - A hosted trial passed 56 jobs in 333 s with 175.7 runner-minutes. Godot 4.3 Chromium ownership took up
   to 322 s in one job. Workload estimates alone understated that path. The jobs retain suite and page timings
   for the next partition adjustment. [Hosted trial](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45090341692)

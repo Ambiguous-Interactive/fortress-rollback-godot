@@ -22,6 +22,23 @@ The study alternates expected failures and passes in a shared addon, the online 
 It verifies edited bytes, case identity, both fresh processes, both in-process repeats and the expected
 assertion outcome. Cold samples clear runner timing history. Warm samples seed it. Both use the host's ordinary filesystem cache.
 
+## Measured local edits
+
+Two 100-edit runs used Godot 4.7.2 on the development host. Each included 50 intentional failures,
+50 passing edits, 80 single-case commands and 20 eight-case changed-suite commands.
+
+| Revision | Median | p95 | Maximum |
+| --- | ---: | ---: | ---: |
+| `025dfc9` | 3.78 s | 6.29 s | 10.01 s |
+| `0144540` | 3.43 s | 5.97 s | 8.22 s |
+
+On the second run, single-case p95 was 5.41 s and changed-suite p95 was 7.26 s. Neither run
+waited for another host lease. A separate trial that overlapped full qualification waited over five
+minutes for the lease and was interrupted. These distributions describe an available development host.
+The first five paired edits on each revision matched the control's edited bytes, engine and result
+digests. Their median time difference changed sign between runs, so these small pairs establish
+workload equivalence and do not establish a consistent speedup.
+
 ## Hosted baseline and comparison
 
 The November 18–22, 2026 baseline uses repository activity and all five required check contexts.
