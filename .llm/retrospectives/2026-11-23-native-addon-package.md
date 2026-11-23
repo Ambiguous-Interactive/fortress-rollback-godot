@@ -35,6 +35,12 @@ the archive.
   cache control now puts only the pinned ZIP in the selected cache, then executes
   the extracted editor's version command. The witness shares the pinned editor
   preparation path with the other reference tools.
+- The first 4.3 simulator run reported `no completion after 160 ticks` after
+  export and installation. A stationary local HTTP fixture reproduced the
+  generic timeout. The witness now reports the slot, control, verified state and
+  both peers' most recent frame and confirmation observations. The fixture
+  reported Godot and Rust at frame 0 with confirmation at -1. The Linux
+  exported matrix and stall witness still completed on both pins.
 
 ## Prune ledger
 
