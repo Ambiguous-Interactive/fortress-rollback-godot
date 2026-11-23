@@ -49,6 +49,11 @@ the archive.
   52 canonical frames and every peer reported `disconnected` after the terminal
   interruption. The [browser witness guide](../skills/testing/references/browser-integration.md)
   records the boundary and correction rule.
+- The hosted 4.3 direct-only eight-player cell started at 3.015–3.079 seconds,
+  after the production fallback grace expired. Four clients used relay while
+  direct links were still opening. The direct-only fixture now establishes full
+  physical connectivity before entering the production start path and still
+  requires zero relay sends. The missing-link cell keeps the production grace.
 
 ## Prune ledger
 

@@ -232,7 +232,8 @@ async function run(root, endpoint, mode, players) {
     }
     phase = 'lobby';
     function connect(page, index, room) {
-      return command(page, 'connect', { endpoint: socketEndpoint, name: `Player ${index}`, room, route, players });
+      return command(page, 'connect', { endpoint: socketEndpoint, name: `Player ${index}`, room, route, players,
+        wait_for_full_mesh: mode === 'mesh' });
     }
     await connect(pages[0], 0, '');
     await wait(pages[0], () => window.fortressNative.state === 'lobby' && window.fortressNative.room !== '');
@@ -336,7 +337,10 @@ async function run(root, endpoint, mode, players) {
         continue;
       }
       const before = stalled[peer.index];
-      if (route === 'mesh') assert.ok(peer.open_mesh_wait_ticks <= 2, 'a complete direct mesh must start when the engine sees its channels');
+      if (route === 'mesh') {
+        assert.ok(peer.started_on_full_mesh, 'the direct-only room must start with every physical channel connected');
+        assert.ok(peer.open_mesh_wait_ticks <= 2, 'a complete direct mesh must start when the engine sees its channels');
+      }
       assert.ok(peer.saves > 0 && peer.advances > peer.frame && peer.restores > before.restores, 'save, load and re-advance must run');
       assert.ok(before.frame > GATE_FRAME && before.confirmed < before.frame - 1, 'gate must force prediction beyond confirmation');
       assert.ok(before.wire.holding && before.wire.held[route] > 0, 'native bytes must be held on the selected physical route');
