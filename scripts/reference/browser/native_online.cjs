@@ -47,7 +47,8 @@ function instrumentNativeWire() {
   const relaySenders = new Map();
   const held = { mesh: 0, relay: 0 };
   const controlRoundTrips = { mesh: 0, relay: 0 };
-  const pendingReports = new Map();
+  const channelReports = new Map();
+  const socketReports = new WeakMap();
   const nativeBytes = bytes => bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
     : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
   const matches = (bytes, offset) => session && offset + session.length < bytes.length
@@ -82,19 +83,22 @@ function instrumentNativeWire() {
   }
   const increment = (counts, uuid) => counts.set(uuid, (counts.get(uuid) ?? 0) + 1);
   const ufrag = description => description?.sdp.match(/^a=ice-ufrag:([\w+/]+)\r?$/m)?.[1];
-  function receive(route, link, packet) {
-    if (packet.kind === 5 && packet.token !== null && pendingReports.get(link) === packet.token) {
-      controlRoundTrips[route]++;
-      pendingReports.delete(link);
-    }
+  function receive(route, reports, peer, packet) {
+    if (packet.kind === 5 && reports.get(peer)?.delete(packet.token)) controlRoundTrips[route]++;
   }
-  function send(route, link, emit, data, packet) {
+  function send(route, reports, peer, emit, data, packet) {
     if (!packet) return emit(data);
     counts[route]++;
     if (!holding) return emit(data);
     if (!holdAll && packet.kind !== inputKind) {
       const sent = emit(data);
-      if (packet.kind === 4 && packet.token !== null) pendingReports.set(link, packet.token);
+      if (reports && packet.kind === 4 && packet.token !== null) {
+        if (!reports.has(peer)) reports.set(peer, new Set());
+        const pending = reports.get(peer);
+        // Reports are spaced by 200 ms. Keep 16 to cover delayed or out-of-order replies.
+        if (pending.size === 16) pending.delete(pending.values().next().value);
+        pending.add(packet.token);
+      }
       return sent;
     }
     if (active.length >= 1024 || totalBytes + data.byteLength > 1024 * 1024) throw new Error('native packet hold exceeded bounds');
@@ -128,7 +132,7 @@ function instrumentNativeWire() {
       const view = nativeBytes(data);
       if (channel.id === 3 && view && matches(view, 0)) {
         record.received++;
-        receive('mesh', channel, nativePacket(view, 0));
+        receive('mesh', channelReports, channel, nativePacket(view, 0));
       }
     });
     resources.rtc.push(record);
@@ -136,7 +140,7 @@ function instrumentNativeWire() {
     channel.send = data => {
       const view = nativeBytes(data);
       const packet = channel.id === 3 && view && matches(view, 0) ? nativePacket(view, 0) : null;
-      return send('mesh', channel, bytes => {
+      return send('mesh', channelReports, channel, bytes => {
         nativeSend.call(channel, bytes);
         if (packet) record.sent++;
       }, data, packet);
@@ -159,12 +163,14 @@ function instrumentNativeWire() {
   };
   window.WebSocket = new Proxy(nativeSocket, { construct(target, args, newTarget) {
     const socket = Reflect.construct(target, args, newTarget);
+    const reports = new Map();
+    socketReports.set(socket, reports);
     resources.sockets.push(socket);
     socket.addEventListener('message', ({ data }) => {
       const packet = relayAddresses(data);
       if (packet && packet.recipient === localUuid) {
         increment(relaySenders, packet.sender);
-        receive('relay', packet.sender, packet);
+        receive('relay', reports, packet.sender, packet);
       }
     });
     return socket;
@@ -172,10 +178,10 @@ function instrumentNativeWire() {
   const socketSend = nativeSocket.prototype.send;
   nativeSocket.prototype.send = function(data) {
     const packet = relayAddresses(data);
-    return send('relay', packet?.recipient, bytes => {
+    return send('relay', socketReports.get(this), packet?.recipient, bytes => {
       socketSend.call(this, bytes);
       if (packet) increment(relayRecipients, packet.recipient);
-    }, data, packet);
+    }, data, packet?.sender === localUuid ? packet : null);
   };
   window.fortressNativeWire = {
     bind(hash, uuid) {
@@ -197,7 +203,6 @@ function instrumentNativeWire() {
     release() {
       if (!holding || !active.length) throw new Error('native packet hold did not take effect');
       holding = false;
-      pendingReports.clear();
       for (const emit of active) {
         emit();
         released++;

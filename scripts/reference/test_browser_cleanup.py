@@ -32,25 +32,45 @@ for (const expiry of [false, true]) {
     addEventListener(name, listener) { this[name] = listener; }
     send(bytes) { seen.push(Array.from(bytes)); }
   }
+  class Socket {
+    written = [];
+    addEventListener(name, listener) { this[name] = listener; }
+    send(bytes) { this.written.push(bytes); }
+  }
   const channels = [new Channel(), new Channel()];
   const [channel, other] = channels;
   const window = {};
   const realm = {
-    window, performance, Uint8Array, ArrayBuffer, DataView, WebSocket: class {},
+    window, performance, Uint8Array, ArrayBuffer, DataView, WebSocket: Socket,
     RTCPeerConnection: class { addEventListener() {} createDataChannel() { return channels.shift(); } },
   };
   runInNewContext(`(${instrumentNativeWire})()`, realm);
   new realm.RTCPeerConnection().createDataChannel();
   new realm.RTCPeerConnection().createDataChannel();
   const wire = window.fortressNativeWire;
-  wire.bind('00'.repeat(16), '01234567-0123-0123-0123-0123456789ab');
+  const local = '01'.repeat(16);
+  const relay = (sender, recipient, data) => {
+    const envelope = new Uint8Array(57 + data.length);
+    envelope.set([70, 83, 82, 49, 1]);
+    envelope.fill(sender, 21, 37);
+    envelope.fill(recipient, 37, 53);
+    envelope.set(data, 57);
+    return envelope;
+  };
+  wire.bind('00'.repeat(16), local);
+  const socket = new window.WebSocket();
+  const otherSocket = new window.WebSocket();
   channel.send(packet(4, 1));
   seen.length = 0;
   if (expiry) wire.holdTerminal();
   else wire.arm();
   channel.send(packet(2));
   channel.send(packet(4, 2));
+  channel.send(packet(4, 3));
   channel.send(packet(255));
+  const report = relay(1, 2, packet(4, 2));
+  const reply = relay(2, 1, packet(5, 2));
+  socket.send(report);
   if (!expiry) {
     channel.message({data: packet(5, 1)});
     channel.message({data: packet(255)});
@@ -59,14 +79,20 @@ for (const expiry of [false, true]) {
     assert.deepEqual({...wire.status().control_round_trips}, {mesh: 0, relay: 0});
     channel.message({data: packet(5, 2)});
     channel.message({data: packet(5, 2)});
+    otherSocket.message({data: reply});
+    socket.message({data: relay(3, 1, packet(5, 2))});
+    socket.message({data: relay(2, 3, packet(5, 2))});
+    assert.equal(wire.status().control_round_trips.relay, 0);
+    socket.message({data: reply});
   }
-  const status = wire.status();
-  assert.equal(status.held.mesh, expiry ? 3 : 1);
-  assert.deepEqual({...status.control_round_trips}, {mesh: expiry ? 0 : 1, relay: 0});
+  assert.equal(wire.status().held.mesh, expiry ? 4 : 1);
+  assert.equal(wire.status().held.relay, expiry ? 1 : 0);
+  assert.deepEqual({...wire.status().control_round_trips}, {mesh: expiry ? 0 : 1, relay: expiry ? 0 : 1});
+  assert.deepEqual(socket.written, expiry ? [] : [report]);
   assert.throws(() => channel.send(packet(7, 0, 3)), /native gameplay wire header/);
   if (!expiry) {
     wire.release();
-    assert.deepEqual(seen, [packet(4, 2), packet(255), packet(2)].map(bytes => Array.from(bytes)));
+    assert.deepEqual(seen, [packet(4, 2), packet(4, 3), packet(255), packet(2)].map(bytes => Array.from(bytes)));
   } else assert.deepEqual(seen, []);
 }
 """
