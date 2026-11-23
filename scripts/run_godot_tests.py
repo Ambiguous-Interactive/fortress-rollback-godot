@@ -576,6 +576,17 @@ def case_inventory(command: list[str], suites: list[str], timeout: float) -> dic
     return inventory
 
 
+def verified_cases(command: list[str], suites: list[str], timeout: float, jobs: int) -> dict:
+    """List each suite in isolation, matching the CI execution boundary on the minimum engine."""
+    def list_one(suite: str) -> dict:
+        row = case_inventory(command, [suite], timeout)
+        if suite not in row:
+            raise ValueError(f"incomplete_case_inventory: {suite}")
+        return row
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        return {suite: names for row in pool.map(list_one, suites) for suite, names in row.items()}
+
+
 def split_cases(command: list[str], suites: list[str], timeout: float) -> dict:
     """List slow suites without splitting single-case suites."""
     return {suite: names for suite, names in case_inventory(command, suites, timeout).items() if len(names) > 1}
@@ -866,9 +877,7 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
         if version_probe["exit"] != 0:
             raise ValueError("version_probe_failed")
         version = version_probe["stdout"].strip()
-        expected = case_inventory(command, suites, args.inventory_timeout) if args.verify_inventory else {}
-        if args.verify_inventory and not expected:
-            raise ValueError("incomplete_case_inventory")
+        expected = verified_cases(command, suites, args.inventory_timeout, args.jobs) if args.verify_inventory else {}
         if contended or args.jobs > 1:
             if args.filter and len(suites) > 1:
                 inventory = case_inventory(command, suites, args.inventory_timeout)
