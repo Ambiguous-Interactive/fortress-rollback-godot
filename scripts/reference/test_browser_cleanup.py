@@ -33,6 +33,7 @@ for (const expiry of [false, true]) {
     send(bytes) { seen.push(Array.from(bytes)); }
   }
   class Socket {
+    bufferedAmount = 4096;
     written = [];
     addEventListener(name, listener) { this[name] = listener; }
     send(bytes) { this.written.push(bytes); }
@@ -59,8 +60,10 @@ for (const expiry of [false, true]) {
     envelope.set([0xa1, 0x73, 0x01], 57 + data.length);
     return envelope;
   };
-  wire.bind('00'.repeat(16), local);
   const socket = new window.WebSocket();
+  socket.send('authenticate');
+  assert.deepEqual(socket.written.splice(0), ['authenticate']);
+  wire.bind('00'.repeat(16), local);
   const otherSocket = new window.WebSocket();
   channel.send(packet(4, 1));
   seen.length = 0;
@@ -86,11 +89,29 @@ for (const expiry of [false, true]) {
     socket.message({data: relay(2, 3, packet(5, 2))});
     assert.equal(wire.status().control_round_trips.relay, 0);
     socket.message({data: reply});
+    socket.message({data: relay(2, 1, packet(4, 4))});
+    socket.send(relay(1, 2, packet(5, 4)));
   }
   assert.equal(wire.status().held.mesh, expiry ? 4 : 1);
   assert.equal(wire.status().held.relay, expiry ? 1 : 0);
   assert.deepEqual({...wire.status().control_round_trips}, {mesh: expiry ? 0 : 1, relay: expiry ? 0 : 1});
-  assert.deepEqual(socket.written, expiry ? [] : [report]);
+  assert.deepEqual(socket.written, expiry ? [] : [report, relay(1, 2, packet(5, 4))]);
+  const relayTrace = wire.status().relay_trace;
+  assert.equal(relayTrace.buffered_bytes_peak, expiry ? 0 : 4096);
+  assert.equal(relayTrace.events.length, expiry ? 0 : 6);
+  if (!expiry) {
+    assert.deepEqual(JSON.parse(JSON.stringify(relayTrace.events)).map(({direction, kind, peer, token}) => [direction, kind, peer, token.slice(-2)]), [
+      ['send', 4, '02'.repeat(16), '02'], ['receive', 5, '02'.repeat(16), '02'],
+      ['receive', 5, '03'.repeat(16), '02'], ['receive', 5, '02'.repeat(16), '02'],
+      ['receive', 4, '02'.repeat(16), '04'], ['send', 5, '02'.repeat(16), '04'],
+    ]);
+    assert.equal(relayTrace.events.every(event => Number.isFinite(event.at_ms)), true);
+    for (let i = 0; i < 256; i++) socket.message({data: relay(2, 1, packet(4, i))});
+    const wrapped = wire.status().relay_trace;
+    assert.equal(wrapped.event_count, 262);
+    assert.equal(wrapped.events.length, 256);
+    assert.deepEqual(wrapped.events.map(event => parseInt(event.token.slice(-2), 16)).join(), Array.from({length: 256}, (_, i) => i).join());
+  }
   assert.throws(() => channel.send(packet(7, 0, 3)), /native gameplay wire header/);
   if (!expiry) {
     wire.release();

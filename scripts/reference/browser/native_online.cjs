@@ -46,6 +46,11 @@ function instrumentNativeWire(tagWebKitSends) {
   const counts = { mesh: 0, relay: 0 };
   const relayRecipients = new Map();
   const relaySenders = new Map();
+  const qualityEvents = [];
+  const qualityEventLimit = 256;
+  let qualityEventCount = 0;
+  let bufferedBytesPeak = 0;
+  let relayBroadcasts = 0;
   const held = { mesh: 0, relay: 0 };
   const controlRoundTrips = { mesh: 0, relay: 0 };
   const channelReports = new Map();
@@ -84,6 +89,10 @@ function instrumentNativeWire(tagWebKitSends) {
       }
     }
     return null;
+  }
+  function traceRelayQuality(direction, peer, { kind, token }) {
+    if (token === null) return;
+    qualityEvents[qualityEventCount++ % qualityEventLimit] = { direction, peer, kind, token, at_ms: performance.now() };
   }
   const increment = (counts, uuid) => counts.set(uuid, (counts.get(uuid) ?? 0) + 1);
   const ufrag = description => description?.sdp.match(/^a=ice-ufrag:([\w+/]+)\r?$/m)?.[1];
@@ -184,8 +193,11 @@ function instrumentNativeWire(tagWebKitSends) {
     resources.sockets.push(socket);
     socket.addEventListener('message', ({ data }) => {
       const packet = relayAddresses(data);
-      if (packet && packet.recipient === localUuid) {
+      if (!packet) return;
+      relayBroadcasts++;
+      if (packet.recipient === localUuid) {
         increment(relaySenders, packet.sender);
+        traceRelayQuality('receive', packet.sender, packet);
         receive('relay', reports, packet.sender, packet);
       }
     });
@@ -196,7 +208,11 @@ function instrumentNativeWire(tagWebKitSends) {
     const packet = relayAddresses(data);
     return send('relay', socketReports.get(this), packet?.recipient, bytes => {
       socketSend.call(this, bytes);
-      if (packet) increment(relayRecipients, packet.recipient);
+      if (packet && packet.sender === localUuid) {
+        increment(relayRecipients, packet.recipient);
+        bufferedBytesPeak = Math.max(bufferedBytesPeak, this.bufferedAmount);
+        traceRelayQuality('send', packet.recipient, packet);
+      }
     }, data, packet?.sender === localUuid ? packet : null);
   };
   window.fortressNativeWire = {
@@ -237,6 +253,9 @@ function instrumentNativeWire(tagWebKitSends) {
       holdTerminalClose = false;
       deferredClose();
     },
+    hasHeldInputAndControl(route) {
+      return held[route] > 0 && controlRoundTrips[route] > 0;
+    },
     status() {
       const holdMs = holdStarted === null ? null : Math.round((holdEnded ?? performance.now()) - holdStarted);
       const sctp = resources.rtc.filter(({channel}) => channel.id === 3).map(record => {
@@ -248,9 +267,12 @@ function instrumentNativeWire(tagWebKitSends) {
           closed: record.channel.readyState === 'closed', connectionClosed: record.connection.signalingState === 'closed',
           closedAt: ice.get(record.connection).closedAt ?? null };
       });
+      const first = Math.max(0, qualityEventCount - qualityEventLimit);
+      const events = Array.from(qualityEvents, (_, i) => qualityEvents[(first + i) % qualityEventLimit]);
       return { armed, holding, hold_ms: holdMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
         control_round_trips: { ...controlRoundTrips },
         relayRecipients: Object.fromEntries(relayRecipients), relaySenders: Object.fromEntries(relaySenders),
+        relay_trace: { buffered_bytes_peak: bufferedBytesPeak, broadcasts: relayBroadcasts, events, event_count: qualityEventCount },
         ice: [...ice.values()], sctp,
         rtc: resources.rtc.map(({channel, sent, received}) => [channel.id, channel.readyState, sent, received]),
         sockets: resources.sockets.map(socket => socket.readyState) };
@@ -343,6 +365,7 @@ async function run(root, endpoint, mode, players, browserPair) {
   let sequence = 0;
   let departureClocks;
   let closeProofs;
+  let stalled;
   const wait = async (page, condition, argument = null, timeout = 30000) => {
     const handle = await page.waitForFunction(condition, argument, { timeout });
     await handle.dispose();
@@ -440,7 +463,7 @@ async function run(root, endpoint, mode, players, browserPair) {
     await command(pages[0], 'start');
     await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
       && window.fortressNative.confirmed >= frame, GATE_FRAME, 45000)));
-    let armed, stalled, direct, afterClose, closeLinks;
+    let armed, direct, afterClose, closeLinks;
     let comparedFrames = HISTORY_FRAMES;
     if (liveClose) {
       direct = await observe();
@@ -471,8 +494,7 @@ async function run(root, endpoint, mode, players, browserPair) {
         const { state, stalls, prediction } = window.fortressNative;
         if (state === 'failed') return true;
         if (state !== 'playing' || stalls <= threshold.stalls || prediction < threshold.frame) return false;
-        const wire = window.fortressNativeWire.status();
-        return wire.held[threshold.route] > 0 && wire.control_round_trips[threshold.route] > 0;
+        return window.fortressNativeWire.hasHeldInputAndControl(threshold.route);
       },
       { route, stalls: armed[index].stalls, frame: GATE_FRAME }, 45000)));
       stalled = await observe();
@@ -609,7 +631,9 @@ async function run(root, endpoint, mode, players, browserPair) {
       ...window.fortressNative, wire: window.fortressNativeWire?.status()
     })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
     const diagnostics = states.map(state => state.status === 'fulfilled' ? state : { status: state.status, reason: String(state.reason) });
-    console.error(JSON.stringify({ phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, departureClocks, closeProofs, states: diagnostics }));
+    console.error(JSON.stringify({
+      phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, departureClocks, closeProofs, stalled, states: diagnostics
+    }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
     failures.push(...await closeAll(browsers, owner => owner.close(), 'browser'));

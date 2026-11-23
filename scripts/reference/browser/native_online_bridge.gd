@@ -73,6 +73,11 @@ class ObservedLobby:
 	var wait_for_full_mesh: bool = false
 	var started_on_full_mesh: bool = false
 	var _engine_mesh_open: bool = false
+	var _last_play_tick_us: int = -1
+	var play_tick_gap_peak_us: int = 0
+	var sdk_receive_peak: int = 0
+	var relay_receive_peak: int = 0
+	var relay_send_peak: int = 0
 
 	func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:
 		if transport_wait_started < 0:
@@ -121,6 +126,17 @@ class ObservedLobby:
 		var previous_state: String = state
 		var callbacks: PackedInt32Array = []
 		if state == "playing":
+			if _last_play_tick_us >= 0:
+				play_tick_gap_peak_us = maxi(play_tick_gap_peak_us, now_us - _last_play_tick_us)
+			_last_play_tick_us = now_us
+			# The pinned SDK transport owns the socket adapter and exposes no receive queue getter.
+			var transport: RefCounted = client.get("transport")
+			var socket: RefCounted = transport.get("_peer")
+			if socket != null:
+				sdk_receive_peak = maxi(sdk_receive_peak, socket.call("get_available_packet_count"))
+			var relay_status: Dictionary = game_match.relay.status()
+			relay_receive_peak = maxi(relay_receive_peak, relay_status.received_packets)
+			relay_send_peak = maxi(relay_send_peak, relay_status.pending_packets)
 			callbacks = [observations.saves, observations.restores, observations.advances]
 			var frame: int = game_match.status().current_frame
 			# Variations after the warmup force correction when delivery is held.
@@ -178,6 +194,10 @@ func _process(_delta: float) -> void:
 		"reason": match_status.reason,
 		"terminated": match_status.lifecycle == Types.Lifecycle.TERMINATED,
 		"turns": lobby.turns,
+		"play_tick_gap_peak_us": lobby.play_tick_gap_peak_us,
+		"sdk_receive_peak": lobby.sdk_receive_peak,
+		"relay_receive_peak": lobby.relay_receive_peak,
+		"relay_send_peak": lobby.relay_send_peak,
 		"transport_start_delay": lobby.transport_start_delay,
 		"previous_transport_delay": lobby.previous_transport_delay,
 		"browser_open_wait_ticks": lobby.browser_open_wait_ticks,
