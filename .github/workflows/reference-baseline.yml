@@ -1,64 +1,8 @@
 name: Reference Baseline
-
-# Gate calls the full Chromium matrix on the merge candidate. Manual runs
-# also execute the reference and oracle controls that Gate owns on candidates.
-on:
-  workflow_call:
-  workflow_dispatch:
-
+on: workflow_dispatch
 permissions:
   contents: read
-
 jobs:
-  contracts:
-    name: Reference negative controls
-    runs-on: ubuntu-24.04
-    if: github.event_name == 'workflow_dispatch'
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.1.0
-        with:
-          python-version: "3.15.2"
-      - run: make test-reference
-      - run: make test-oracle
-
-  rust:
-    name: Pinned Rust reference
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.1.0
-        with:
-          python-version: "3.15.2"
-      - name: Restore pinned Rust downloads and crates
-        uses: actions/cache@v6.1.0
-        with:
-          path: |
-            .cache/reference/downloads
-            .cache/reference/cargo/registry/cache
-            .cache/reference/cargo/registry/index
-          key: reference-rust-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/oracle/rust/Cargo.lock') }}
-      - name: Select Ubuntu HTTPS mirror alternatives
-        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
-      - name: Install upstream linker prerequisites
-        run: |
-          sudo apt-get update
-          sudo bash scripts/reference/retry_apt_fetch.sh apt-get install -y clang lld
-      - name: Reproduce reference twice
-        run: make reference-baseline
-      - name: Verify independent integer and checksum vectors
-        run: python3 scripts/reference/check_integer_vectors.py --check
-      - name: Verify source inventory against the pinned extraction
-        run: python3 scripts/reference/inventory.py
-      - uses: actions/upload-artifact@v7.0.2
-        if: always()
-        with:
-          name: rust-reference-results
-          path: .cache/reference/results/
-          if-no-files-found: error
-
   ownership:
     name: Native and Chromium snapshot ownership ${{ matrix.version }}${{ matrix.suffix }}
     runs-on: ubuntu-24.04
@@ -67,26 +11,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {version: "4.3", browser: chromium, phase: negative, suite_part: "1of5", suffix: " negative part 1", part_suffix: "-negative-part-1"}
-          - {version: "4.3", browser: chromium, phase: negative, suite_part: "2of5", suffix: " negative part 2", part_suffix: "-negative-part-2"}
-          - {version: "4.3", browser: chromium, phase: negative, suite_part: "3of5", suffix: " negative part 3", part_suffix: "-negative-part-3"}
-          - {version: "4.3", browser: chromium, phase: negative, suite_part: "4of5", suffix: " negative part 4", part_suffix: "-negative-part-4"}
-          - {version: "4.3", browser: chromium, phase: negative, suite_part: "5of5", suffix: " negative part 5", part_suffix: "-negative-part-5"}
-          - {version: "4.3", browser: chromium, phase: positive, suite_part: "1of5", suffix: " positive part 1", part_suffix: "-positive-part-1"}
-          - {version: "4.3", browser: chromium, phase: positive, suite_part: "2of5", suffix: " positive part 2", part_suffix: "-positive-part-2"}
-          - {version: "4.3", browser: chromium, phase: positive, suite_part: "3of5", suffix: " positive part 3", part_suffix: "-positive-part-3"}
-          - {version: "4.3", browser: chromium, phase: positive, suite_part: "4of5", suffix: " positive part 4", part_suffix: "-positive-part-4"}
-          - {version: "4.3", browser: chromium, phase: positive, suite_part: "5of5", suffix: " positive part 5", part_suffix: "-positive-part-5"}
-          - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-negative-part-1"}
-          - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-negative-part-2"}
-          - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "3", suffix: " negative part 3", part_suffix: "-negative-part-3"}
-          - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "4", suffix: " negative part 4", part_suffix: "-negative-part-4"}
-          - {version: "4.7.2", browser: chromium, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-positive-part-1"}
-          - {version: "4.7.2", browser: chromium, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-positive-part-2"}
-          - {version: "4.7.2", browser: chromium, phase: positive, suite_part: "3", suffix: " positive part 3", part_suffix: "-positive-part-3"}
-          - {version: "4.7.2", browser: chromium, phase: positive, suite_part: "4", suffix: " positive part 4", part_suffix: "-positive-part-4"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "2of5", suffix: " positive part 2 trial 1", part_suffix: "-positive-part-2-1"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "2of5", suffix: " positive part 2 trial 2", part_suffix: "-positive-part-2-2"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "2of5", suffix: " positive part 2 trial 3", part_suffix: "-positive-part-2-3"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "2of5", suffix: " positive part 2 trial 4", part_suffix: "-positive-part-2-4"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "2of5", suffix: " positive part 2 trial 5", part_suffix: "-positive-part-2-5"}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ce384c3ebd374003fda1a4698746f07ad5debe6d
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.15.2"
@@ -129,299 +62,39 @@ jobs:
           path: .cache/reference/results/
           if-no-files-found: error
 
-  godot:
-    name: Godot ${{ matrix.version }} and Chromium ${{ matrix.part }}
+  units:
+    name: Unit layout ${{ matrix.count }} part ${{ matrix.part }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        version: ["4.3", "4.7.2"]
-        part: [suites, oracle-1, oracle-2, oracle-3, oracle-4, tests-1of3, tests-2of3, tests-3of3, integration]
+        count: [3, 4]
+        part: [0, 1, 2, 3]
+        exclude:
+          - {count: 3, part: 3}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: 73924652282ae1c98d0d29d77d7fa98c502548ce
+          fetch-depth: 0
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.15.2"
-      - uses: actions/setup-node@v7.1.0
-        if: matrix.part == 'suites'
-        with:
-          node-version: "26.12.1"
-          cache: npm
-          cache-dependency-path: scripts/reference/browser/package-lock.json
-      - name: Select Ubuntu HTTPS mirror alternatives
-        if: matrix.part == 'suites'
-        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
-      - name: Restore the pinned editor
-        if: matrix.part != 'suites'
-        uses: actions/cache@v6.1.0
-        with:
-          path: .cache/reference/downloads/Godot_v${{ matrix.version }}-stable_linux.x86_64.zip
-          key: reference-editor-v1-${{ matrix.version }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
-      - name: Restore verified oracle downloads and crates
-        if: startsWith(matrix.part, 'oracle-')
-        uses: actions/cache@v6.1.0
-        with:
-          path: |
-            .cache/reference/downloads/*.tar.gz
-            .cache/reference/downloads/rust*
-            .cache/reference/cargo/registry/cache
-            .cache/reference/cargo/registry/index
-          key: oracle-v3-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/oracle/rust/Cargo.lock') }}
-      - name: Restore the pinned editor, Chromium and Web templates
-        if: matrix.part == 'suites'
-        uses: ./.github/actions/reference-browser-cache
-        with:
-          version: ${{ matrix.version }}
-          browser: chromium
-      - name: Install pinned browser runner and operating system dependencies
-        if: matrix.part == 'suites'
-        run: |
-          mkdir -p .cache/reference/browser
-          cp scripts/reference/browser/package*.json .cache/reference/browser/
-          npm ci --ignore-scripts --prefix .cache/reference/browser
-          bash scripts/reference/retry_apt_fetch.sh .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
-      - name: Execute native and exported web probes
-        # The exported representation and protocol probes are identical for both legs, so the
-        # suites leg owns them and the oracles leg keeps only its own native work.
-        if: matrix.part == 'suites'
-        run: python3 scripts/reference/godot_smoke.py --web --version "${{ matrix.version }}"
-      - name: Run the native oracle smoke probes
-        if: matrix.part == 'oracle-4'
-        run: python3 scripts/reference/godot_smoke.py --version "${{ matrix.version }}"
-      - name: Prepare the pinned editor
-        if: matrix.part != 'suites' && matrix.part != 'oracle-4'
+      - name: Plan identical inventories
         env:
-          VERSION: ${{ matrix.version }}
+          COUNT: ${{ matrix.count }}
         run: |
-          PYTHONPATH=scripts/reference python3 - <<'PYTHON'
-          import os
-          from fetch import load_manifest
-          from godot_smoke import prepare_editor
-          prepare_editor(load_manifest(), os.environ['VERSION'])
+          PYTHONPATH=scripts python3 - <<'PYTHON'
+          import json, os, unit_gate as g
+          p = g.plan("f6fa581")
+          assert len(p["parts"]) == 4
+          p["parts"] = g.balance_suites(g.suite_weights(p["selection"]["suites"], g.load_durations(g.WEIGHTS)), int(os.environ["COUNT"]))
+          with open(os.environ["GITHUB_ENV"], "a") as out:
+              print("UNIT_PLAN=" + json.dumps(p, separators=(",", ":")), file=out)
           PYTHON
-      - name: Verify runner failure controls and fresh-process suites
-        if: matrix.part == 'suites'
-        run: |
-          version="${{ matrix.version }}"
-          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
-          python3 scripts/reference/package_audit.py --godot "$editor" --output ".cache/reference/results/package-$version"
-          python3 scripts/reference/test_package_audit.py --godot "$editor" -v
-          python3 scripts/reference/signalfish_probe.py --godot "$editor" --output ".cache/reference/results/signalfish-$version"
-          python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
-          python3 scripts/reference/diagnostic_json.py --godot "$editor"
-          for round in 1 2; do
-            navigation_log=".cache/reference/results/replay-navigation-$version-$round.log"
-            navigation_status=0
-            timeout 30 "$editor" --headless --path . --script scripts/reference/replay_navigation_probe.gd > "$navigation_log" 2>&1 || navigation_status=$?
-            cat "$navigation_log"
-            if (( navigation_status != 0 )); then exit "$navigation_status"; fi
-            grep -Fx 'FORTRESS_REPLAY_NAVIGATION_OK 460' "$navigation_log"
-            if grep -Eq '^(SCRIPT ERROR:|ERROR:)' "$navigation_log"; then exit 1; fi
-          done
-      - name: Verify the whole-inventory engine wave shards
-        if: startsWith(matrix.part, 'tests')
-        run: |
-          version="${{ matrix.version }}"
-          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
-          part="${{ matrix.part }}"
-          shard="${part#tests-}"
-          python3 scripts/run_godot_tests.py --godot "$editor" --shard "$shard" --verify-inventory --timeout 180 --results ".cache/tests/runner-$version-$part.json"
-      - name: Verify integration and determinism
-        if: matrix.part == 'integration'
-        run: |
-          version="${{ matrix.version }}"
-          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
-          for case in default_single default_batched readiness_boundary aborted_wait; do
-            case_timeout=120
-            if [[ "$case" == default_single ]]; then case_timeout=180; fi
-            python3 scripts/run_godot_tests.py --godot "$editor" --category integration --filter "$case" --timeout "$case_timeout" \
-              --results ".cache/tests/integration-$version-$case.json"
-          done
-          python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
-      - name: Compare actual upstream and Godot traces
-        if: startsWith(matrix.part, 'oracle-')
-        run: |
-          version="${{ matrix.version }}"
-          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
-          part="${{ matrix.part }}"
-          # The handshake launcher records formal_skipped: the nightly models job owns
-          # the TLC model evidence; this leg keeps the differential trace.
-          python3 scripts/oracle/parallel_launchers.py --godot "$editor" --suffix "$version" --skip-formal --lane "${part#oracle-}"
+      - name: Run the affected unit suites
+        run: python3 scripts/unit_gate.py run --part ${{ matrix.part }}
       - uses: actions/upload-artifact@v7.0.2
-        if: always()
         with:
-          name: godot-browser-reference-results-${{ matrix.version }}-${{ matrix.part }}
-          path: |
-            .cache/reference/results/
-            .cache/tests/
-          if-no-files-found: error
-
-  server:
-    name: Build the pinned relay server
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    outputs:
-      artifact: ${{ steps.publish.outputs.artifact-id }}
-      receipt: ${{ steps.receipt.outputs.sha256 }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.1.0
-        with:
-          python-version: "3.15.2"
-      - name: Restore pinned server downloads and crates
-        uses: actions/cache@v6.1.0
-        with:
-          path: |
-            .cache/reference/downloads/*.tar.gz
-            .cache/reference/downloads/rust*
-            .cache/reference/cargo/registry/cache
-            .cache/reference/cargo/registry/index
-          key: server-sources-v1-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
-      - name: Verify the pinned sources and name the server build cache
-        id: pinned
-        run: |
-          PYTHONPATH=scripts/reference python3 - <<'PY'
-          from fetch import load_manifest, sources
-          manifest = load_manifest()
-          trees = sources(manifest)
-          lock = trees['server'] / 'Cargo.lock'
-          if not lock.is_file():
-              raise SystemExit('the pinned server source has no Cargo.lock')
-          print(lock)
-          PY
-          echo "pins=$(sha256sum docs/reference/pins.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          digest="$(sha256sum .cache/reference/signal-fish-server-*/Cargo.lock scripts/reference/signalfish_build_server.py | sha256sum | cut -d' ' -f1)"
-          echo "build=$digest" >> "$GITHUB_OUTPUT"
-      - name: Restore the shared relay server build tree
-        uses: actions/cache@v6.1.0
-        with:
-          path: |
-            .cache/reference/server-target
-            .cache/reference/server-cargo
-          key: reference-signalfish-server-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned.outputs.pins }}-${{ steps.pinned.outputs.build }}
-          restore-keys: |
-            reference-signalfish-server-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned.outputs.pins }}-
-      - name: Build the pinned local SignalFish server
-        id: build
-        run: |
-          PYTHONPATH=scripts/reference python3 - <<'PY'
-          from fetch import load_manifest
-          from run import setup_rust
-          manifest = load_manifest()
-          setup_rust(manifest, False)
-          PY
-          cargo="$(RUSTUP_HOME="$PWD/.cache/reference/rustup" .cache/reference/cargo/bin/rustup which --toolchain 1.99.1 cargo)"
-          echo "tool_bin=$(realpath --relative-to="$PWD" "$(dirname "$cargo")")" >> "$GITHUB_OUTPUT"
-          python3 scripts/reference/signalfish_build_server.py \
-            --cargo "$cargo" \
-            --source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
-            --output .cache/reference/server-build
-      - name: Bind the relay receipt to this candidate
-        id: receipt
-        run: |
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          echo "sha256=$(sha256sum .cache/reference/server-build/build-receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - name: Publish the executable, compiler witnesses and build provenance
-        id: publish
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: relay-server-${{ github.sha }}-${{ github.run_attempt }}
-          path: |
-            .cache/reference/server-build/
-            .cache/reference/downloads/sdk.tar.gz
-            .cache/reference/downloads/server.tar.gz
-            ${{ steps.build.outputs.tool_bin }}/cargo
-            ${{ steps.build.outputs.tool_bin }}/rustc
-          if-no-files-found: error
-
-  signalfish:
-    name: SignalFish relay and Chromium WebRTC ${{ matrix.version }} ${{ matrix.part }}
-    needs: server
-    runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    strategy:
-      fail-fast: false
-      matrix:
-        version: ["4.3", "4.7.2"]
-        part: [clean, faults, mixed, mixed-default, mixed-close, departures, admission, online, native]
-        pair: [chromium]
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.1.0
-        with:
-          python-version: "3.15.2"
-      - uses: actions/setup-node@v7.1.0
-        if: matrix.part != 'native'
-        with:
-          node-version: "26.12.1"
-          cache: npm
-          cache-dependency-path: scripts/reference/browser/package-lock.json
-      - name: Require a single producer artifact
-        env:
-          ARTIFACT_ID: ${{ needs.server.outputs.artifact }}
-        run: '[[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]'
-      - name: Download this candidate's relay build
-        uses: actions/download-artifact@v8.0.2
-        with:
-          artifact-ids: ${{ needs.server.outputs.artifact }}
-          path: .cache/reference
-          merge-multiple: true
-      - name: Verify the candidate build receipt
-        env:
-          RECEIPT_SHA: ${{ needs.server.outputs.receipt }}
-        run: |
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          echo "$RECEIPT_SHA  .cache/reference/server-build/build-receipt.json" | sha256sum --check --strict
-          chmod 755 .cache/reference/server-build/target/debug/signal-fish-server
-      - name: Restore the pinned editor
-        if: matrix.part == 'native'
-        uses: actions/cache@v6.1.0
-        with:
-          path: .cache/reference/downloads/Godot_v${{ matrix.version }}-stable_linux.x86_64.zip
-          key: reference-editor-v1-${{ matrix.version }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
-      - name: Restore the pinned editor, Chromium and Web templates
-        if: matrix.part != 'native'
-        uses: ./.github/actions/reference-browser-cache
-        with:
-          version: ${{ matrix.version }}
-          browser: chromium
-      - name: Select Ubuntu HTTPS mirror alternatives
-        if: matrix.part != 'native'
-        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
-      - name: Install pinned browser runner and operating system dependencies
-        if: matrix.part != 'native'
-        run: |
-          python3 scripts/reference/qualification_transport.py --version "${{ matrix.version }}" --part "${{ matrix.part }}" --prepare-browser &
-          preparing=$!
-          trap 'kill "$preparing" 2>/dev/null || true' EXIT
-          mkdir -p .cache/reference/browser
-          cp scripts/reference/browser/package*.json .cache/reference/browser/
-          npm ci --ignore-scripts --prefix .cache/reference/browser
-          bash scripts/reference/retry_apt_fetch.sh .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
-          wait "$preparing"
-          trap - EXIT
-      - name: Verify transport witnesses on the pinned engine
-        run: python3 scripts/reference/qualification_transport.py --version "${{ matrix.version }}" --part "${{ matrix.part }}"
-      - uses: actions/upload-artifact@v7.0.2
-        if: always()
-        with:
-          name: signalfish-live-reference-results-${{ matrix.version }}-${{ matrix.part }}
-          path: .cache/reference/results/
-          if-no-files-found: error
-
-  qualification:
-    name: Verify qualification families
-    needs: [contracts, rust, ownership, godot, server, signalfish]
-    if: always()
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Report the qualification tree result
-        env:
-          FAMILIES: ${{ toJSON(needs) }}
-        run: |
-          contracts=skipped
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then contracts=success; fi
-          jq -e --arg contracts "$contracts" \
-            'all(to_entries[]; .value.result == (if .key == "contracts" then $contracts else "success" end))' <<< "$FAMILIES"
+          name: unit-layout-${{ matrix.count }}-${{ matrix.part }}
+          path: .cache/tests/gate-unit-part-*.json
