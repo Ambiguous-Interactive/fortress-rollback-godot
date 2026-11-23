@@ -171,8 +171,10 @@ class WorkflowTierTests(unittest.TestCase):
             self.assertIn(f'make test-{family}', dispatch)
         verify = '\n'.join(blocks['qualification'])
         self.assertIn('if: always()', verify)
-        for family in ('contracts', 'rust', 'ownership', 'godot', 'server', 'signalfish'):
-            self.assertRegex(verify, rf'needs: \[[-a-z, ]*{family}')
+        declared_jobs = set(re.findall(r'^  ([a-z][a-z-]+):$', read(QUALIFY).split('\njobs:\n', 1)[1], re.MULTILINE))
+        needs = re.search(r'needs: \[([^\]]+)\]', verify).group(1).split(', ')
+        self.assertCountEqual(needs, declared_jobs - {'qualification'})
+        self.assertTrue({'contracts', 'rust', 'ownership', 'godot', 'server', 'signalfish'}.issubset(needs))
         self.assertIn('toJSON(needs)', verify)
         self.assertIn('all(to_entries[]; .value.result == (if .key == "contracts" then $contracts else "success" end))', verify)
 

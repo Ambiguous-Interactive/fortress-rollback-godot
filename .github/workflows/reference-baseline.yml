@@ -356,7 +356,7 @@ jobs:
           ARTIFACT_ID: ${{ needs.server.outputs.artifact }}
         run: '[[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]'
       - name: Download this candidate's relay build
-        uses: actions/download-artifact@v5.0.0
+        uses: actions/download-artifact@v8.0.2
         with:
           artifact-ids: ${{ needs.server.outputs.artifact }}
           path: .cache/reference/server-build
