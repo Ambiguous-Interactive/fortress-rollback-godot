@@ -362,6 +362,15 @@ function historyThrough(peers) {
   return frames;
 }
 
+async function readConfirmedHistory(page, frames, wait) {
+  await page.evaluate(frameCount => {
+    window.fortressNativeHistory = null;
+    window.fortressNativeCapture = frameCount;
+  }, frames);
+  await wait(page, frameCount => window.fortressNativeHistory?.frames === frameCount, frames);
+  return page.evaluate(() => window.fortressNativeHistory);
+}
+
 function compareHistory(peers, frames = HISTORY_FRAMES) {
   const ordered = [...peers].sort((first, second) => first.slot - second.slot);
   assert.deepEqual(ordered.map(peer => peer.slot), peers.map((_, index) => index), 'slots must cover the frozen roster');
@@ -544,9 +553,9 @@ async function run(root, endpoint, mode, players, browserPair) {
     const confirmedHistory = await observe();
     await Promise.all(pages.map((page, index) => wait(page, frame => window.fortressNative.state === 'playing'
       && window.fortressNative.frame > frame, confirmedHistory[index].frame)));
-    await Promise.all(pages.map(page => page.evaluate(() => { window.fortressNativeCapture = true; })));
-    await Promise.all(pages.map(page => wait(page, frame => !!window.fortressNative.snapshots?.[frame], comparedFrames)));
-    const peers = await observe();
+    phase = 'confirmed history capture';
+    const history = await Promise.all(pages.map(page => readConfirmedHistory(page, comparedFrames, wait)));
+    const peers = (await observe()).map((peer, index) => ({ ...peer, rows: history[index].rows, snapshots: history[index].snapshots }));
     compareHistory(peers, comparedFrames);
     const other = route === 'mesh' ? 'relay' : 'mesh';
     for (const peer of peers) {
@@ -592,7 +601,6 @@ async function run(root, endpoint, mode, players, browserPair) {
       if (route === 'mesh') assert.equal(peer.wire.rtc.filter(([id, state]) => id === 3 && state === 'open').length, players - 1);
       else assert.deepEqual(peer.wire.rtc, [], 'initial relay must avoid WebRTC channel creation');
     }
-    await Promise.all(pages.map(page => page.evaluate(() => { window.fortressNativeCapture = false; })));
     const survivors = liveClose ? pages : pages.slice(0, -1);
     let interruption;
     if (liveClose) {
@@ -695,4 +703,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { closeEvidence, compareHistory, instrumentNativeWire, reportedChannel, waitForCloseProofs };
+module.exports = { closeEvidence, compareHistory, instrumentNativeWire, readConfirmedHistory, reportedChannel, waitForCloseProofs };

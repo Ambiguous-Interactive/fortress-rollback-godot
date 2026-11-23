@@ -227,11 +227,23 @@ func _process(_delta: float) -> void:
 				}
 			)
 		)
-		# Keep full callback history out of the per-render status payload.
-		if JavaScriptBridge.eval("window.fortressNativeCapture === true"):
-			result["rows"] = game.rows
-			result["snapshots"] = game.snapshots
+		_capture_history(game)
 	JavaScriptBridge.eval("window.fortressNative = " + JSON.stringify(result))
+
+
+func _capture_history(game: ObservedGame) -> void:
+	var frames: int = JavaScriptBridge.eval("window.fortressNativeCapture || 0")
+	if frames < 1 or frames > HISTORY_LIMIT:
+		return
+	var rows: Dictionary = {}
+	var snapshots: Dictionary = {}
+	for input_frame: int in frames:
+		var row_key: String = str(input_frame)
+		var snapshot_key: String = str(input_frame + 1)
+		rows[row_key] = game.rows.get(row_key)
+		snapshots[snapshot_key] = game.snapshots.get(snapshot_key)
+	var receipt: Dictionary = {"frames": frames, "rows": rows, "snapshots": snapshots}
+	JavaScriptBridge.eval("window.fortressNativeCapture = 0; window.fortressNativeHistory = " + JSON.stringify(receipt))
 
 
 func _command(value: Dictionary) -> void:

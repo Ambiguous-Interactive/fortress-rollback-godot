@@ -204,6 +204,39 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
+    def test_native_history_capture_rejects_stale_rows_and_snapshot_mutations(self):
+        # Value: protects=fresh confirmed history; fails_when=reusing a capture or skipping either comparison; why_new=per-render capture had no request boundary; seam=browser
+        script = r"""
+const assert = require('node:assert/strict');
+const { compareHistory, readConfirmedHistory } = require(process.argv[1]);
+
+async function run() {
+  const fresh = { frames: 2, rows: { 0: [1, 2], 1: [1, 2] }, snapshots: { 1: '01', 2: '02' } };
+  global.window = { fortressNativeHistory: { ...fresh, snapshots: { 1: 'ff', 2: 'ff' } } };
+  const page = { async evaluate(operation, value) { return operation(value); } };
+  const captured = await readConfirmedHistory(page, 2, async (owner, complete, frames) => {
+    assert.equal(owner, page);
+    assert.equal(window.fortressNativeCapture, 2);
+    assert.equal(complete(frames), false, 'an old capture for the same frame count must be invalidated');
+    window.fortressNativeHistory = fresh;
+    assert.equal(complete(frames), true);
+  });
+  assert.deepEqual(captured, fresh);
+
+  const peers = [0, 1].map(slot => ({ ...fresh, index: slot, slot, uuid: String(slot), session_id: '00'.repeat(16), room_id: 'room' }));
+  compareHistory(peers, 2);
+  for (const [field, mutation, error] of [
+    ['rows', { 1: [2, 1] }, /input row at frame 1/],
+    ['snapshots', { 2: 'ff' }, /canonical state at frame 2/],
+  ]) {
+    const changed = { ...peers[1], [field]: { ...peers[1][field], ...mutation } };
+    assert.throws(() => compareHistory([peers[0], changed], 2), error);
+  }
+}
+run().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
     def test_native_webkit_abort_must_belong_to_the_reported_closed_link(self):
         # Value: protects=departure attribution; fails_when=another link excuses the warning; seam=browser receipt validator
         script = r"""
