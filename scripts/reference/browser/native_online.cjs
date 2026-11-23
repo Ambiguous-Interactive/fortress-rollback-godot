@@ -49,13 +49,17 @@ function instrumentNativeWire(tagWebKitSends) {
   const counts = { mesh: 0, relay: 0 };
   const relayRecipients = new Map();
   const relaySenders = new Map();
-  const qualityEvents = [];
+  const qualityEvents = { send: [], receive: [] };
+  const qualityEventCounts = { send: 0, receive: 0 };
   const qualityEventLimit = 256;
   let qualityEventCount = 0;
   let bufferedBytesPeak = 0;
   let relayBroadcasts = 0;
   const held = { mesh: 0, relay: 0 };
   const controlRoundTrips = { mesh: 0, relay: 0 };
+  // The pinned protocol sends one report per peer at intervals above 200 ms.
+  // Keep enough relay tokens for the 45-second stall witness despite FIFO delay.
+  const pendingReportLimit = { mesh: 16, relay: 256 };
   const channelReports = new Map();
   const socketReports = new WeakMap();
   const nativeBytes = bytes => bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
@@ -95,7 +99,9 @@ function instrumentNativeWire(tagWebKitSends) {
   }
   function traceRelayQuality(direction, peer, { kind, token }) {
     if (token === null) return;
-    qualityEvents[qualityEventCount++ % qualityEventLimit] = { direction, peer, kind, token, at_ms: performance.now() };
+    // A delayed burst of incoming traffic must leave the outgoing reports available for correlation.
+    const index = qualityEventCounts[direction]++ % qualityEventLimit;
+    qualityEvents[direction][index] = { sequence: qualityEventCount++, direction, peer, kind, token, at_ms: performance.now() };
   }
   const increment = (counts, uuid) => counts.set(uuid, (counts.get(uuid) ?? 0) + 1);
   const ufrag = description => description?.sdp.match(/^a=ice-ufrag:([\w+/]+)\r?$/m)?.[1];
@@ -111,8 +117,8 @@ function instrumentNativeWire(tagWebKitSends) {
       if (reports && packet.kind === 4 && packet.token !== null) {
         if (!reports.has(peer)) reports.set(peer, new Set());
         const pending = reports.get(peer);
-        // Reports are spaced by 200 ms. Keep 16 to cover delayed or out-of-order replies.
-        if (pending.size === 16) pending.delete(pending.values().next().value);
+        if (pending.has(packet.token)) return sent;
+        if (pending.size === pendingReportLimit[route]) pending.delete(pending.values().next().value);
         pending.add(packet.token);
       }
       return sent;
@@ -283,13 +289,14 @@ function instrumentNativeWire(tagWebKitSends) {
           closed: record.channel.readyState === 'closed', connectionClosed: record.connection.signalingState === 'closed',
           closedAt: ice.get(record.connection).closedAt ?? null };
       });
-      const first = Math.max(0, qualityEventCount - qualityEventLimit);
-      const events = Array.from(qualityEvents, (_, i) => qualityEvents[(first + i) % qualityEventLimit]);
+      const events = [...qualityEvents.send, ...qualityEvents.receive].sort((a, b) => a.sequence - b.sequence)
+        .map(({ direction, peer, kind, token, at_ms }) => ({ direction, peer, kind, token, at_ms }));
       const releaseMs = holdEnded === null ? null : Math.round((releaseEnded ?? performance.now()) - holdEnded);
       return { armed, holding, hold_ms: holdMs, release_ms: releaseMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
         control_round_trips: { ...controlRoundTrips },
         relayRecipients: Object.fromEntries(relayRecipients), relaySenders: Object.fromEntries(relaySenders),
-        relay_trace: { buffered_bytes_peak: bufferedBytesPeak, broadcasts: relayBroadcasts, events, event_count: qualityEventCount },
+        relay_trace: { buffered_bytes_peak: bufferedBytesPeak, broadcasts: relayBroadcasts, events,
+          event_count: qualityEventCount, direction_counts: { ...qualityEventCounts } },
         ice: [...ice.values()], sctp,
         rtc: resources.rtc.map(({channel, sent, received}) => [channel.id, channel.readyState, sent, received]),
         sockets: resources.sockets.map(socket => socket.readyState) };

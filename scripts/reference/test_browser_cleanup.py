@@ -21,6 +21,7 @@ const { instrumentNativeWire } = require(process.argv[1]);
 const packet = (kind, timestamp = 0, version = 2) => {
   const bytes = new Uint8Array(kind === 4 ? 46 : kind === 5 ? 44 : 28);
   bytes.set([0xf5, 0x52, version, 0, 1, 0, 0, 0, kind, 0, 0, 0], 16);
+  bytes[bytes.length - 2] = timestamp >>> 8;
   bytes[bytes.length - 1] = timestamp;
   return bytes;
 };
@@ -109,8 +110,32 @@ for (const expiry of [false, true]) {
     for (let i = 0; i < 256; i++) socket.message({data: relay(2, 1, packet(4, i))});
     const wrapped = wire.status().relay_trace;
     assert.equal(wrapped.event_count, 262);
-    assert.equal(wrapped.events.length, 256);
-    assert.deepEqual(wrapped.events.map(event => parseInt(event.token.slice(-2), 16)).join(), Array.from({length: 256}, (_, i) => i).join());
+    assert.deepEqual({...wrapped.direction_counts}, {send: 2, receive: 260});
+    assert.equal(wrapped.events.length, 258);
+    assert.deepEqual(wrapped.events.slice(0, 2).map(event => event.direction).join(), 'send,send');
+    assert.deepEqual(wrapped.events.slice(2).map(event => parseInt(event.token.slice(-2), 16)).join(), Array.from({length: 256}, (_, i) => i).join());
+
+    for (let i = 0; i < 256; i++) socket.send(relay(1, 2, packet(4, i)));
+    const wrappedBoth = wire.status().relay_trace;
+    assert.equal(wrappedBoth.event_count, 518);
+    assert.deepEqual({...wrappedBoth.direction_counts}, {send: 258, receive: 260});
+    assert.equal(wrappedBoth.events.map(event => event.direction).join(','), [
+      ...Array(256).fill('receive'), ...Array(256).fill('send'),
+    ].join(','));
+    assert.equal(wrappedBoth.events.slice(256).map(event => parseInt(event.token.slice(-2), 16)).join(), Array.from({length: 256}, (_, i) => i).join());
+
+    // A slow eight-player relay can echo an earlier report after many more are sent.
+    socket.send(relay(1, 3, packet(4, 200)));
+    for (let i = 0; i < 80; i++) socket.send(relay(1, 3, packet(4, i)));
+    socket.message({data: relay(3, 1, packet(5, 200))});
+    socket.message({data: relay(3, 1, packet(5, 200))});
+    assert.equal(wire.status().control_round_trips.relay, 2);
+
+    for (let i = 0; i <= 256; i++) socket.send(relay(1, 4, packet(4, i)));
+    socket.message({data: relay(4, 1, packet(5, 0))});
+    assert.equal(wire.status().control_round_trips.relay, 2);
+    socket.message({data: relay(4, 1, packet(5, 1))});
+    assert.equal(wire.status().control_round_trips.relay, 3);
   }
   assert.throws(() => channel.send(packet(7, 0, 3)), /native gameplay wire header/);
   if (!expiry) {
