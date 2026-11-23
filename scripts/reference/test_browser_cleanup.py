@@ -101,17 +101,28 @@ for (const expiry of [false, true]) {
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
-    def test_native_webkit_abort_must_belong_to_the_departing_connection(self):
+    def test_native_webkit_abort_must_belong_to_the_reported_closed_link(self):
         # Value: protects=departure attribution; fails_when=another link excuses the warning; seam=browser receipt validator
         script = r"""
 const assert = require('node:assert/strict');
-const { receivedDepartureAbort } = require(process.argv[1]);
-const leaving = {local:'departing', remote:'survivor', closeAborts:0};
-const expected = {local:'survivor', remote:'departing', closeAborts:0};
-const other = {local:'same-page', remote:'another-peer', closeAborts:0};
-assert.ok(receivedDepartureAbort([expected, other], [{...expected, closeAborts:1}, other], [leaving]));
-assert.ok(!receivedDepartureAbort([expected, other], [expected, {...other, closeAborts:1}], [leaving]));
-assert.ok(!receivedDepartureAbort([expected, expected], [{...expected, closeAborts:1}], [leaving]));
+const { departureChannel, receivedDepartureAbort } = require(process.argv[1]);
+const frame = '    at fortressNativeSend_5 (:5:27)';
+assert.equal(departureChannel('Error sending binary data\n' + frame), 5);
+assert.equal(departureChannel(frame + '\n' + frame), null);
+assert.equal(departureChannel('at unrelated (:5:27)'), null);
+const counterpart = {local:'closing', remote:'survivor', closed:true};
+const link = {index:5, local:'survivor', remote:'closing', closeAborts:1};
+const other = {index:8, local:'same-page', remote:'another-peer', closeAborts:0};
+const newAbort = {...link, closeAborts:2};
+const closed = [[counterpart], [newAbort, other]];
+assert.ok(receivedDepartureAbort(1, 5, [link, other], closed));
+assert.ok(!receivedDepartureAbort(1, null, [link, other], closed));
+assert.ok(!receivedDepartureAbort(1, 8, [link, other], closed));
+assert.ok(!receivedDepartureAbort(1, 5, [link, other], [[{...counterpart, closed:false}], closed[1]]));
+assert.ok(!receivedDepartureAbort(1, 5, [link, other], [[counterpart, counterpart], closed[1]]));
+assert.ok(!receivedDepartureAbort(1, 5, [link, other], [[counterpart], [link, {...other, closeAborts:1}]]));
+const same = {...link, remote:link.local, closed:true};
+assert.ok(!receivedDepartureAbort(1, 5, [same], [[], [{...same, closeAborts:2}]]));
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)

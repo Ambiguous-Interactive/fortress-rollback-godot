@@ -30,7 +30,7 @@ function browserOptions(name) {
   throw new Error(`unknown browser ${name}`);
 }
 
-function instrumentNativeWire() {
+function instrumentNativeWire(tagWebKitSends) {
   const active = [];
   const resources = { rtc: [], sockets: [] };
   const ice = new Map();
@@ -127,7 +127,8 @@ function instrumentNativeWire() {
       });
     }
     const channel = createChannel.call(this, label, options);
-    const record = { channel, connection: this, sent: 0, received: 0, local: null, remote: null, closeAborts: 0 };
+    const index = resources.rtc.length;
+    const record = { index, channel, connection: this, sent: 0, received: 0, local: null, remote: null, closeAborts: 0 };
     channel.addEventListener('error', ({ error }) => {
       if (channel.id === 3 && error?.errorDetail === 'sctp-failure' && error.message === 'User-Initiated Abort, reason=Close called') record.closeAborts++;
     });
@@ -140,11 +141,15 @@ function instrumentNativeWire() {
     });
     resources.rtc.push(record);
     const nativeSend = channel.send;
+    // WebKit reports a native send rejection on the calling stack without throwing.
+    const emit = tagWebKitSends
+      ? new Function('send', 'channel', `return function fortressNativeSend_${index}(bytes) { send.call(channel, bytes); }`)(nativeSend, channel)
+      : bytes => nativeSend.call(channel, bytes);
     channel.send = data => {
       const view = nativeBytes(data);
       const packet = channel.id === 3 && view && matches(view, 0) ? nativePacket(view) : null;
       return send('mesh', channelReports, channel, bytes => {
-        nativeSend.call(channel, bytes);
+        emit(bytes);
         if (packet) record.sent++;
       }, data, packet);
     };
@@ -230,7 +235,8 @@ function instrumentNativeWire() {
           record.local = ufrag(record.connection.localDescription) ?? record.local;
           record.remote = ufrag(record.connection.remoteDescription) ?? record.remote;
         }
-        return { local: record.local, remote: record.remote, closeAborts: record.closeAborts };
+        return { index: record.index, local: record.local, remote: record.remote, closeAborts: record.closeAborts,
+          closed: record.connection.signalingState === 'closed' };
       });
       return { armed, holding, hold_ms: holdMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
         control_round_trips: { ...controlRoundTrips },
@@ -242,12 +248,18 @@ function instrumentNativeWire() {
   };
 }
 
-function receivedDepartureAbort(before, after, departing) {
-  const expected = before.filter(({local, remote}) => local && remote
-    && departing.some(peer => peer.local === remote && peer.remote === local));
-  if (expected.length !== 1) return false;
-  const link = expected[0];
-  return after.some(peer => peer.local === link.local && peer.remote === link.remote && peer.closeAborts > link.closeAborts);
+function departureChannel(stack) {
+  const frames = [...(stack ?? '').matchAll(/^\s*at (?:Object\.)?fortressNativeSend_(\d+) \(/gm)];
+  return frames.length === 1 ? Number(frames[0][1]) : null;
+}
+
+function receivedDepartureAbort(pageIndex, index, before, closedByPage) {
+  const link = before.find(peer => peer.index === index);
+  if (!link?.local || !link.remote) return false;
+  const terminalLinks = closedByPage.flatMap((links, owner) => owner === pageIndex ? [] : links);
+  const counterparts = terminalLinks.filter(peer => peer.local === link.remote && peer.remote === link.local);
+  return counterparts.length === 1 && counterparts[0].closed && closedByPage[pageIndex].some(peer =>
+    peer.index === index && peer.local === link.local && peer.remote === link.remote && peer.closeAborts > link.closeAborts);
 }
 
 function historyThrough(peers) {
@@ -333,7 +345,7 @@ async function run(root, endpoint, mode, players, browserPair) {
         const expectedClosure = phase === 'departure' && route === 'mesh' && index < players - 1
           && name === 'webkit' && error.name === '' && error.message === WEBKIT_CLOSED_STREAM;
         const errorList = expectedClosure ? departureErrors : errors;
-        errorList.push({ index, phase, text: String(error) });
+        errorList.push({ index, phase, text: String(error), channel: expectedClosure ? departureChannel(error.stack) : null });
       });
       page.on('console', message => {
         const text = message.text();
@@ -344,7 +356,7 @@ async function run(root, endpoint, mode, players, browserPair) {
         errors.push({ index, phase, host: url.host, path: url.pathname, method: request.method(), resource: request.resourceType(),
           code: request.failure()?.errorText });
       });
-      await page.addInitScript(instrumentNativeWire);
+      await page.addInitScript(instrumentNativeWire, name === 'webkit');
       await page.goto(`${origin}/index.html`);
       await wait(page, () => window.fortressNativeReady === true, null, PAGE_BOOT_MS);
       bootstrap_ms.push(Math.round(performance.now() - started));
@@ -511,11 +523,22 @@ async function run(root, endpoint, mode, players, browserPair) {
       for (const key of ['frame', 'confirmed', 'reason', 'terminal_detail', 'message', 'game_frame', 'saves', 'restores', 'advances'])
         assert.equal(peer[key], before[key], `terminal ${key} changed for survivor ${index}`);
     }
-    for (const { index } of departureErrors) {
-      assert.ok(receivedDepartureAbort(peers[index].wire.sctp, after[index].wire.sctp, peers.at(-1).wire.sctp),
-        `WebKit send failure for survivor ${index} lacked an observed SCTP abort on the departing link`);
-    }
     phase = 'teardown';
+    let departureLinks;
+    if (departureErrors.length) {
+      // Let the channel's queued abort reach the browser before the receipt and any scripted close.
+      await Promise.all(departureErrors.map(({ index, channel }) => {
+        const link = peers[index].wire.sctp.find(link => link.index === channel);
+        assert.ok(link, `WebKit send failure for survivor ${index} lacked a sending channel`);
+        return wait(pages[index], ({ channel, aborts }) => window.fortressNativeWire.status().sctp
+          .some(link => link.index === channel && link.closeAborts > aborts), { channel, aborts: link.closeAborts }, DIAGNOSTIC_MS);
+      }));
+      departureLinks = await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.status().sctp)));
+      for (const { index, channel } of departureErrors) {
+        assert.ok(receivedDepartureAbort(index, channel, peers[index].wire.sctp, departureLinks),
+          `WebKit send failure for survivor ${index} channel ${channel} lacked an observed SCTP abort on a closed room link`);
+      }
+    }
     if (liveClose) await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.releaseTerminal())));
     await Promise.all(survivors.map(page => command(page, 'leave')));
     await Promise.all(pages.map(page => wait(page, () => {
@@ -524,7 +547,7 @@ async function run(root, endpoint, mode, players, browserPair) {
         && rtc.every(([, state]) => state === 'closed');
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
-      direct, afterClose, peers, interruption, terminal, after, departureErrors };
+      direct, afterClose, peers, interruption, terminal, after, departureErrors, departureLinks };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
@@ -563,4 +586,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { compareHistory, instrumentNativeWire, receivedDepartureAbort };
+module.exports = { compareHistory, departureChannel, instrumentNativeWire, receivedDepartureAbort };
