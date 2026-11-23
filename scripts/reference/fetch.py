@@ -128,20 +128,26 @@ def prepare_zip(archive, destination, executable_members=()):
                 path.mkdir(parents=True, exist_ok=True)
                 continue
             mode = 0o755 if member.filename in executable_members else (member.external_attr >> 16) & 0o777 or 0o644
-            with package.open(member) as source:
-                expected = hashlib.file_digest(source, 'sha256').hexdigest()
-            if path.is_file() and digest(path) == expected:
-                if path.stat().st_mode & 0o7777 != mode:
-                    path.chmod(mode)
-                continue
+            expected = None
+            if path.is_file():
+                with package.open(member) as source:
+                    expected = hashlib.file_digest(source, 'sha256').hexdigest()
+                if digest(path) == expected:
+                    if path.stat().st_mode & 0o7777 != mode:
+                        path.chmod(mode)
+                    continue
             path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
                 temporary = Path(output.name)
                 try:
+                    hasher = hashlib.sha256()
                     with package.open(member) as source:
-                        shutil.copyfileobj(source, output)
+                        while block := source.read(1024 * 1024):
+                            hasher.update(block)
+                            output.write(block)
                     output.close()
-                    if digest(temporary) != expected:
+                    copied = hasher.hexdigest()
+                    if (expected is not None and copied != expected) or digest(temporary) != copied:
                         raise ValueError('ZIP member changed during preparation')
                     temporary.chmod(mode)
                     temporary.replace(path)
