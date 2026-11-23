@@ -1,8 +1,11 @@
 """Bounded, private source images for native Godot test execution."""
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
+import errno
 import hashlib
 import json
+import os
 from pathlib import Path
 import stat
 import subprocess
@@ -23,36 +26,79 @@ def source_paths(root: Path) -> list[str]:
     return sorted({name for name in paths if name and not EXCLUDED.intersection(Path(name).parts)})
 
 
-def inventory(root: Path, names: list[str]) -> dict:
-    files = {}
-    total = 0
-    if len(names) > MAX_FILES:
-        raise ValueError("source_file_limit")
-    for name in names:
-        path = root / name
-        if Path(name).is_absolute() or ".." in Path(name).parts:
-            raise ValueError("unsafe_source_path")
-        current = root
-        for part in Path(name).parts:
-            current = current / part
-            if current.is_symlink():
-                raise ValueError("source_symlink")
-        try:
-            metadata = path.stat()
-        except FileNotFoundError:
-            continue  # A tracked deletion belongs to the working source image.
+@contextmanager
+def source_directory(root: Path, relative: Path):
+    """Pin one sibling group below the source root without following an in-tree symlink."""
+    with ExitStack() as opened:
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        opened.callback(os.close, directory)
+        for part in relative.parts:
+            try:
+                directory = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            except FileNotFoundError:
+                yield None  # Git still lists tracked deletions.
+                return
+            except NotADirectoryError:
+                if stat.S_ISLNK(os.stat(part, dir_fd=directory, follow_symlinks=False).st_mode):
+                    raise ValueError("source_symlink")
+                raise
+            opened.callback(os.close, directory)
+        yield directory
+
+
+def read_source(directory: int, leaf: str, remaining: int) -> tuple[bytes, int]:
+    try:
+        descriptor = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise ValueError("source_symlink") from error
+        raise
+    try:
+        metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
             raise ValueError("source_not_regular")
-        total += metadata.st_size
-        if total > MAX_BYTES:
+        if metadata.st_size > remaining:
             raise ValueError("source_byte_limit")
-        with path.open("rb") as stream:
-            data = stream.read(MAX_BYTES - (total - metadata.st_size) + 1)
+        with open(descriptor, "rb", closefd=False) as stream:
+            data = stream.read(metadata.st_size + 1)
         if len(data) != metadata.st_size:
             raise ValueError("source_changed_during_capture")
-        files[name] = {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
-                       "mode": stat.S_IMODE(metadata.st_mode)}
-    return files
+        return data, stat.S_IMODE(metadata.st_mode)
+    finally:
+        os.close(descriptor)
+
+
+def inventory(root: Path, names: list[str], destination: Path | None = None) -> dict:
+    if len(names) > MAX_FILES:
+        raise ValueError("source_file_limit")
+    directories = {}
+    for name in names:
+        path = Path(name)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("unsafe_source_path")
+        directories.setdefault(path.parent, []).append(path.name)
+
+    files = {}
+    total = 0
+    for parent, leaves in directories.items():
+        with source_directory(root, parent) as directory:
+            if directory is None:
+                continue
+            if destination is not None:
+                (destination / parent).mkdir(parents=True, exist_ok=True)
+            for leaf in leaves:
+                try:
+                    data, mode = read_source(directory, leaf, MAX_BYTES - total)
+                except FileNotFoundError:
+                    continue
+                total += len(data)
+                name = (parent / leaf).as_posix()
+                files[name] = {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "mode": mode}
+                if destination is not None:
+                    target = destination / name
+                    target.write_bytes(data)
+                    target.chmod(mode)
+    return dict(sorted(files.items()))
 
 
 class SourceSnapshot:
@@ -73,16 +119,7 @@ class SourceSnapshot:
             self.commit = git(self.root, "rev-parse", "HEAD").strip()
             self.dirty = bool(git(self.root, "status", "--porcelain"))
             names = source_paths(self.root)
-            self.files = inventory(self.root, names)
-            for name, expected in self.files.items():
-                with (self.root / name).open("rb") as stream:
-                    data = stream.read(expected["bytes"] + 1)
-                if len(data) != expected["bytes"] or hashlib.sha256(data).hexdigest() != expected["sha256"]:
-                    raise ValueError("source_changed_during_capture")
-                target = self.path / name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(data)
-                target.chmod(expected["mode"])
+            self.files = inventory(self.root, names, self.path)
             if self.changed():
                 raise ValueError("source_changed_during_capture")
             self.verify_image()
@@ -97,14 +134,19 @@ class SourceSnapshot:
 
     def verify_image(self) -> None:
         names = []
-        for path in self.path.rglob("*"):
-            if EXCLUDED.intersection(path.relative_to(self.path).parts):
-                continue
-            if path.is_symlink():
-                raise ValueError("snapshot_changed")
-            if path.is_file():
-                names.append(path.relative_to(self.path).as_posix())
-        names.sort()
+        pending = [self.path]
+        while pending:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    if entry.name in EXCLUDED:
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                    else:
+                        name = Path(entry.path).relative_to(self.path).as_posix()
+                        if not entry.is_file(follow_symlinks=False) or name not in self.files:
+                            raise ValueError("snapshot_changed")
+                        names.append(name)
         if inventory(self.path, names) != self.files:
             raise ValueError("snapshot_changed")
 

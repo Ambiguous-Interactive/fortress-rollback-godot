@@ -35,6 +35,48 @@ class SourceImageControls(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "source_symlink"):
                     SNAPSHOT.inventory(selected, ["link"])
 
+    # Value: protects=bounded capture of the bytes actually staged; fails_when=parent traversal escapes or file type changes; seam=private source and image
+    def test_copy_binds_mode_bytes_and_directory_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            (root / "outside").mkdir()
+            (root / "src/main").write_bytes(b"abcd")
+            (root / "src/main").chmod(0o751)
+            (root / "src/data").write_bytes(b"z")
+            (root / "linked").symlink_to(root / "outside", target_is_directory=True)
+            os.mkfifo(root / "src/pipe")
+            image = root / "image"
+            files = ["src/main", "src/data", "deleted_dir/old", "src/deleted"]
+            with patch.object(SNAPSHOT, "MAX_BYTES", 5):
+                captured = SNAPSHOT.inventory(root, files, image)
+            self.assertEqual(captured, SNAPSHOT.inventory(image, ["src/data", "src/main"]))
+            self.assertEqual((image / "src/main").read_bytes(), b"abcd")
+            self.assertEqual(captured["src/main"]["mode"], 0o751)
+            with patch.object(SNAPSHOT, "MAX_BYTES", 4), self.assertRaisesRegex(ValueError, "source_byte_limit"):
+                SNAPSHOT.inventory(root, files, image)
+            for name, failure in (("linked/missing", "source_symlink"), ("src/pipe", "source_not_regular"), ("src", "source_not_regular")):
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, failure):
+                    SNAPSHOT.inventory(root, [name], image)
+
+    # Value: protects=private image membership and ignored caches; fails_when=unknown file, link or FIFO escapes verification; seam=private image
+    def test_verify_image_rejects_extra_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory)
+            snapshot = SNAPSHOT.SourceSnapshot(image)
+            snapshot.path = image
+            (image / "source").write_bytes(b"abcd")
+            snapshot.files = SNAPSHOT.inventory(image, ["source"])
+            (image / ".godot").mkdir()
+            (image / ".godot/cache").write_bytes(b"generated")
+            snapshot.verify_image()
+            extra = image / "extra"
+            for create in (lambda: extra.write_bytes(b"extra"), lambda: extra.symlink_to(image / "source"), lambda: os.mkfifo(extra)):
+                create()
+                with self.assertRaisesRegex(ValueError, "snapshot_changed"):
+                    snapshot.verify_image()
+                extra.unlink()
+
     # Value: protects=pre-engine Git deadline; fails_when=metadata ignores its watchdog; why_new=engine timeouts do not cover source capture; seam=scripted Git process
     def test_git_query_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

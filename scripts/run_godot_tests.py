@@ -693,6 +693,11 @@ class _Parser(argparse.ArgumentParser):
         super().error(message)
 
 
+def file_digest(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
 def helper_identity() -> dict:
     """Digest the Python bytes this launcher executed, from each loaded module's own staged file."""
     sources = {'run_godot_tests.py': _STAGE_ROOT / 'run_godot_tests.py'}
@@ -814,7 +819,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot, helpers: dict[str, str],
             live_helpers: dict[str, str]) -> int:
-    engine_sha256 = hashlib.sha256(executable.read_bytes()).hexdigest()
+    engine_sha256 = file_digest(executable)
     command = [str(executable), "--headless", "--path", str(snapshot.path), "--script",
                "res://tests/runner/run_tests.gd", "--", "--category", args.category,
                "--seed", str(args.seed)]
@@ -926,7 +931,7 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
     report.update(commit=snapshot.commit, working_tree_dirty=snapshot.dirty, source_snapshot=snapshot.evidence(),
                   helper_sources=helpers)
     try:
-        if hashlib.sha256(executable.read_bytes()).hexdigest() != engine_sha256:
+        if file_digest(executable) != engine_sha256:
             raise ValueError("engine_changed")
         if helper_identity() != helpers:
             raise ValueError("helper_image_changed")
