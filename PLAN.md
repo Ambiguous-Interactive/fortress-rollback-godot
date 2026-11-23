@@ -80,6 +80,8 @@ their acceptance criteria are met or explicitly superseded.
 Qualify clean Web installs in [playable browser rooms](docs/experiments/upstream-binding.md#playable-web-rooms)
 at 2, 4 and 8 peers on both Godot pins. Keep native WebRTC and SignalFish relay
 acceptance tied to confirmed input, canonical state and observed routes.
+Use a [focused hosted room](docs/native-backend-migration.md) to reproduce a
+specific failure and the full profile to qualify the browser combination.
 
 ## Milestone map
 
