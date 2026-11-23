@@ -82,6 +82,11 @@ completed partition receipts. This uses the dependency-based selection studied a
 a complete qualification run on the GitHub merge candidate. [Regression Test Selection at Scale](https://research.google/pubs/regression-test-selection-at-scale-4/) ·
 [GitHub merge queues](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue)
 
+On the 30 first-parent revisions ending at `e2bdaca`, replaying the old and new selectors against
+each revision's own source reduced suite selections from 3,335 to 1,961. Full-inventory selections
+fell from 23 to 11. The new selector retained the old selector's traceable resource dependencies
+on every revision. Four full PR partitions also reproduced all 869 historical case records.
+
 ## What runs on a candidate
 
 A PR runs the harness, affected unit partitions and, when tooling changes, the reference and oracle controls.
