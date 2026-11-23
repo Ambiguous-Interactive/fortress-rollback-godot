@@ -19,7 +19,7 @@ from run_godot_tests import HELPERS, ROOT, balance_suites, discover, load_durati
 
 WEIGHTS = ROOT / "scripts/unit_suite_seconds.json"
 # One repetition's suite seconds on the 4-vCPU hosted runner. Two repetitions and startup share the PR budget.
-PART_SECONDS = 275
+PART_SECONDS = 310
 ARTIFACT = "gate-unit-part-"
 RESULTS = Path(".cache/tests")
 

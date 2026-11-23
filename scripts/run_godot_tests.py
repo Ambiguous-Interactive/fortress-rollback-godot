@@ -720,8 +720,13 @@ class _Parser(argparse.ArgumentParser):
 
 
 def file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        while block := stream.read(1024 * 1024):
+            if _cancelled.is_set():
+                raise KeyboardInterrupt
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def helper_identity() -> dict:
@@ -821,8 +826,10 @@ def main(argv: list[str] | None = None) -> int:
             # bytes would not correspond to any single live-tree state.
             raise ValueError("helper_source_changed")
         executable = resolve_engine(args.godot)
-        with SourceSnapshot(ROOT) as snapshot:
-            return execute(args, executable, snapshot, helpers, live_helpers)
+        with ThreadPoolExecutor(max_workers=1) as hashing:
+            engine_before = hashing.submit(file_digest, executable)
+            with SourceSnapshot(ROOT) as snapshot:
+                return execute(args, executable, snapshot, helpers, live_helpers, engine_before.result())
     except KeyboardInterrupt:
         args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "cancelled"}) + "\n", encoding="utf-8")
         print(json.dumps({"passed": False, "results": str(args.results)}))
@@ -847,8 +854,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot, helpers: dict[str, str],
-            live_helpers: dict[str, str]) -> int:
-    engine_sha256 = file_digest(executable)
+            live_helpers: dict[str, str], engine_sha256: str) -> int:
     command = [str(executable), "--headless", "--path", str(snapshot.path), "--script",
                "res://tests/runner/run_tests.gd", "--", "--category", args.category,
                "--seed", str(args.seed)]
@@ -976,15 +982,19 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
     report.update(commit=snapshot.commit, working_tree_dirty=snapshot.dirty, source_snapshot=snapshot.evidence(),
                   helper_sources=helpers)
     try:
-        if file_digest(executable) != engine_sha256:
-            raise ValueError("engine_changed")
-        if helper_identity() != helpers:
-            raise ValueError("helper_image_changed")
-        if live_helper_identity() != live_helpers:
-            raise ValueError("helper_source_changed")
-        snapshot.verify_image()
-        if snapshot.changed():
-            raise ValueError("source_changed")
+        with ThreadPoolExecutor(max_workers=1) as hashing:
+            engine_after = hashing.submit(file_digest, executable)
+            try:
+                if helper_identity() != helpers:
+                    raise ValueError("helper_image_changed")
+                if live_helper_identity() != live_helpers:
+                    raise ValueError("helper_source_changed")
+                snapshot.verify_image()
+                if snapshot.changed():
+                    raise ValueError("source_changed")
+            finally:
+                if not _cancelled.is_set() and engine_after.result() != engine_sha256:
+                    raise ValueError("engine_changed")
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         report.update(passed=False, failure=str(exc))
     args.results.parent.mkdir(parents=True, exist_ok=True)

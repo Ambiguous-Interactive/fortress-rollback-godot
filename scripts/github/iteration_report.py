@@ -85,7 +85,9 @@ def summary(rows):
     times = sorted(r['elapsed_s'] for r in rows if r['outcome'] in ('success', 'failure') and r['elapsed_s'] is not None)
     p95 = times[math.ceil(.95*len(times))-1] if len(times) >= 40 else None
     counts = Counter(r['outcome'] for r in rows)
-    return dict(outcomes=counts, completed=len(times), p95_s=p95, target_verified=p95 is not None and p95 < 300 and not counts['incomplete'],
+    measured = p95 is not None and not counts['incomplete']
+    return dict(outcomes=counts, completed=len(times), p95_s=p95, target_verified=measured and p95 < 300,
+                p95_ceiling_verified=measured and p95 < 420, ceiling_breaches=sum(t >= 420 for t in times),
                 total_runner_minutes=round(sum(r['runner_s'] for r in rows)/60, 2))
 
 
