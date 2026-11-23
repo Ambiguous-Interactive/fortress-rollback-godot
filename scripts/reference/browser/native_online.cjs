@@ -236,7 +236,7 @@ function instrumentNativeWire(tagWebKitSends) {
           record.remote = ufrag(record.connection.remoteDescription) ?? record.remote;
         }
         return { index: record.index, local: record.local, remote: record.remote, closeAborts: record.closeAborts,
-          closed: record.connection.signalingState === 'closed' };
+          closed: record.channel.readyState === 'closed', connectionClosed: record.connection.signalingState === 'closed' };
       });
       return { armed, holding, hold_ms: holdMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
         control_round_trips: { ...controlRoundTrips },
@@ -248,18 +248,23 @@ function instrumentNativeWire(tagWebKitSends) {
   };
 }
 
-function departureChannel(stack) {
+function reportedChannel(stack) {
   const frames = [...(stack ?? '').matchAll(/^\s*at (?:Object\.)?fortressNativeSend_(\d+) \(/gm)];
   return frames.length === 1 ? Number(frames[0][1]) : null;
 }
 
-function receivedDepartureAbort(pageIndex, index, before, closedByPage) {
+function receivedClose(pageIndex, index, before, closedByPage, closer = null) {
   const link = before.find(peer => peer.index === index);
-  if (!link?.local || !link.remote) return false;
-  const terminalLinks = closedByPage.flatMap((links, owner) => owner === pageIndex ? [] : links);
-  const counterparts = terminalLinks.filter(peer => peer.local === link.remote && peer.remote === link.local);
-  return counterparts.length === 1 && counterparts[0].closed && closedByPage[pageIndex].some(peer =>
-    peer.index === index && peer.local === link.local && peer.remote === link.remote && peer.closeAborts > link.closeAborts);
+  if (!link?.local || !link.remote || link.closed) return false;
+  const counterparts = closedByPage.flatMap((links, owner) => owner === pageIndex ? [] : links
+    .filter(peer => peer.local === link.remote && peer.remote === link.local)
+    .map(peer => ({ ...peer, owner })));
+  if (counterparts.length !== 1) return false;
+  const counterpart = counterparts[0];
+  const confirmedClose = closer === null ? counterpart.connectionClosed : counterpart.owner === closer && counterpart.closed;
+  return confirmedClose
+    && closedByPage[pageIndex].some(peer => peer.index === index && peer.local === link.local && peer.remote === link.remote
+      && (closer === null ? peer.closeAborts > link.closeAborts : peer.closed));
 }
 
 function historyThrough(peers) {
@@ -306,7 +311,7 @@ async function run(root, endpoint, mode, players, browserPair) {
   const bootstrap_ms = [];
   const contexts = [];
   const errors = [];
-  const departureErrors = [];
+  const closeErrors = [];
   const failures = [];
   const browsers = [];
   const browserPeers = [];
@@ -328,6 +333,23 @@ async function run(root, endpoint, mode, players, browserPair) {
   const observe = (group = pages) => Promise.all(group.map((page, index) => page.evaluate(index => ({
     index, ...window.fortressNative, wire: window.fortressNativeWire.status()
   }), index)));
+  async function verifyCloseErrors(before, closer = null) {
+    if (!closeErrors.length) return undefined;
+    // A channel close resets the stream. Peer teardown can also report an SCTP abort.
+    await Promise.all(closeErrors.map(({ index, channel }) => {
+      const link = before[index].wire.sctp.find(link => link.index === channel);
+      assert.ok(link, `WebKit send failure for peer ${index} lacked a sending channel`);
+      return wait(pages[index], ({ channel, aborts, streamClose }) => window.fortressNativeWire.status().sctp
+        .some(link => link.index === channel && (streamClose ? link.closed : link.closeAborts > aborts)),
+      { channel, aborts: link.closeAborts, streamClose: closer !== null }, DIAGNOSTIC_MS);
+    }));
+    const closedByPage = await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.status().sctp)));
+    for (const { index, channel } of closeErrors) {
+      assert.ok(receivedClose(index, channel, before[index].wire.sctp, closedByPage, closer),
+        `WebKit send failure for peer ${index} channel ${channel} lacked confirmation on the expected closed link`);
+    }
+    return closedByPage;
+  }
   try {
     for (const name of browserPair) browsers.push(await playwright[name].launch(browserOptions(name)));
     for (let index = 0; index < players; index++) {
@@ -342,10 +364,11 @@ async function run(root, endpoint, mode, players, browserPair) {
       const display = name === 'firefox' ? await placeFirefox(page, index) : null;
       browserPeers.push({ index, name, version: browser.version(), display });
       page.on('pageerror', error => {
-        const expectedClosure = phase === 'departure' && route === 'mesh' && index < players - 1
-          && name === 'webkit' && error.name === '' && error.message === WEBKIT_CLOSED_STREAM;
-        const errorList = expectedClosure ? departureErrors : errors;
-        errorList.push({ index, phase, text: String(error), channel: expectedClosure ? departureChannel(error.stack) : null });
+        const physicalClose = liveClose && phase === 'physical channel close' && index === 1;
+        const departure = route === 'mesh' && phase === 'departure' && index < players - 1;
+        const webkitSend = name === 'webkit' && error.name === '' && error.message === WEBKIT_CLOSED_STREAM;
+        const errorList = webkitSend && (physicalClose || departure) ? closeErrors : errors;
+        errorList.push({ index, phase, text: String(error), channel: webkitSend ? reportedChannel(error.stack) : null });
       });
       page.on('console', message => {
         const text = message.text();
@@ -386,21 +409,23 @@ async function run(root, endpoint, mode, players, browserPair) {
     await command(pages[0], 'start');
     await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
       && window.fortressNative.confirmed >= frame, GATE_FRAME, 45000)));
-    let armed, stalled, direct, afterClose;
+    let armed, stalled, direct, afterClose, closeLinks;
     let comparedFrames = HISTORY_FRAMES;
     if (liveClose) {
-      phase = 'physical channel close';
       direct = await observe();
       for (const peer of direct) {
         assert.deepEqual(peer.relay_peers, [], 'the room must begin on direct links');
         assert.ok(peer.wire.counts.mesh > 0 && peer.wire.counts.relay === 0);
         assert.equal(peer.wire.rtc.filter(([id, state]) => id === 3 && state === 'open').length, players - 1);
       }
+      phase = 'physical channel close';
       await command(pages[0], 'close_link', { uuid: joined[1].uuid });
       await Promise.all(pages.slice(0, 2).map(page => wait(page, count => window.fortressNativeWire.status().rtc
         .filter(([id, state]) => id === 3 && state === 'closed').length === count, 1)));
       afterClose = await observe();
       comparedFrames = historyThrough(afterClose);
+      phase = 'mixed confirmed history';
+      closeLinks = await verifyCloseErrors(direct, 0);
     }
     if (!mixed) {
       phase = 'prediction stall';
@@ -524,21 +549,7 @@ async function run(root, endpoint, mode, players, browserPair) {
         assert.equal(peer[key], before[key], `terminal ${key} changed for survivor ${index}`);
     }
     phase = 'teardown';
-    let departureLinks;
-    if (departureErrors.length) {
-      // Let the channel's queued abort reach the browser before the receipt and any scripted close.
-      await Promise.all(departureErrors.map(({ index, channel }) => {
-        const link = peers[index].wire.sctp.find(link => link.index === channel);
-        assert.ok(link, `WebKit send failure for survivor ${index} lacked a sending channel`);
-        return wait(pages[index], ({ channel, aborts }) => window.fortressNativeWire.status().sctp
-          .some(link => link.index === channel && link.closeAborts > aborts), { channel, aborts: link.closeAborts }, DIAGNOSTIC_MS);
-      }));
-      departureLinks = await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.status().sctp)));
-      for (const { index, channel } of departureErrors) {
-        assert.ok(receivedDepartureAbort(index, channel, peers[index].wire.sctp, departureLinks),
-          `WebKit send failure for survivor ${index} channel ${channel} lacked an observed SCTP abort on a closed room link`);
-      }
-    }
+    if (!liveClose) closeLinks = await verifyCloseErrors(peers);
     if (liveClose) await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.releaseTerminal())));
     await Promise.all(survivors.map(page => command(page, 'leave')));
     await Promise.all(pages.map(page => wait(page, () => {
@@ -547,14 +558,14 @@ async function run(root, endpoint, mode, players, browserPair) {
         && rtc.every(([, state]) => state === 'closed');
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
-      direct, afterClose, peers, interruption, terminal, after, departureErrors, departureLinks };
+      direct, afterClose, peers, interruption, terminal, after, closeErrors, closeLinks };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
       ...window.fortressNative, wire: window.fortressNativeWire?.status()
     })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
     const diagnostics = states.map(state => state.status === 'fulfilled' ? state : { status: state.status, reason: String(state.reason) });
-    console.error(JSON.stringify({ phase, browser_peers: browserPeers, bootstrap_ms, errors, departureErrors, states: diagnostics }));
+    console.error(JSON.stringify({ phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors, states: diagnostics }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
     failures.push(...await closeAll(browsers, owner => owner.close(), 'browser'));
@@ -586,4 +597,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { compareHistory, departureChannel, instrumentNativeWire, receivedDepartureAbort };
+module.exports = { compareHistory, instrumentNativeWire, receivedClose, reportedChannel };

@@ -105,24 +105,29 @@ for (const expiry of [false, true]) {
         # Value: protects=departure attribution; fails_when=another link excuses the warning; seam=browser receipt validator
         script = r"""
 const assert = require('node:assert/strict');
-const { departureChannel, receivedDepartureAbort } = require(process.argv[1]);
+const { reportedChannel, receivedClose } = require(process.argv[1]);
 const frame = '    at fortressNativeSend_5 (:5:27)';
-assert.equal(departureChannel('Error sending binary data\n' + frame), 5);
-assert.equal(departureChannel(frame + '\n' + frame), null);
-assert.equal(departureChannel('at unrelated (:5:27)'), null);
-const counterpart = {local:'closing', remote:'survivor', closed:true};
-const link = {index:5, local:'survivor', remote:'closing', closeAborts:1};
+assert.equal(reportedChannel('Error sending binary data\n' + frame), 5);
+assert.equal(reportedChannel(frame + '\n' + frame), null);
+assert.equal(reportedChannel('at unrelated (:5:27)'), null);
+const counterpart = {local:'closing', remote:'survivor', closed:true, connectionClosed:true};
+const link = {index:5, local:'survivor', remote:'closing', closeAborts:1, closed:false};
 const other = {index:8, local:'same-page', remote:'another-peer', closeAborts:0};
-const newAbort = {...link, closeAborts:2};
+const newAbort = {...link, closeAborts:2, closed:true};
 const closed = [[counterpart], [newAbort, other]];
-assert.ok(receivedDepartureAbort(1, 5, [link, other], closed));
-assert.ok(!receivedDepartureAbort(1, null, [link, other], closed));
-assert.ok(!receivedDepartureAbort(1, 8, [link, other], closed));
-assert.ok(!receivedDepartureAbort(1, 5, [link, other], [[{...counterpart, closed:false}], closed[1]]));
-assert.ok(!receivedDepartureAbort(1, 5, [link, other], [[counterpart, counterpart], closed[1]]));
-assert.ok(!receivedDepartureAbort(1, 5, [link, other], [[counterpart], [link, {...other, closeAborts:1}]]));
-const same = {...link, remote:link.local, closed:true};
-assert.ok(!receivedDepartureAbort(1, 5, [same], [[], [{...same, closeAborts:2}]]));
+assert.ok(receivedClose(1, 5, [link, other], closed));
+const streamClosed = [[{...counterpart, connectionClosed:false}], [{...link, closed:true}, other]];
+assert.ok(receivedClose(1, 5, [link, other], streamClosed, 0));
+assert.ok(!receivedClose(1, 5, [link, other], streamClosed));
+assert.ok(!receivedClose(1, 5, [link, other], [[counterpart], [link, other]], 0));
+assert.ok(!receivedClose(1, 5, [link, other], [[], closed[1], [counterpart]], 0));
+assert.ok(!receivedClose(1, null, [link, other], closed));
+assert.ok(!receivedClose(1, 8, [link, other], closed));
+assert.ok(!receivedClose(1, 5, [link, other], [[{...counterpart, connectionClosed:false}], closed[1]]));
+assert.ok(!receivedClose(1, 5, [link, other], [[counterpart, counterpart], closed[1]]));
+assert.ok(!receivedClose(1, 5, [link, other], [[counterpart], [link, {...other, closeAborts:1}]]));
+const same = {...link, remote:link.local};
+assert.ok(!receivedClose(1, 5, [same], [[], [{...same, closeAborts:2, closed:true}]]));
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)

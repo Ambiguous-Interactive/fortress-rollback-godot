@@ -17,7 +17,8 @@
   [Firefox candidate registration report](https://bugzilla.mozilla.org/show_bug.cgi?id=1605815)
 - WebKit reported a send failure when a peer deliberately left. A browser-only reproduction showed the JavaScript call returning normally while the remote SCTP stream closed.
   The eight-player run also observed aborts as survivors closed their links to one another. WebKit reports the failed send on its JavaScript call stack.
-  Tag the sending channel and require a new SCTP abort on that exact link and a reciprocal close from a terminal room participant.
+  Tag the sending channel and match the reciprocal closed stream. After departure, require a new SCTP abort on that link and a terminal room participant.
+  During a planned stream close, require both ends closed and the nominated closer. WebKit can report the send failure without an SCTP abort in that case.
   [Pinned WebKit diagnostic](https://github.com/WebKit/WebKit/blob/56453fdfe0b0ca6258c23e6453b34f70b885d13f/Source/WebCore/Modules/mediastream/RTCDataChannel.cpp#L67-L85)
 - Fresh review found that TCP readiness accepted a stand-in without UDP STUN, and a pending diagnostic could stall cleanup.
   The controls rejected the stand-in and bounded the blocked renderer while still closing the browser and listening socket.
