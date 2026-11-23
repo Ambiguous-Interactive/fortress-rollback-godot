@@ -91,6 +91,12 @@ class FakeIssues:
     def list_comments(self, number):
         return [dict(comment) for comment in self.comments[number]]
 
+    def read_comment(self, comment_id):
+        return next(dict(comment) for comments in self.comments.values() for comment in comments if comment['id'] == comment_id)
+
+    def artifact_live(self, artifact, checkout_sha=None):
+        return True
+
     def add_comment(self, number, body, author=None):
         comment_id = 1 + sum(map(len, self.comments.values()))
         self.comments[number].append({'id': comment_id, 'author': author or self.identity, 'body': body})
@@ -139,8 +145,11 @@ class DriftReportTests(unittest.TestCase):
             argv += ['--latest', f'fortress={latest}']
         argv += list(extra)
         if '--publish-staged' in argv:
-            argv += ['--checkout-sha', CHECKOUT_SHA]
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+            url = argv[argv.index('--artifact-url') + 1]
+            for flag, value in (('--run-id', url.split('/')[-3]), ('--artifact-id', url.split('/')[-1]), ('--checkout-sha', CHECKOUT_SHA)):
+                if flag not in argv:
+                    argv += [flag, value]
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'download_archive', fake_download), \
              patch.object(drift_report, 'resolve_latest', resolve or (lambda entry: latest)):
             code = drift_report.main_with_args(argv)
@@ -240,8 +249,9 @@ class DriftReportTests(unittest.TestCase):
             return self.run_report(None, issues=fake, resolve=self.fail, override=False,
                                    extra=['--publish-staged', '--artifact-url', url])[0]
 
-        for old_state in ('absent', 'live', 'forbidden', 'network-error', 'foreign-host', 'foreign-repo', 'invalid-id',
-                          'different-digest', 'foreign-author', 'replacement-absent'):
+        for old_state in ('absent', 'blockquote', 'legacy', 'prior-checkout', 'live', 'forbidden', 'network-error', 'foreign-host', 'foreign-repo',
+                          'invalid-id', 'different-digest', 'foreign-author', 'replacement-absent', 'same-id-missing',
+                          'archive-mismatch', 'oversize', 'edited', 'duplicate', 'comment-id-out-of-range', 'artifact-id-out-of-range'):
             with self.subTest(old_state=old_state):
                 fake = FakeIssues()
                 self.assertEqual(publish(fake, base + '21'), 0)
@@ -258,39 +268,100 @@ class DriftReportTests(unittest.TestCase):
                     recorded['author'] = 'different-bot'
                 if old_state == 'invalid-id':
                     recorded['body'] = recorded['body'].replace(base + '21', base + '21%2f22')
+                if old_state == 'blockquote':
+                    artifact_line = next(line for line in recorded['body'].splitlines() if base + '21' in line)
+                    recorded['body'] = f'> Human quote: {artifact_line}\n\n' + recorded['body']
+                if old_state == 'prior-checkout':
+                    recorded['body'] = recorded['body'].replace(CHECKOUT_SHA, 'a' * 40)
+                if old_state == 'artifact-id-out-of-range':
+                    recorded['body'] = recorded['body'].replace(base + '21', base + str(1 << 63))
+                if old_state == 'legacy':
+                    start = recorded['body'].index('Check out ')
+                    end = recorded['body'].index('\n```\n', start) + len('\n```\n\n')
+                    recorded['body'] = recorded['body'][:start] + recorded['body'][end:]
+                    recorded['body'] += '\nHuman note that must survive.\n'
+                if old_state == 'archive-mismatch':
+                    recorded['body'] = '\n'.join(
+                        'candidate archive sha256: `' + 'd' * 64 + '`' if line.startswith('candidate archive sha256: ') else line
+                        for line in recorded['body'].split('\n')
+                    )
+                if old_state == 'oversize':
+                    recorded['body'] += 'h' * (65_536 - len(recorded['body'].encode('utf-8')))
+                if old_state == 'duplicate':
+                    fake.add_comment(number, recorded['body'])
+                if old_state == 'comment-id-out-of-range':
+                    recorded['id'] = 1 << 63
                 original = dict(recorded)
                 reads = []
+                changed = False
 
                 def artifact_live(artifact, checkout_sha=None):
                     reads.append(artifact)
-                    if artifact == (42, 21):
-                        self.assertIsNone(checkout_sha)
+                    if checkout_sha is None:
+                        self.assertEqual(artifact, (42, 21))
                         if old_state in ('forbidden', 'network-error'):
                             raise drift_report.ToolingError(old_state)
                         return old_state == 'live'
-                    self.assertEqual(artifact, (42, 22))
                     self.assertEqual(checkout_sha, CHECKOUT_SHA)
-                    return old_state != 'replacement-absent'
+                    expected = {'oversize': 100, 'same-id-missing': 21}.get(old_state, 22)
+                    self.assertEqual(artifact, (42, expected))
+                    return old_state not in ('replacement-absent', 'same-id-missing')
+
+                def read_comment(comment_id):
+                    nonlocal changed
+                    self.assertEqual(comment_id, original['id'])
+                    if old_state == 'edited':
+                        recorded['body'] += '\nConcurrent human change.\n'
+                        changed = True
+                    return dict(recorded)
 
                 def update_comment(comment_id, body):
                     self.assertEqual(comment_id, original['id'])
                     recorded['body'] = body
 
                 fake.artifact_live = artifact_live
+                fake.read_comment = read_comment
                 fake.update_comment = update_comment
-                self.assertEqual(publish(fake, base + '22'), int(old_state in ('forbidden', 'network-error', 'replacement-absent')))
-                self.assertEqual(len(fake.comments[number]), 2 if old_state in ('different-digest', 'foreign-author') else 1)
-                if old_state == 'absent':
-                    self.assertEqual(recorded['body'], original['body'].replace(base + '21', base + '22'))
-                    self.assertEqual(reads, [(42, 21), (42, 22)])
+                suffix = {'oversize': '100', 'same-id-missing': '21'}.get(old_state, '22')
+                failed = old_state in ('forbidden', 'network-error', 'replacement-absent', 'same-id-missing',
+                                       'archive-mismatch', 'oversize', 'edited', 'duplicate', 'comment-id-out-of-range', 'artifact-id-out-of-range')
+                self.assertEqual(publish(fake, base + suffix), int(failed))
+                self.assertEqual(len(fake.comments[number]), 2 if old_state in ('different-digest', 'foreign-author', 'duplicate') else 1)
+                self.assertEqual(reads[0], (42, int(suffix)))
+                if old_state in ('absent', 'blockquote', 'prior-checkout'):
+                    leading, target = original['body'].rsplit(base + '21', 1)
+                    self.assertEqual(recorded['body'], leading + base + '22' + target)
+                    self.assertEqual(reads, [(42, 22), (42, 21)])
                     self.assertEqual(recorded['id'], original['id'])
                     self.assertEqual(recorded['author'], original['author'])
+                elif old_state == 'legacy':
+                    self.assertIn(CHECKOUT_SHA, recorded['body'])
+                    self.assertIn(f'--latest fortress={NEW_SHA}', recorded['body'])
+                    self.assertIn('Human note that must survive.', recorded['body'])
+                    self.assertIn(base + '22', recorded['body'])
+                elif old_state == 'edited':
+                    self.assertTrue(changed)
+                    self.assertEqual(recorded['body'], original['body'] + '\nConcurrent human change.\n')
                 else:
                     self.assertEqual(recorded, original)
-                    expected_reads = [(42, 21)] if old_state in ('live', 'forbidden', 'network-error') else []
-                    if old_state == 'replacement-absent':
-                        expected_reads = [(42, 21), (42, 22)]
-                    self.assertEqual(reads, expected_reads)
+                    lookup = old_state in ('live', 'forbidden', 'network-error', 'archive-mismatch', 'oversize')
+                    self.assertEqual(reads[1:], [(42, 21)] if lookup else [])
+
+    # Value: protects=downloaded receipt binds to workflow inputs; fails_when=URL alone chooses evidence; why_new=existing coverage assumes matched IDs; seam=none
+    def test_hosted_publication_requires_live_artifact_bound_to_run_and_upload(self):
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        self.assertEqual(self.run_report(NEW_SHA, extra=['--stage'])[0], 0)
+        url = 'https://github.com/example/fortress/actions/runs/42/artifacts/21'
+        args = ['--publish-staged', '--artifact-url', url]
+        fake = FakeIssues()
+
+        for flag, value in (('--run-id', '43'), ('--artifact-id', '22'), ('--run-id', str(1 << 63))):
+            with self.subTest(flag=flag, value=value), self.assertRaisesRegex(drift_report.ToolingError, 'must match'):
+                self.run_report(None, issues=fake, override=False, extra=[*args, flag, value])
+        with patch.object(fake, 'artifact_live', return_value=False) as lookup:
+            self.assertEqual(self.run_report(None, issues=fake, override=False, extra=args)[0], 1)
+        lookup.assert_called_once_with((42, 21), CHECKOUT_SHA)
+        self.assertFalse(fake.issues)
 
     def test_repeated_observation_of_the_same_state_is_noise_free(self):
         self.prepare_candidate(NEW_SHA, NEW_FILES)
@@ -606,7 +677,7 @@ class DriftReportTests(unittest.TestCase):
         fake = FakeIssues()
         argv = ['--pins', str(self.pins), '--cache', str(self.cache), '--output', str(self.output),
                 '--repo', 'example/fortress']
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'download_archive', download), \
              patch.object(drift_report, 'resolve_latest', timing_out_resolve):
             code = drift_report.main_with_args(argv)
@@ -656,7 +727,7 @@ class DriftReportTests(unittest.TestCase):
         fake = FakeIssues()
         argv = ['--pins', str(self.pins), '--cache', str(self.cache), '--output', str(self.output),
                 '--repo', 'example/fortress']
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'download_archive', download), \
              patch.object(drift_report, 'resolve_latest', resolve):
             code = drift_report.main_with_args(argv)
@@ -667,7 +738,7 @@ class DriftReportTests(unittest.TestCase):
 
         fake = FakeIssues()
         staged = ['--output', str(self.output.with_name('partial'))]
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'download_archive', download), \
              patch.object(drift_report, 'resolve_latest', resolve):
             code = drift_report.main_with_args([*argv, *staged, '--stage'])
@@ -675,8 +746,9 @@ class DriftReportTests(unittest.TestCase):
         self.assertFalse(fake.issues)
         output = self.output.with_name('partial')
         artifact_url = 'https://github.com/example/fortress/actions/runs/1/artifacts/2'
-        publish = [*argv, *staged, '--publish-staged', '--artifact-url', artifact_url, '--checkout-sha', CHECKOUT_SHA]
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+        publish = [*argv, *staged, '--publish-staged', '--artifact-url', artifact_url,
+                   '--run-id', '1', '--artifact-id', '2', '--checkout-sha', CHECKOUT_SHA]
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'resolve_latest', self.fail):
             code = drift_report.main_with_args(publish)
         self.assertEqual(code, 0)
@@ -691,7 +763,7 @@ class DriftReportTests(unittest.TestCase):
                          reviewed_revision=fortress_entry['revision'], records=None)
         malformed['report_digest'] = drift_report.observation_digest(malformed)
         (output / 'fortress.json').write_text(json.dumps(malformed), encoding='utf-8')
-        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+        with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'resolve_latest', self.fail):
             code = drift_report.main_with_args(publish)
         self.assertEqual(code, 1)
@@ -700,7 +772,7 @@ class DriftReportTests(unittest.TestCase):
 
 
 class GhIssueClientTests(unittest.TestCase):
-    def run_client(self, argv_responses, call):
+    def run_client(self, argv_responses, call, hostname=None):
         """Drive one client method against scripted `gh api` responses."""
         calls = []
 
@@ -709,7 +781,7 @@ class GhIssueClientTests(unittest.TestCase):
             stdout, code = argv_responses[len(calls) - 1]
             return subprocess.CompletedProcess(command, code, stdout, 'boom')
 
-        client = drift_report.GhIssueClient('example/fortress')
+        client = drift_report.GhIssueClient('example/fortress', hostname=hostname)
         with patch.object(drift_report.subprocess, 'run', fake_run):
             result = call(client)
         return result, calls
@@ -753,7 +825,7 @@ class GhIssueClientTests(unittest.TestCase):
             ('PATCH', 'issues/comments/8', {'body': body}),
         ], strict=True):
             with self.subTest(method=method, path=path, fields=fields):
-                self.assertEqual(argv, ['gh', 'api', '--hostname', 'github.com', '-X', method, f'repos/example/fortress/{path}', '--input', '-'])
+                self.assertEqual(argv, ['gh', 'api', '-X', method, f'repos/example/fortress/{path}', '--input', '-'])
                 self.assertEqual(json.loads(payload), fields)
 
     # Value: protects=only authenticated artifact absence permits repair; fails_when=auth errors look missing; why_new=issue reads ignore HTTP status; seam=none
@@ -777,9 +849,9 @@ class GhIssueClientTests(unittest.TestCase):
 
                 if result is None:
                     with self.assertRaises(drift_report.ToolingError):
-                        self.run_client(responses, get_artifact)
+                        self.run_client(responses, get_artifact, hostname='github.com')
                 else:
-                    found, calls = self.run_client(responses, get_artifact)
+                    found, calls = self.run_client(responses, get_artifact, hostname='github.com')
                     self.assertEqual(found, result)
                     self.assertEqual(calls, [
                         (['gh', 'api', '--hostname', 'github.com', 'repos/example/fortress/actions/artifacts/21', '--include'], None)
@@ -807,7 +879,7 @@ class GhIssueClientTests(unittest.TestCase):
     def test_the_reporting_identity_is_resolved_and_validated(self):
         result, calls = self.run_client([('gh-bot\n', 0)], lambda client: client.current_login())
         self.assertEqual(result, 'gh-bot')
-        self.assertIn('user', calls[0][0])
+        self.assertEqual(calls[0][0], ['gh', 'api', 'user', '--jq', '.login'])
 
         import subprocess
 
