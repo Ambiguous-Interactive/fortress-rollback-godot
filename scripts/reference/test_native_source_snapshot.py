@@ -154,7 +154,7 @@ class SourceReceiptControls(unittest.TestCase):
 
     # Value: protects=executed source identity; fails_when=end-only Git metadata qualifies changed bytes; why_new=runner controls only validate outcomes; seam=fake engine process
     def test_executed_source_identity(self) -> None:
-        for mode in ("stable_dirty", "edit", "commit", "replace_snapshot", "transient_edit", "engine_edit", "helper_edit"):
+        for mode in ("stable_dirty", "edit", "commit", "replace_snapshot", "transient_edit", "engine_edit", "engine_and_source_edit", "helper_edit"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 environment = fixture_environment()
@@ -186,8 +186,8 @@ class SourceReceiptControls(unittest.TestCase):
                     f"original=pathlib.Path({str(suite)!r});marker=pathlib.Path({str(marker)!r})\n"
                     "if not marker.exists():\n marker.write_text('mutated')\n"
                     + (" pathlib.Path(sys.argv[0]).write_text(pathlib.Path(sys.argv[0]).read_text() + '\\n# mutated engine\\n')\n"
-                       if mode == "engine_edit" else "")
-                    + (" original.write_text('changed source\\n')\n" if mode == "edit" else "")
+                       if mode in ("engine_edit", "engine_and_source_edit") else "")
+                    + (" original.write_text('changed source\\n')\n" if mode in ("edit", "engine_and_source_edit") else "")
                     + (f" subprocess.run(['git','add','.'],cwd={str(root)!r},check=True,timeout=10)\n"
                        " subprocess.run(['git','-c','user.name=Test','-c','user.email=test@example.invalid',"
                        f"'commit','-qm','intervening'],cwd={str(root)!r},check=True,timeout=10)\n"
@@ -221,7 +221,7 @@ class SourceReceiptControls(unittest.TestCase):
                 self.assertFalse(Path(identity["path"]).exists(), "snapshot must be cleaned after qualification")
                 if not expected:
                     failure = {"replace_snapshot": "snapshot_changed", "engine_edit": "engine_changed",
-                               "helper_edit": "helper_source_changed"}.get(mode, "source_changed")
+                               "engine_and_source_edit": "engine_changed", "helper_edit": "helper_source_changed"}.get(mode, "source_changed")
                     self.assertEqual(report["failure"], failure)
                 if mode == "commit":
                     self.assertEqual(suite.read_text(), "stable dirty source\n")
