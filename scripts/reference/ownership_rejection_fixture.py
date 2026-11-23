@@ -90,7 +90,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
 
     def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None,
                  version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False, runtime_before=None, tool_fault=None,
-                 phase=None, suite_part='all', download_fault=None, control_output=None):
+                 phase=None, suite_part='all', download_fault=None, control_output=None, balance_chromium=False):
         """Run the ownership launcher against mocked tools and return its results."""
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
@@ -374,7 +374,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
                 mock.patch.object(probes.platform, 'system', return_value='Linux'), \
                 mock.patch('sys.argv', ['ownership_probes.py', '--offline', '--web', '--browser', selected]
                            + ([] if version is None else ['--version', version]) + ([] if phase is None else ['--phase', phase])
-                           + ([] if suite_part == 'all' else ['--suite-part', suite_part])):
+                           + ([] if suite_part == 'all' else ['--suite-part', suite_part]) + (['--balance-chromium'] if balance_chromium else [])):
             if expected is None:
                 probes.main()
                 helpers.assert_called_once_with(probes.source_inventory())
@@ -404,7 +404,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
             self.assertEqual(len(browser_calls), 1, 'mutation during a batch must stop before another executes')
         if expected is None:
             round_count = (2 if version is None else 1) * (2 if phase in (None, 'both') else 1)
-            expected_suites = probes.select_suites(suite_part)
+            expected_suites = probes.select_suites(suite_part, (phase or 'both') if balance_chromium else None)
             selections = [[command[index + 1] for index, item in enumerate(command) if item == '--suite']
                           for command, log, timeout in capture_calls]
             # The native wave overlaps per-suite engine children, so the calls

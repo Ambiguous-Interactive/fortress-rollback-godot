@@ -203,6 +203,8 @@ class OwnershipBatchTests(unittest.TestCase):
         for tier in (workflow, nightly):
             self.assertIn('--phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"',
                           tier.split('python3 scripts/reference/ownership_probes.py', 1)[1])
+        self.assertIn('--suite-part "${{ matrix.suite_part }}" --balance-chromium', workflow)
+        self.assertNotIn('--balance-chromium', nightly)
         self.assertIn("matrix.part_suffix", workflow)
         self.assertIn("matrix.part_suffix", nightly)
 

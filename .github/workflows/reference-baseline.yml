@@ -113,7 +113,7 @@ jobs:
       - name: Verify integer encoding, snapshot ownership and byte sessions
         run: |
           python3 scripts/reference/ownership_probes.py --web --version "${{ matrix.version }}" \
-            --phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"
+            --phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}" --balance-chromium
       - name: Verify spectator browser control origins
         if: matrix.browser == 'chromium' && matrix.version == '4.3' && matrix.phase == 'negative' && matrix.suite_part == '1'
         env:
