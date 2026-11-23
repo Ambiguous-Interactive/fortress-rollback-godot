@@ -142,6 +142,9 @@ native initialization and an independently deferred witness do not exercise that
 suites over four seconds run one pair per case. Its record matches `--jobs 1`. `make test-focus SUITE=res://tests/unit/x.gd`
 selects one suite. `make test-changed` runs only suites reaching files changed since `origin/main`. Deliver all suites.
 Direct launcher calls default to 30 seconds; pass `--timeout 180` when selecting long stress or full-duration replay cases, as the full Makefile target does.
+Compare the same case inventory by name and through changed-suite selection to isolate discovery time.
+For competing CI layouts, compare the complete case records, longest job and summed runner-seconds on the same source revision.
+The [iteration study](../../../../docs/reference/iteration.md) records both workloads.
 Scope tool installation to the matrix legs that actually invoke it; preserve every verification command when removing unused setup.
 The oracle launcher defaults to four independent scenario workers; `--jobs 1`
 selects serial diagnosis. Preserve deterministic receipt order and unique logs.

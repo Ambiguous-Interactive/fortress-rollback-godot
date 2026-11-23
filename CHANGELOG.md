@@ -4,6 +4,8 @@
 
 ### Added
 
+- Compare verified local edit times by command and count required CI verdicts reaching seven minutes. [Iteration measurements](docs/reference/iteration.md)
+
 - Add the GDScript runtime to each prebuilt native addon archive so both addon directories install together. [Installation guide](experiments/gdextension/README.md#install-and-use)
 
 - Measure PR and merge-queue validation from the branch update through the required verdict, including reruns. [Iteration measurements](docs/reference/iteration.md)

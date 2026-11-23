@@ -14,8 +14,9 @@ hook is a POSIX shell command).
 1. Install [Docker](https://www.docker.com/products/docker-desktop/) and
    [VS Code](https://code.visualstudio.com/) with the **Dev Containers**
    extension.
-2. Open this folder in VS Code and run **Dev Containers: Reopen in Container**
-   (or accept the "Reopen in Container" toast).
+2. For the fastest edit loop on Docker Desktop, run **Dev Containers: Clone Repository in Container Volume**.
+   Open the repository in that volume. For an existing Linux-native checkout, use **Dev Containers: Reopen in Container**.
+   See the [local and CI measurements](../docs/reference/iteration.md).
 3. On first open, `.devcontainer/devcontainer.env` is created from the
    committed template. Add any API keys you use (see below), then
    **Dev Containers: Rebuild Container** so they are injected.
