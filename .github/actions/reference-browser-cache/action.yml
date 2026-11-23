@@ -1,0 +1,33 @@
+name: Restore verified reference browser inputs
+description: Cache one engine, browser and pinned Web template subset for Linux x86_64 qualification.
+inputs:
+  version:
+    description: Pinned Godot version
+    required: true
+  browser:
+    description: Pinned browser family
+    required: true
+  legacy-ownership-cache:
+    description: Restore the previous full ownership download cache on a cold Web template cache
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v6.1.0
+      id: web
+      with:
+        path: .cache/reference/web-template-archives/Godot_v${{ inputs.version }}-stable_export_templates.zip
+        key: reference-web-template-v1-${{ inputs.version }}-${{ hashFiles('docs/reference/pins.json', 'scripts/reference/web_templates.py') }}
+    - uses: actions/cache@v6.1.0
+      with:
+        path: .cache/reference/downloads/Godot_v${{ inputs.version }}-stable_linux.x86_64.zip
+        key: reference-editor-v1-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
+    - uses: actions/cache@v6.1.0
+      with:
+        path: .cache/reference/downloads/${{ inputs.browser }}-*-x86_64.zip
+        key: reference-${{ inputs.browser }}-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
+    - uses: actions/cache/restore@v6.1.0
+      if: inputs.legacy-ownership-cache == 'true' && steps.web.outputs.cache-hit != 'true'
+      with:
+        path: .cache/reference/downloads
+        key: reference-ownership-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
