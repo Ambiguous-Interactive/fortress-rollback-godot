@@ -45,8 +45,7 @@ class UnitGateTests(unittest.TestCase):
               mock.patch.object(gate, "inventory_sha256", return_value="source"), mock.patch.object(gate, "inventory", return_value={}),
               mock.patch.object(gate, "source_paths", return_value=[]), mock.patch.object(platform, "machine", return_value="x86_64")):
             directory = Path(temp)
-            part = directory / (gate.ARTIFACT + "0") / "latest.json"
-            part.parent.mkdir()
+            part = directory / (gate.ARTIFACT + "0.json")
             part.write_text(json.dumps(report))
             gate.verify(plan, directory, "success", "event-base")
             cases.return_value = {suite: ["fixture", "stripped"]}

@@ -111,6 +111,8 @@ class WorkflowTierTests(unittest.TestCase):
         self.assertIn("if: always()", verdict)
         self.assertIn('test "$QUALIFIED" = success', verdict)
         self.assertIn('scripts/unit_gate.py verify', verdict)
+        self.assertIn('merge-multiple: true', verdict)
+        self.assertIn('path: .cache/tests/gate-unit-part-${{ matrix.part }}.json', worker)
         self.assertIn('set -o pipefail', verdict)
         self.assertNotIn('4.7.2', worker)
         workers = '\n'.join(blocks['control-work'])

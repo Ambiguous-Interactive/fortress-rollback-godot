@@ -134,7 +134,7 @@ jobs:
         if: always()
         with:
           name: gate-unit-part-${{ matrix.part }}
-          path: .cache/tests/latest.json
+          path: .cache/tests/gate-unit-part-${{ matrix.part }}.json
           if-no-files-found: error
           overwrite: true
 
@@ -160,6 +160,7 @@ jobs:
         if: github.event_name != 'merge_group' && needs.unit-part.result == 'success'
         with:
           pattern: gate-unit-part-*
+          merge-multiple: true
           path: .cache/unit-artifacts
 
       - name: Verify partition receipts

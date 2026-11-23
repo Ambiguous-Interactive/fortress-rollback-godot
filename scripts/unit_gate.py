@@ -21,7 +21,7 @@ WEIGHTS = ROOT / "scripts/unit_suite_seconds.json"
 # One repetition's suite seconds on the 4-vCPU hosted runner. Two repetitions and startup share the PR budget.
 PART_SECONDS = 275
 ARTIFACT = "gate-unit-part-"
-RESULTS = Path(".cache/tests/latest.json")
+RESULTS = Path(".cache/tests")
 
 
 def partitions(suites: list[str], hints: dict) -> list[list[str]]:
@@ -99,7 +99,7 @@ def verify(value: dict, directory: Path, status: str, base: str) -> None:
     validate_plan(value, commit)
     groups = value["parts"]
     expected_status = "success" if groups else "skipped"
-    files = {p.parent.name: p for p in directory.glob(f"{ARTIFACT}*/latest.json")}
+    files = {p.stem: p for p in directory.glob(f"{ARTIFACT}*.json")}
     if status != expected_status or set(files) != {ARTIFACT + str(i) for i in range(len(groups))}:
         raise ValueError("missing or failed unit partition")
     helpers = {name: sha(ROOT / "scripts" / name) for name in ("run_godot_tests.py", *HELPERS)}
@@ -164,7 +164,7 @@ def main() -> None:
             raise ValueError("unknown unit partition")
         suites = value["parts"][args.part]
         command = [sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", args.godot or str(pinned_editor()), "--category", "unit",
-                   "--verify-inventory", "--timeout", "180", "--results", str(RESULTS)]
+                   "--verify-inventory", "--timeout", "180", "--results", str(RESULTS / f"{ARTIFACT}{args.part}.json")]
         subprocess.run(command + [arg for suite in suites for arg in ("--suite", suite)], check=True)
     else:
         verify(value, args.artifacts, args.status, args.base)
