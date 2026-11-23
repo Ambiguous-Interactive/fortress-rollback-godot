@@ -732,6 +732,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--inventory-timeout", type=float, default=120, help="seconds for each combined case listing, separate from test execution")
     parser.add_argument("--results", type=Path, default=DEFAULT_RESULTS)
+    parser.add_argument("--verify-inventory", action="store_true", help="require an independent case listing for every selected suite")
     parser.add_argument("--changed", metavar="BASE", help="run only suites that load files changed since BASE (e.g. origin/main)")
     parser.add_argument("--durations", type=Path, default=DURATIONS, help="per-suite times that order and split shards")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
@@ -765,6 +766,8 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error("shard selects no suite")
         except ValueError as failure:
             parser.error(str(failure))
+    if args.verify_inventory and args.filter:
+        parser.error("--verify-inventory requires unfiltered suites")
     if args.changed and args.suite:
         parser.error("--changed selects suites itself")
     # Supersede prior success before any external executable gets control.
@@ -826,16 +829,19 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
     if args.filter:
         command += ["--filter", args.filter]
     # run_tests.gd sorts its suites, so shards follow the same order.
+    selection = None
     if args.changed:
-        import changed_suites  # already loaded in main; a cached import cannot re-read the file
-        # The staged helper module defaults to its own copy's parents, so the live project
-        # root is passed explicitly: selection reads the same evidence inputs the run names.
-        changed = changed_suites.changed_files(args.changed, root=ROOT)
-        args.suite = changed_suites.select(discover(args.category, snapshot.path), changed, root=snapshot.path,
-                                           old_names=changed_suites.previous_class_names(args.changed, changed, root=ROOT))
-        print(json.dumps({"changed_since": args.changed, "suites": args.suite}), file=sys.stderr)
+        import changed_suites  # already loaded from the staged helper image
+        selection = changed_suites.from_base(args.changed, discover(args.category, snapshot.path), ROOT, snapshot.path, snapshot.files)
+        args.suite = selection["suites"]
+        print(json.dumps(selection), file=sys.stderr)
         if not args.suite:
-            args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "no_affected_suites"}) + "\n", encoding="utf-8")
+            snapshot.verify_image()
+            if snapshot.changed() or live_helper_identity() != live_helpers or helper_identity() != helpers:
+                raise ValueError("source_changed")
+            report = {"format": 1, "passed": False, "failure": "no_affected_suites", "selection": selection,
+                      "commit": snapshot.commit, "working_tree_dirty": snapshot.dirty, "source_snapshot": snapshot.evidence(), "helper_sources": helpers}
+            args.results.write_text(json.dumps(report) + "\n", encoding="utf-8")
             print(json.dumps({"passed": None, "results": str(args.results), "note": "no suite loads a changed file"}))
             return 0
     suites = sorted(args.suite) or discover(args.category, snapshot.path)
@@ -860,6 +866,9 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
         if version_probe["exit"] != 0:
             raise ValueError("version_probe_failed")
         version = version_probe["stdout"].strip()
+        expected = case_inventory(command, suites, args.inventory_timeout) if args.verify_inventory else {}
+        if args.verify_inventory and not expected:
+            raise ValueError("incomplete_case_inventory")
         if contended or args.jobs > 1:
             if args.filter and len(suites) > 1:
                 inventory = case_inventory(command, suites, args.inventory_timeout)
@@ -867,7 +876,10 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
                 # Empty or invalid listings retain the original failure path, including zero matches.
                 suites = matching or suites
             slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
-            cases = split_cases(command, slow, args.inventory_timeout) if slow else {}
+            if expected:
+                cases = {suite: expected[suite] for suite in slow if len(expected[suite]) > 1}
+            else:
+                cases = split_cases(command, slow, args.inventory_timeout) if slow else {}
             # Shards stay in suite order, then inventory order, so merged records match one process.
             keys = [(suite, case) for suite in suites for case in cases.get(suite, [None])]
             shards = [command + ["--suite", suite] + (["--case", case] if case else []) for suite, case in keys]
@@ -913,6 +925,11 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
             failed = True
             runs[1]["failure"] = "fresh_process_divergence"
             runs[1]["divergence"] = first_divergence(runs[0].get("result"), runs[1].get("result"))
+        if expected and not failed:
+            actual = [(r["suite"], r["case"]) for r in runs[0]["result"]["records"]]
+            if actual != [(suite, case) for suite in suites for case in expected[suite]]:
+                runs[0]["failure"] = "case_inventory_mismatch"
+                failed = True
         manifest = snapshot.path / "docs/reference/pins.json"
         report = {"format": 1, "passed": not failed, "commit": snapshot.commit,
                   "working_tree_dirty": snapshot.dirty,
@@ -920,6 +937,8 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
                   "pin_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest() if manifest.exists() else None,
                   "platform": platform.platform(), "machine": platform.machine(),
                   "cwd": str(ROOT), "seed": str(args.seed), "runs": runs}
+        if expected:
+            report["case_inventory"] = expected
     except (OSError, subprocess.SubprocessError, ValueError, UnicodeError) as exc:
         report = {"format": 1, "passed": False, "failure": str(exc)}
         if version_probe is not None:
@@ -928,6 +947,8 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
             report[exc.phase + "_probe"] = exc.report
         if isinstance(exc, subprocess.TimeoutExpired):
             report.update(stdout=_decode(exc.stdout), stderr=_decode(exc.stderr))
+    if selection is not None:
+        report["selection"] = selection
     report.update(commit=snapshot.commit, working_tree_dirty=snapshot.dirty, source_snapshot=snapshot.evidence(),
                   helper_sources=helpers)
     try:

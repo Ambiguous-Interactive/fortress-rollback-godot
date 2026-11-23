@@ -1,65 +1,226 @@
-"""Select the test suites that can observe files changed since a base revision."""
+"""Find all suites that can observe a change, widening to the inventory on uncertainty."""
 from __future__ import annotations
 
-from pathlib import Path
+from collections import defaultdict
+import hashlib
+from pathlib import Path, PurePosixPath
+import posixpath
 import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-RESOURCE = re.compile(r"res://([A-Za-z0-9_./-]+)")
-CLASS_NAME = re.compile(r"(?m)^(?:@\w+\s+)*class_name\s+(\w+)")
-SOURCES = ("addons", "tests", "examples")
+SOURCES = ("addons", "tests", "examples", "scripts")
 SCANNED = (".gd", ".tscn", ".tres", ".json", ".cfg")
+CLASS_NAME = re.compile(r"(?m)^(?:@\w+\s+)*class_name\s+(\w+)")
+LITERAL = re.compile(r"""(?P<quote>["'])(?P<value>[^"'\n]*)(?P=quote)""")
+ACCESS = re.compile(r"(?:(?<![\w.])(?:pre)?load|\.change_scene_to_file|ResourceLoader\.\w+"
+                    r"|FileAccess\.(?:open\w*|get_file_as_\w+|file_exists)|DirAccess\.(?:open|get_\w+_at))\s*\(\s*")
+# These exact source versions have indirect reads of user files, supervisor output, SDK constants or selected suite paths.
+# A new reader or an edit to one of these files restores the conservative fallback until its inputs are reviewed.
+REVIEWED_READERS = {
+    "examples/online/diagnostic_scene.gd": "7659c077fa390489ca7134ac5ec96146ca305362c4c657433976b1d408b0ff8f",
+    "examples/online/lobby.gd": "bfd344360dd6b7de99dbcda9da250644dbe9be8b3f7c711572d007f194b59b45",
+    "examples/online/replay_scene.gd": "c19e23dc7a92e4228538e21a1247c98a4e62ff957acdc6a4b8f7786733298866",
+    "tests/oracle/p2p_trace.gd": "40fd08dd8fb4a34f08425e4006458d69120cc02890c1862d748c6da382182226",
+    "tests/oracle/replay_session_trace.gd": "8cbabef01cca3cfa627555b73420a26884fe74451b0bb491f29b3c2854ad4955",
+    "tests/runner/abort_supervisor.gd": "e22b3f8b74b9e31d61f0af1cb824be7f2a847f8252c913e0cd004373b0744113",
+    "tests/runner/run_tests.gd": "2ee26d3f3f890bf0c30a4b05c0127971af0120a51f85181c76a91ac6152ae674",
+    "tests/unit/test_diagnostic_viewer.gd": "e444e5f83a5ac1059fb711aafc44a41dc50680fe92b7adb555dc3389c8785679",
+    "tests/unit/test_online_example.gd": "7f1f35e49bc9f65a6c0758848b71c3850ceeac6465cd3944fbb869d7e6972ccc",
+    "tests/unit/test_replay_viewer.gd": "965cdc5e29f6263825cb8c6dcc850d81b568c9417012d534d88b24ef8545cad0",
+    "tests/unit/test_replay_viewer_prefix.gd": "91522f8602503ac28d080fff29590d3e775fc4623eb3317116b23404c99db613",
+}
+# These host programs run in distinct entry points. Keep launcher imports, setup, workflow, pins and unknown files broad.
+REFERENCE_TOOLS = {
+    "native_online_probe.py", "online_install.py", "owned_process.py", "ownership_probes.py", "signalfish_webrtc_probe.py",
+}
+
+
+def independent_tool(path: str) -> bool:
+    p = PurePosixPath(path)
+    return (p.suffix == ".py" and path.startswith(("scripts/tests/", "scripts/oracle/", "scripts/llm/", "scripts/reference/browser/"))
+            or p.suffix == ".rs" and path.startswith("scripts/oracle/rust/")
+            or p.suffix == ".cjs" and path.startswith("scripts/reference/browser/")
+            or p.parent.as_posix() == "scripts/reference" and (p.name in REFERENCE_TOOLS or p.name.startswith("test_") and p.suffix == ".py")
+            or path == "scripts/package_addon.py")
+
+
+def git(root: Path, *args: str) -> str:
+    return subprocess.check_output(["git", "--literal-pathspecs", *args], cwd=root, encoding="utf-8", errors="strict", timeout=30, stderr=subprocess.PIPE)
 
 
 def changed_files(base: str, root: Path = ROOT) -> list[str]:
-    """Committed changes since the merge base, plus staged, unstaged and untracked source files.
-
-    Untracked files outside the Godot source directories (editor or agent settings) cannot reach a suite."""
-    def git(*arguments: str) -> list[str]:
-        return subprocess.run(["git", *arguments], cwd=root, capture_output=True, text=True, check=True).stdout.splitlines()
-    merge_base = git("merge-base", "HEAD", base)[0]
-    return sorted(set(git("diff", "--name-only", "--no-renames", merge_base)) | set(git("ls-files", "--others", "--exclude-standard", "--", *SOURCES)))
+    """Keep both sides of renames and every local layer, including external untracked resources."""
+    merge_base = git(root, "merge-base", "HEAD", base).strip()
+    changes = set()
+    for args in (("diff", merge_base, "HEAD"), ("diff", "--cached"), ("diff",)):
+        changes.update(git(root, *args, "--name-only", "--no-renames", "-z", "--").split("\0"))
+    changes.update(git(root, "ls-files", "--others", "--exclude-standard", "-z").split("\0"))
+    return sorted(changes - {""})
 
 
 def previous_class_names(base: str, changed: list[str], root: Path = ROOT) -> set[str]:
-    """Class names the changed files declared at the merge base, so renamed or removed names still reach their users."""
-    merge_base = subprocess.run(["git", "merge-base", "HEAD", base], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
-    names: set[str] = set()
-    for path in changed:
-        if not path.endswith(".gd"):
-            continue
-        old = subprocess.run(["git", "show", f"{merge_base}:{path}"], cwd=root, capture_output=True)
-        if old.returncode == 0:
-            names.update(CLASS_NAME.findall(old.stdout.decode("utf-8", errors="replace")))
+    sources = [name for name in changed if name.endswith(".gd")]
+    if not sources:
+        return set()
+    names = set()
+    blobs = set()
+    for revision in {git(root, "merge-base", "HEAD", base).strip(), "HEAD"}:
+        rows = git(root, "ls-tree", "-rz", revision, "--", *sources)
+        blobs.update(row.split("\t", 1)[0].split()[2] for row in rows.split("\0") if row)
+    rows = git(root, "ls-files", "--stage", "-z", "--", *sources)
+    blobs.update(row.split("\t", 1)[0].split()[1] for row in rows.split("\0") if row)
+    for oid in blobs:
+        names.update(CLASS_NAME.findall(git(root, "cat-file", "blob", oid)))
     return names
 
 
-def select(suites: list[str], changed: list[str], root: Path = ROOT, old_names: set[str] = frozenset()) -> list[str]:
-    """Return the suites (res:// paths) to run; every suite when a change cannot be traced."""
-    # A rename reports both paths (--no-renames); a .uid sidecar stands for its resource.
-    relevant = [path.removesuffix(".uid") for path in changed if not path.endswith(".md")]
-    if any(path.split("/")[0] not in SOURCES or path.startswith("tests/runner/") for path in relevant):
-        return list(suites)
-    files = [path for directory in SOURCES for path in (root / directory).rglob("*") if path.suffix in SCANNED and path.is_file()]
-    texts = {path.relative_to(root).as_posix(): path.read_text(encoding="utf-8", errors="replace") for path in files}
-    classes = {name: path for path, text in texts.items() for name in CLASS_NAME.findall(text)}
-    words = {path: set(re.findall(r"\w+", text)) for path, text in texts.items()}
-    # Over-approximate: any res:// string or class name mentioned in a file is a dependency.
-    dependents: dict[str, set[str]] = {}
-    for path, text in texts.items():
-        used = set(RESOURCE.findall(text))
-        used |= {classes[name] for name in words[path].intersection(classes) if classes[name] != path}
-        for target in used:
-            dependents.setdefault(target, set()).add(path)
-    # A directory reference (a res:// string ending in /) depends on every file under it, including new ones.
-    directories = [target for target in dependents if target.endswith("/")]
-    reached = set(relevant) | {path for path in texts if words[path].intersection(old_names)}
-    pending = list(reached)
-    while pending:
-        path = pending.pop()
-        for dependent in dependents.get(path, set()).union(*(dependents[d] for d in directories if path.startswith(d))):
-            if dependent not in reached:
-                reached.add(dependent)
-                pending.append(dependent)
-    return [suite for suite in suites if suite.removeprefix("res://") in reached]
+def sources_in(root: Path):
+    # Live callers pass Git's file inventory. Standalone fixture trees and private images contain only authored inputs.
+    if (root / ".git").exists():
+        return git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z").split("\0")
+    return (p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+
+
+def bound_argument(text: str, offset: int, constants: dict) -> bool:
+    """Recognize an immutable literal or an immediately enclosing literal list loop."""
+    symbol = re.match(r"(\w+)\s*[,)]", text[offset:])
+    if not symbol:
+        return False
+    name = symbol[1]
+    if constants.get(name, "").startswith(("res://", "user://")):
+        return True
+    previous = text[:offset].rsplit("\n", 2)
+    if len(previous) < 3:
+        return False
+    loop = re.fullmatch(r"\s*for " + name + r": String in \[([A-Z_, 0-9]+)\]:", previous[1])
+    if loop:
+        return all(constants.get(key.strip(), "").startswith("res://") for key in loop[1].split(","))
+    local = re.fullmatch(r'\s*var ' + name + r': String = "user://" \+ (\w+)', previous[1])
+    return bool(local and re.fullmatch(r"[a-zA-Z0-9_-]+\.[a-zA-Z0-9]+", constants.get(local[1], "")))
+
+
+def inputs(path: str, text: str) -> tuple[set[str], bool]:
+    used = set()
+    opaque = False
+    for match in LITERAL.finditer(text):
+        value = match["value"]
+        if value.startswith("res://"):
+            target = value[6:]
+            # A formatted string depends on everything under its last known directory.
+            if "%" in target or "{" in target:
+                prefix = re.split(r"[%{]", target, maxsplit=1)[0]
+                target = prefix[:prefix.rfind("/") + 1]
+            if target:
+                used.add(posixpath.normpath(target) + ("/" if target.endswith("/") else ""))
+            elif path != "tests/runner/abort_supervisor.gd":
+                opaque = True
+        elif value.startswith("uid://"):
+            # Scenes usually also give a resource path, but a UID can resolve independently.
+            opaque = True
+        elif PurePosixPath(value).suffix in SCANNED and "://" not in value:
+            used.update((posixpath.normpath(value), posixpath.normpath(posixpath.join(posixpath.dirname(path), value))))
+    if path.endswith(".gd"):
+        opaque |= bool(re.search(r"\.source_code\s*=", text))
+        constants = dict(re.findall(r'^const (\w+)(?:: String)? = "([^"\n]*)"\s*$', text, re.MULTILINE))
+        for match in ACCESS.finditer(text):
+            arg = LITERAL.match(text, match.end())
+            if not arg:
+                opaque |= not bound_argument(text, match.end(), constants)
+            elif not arg["value"].startswith(("res://", "user://")) and PurePosixPath(arg["value"]).suffix not in SCANNED:
+                opaque = True
+            elif not text[arg.end():].lstrip().startswith((",", ")")):
+                # Concatenation can extend even a literal filename. A directory prefix already covers its descendants.
+                if not (arg["value"].startswith("res://") and (arg["value"].endswith("/") or "%" in arg["value"])):
+                    opaque = True
+    if opaque and hashlib.sha256(text.encode()).hexdigest() == REVIEWED_READERS.get(path):
+        opaque = False
+        if path == "tests/runner/run_tests.gd":
+            # _discover enumerates the selected category. discover() already includes each test in that directory.
+            used.discard("tests/")
+    return used, opaque
+
+
+def selection(suites: list[str], changed: list[str], root: Path, old_names=frozenset(), paths=None) -> dict:
+    def receipt(reason, selected, **details):
+        return dict(reason=reason, changed_count=len(changed), inventory_count=len(suites), selected_count=len(selected), suites=list(selected), **details)
+
+    relevant = {p.removesuffix(".uid") for p in changed}
+    if not relevant:
+        return receipt("no_changes", [])
+    if any(p.startswith("tests/runner/") for p in relevant):
+        return receipt("runner_changed", suites)
+    texts = {p: (root / p).read_text(encoding="utf-8") for p in (paths if paths is not None else sources_in(root))
+             if PurePosixPath(p).suffix in SCANNED and (root / p).is_file()}
+    classes = defaultdict(set)
+    for p, text in texts.items():
+        if p.endswith(".gd"):
+            for name in CLASS_NAME.findall(text):
+                classes[name].add(p)
+    dependents = defaultdict(set)
+    opaque_paths = set()
+    reached = set(relevant)
+    for p, text in texts.items():
+        used, opaque = inputs(p, text)
+        if opaque:
+            opaque_paths.add(p)
+        words = set(re.findall(r"\w+", text))
+        for name in words.intersection(classes):
+            used.update(classes[name])
+        if words.intersection(old_names):
+            reached.add(p)
+        for dep in used:
+            dependents[dep].add(p)
+    directories = [key for key in dependents if key.endswith("/")]
+
+    def consumers(paths):
+        seen = set(paths)
+        pending = list(seen)
+        while pending:
+            p = pending.pop()
+            for dep in dependents.get(p, set()).union(*(dependents[d] for d in directories if p.startswith(d))):
+                if dep not in seen:
+                    seen.add(dep)
+                    pending.append(dep)
+        return seen
+
+    suite_paths = {s.removeprefix("res://") for s in suites}
+    runner = "tests/runner/run_tests.gd"
+    for path in sorted(opaque_paths):
+        if consumers([path]).intersection(suite_paths | {runner}):
+            return receipt("unresolved_resource", suites, path=path)
+    for p in sorted(relevant):
+        if p == "scripts/unit_suite_seconds.json":
+            return receipt("partition_weights_changed", suites)
+        if p.endswith(".md") or independent_tool(p):
+            continue
+        suffix = PurePosixPath(p).suffix
+        if (p.split("/")[0] in SOURCES and suffix in (".gd", ".tscn", ".tres")
+                or suffix in SCANNED and (p in dependents or any(p.startswith(d) for d in directories))):
+            continue
+        return receipt("unknown_input", suites, path=p)
+    affected = consumers(reached)
+    if runner in affected:
+        return receipt("runner_dependency", suites)
+    selected = [s for s in suites if s.removeprefix("res://") in affected]
+    if selected:
+        return receipt("resource_dependency", selected)
+    if all(p.endswith(".md") for p in relevant):
+        return receipt("documentation_only", [])
+    if all(independent_tool(p) or p.endswith(".md") for p in relevant):
+        return receipt("verified_independent_tooling", [])
+    return receipt("no_affected_suites", [])
+
+
+def select(suites: list[str], changed: list[str], root: Path = ROOT, old_names=frozenset()) -> list[str]:
+    return selection(suites, changed, root, old_names)["suites"]
+
+
+def from_base(base: str, suites: list[str], root: Path, image: Path, paths) -> dict:
+    try:
+        changed = changed_files(base, root)
+        old_names = previous_class_names(base, changed, root)
+        result = selection(suites, changed, image, old_names, paths)
+    except (OSError, UnicodeError, subprocess.SubprocessError):
+        result = dict(reason="unresolved_diff_or_source", changed_count=None, inventory_count=len(suites), selected_count=len(suites), suites=list(suites))
+    return dict(base=base, **result)

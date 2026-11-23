@@ -101,6 +101,11 @@ def inventory(root: Path, names: list[str], destination: Path | None = None) -> 
     return dict(sorted(files.items()))
 
 
+def inventory_sha256(files: dict) -> str:
+    encoded = json.dumps(files, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 class SourceSnapshot:
     def __init__(self, root: Path):
         self.root = root
@@ -151,8 +156,7 @@ class SourceSnapshot:
             raise ValueError("snapshot_changed")
 
     def evidence(self) -> dict:
-        encoded = json.dumps(self.files, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        return {"path": str(self.path), "files": self.files, "sha256": hashlib.sha256(encoded).hexdigest()}
+        return {"path": str(self.path), "files": self.files, "sha256": inventory_sha256(self.files)}
 
     def __exit__(self, *_):
         self.temporary.cleanup()

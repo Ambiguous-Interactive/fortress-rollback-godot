@@ -61,11 +61,21 @@ case (`--case <name>`), still merged in inventory order. The times only change s
 missing or stale file gives the same records. Pure engine run time makes a new suite shard freely,
 so split a slow case into smaller cases rather than lengthen it.
 
-`make test-changed` (`--changed origin/main`; `BASE=` overrides) runs only the suites that can
-observe a change. It follows every `res://` path and `class_name` mention in `addons/`, `tests/` and
-`examples/` from the files changed since the merge base, including uncommitted and untracked source
-files. A change anywhere else, or to `tests/runner/`, runs every suite; Markdown runs none. It is the
-inner loop only: run `make test-godot` before pushing. Each report run lists its
+`make test-changed` selects suites against the merge base of `BASE` (default `origin/main`) and the
+committed, staged, unstaged and untracked paths. Selection follows resource literals, directory references and
+class names, including transitive scripts outside the addon and old class names after a rename.
+Recognized host-only tooling and documentation can produce an empty selection. Unknown inputs, unresolved
+dynamic resource readers, changes to the runner or an unavailable base select the full inventory.
+The selection receipt records the reason, changed path count, selected suites and total suite count.
+
+The PR Gate runs small selections together. For larger selections it assigns the longest suites first
+to the least loaded partition. Scheduling weights in `scripts/unit_suite_seconds.json` come from the two
+Godot 4.3 unit artifacts of qualification run 45081767956. New suites receive a default weight.
+Each partition lists the selected cases independently and executes both fresh processes. The required
+changed-unit check verifies the disjoint union, engine and source bytes, and every case record against that listing.
+The merge candidate supplies the same minimum-engine coverage through its full qualification.
+
+Each report run lists its
 shard processes under `shards`. Default results live in ignored
 `.cache/tests/latest.json`. They contain engine version/digest, repository commit
 and dirty flag, pin digest, platform, commands, working directory, seeds, complete

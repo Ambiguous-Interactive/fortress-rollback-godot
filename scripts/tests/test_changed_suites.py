@@ -1,11 +1,15 @@
 """Changed-suite selection follows res:// references and class names, and runs everything when unsure."""
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
+from unittest import mock
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from changed_suites import select  # noqa: E402
+from changed_suites import changed_files, from_base, previous_class_names, select, selection  # noqa: E402
+
+from git_test_environment import fixture_environment  # noqa: E402
 
 FILES = {
     "addons/a.gd": "@tool\nclass_name Alpha\n",
@@ -57,6 +61,55 @@ class SelectTests(unittest.TestCase):
             self.assertEqual(select([substring], ["addons/a.gd"], root, {"Alpha"}), [])
             (root / "tests/unit/test_substring.gd").write_text("# Alpha.member and (Alpha) both name a complete class\n")
             self.assertEqual(select([substring], ["addons/a.gd"], root, {"Alpha"}), [substring])
+
+
+    def test_external_transitive_consumers_and_fail_closed_inputs(self):
+        suite = "res://tests/unit/test_only.gd"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = {
+                suite[6:]: 'const Bridge = preload("res://scripts/reference/bridge.gd")',
+                "scripts/reference/bridge.gd": 'const Helper = preload("helper with space.gd")',
+                "scripts/reference/helper with space.gd": 'const DATA = "res://docs/example.json"',
+                "docs/example.json": "{}",
+            }
+            for path, value in files.items():
+                (root / path).parent.mkdir(parents=True, exist_ok=True)
+                (root / path).write_text(value)
+            for path in files:
+                self.assertEqual(selection([suite], [path], root)["suites"], [suite])
+            for path in ("scripts/reference/browser/webrtc.cjs", "scripts/oracle/p2p_lifecycle.py"):
+                self.assertEqual(selection([suite], [path], root)["selected_count"], 0)
+                self.assertEqual(select([suite], [path, "docs/example.json"], root), [suite])
+            for path in ("scripts/new_agent.py", "scripts/reference/new_settings.cfg", "addons/data.unknown", "project.godot"):
+                self.assertEqual(selection([suite], [path], root)["reason"], "unknown_input")
+            for expression in ('load(dynamic_path)', 'ResourceLoader.load_threaded_request(path)',
+                               'FileAccess.get_file_as_string(path)', 'load("uid://unknown")', 'load("res://prefix" + suffix)'):
+                with self.subTest(expression=expression):
+                    (root / "scripts/reference/bridge.gd").write_text(expression)
+                    self.assertEqual(selection([suite], ["scripts/oracle/p2p_lifecycle.py"], root)["reason"], "unresolved_resource")
+
+    def test_git_changes_include_renames_untracked_paths_and_every_dirty_layer(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict("os.environ", fixture_environment(), clear=True):
+            root = Path(directory)
+            def git(*args):
+                subprocess.run(["git", *args], cwd=root, capture_output=True, check=True)
+            git("init")
+            gd = root / "original.gd"
+            gd.write_text("class_name OldName")
+            git("add", ".")
+            git("-c", "user.name=Fixture", "-c", "user.email=test@example.invalid", "commit", "-m", "base")
+            git("mv", "original.gd", "renamed.gd")
+            (root / "renamed.gd").write_text("class_name StagedName")
+            git("add", "renamed.gd")
+            (root / "renamed.gd").write_text("class_name LiveName")
+            odd = "untracked script\nwith spaces.gd"
+            (root / odd).touch()
+            changed = changed_files("HEAD", root)
+            self.assertEqual(changed, sorted(["original.gd", "renamed.gd", odd]))
+            self.assertEqual(previous_class_names("HEAD", changed, root), {"OldName", "StagedName"})
+            r = from_base("unavailable", SUITES, root, root, [])
+            self.assertEqual((r["reason"], r["selected_count"]), ("unresolved_diff_or_source", len(SUITES)))
 
 
 if __name__ == "__main__":

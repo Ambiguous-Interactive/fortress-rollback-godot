@@ -100,12 +100,19 @@ class WorkflowTierTests(unittest.TestCase):
                       'make lint-source', 'make test-llm'):
             with self.subTest(check=check):
                 self.assertIn(check, harness)
-        # The unit gate runs the changed-suite selector on the minimum pin only.
-        unit = '\n'.join(blocks['unit-fast'])
-        self.assertIn('run_godot_tests.py', unit)
-        self.assertIn('--changed', unit)
-        self.assertNotIn('4.7.2', unit)
-        self.assertIn('fetch-depth: 0', unit)
+        detect = '\n'.join(blocks['detect'])
+        worker = '\n'.join(blocks['unit-part'])
+        verdict = '\n'.join(blocks['unit-fast'])
+        self.assertIn('fetch-depth: 0', detect)
+        self.assertIn('scripts/unit_gate.py plan --base "$BASE"', detect)
+        self.assertIn("if: github.event_name != 'merge_group' &&", worker)
+        self.assertIn('scripts/unit_gate.py run --part "$PART"', worker)
+        self.assertIn("needs: [detect, unit-part, qualify]", verdict)
+        self.assertIn("if: always()", verdict)
+        self.assertIn('test "$QUALIFIED" = success', verdict)
+        self.assertIn('scripts/unit_gate.py verify', verdict)
+        self.assertIn('set -o pipefail', verdict)
+        self.assertNotIn('4.7.2', worker)
         workers = '\n'.join(blocks['control-work'])
         self.assertIn("needs.detect.outputs.scripts == 'true'", workers)
         self.assertIn("github.event_name == 'merge_group'", workers)
@@ -116,20 +123,13 @@ class WorkflowTierTests(unittest.TestCase):
         self.assertIn('if: always()', controls)
         self.assertIn('test "$WORK" = success', controls)
 
-    def test_gate_base_resolution_fails_closed_in_both_jobs(self):
-        # detect and unit-fast carry the same base-resolution contract: an empty
-        # or all-zero base (fresh branch, first push, force-push recreation)
-        # falls back to a real commit so the window can never silently be empty,
-        # and an unresolvable base must run the controls rather than skip them.
-        for job in ('detect', 'unit-fast'):
-            block = '\n'.join(job_blocks(read(GATE))[job])
-            with self.subTest(job=job):
-                self.assertIn('github.event.pull_request.base.sha', block)
-                self.assertIn('github.event.before', block)
-                self.assertIn('0000000000000000000000000000000000000000', block)
-                self.assertIn('git rev-parse -q --verify origin/main', block)
+    def test_gate_base_resolution_fails_closed(self):
         detect = '\n'.join(job_blocks(read(GATE))['detect'])
-        self.assertIn('An unresolvable base is the suspicious case', detect)
+        for source in ('github.event.pull_request.base.sha', 'github.event.merge_group.base_sha', 'github.event.before'):
+            self.assertIn(source, detect)
+        self.assertIn('0000000000000000000000000000000000000000', detect)
+        self.assertIn('base="unavailable"', detect)
+        self.assertIn('scripts=true', detect)
         self.assertIn('set -o pipefail', detect)
 
     def test_gate_cancels_superseded_runs(self):
@@ -171,7 +171,7 @@ class WorkflowTierTests(unittest.TestCase):
             self.assertIn(f'make test-{family}', dispatch)
         verify = '\n'.join(blocks['qualification'])
         self.assertIn('if: always()', verify)
-        for family in ('contracts', 'rust', 'ownership', 'godot', 'signalfish'):
+        for family in ('contracts', 'rust', 'ownership', 'godot', 'server', 'signalfish'):
             self.assertRegex(verify, rf'needs: \[[-a-z, ]*{family}')
         self.assertIn('toJSON(needs)', verify)
         self.assertIn('all(to_entries[]; .value.result == (if .key == "contracts" then $contracts else "success" end))', verify)
