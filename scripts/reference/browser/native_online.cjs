@@ -36,6 +36,7 @@ function instrumentNativeWire() {
   const ice = new Map();
   let session, localUuid;
   let holding = false;
+  let holdAll = false;
   let armed = false;
   let holdStarted = null;
   let holdEnded = null;
@@ -45,10 +46,20 @@ function instrumentNativeWire() {
   const relayRecipients = new Map();
   const relaySenders = new Map();
   const held = { mesh: 0, relay: 0 };
+  const controlDuringHold = { sent: 0, received: 0 };
   const nativeBytes = bytes => bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
     : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
   const matches = (bytes, offset) => session && offset + session.length < bytes.length
     && session.every((byte, index) => bytes[offset + index] === byte);
+  const inputKind = 2;
+  function nativeKind(bytes, offset) {
+    // The pinned Fortress codec uses an eight-byte header and a little-endian u32 body tag.
+    const at = offset + session.length;
+    if (bytes.length < at + 12 || bytes[at] !== 0xf5 || bytes[at + 1] !== 0x52 || bytes[at + 2] !== 2 || bytes[at + 3] !== 0) {
+      throw new Error('native gameplay wire header differs from the pinned codec');
+    }
+    return new DataView(bytes.buffer, bytes.byteOffset + at + 8, 4).getUint32(0, true);
+  }
   const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
   function relayAddresses(data) {
     const view = nativeBytes(data);
@@ -57,17 +68,26 @@ function instrumentNativeWire() {
     for (let index = 0; index + 73 < view.length; index++) {
       if (view[index] === 70 && view[index + 1] === 83 && view[index + 2] === 82 && view[index + 3] === 49
           && view[index + 4] === 1 && matches(view, index + 5) && matches(view, index + 57)) {
-        return [hex(view.subarray(index + 21, index + 37)), hex(view.subarray(index + 37, index + 53))];
+        return { sender: hex(view.subarray(index + 21, index + 37)), recipient: hex(view.subarray(index + 37, index + 53)),
+          kind: nativeKind(view, index + 57) };
       }
     }
     return null;
   }
   const increment = (counts, uuid) => counts.set(uuid, (counts.get(uuid) ?? 0) + 1);
   const ufrag = description => description?.sdp.match(/^a=ice-ufrag:([\w+/]+)\r?$/m)?.[1];
-  function send(route, emit, data, isGame) {
-    if (!isGame) return emit(data);
+  function receive(kind) {
+    if (holding && !holdAll && kind !== inputKind) controlDuringHold.received++;
+  }
+  function send(route, emit, data, kind) {
+    if (kind === null) return emit(data);
     counts[route]++;
     if (!holding) return emit(data);
+    if (!holdAll && kind !== inputKind) {
+      const sent = emit(data);
+      controlDuringHold.sent++;
+      return sent;
+    }
     if (active.length >= 1024 || totalBytes + data.byteLength > 1024 * 1024) throw new Error('native packet hold exceeded bounds');
     const owned = nativeBytes(data).slice();
     active.push(() => emit(owned));
@@ -97,17 +117,20 @@ function instrumentNativeWire() {
     });
     channel.addEventListener('message', ({ data }) => {
       const view = nativeBytes(data);
-      if (channel.id === 3 && view && matches(view, 0)) record.received++;
+      if (channel.id === 3 && view && matches(view, 0)) {
+        record.received++;
+        receive(nativeKind(view, 0));
+      }
     });
     resources.rtc.push(record);
     const nativeSend = channel.send;
     channel.send = data => {
       const view = nativeBytes(data);
-      const isGame = channel.id === 3 && view && matches(view, 0);
+      const kind = channel.id === 3 && view && matches(view, 0) ? nativeKind(view, 0) : null;
       return send('mesh', bytes => {
         nativeSend.call(channel, bytes);
-        if (isGame) record.sent++;
-      }, data, isGame);
+        if (kind !== null) record.sent++;
+      }, data, kind);
     };
     return channel;
   };
@@ -129,18 +152,21 @@ function instrumentNativeWire() {
     const socket = Reflect.construct(target, args, newTarget);
     resources.sockets.push(socket);
     socket.addEventListener('message', ({ data }) => {
-      const addresses = relayAddresses(data);
-      if (addresses && addresses[1] === localUuid) increment(relaySenders, addresses[0]);
+      const packet = relayAddresses(data);
+      if (packet && packet.recipient === localUuid) {
+        increment(relaySenders, packet.sender);
+        receive(packet.kind);
+      }
     });
     return socket;
   } });
   const socketSend = nativeSocket.prototype.send;
   nativeSocket.prototype.send = function(data) {
-    const recipient = relayAddresses(data)?.[1];
+    const packet = relayAddresses(data);
     return send('relay', bytes => {
       socketSend.call(this, bytes);
-      if (recipient) increment(relayRecipients, recipient);
-    }, data, Boolean(recipient));
+      if (packet) increment(relayRecipients, packet.recipient);
+    }, data, packet?.kind ?? null);
   };
   window.fortressNativeWire = {
     bind(hash, uuid) {
@@ -151,9 +177,10 @@ function instrumentNativeWire() {
     meshOpen(peers) {
       return resources.rtc.filter(({channel, connection}) => channel.readyState === 'open' && connection.connectionState === 'connected').length === peers * 3;
     },
-    arm() {
+    arm(all = false) {
       if (!armed) {
         armed = true;
+        holdAll = all;
         holding = true;
         holdStarted = performance.now();
       }
@@ -171,7 +198,7 @@ function instrumentNativeWire() {
     // Let every peer report native expiry before a socket close can cause a room-departure event.
     holdTerminal() {
       holdTerminalClose = true;
-      this.arm();
+      this.arm(true);
     },
     releaseTerminal() {
       if (!deferredClose) throw new Error('native terminal did not close its SDK socket');
@@ -188,6 +215,7 @@ function instrumentNativeWire() {
         return { local: record.local, remote: record.remote, closeAborts: record.closeAborts };
       });
       return { armed, holding, hold_ms: holdMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
+        control_during_hold: { ...controlDuringHold },
         relayRecipients: Object.fromEntries(relayRecipients), relaySenders: Object.fromEntries(relaySenders),
         ice: [...ice.values()], sctp,
         rtc: resources.rtc.map(({channel, sent, received}) => [channel.id, channel.readyState, sent, received]),
@@ -276,7 +304,7 @@ async function run(root, endpoint, mode, players, browserPair) {
       const started = performance.now();
       const browser = browsers[index % browsers.length];
       const name = browser.browserType().name();
-      const viewport = name === 'chromium' ? { width: 480, height: 360 } : undefined;
+      const viewport = { width: 480, height: 360 };
       const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport });
       contexts.push(context);
       const page = await context.newPage();
@@ -353,9 +381,13 @@ async function run(root, endpoint, mode, players, browserPair) {
         window.fortressNativeWire.arm();
         return { frame, stalls, confirmed };
       })));
-      await Promise.all(pages.map((page, index) => wait(page, threshold => window.fortressNative.state === 'failed'
-        || (window.fortressNative.state === 'playing' && window.fortressNative.stalls > threshold.stalls
-          && window.fortressNative.prediction >= threshold.frame && window.fortressNativeWire.status().held[threshold.route] > 0),
+      await Promise.all(pages.map((page, index) => wait(page, threshold => {
+        const { state, stalls, prediction } = window.fortressNative;
+        if (state === 'failed') return true;
+        if (state !== 'playing' || stalls <= threshold.stalls || prediction < threshold.frame) return false;
+        const wire = window.fortressNativeWire.status();
+        return wire.held[threshold.route] > 0 && wire.control_during_hold.sent > 0 && wire.control_during_hold.received > 0;
+      },
       { route, stalls: armed[index].stalls, frame: GATE_FRAME }, 45000)));
       stalled = await observe();
       for (const peer of stalled) {
@@ -417,6 +449,7 @@ async function run(root, endpoint, mode, players, browserPair) {
       assert.ok(peer.saves > 0 && peer.advances > peer.frame && peer.restores > before.restores, 'save, load and re-advance must run');
       assert.ok(before.frame > GATE_FRAME && before.confirmed < before.frame - 1, 'gate must force prediction beyond confirmation');
       assert.ok(before.wire.holding && before.wire.held[route] > 0, 'native bytes must be held on the selected physical route');
+      assert.ok(before.wire.control_during_hold.sent > 0 && before.wire.control_during_hold.received > 0, 'control traffic must keep flowing during the input hold');
       assert.ok(!peer.wire.holding && peer.wire.totalBytes > 0 && peer.wire.released === peer.wire.held[route], 'held originals must be released');
       assert.equal(peer.wire.counts[other], 0, 'native traffic must use the selected physical route');
       if (route === 'mesh') assert.equal(peer.wire.rtc.filter(([id, state]) => id === 3 && state === 'open').length, players - 1);

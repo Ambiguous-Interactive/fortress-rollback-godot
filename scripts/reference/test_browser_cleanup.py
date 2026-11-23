@@ -12,6 +12,55 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_native_input_and_terminal_holds_have_distinct_liveness(self):
+        # Value: protects=physical input/control hold; fails_when=control blocked in recovery or leaks during expiry; seam=browser send and receive
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire } = require(process.argv[1]);
+const packet = (kind, version = 2) => {
+  const bytes = new Uint8Array(28);
+  bytes.set([0xf5, 0x52, version, 0, 1, 0, 0, 0, kind, 0, 0, 0], 16);
+  return bytes;
+};
+
+for (const expiry of [false, true]) {
+  const seen = [];
+  class Channel {
+    id = 3;
+    addEventListener(name, listener) { this[name] = listener; }
+    send(bytes) { seen.push(Array.from(bytes)); }
+  }
+  const channel = new Channel();
+  const window = {};
+  const realm = {
+    window, performance, Uint8Array, ArrayBuffer, DataView, WebSocket: class {},
+    RTCPeerConnection: class { addEventListener() {} createDataChannel() { return channel; } },
+  };
+  runInNewContext(`(${instrumentNativeWire})()`, realm);
+  assert.equal(new realm.RTCPeerConnection().createDataChannel(), channel);
+  const wire = window.fortressNativeWire;
+  wire.bind('00'.repeat(16), '01234567-0123-0123-0123-0123456789ab');
+  if (expiry) wire.holdTerminal();
+  else wire.arm();
+  channel.send(packet(2));
+  channel.send(packet(7));
+  if (!expiry) channel.message({data: packet(7)});
+  assert.equal(seen.length, expiry ? 0 : 1);
+  const status = wire.status();
+  assert.equal(status.held.mesh, expiry ? 2 : 1);
+  assert.equal(status.control_during_hold.sent, expiry ? 0 : 1);
+  assert.equal(status.control_during_hold.received, expiry ? 0 : 1);
+  assert.throws(() => channel.send(packet(7, 3)), /native gameplay wire header/);
+  if (!expiry) {
+    wire.release();
+    assert.deepEqual(seen, [packet(7), packet(2)].map(bytes => Array.from(bytes)));
+  }
+}
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_native_webkit_abort_must_belong_to_the_departing_connection(self):
         # Value: protects=departure attribution; fails_when=another link excuses the warning; seam=browser receipt validator
         script = r"""

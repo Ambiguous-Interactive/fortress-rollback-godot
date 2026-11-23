@@ -5,6 +5,11 @@
 - Both hosted Chromium pins passed seven of eight rooms. The eight-player relay rooms released their held packets, then one or more native peers expired.
   A pinned three-CPU reproduction at 1280×720 hit the same failure and recorded a 2,109 ms gap before one endpoint expired.
   At 480×360 the witness compared 40 frames and the longest observed interval between native queue acceptances was 1,182 ms.
+  The smaller hosted fixture still expired on both pins. Hold input packets during recovery and verify that real control traffic continues.
+  Keep the previous full link outage in the terminal case.
+- Firefox also hit Godot's 65,535-byte WebSocket buffer during warmup, below the SDK's 262,144-byte soft cap.
+  A 1 MiB engine buffer removed all eight hard-limit errors on the matched three-CPU run.
+  With selective input holding, the same Firefox room compared 40 frames and every peer received 160 or more control packets during the hold.
 - Chromium–Firefox could lose links before gameplay at eight peers. The actual exported room delivered all 140 signaling messages.
   The bare eight-peer control opened 44 of 56 endpoints when Firefox's early mDNS candidates arrived before Firefox applied the answer.
   Applying them after the answer opened all 56. A STUN-only listener on the host interface also opened all 56 with early delivery.

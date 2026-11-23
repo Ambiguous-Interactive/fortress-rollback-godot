@@ -22,6 +22,10 @@ Count startup wait ticks only after the engine reports the full mesh ready.
 Retain the earlier browser-open tick count to diagnose event delivery lag.
 Require both views to be ready when a direct-only room starts.
 
+Withhold native input datagrams to force a prediction stall while the link
+can still carry control traffic. Verify control receipt during the hold and
+release the original input bytes. Use a separate full outage to prove expiry.
+
 Qualify cross-origin control services with actual browser preflight and authenticated fetch.
 Native HTTP success does not exercise browser origin enforcement; keep origin permission separate from role capabilities.
 Expected provisioning waits use non-error HTTP pending responses; keep actual console/network failures fatal.

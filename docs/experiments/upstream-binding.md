@@ -47,6 +47,8 @@ Use one engine for the whole room or alternate two browsers in page order.
 Direct and SignalFish relay rooms run at 2, 4 and 8 players. Two four-player cases exercise a missing link at startup and a channel that closes during gameplay.
 Each cell compares at least 40 confirmed input rows and canonical states.
 The receipt records each peer's Playwright engine and version alongside packet, rollback and lifecycle observations.
+The recovery cells hold input datagrams while control traffic continues, then release the held originals.
+After the physical-close case confirms resumed play, it holds all datagrams to verify terminal expiry.
 
 ```sh
 gh workflow run gdextension-experiment.yml --ref main -f qualification=chromium-webkit
