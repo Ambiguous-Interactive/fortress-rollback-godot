@@ -11,6 +11,13 @@ import unit_gate as gate
 
 
 class UnitGateTests(unittest.TestCase):
+    def test_literal_inventory_requires_the_entire_method(self):
+        header = "func cases() -> PackedStringArray:\n"
+        self.assertEqual(gate.literal_cases(header + ' return PackedStringArray(\n ["one", "two",]\n )'), ["one", "two"])
+        for body in (' return NAMES', ' if OS.is_debug_build():\n  return PackedStringArray(["one"])\n return PackedStringArray(["two"])',
+                     ' return PackedStringArray(["duplicate", "duplicate"])'):
+            self.assertIsNone(gate.literal_cases(header + body))
+
     def test_balancing_and_missing_timing_hints(self):
         suites = list("abcdefg")
         weights = dict(zip(suites, [200, 200, 200, 20, 20, 20, 20]))
@@ -32,34 +39,43 @@ class UnitGateTests(unittest.TestCase):
                       helper_sources={name: "verified" for name in ("run_godot_tests.py", *gate.HELPERS)})
         plan = dict(commit="candidate", selection=dict(selected_count=1, inventory_count=1, suites=[suite]), parts=[[suite]])
         with (tempfile.TemporaryDirectory() as temp, mock.patch.object(gate, "git", return_value="candidate"),
-              mock.patch.object(gate, "discover", return_value=[suite]), mock.patch.object(gate, "sha", return_value="verified"),
+              mock.patch.object(gate, "plan", return_value=plan) as planned, mock.patch.object(gate, "discover", return_value=[suite]),
+              mock.patch.object(gate, "sha", return_value="verified"),
+              mock.patch.object(gate, "expected_cases", return_value={suite: ["fixture"]}) as cases,
               mock.patch.object(gate, "inventory_sha256", return_value="source"), mock.patch.object(gate, "inventory", return_value={}),
               mock.patch.object(gate, "source_paths", return_value=[]), mock.patch.object(platform, "machine", return_value="x86_64")):
             directory = Path(temp)
             part = directory / (gate.ARTIFACT + "0") / "latest.json"
             part.parent.mkdir()
             part.write_text(json.dumps(report))
-            gate.verify(plan, directory, "success")
+            gate.verify(plan, directory, "success", "event-base")
+            cases.return_value = {suite: ["fixture", "stripped"]}
+            with self.assertRaisesRegex(ValueError, "case listing disagrees"):
+                gate.verify(plan, directory, "success", "event-base")
+            cases.return_value = {suite: ["fixture"]}
             for field, value in (("passed", False), ("commit", "old"), ("case_inventory", {suite: ["fixture", "missing"]}),
                                  ("seed", "2"), ("engine_sha256", "f" * 64), ("source_snapshot", {"sha256": "other"}),
                                  ("helper_sources", {}), ("runs", report["runs"][:1])):
                 with self.subTest(field=field):
                     part.write_text(json.dumps(dict(report, **{field: value})))
                     with self.assertRaises(ValueError):
-                        gate.verify(plan, directory, "success")
+                        gate.verify(plan, directory, "success", "event-base")
             part.write_text(json.dumps(report))
             for status in ("failure", "cancelled", "skipped"):
                 with self.assertRaises(ValueError):
-                    gate.verify(plan, directory, status)
+                    gate.verify(plan, directory, status, "event-base")
             duplicate = copy.deepcopy(plan)
             duplicate["parts"].append([suite])
             with self.assertRaises(ValueError):
-                gate.verify(duplicate, directory, "success")
+                gate.verify(duplicate, directory, "success", "event-base")
             part.unlink()
             with self.assertRaises(ValueError):
-                gate.verify(plan, directory, "success")
+                gate.verify(plan, directory, "success", "event-base")
             empty = dict(plan, selection=dict(selected_count=0, inventory_count=1, suites=[]), parts=[])
-            gate.verify(empty, directory, "skipped")
+            with self.assertRaisesRegex(ValueError, "disagrees with event base"):
+                gate.verify(empty, directory, "skipped", "event-base")
+            planned.return_value = empty
+            gate.verify(empty, directory, "skipped", "event-base")
 
 
 if __name__ == "__main__":

@@ -9,12 +9,13 @@ import math
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 
 from changed_suites import from_base, git
-from native_source_snapshot import inventory, inventory_sha256, source_paths
-from run_godot_tests import HELPERS, ROOT, discover, load_durations, validate_result
+from native_source_snapshot import SourceSnapshot, inventory, inventory_sha256, source_paths
+from run_godot_tests import HELPERS, ROOT, discover, load_durations, validate_result, verified_cases
 
 WEIGHTS = ROOT / "scripts/unit_suite_seconds.json"
 # One repetition's suite seconds on the 4-vCPU hosted runner. Two repetitions and startup share the PR budget.
@@ -40,6 +41,7 @@ def partitions(suites: list[str], hints: dict) -> list[list[str]]:
 
 def plan(base: str) -> dict:
     suites = discover("unit")
+    base = "unavailable" if not base or base == "0" * 40 else base
     receipt = from_base(base, suites, ROOT, ROOT, source_paths(ROOT))
     return dict(commit=git(ROOT, "rev-parse", "HEAD").strip(), selection=receipt, parts=partitions(receipt["suites"], load_durations(WEIGHTS)))
 
@@ -58,7 +60,50 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def verify(value: dict, directory: Path, status: str) -> None:
+def pinned_editor() -> Path:
+    from reference.fetch import CACHE, fetch, load_manifest, prepare_zip
+
+    arch = {"aarch64": "arm64", "x86_64": "x86_64"}[platform.machine()]
+    name = f"Godot_v4.3-stable_linux.{arch}.zip"
+    directory = CACHE / "editors/4.3"
+    directory.mkdir(parents=True, exist_ok=True)
+    binary = directory / name[:-4]
+    prepare_zip(fetch(load_manifest()["artifacts"][name], name, False), directory, executable_members=(binary.name,))
+    binary.chmod(0o755)
+    return binary
+
+
+def literal_cases(text: str) -> list[str] | None:
+    """Accept only a complete top-level cases method returning literal, unique, nonempty names."""
+    methods = re.findall(r"^func cases\(\) -> PackedStringArray:\n(.*?)(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL)
+    if len(methods) != 1 or not re.fullmatch(r'\s*return PackedStringArray\(\s*\[\s*"\w+"\s*(?:,\s*"\w+"\s*)*,?\s*\]\s*\)\s*', methods[0]):
+        return None
+    names = re.findall(r'"(\w+)"', methods[0])
+    return names if len(names) == len(set(names)) else None
+
+
+def expected_cases(suites: list[str]) -> dict:
+    known, dynamic = {}, []
+    for suite in suites:
+        names = literal_cases((ROOT / suite.removeprefix("res://")).read_text(encoding="utf-8"))
+        if names is None:
+            dynamic.append(suite)
+        else:
+            known[suite] = names
+    if dynamic:
+        editor = pinned_editor()
+        with SourceSnapshot(ROOT) as snapshot:
+            command = [str(editor), "--headless", "--path", str(snapshot.path), "--script", "res://tests/runner/run_tests.gd", "--", "--category", "unit"]
+            known.update(verified_cases(command, dynamic, 120, os.cpu_count() or 1))
+            snapshot.verify_image()
+            if snapshot.changed():
+                raise ValueError("source changed during case discovery")
+    return known
+
+
+def verify(value: dict, directory: Path, status: str, base: str) -> None:
+    if value != plan(base):
+        raise ValueError("unit plan disagrees with event base and checkout")
     commit = git(ROOT, "rev-parse", "HEAD").strip()
     validate_plan(value, commit)
     groups = value["parts"]
@@ -74,6 +119,7 @@ def verify(value: dict, directory: Path, status: str) -> None:
         "aarch64": "8b8d7c6089d8b4238e6ec872f027ef1a4bfc5241ddb5f8aec452b058368d255b",
     }[platform.machine()]
     source_sha = inventory_sha256(inventory(ROOT, source_paths(ROOT))) if groups else None
+    declared = expected_cases(value["selection"]["suites"])
     total = 0
     for i, suites in enumerate(groups):
         report = json.loads(files[ARTIFACT + str(i)].read_text(encoding="utf-8"))
@@ -87,7 +133,9 @@ def verify(value: dict, directory: Path, status: str) -> None:
         if "failure" in first or "failure" in second or first["result"] != second["result"]:
             raise ValueError("incomplete or diverging fresh processes")
         result = validate_result(first["result"])
-        case_inventory = report["case_inventory"]
+        case_inventory = {s: declared[s] for s in suites}
+        if case_inventory != report["case_inventory"]:
+            raise ValueError("case listing disagrees with checkout")
         expected = [(s, c) for s in suites for c in case_inventory[s]]
         actual = [(r["suite"], r["case"]) for r in result["records"]]
         if (not result["passed"] or set(suites) != set(case_inventory) or any(not names for names in case_inventory.values())
@@ -103,10 +151,11 @@ def main() -> None:
     modes.add_parser("plan").add_argument("--base", required=True)
     worker = modes.add_parser("run")
     worker.add_argument("--part", required=True, type=int)
-    worker.add_argument("--godot", required=True)
+    worker.add_argument("--godot", help="use an already prepared minimum editor")
     verdict = modes.add_parser("verify")
     verdict.add_argument("--artifacts", type=Path, required=True)
     verdict.add_argument("--status", required=True)
+    verdict.add_argument("--base", required=True)
     args = parser.parse_args()
     if args.mode == "plan":
         value = plan(args.base)
@@ -123,11 +172,11 @@ def main() -> None:
         if not 0 <= args.part < len(value["parts"]):
             raise ValueError("unknown unit partition")
         suites = value["parts"][args.part]
-        command = [sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", args.godot, "--category", "unit",
+        command = [sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", args.godot or str(pinned_editor()), "--category", "unit",
                    "--verify-inventory", "--timeout", "180", "--results", str(RESULTS)]
         subprocess.run(command + [arg for suite in suites for arg in ("--suite", suite)], check=True)
     else:
-        verify(value, args.artifacts, args.status)
+        verify(value, args.artifacts, args.status, args.base)
 
 
 if __name__ == "__main__":

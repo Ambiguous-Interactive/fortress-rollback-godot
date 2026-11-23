@@ -124,30 +124,11 @@ jobs:
         with:
           python-version: "3.15.2"
 
-      - name: Prepare the pinned minimum editor
-        run: |
-          PYTHONPATH=scripts/reference python3 - <<'PY'
-          from fetch import load_manifest, fetch, prepare_zip, CACHE
-          import platform
-          data = load_manifest()
-          arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
-          if arch is None:
-              raise SystemExit('editor bootstrap supports Linux arm64/x86_64 only')
-          version = "4.3"
-          name = f'Godot_v{version}-stable_linux.{arch}.zip'
-          directory = CACHE / 'editors' / version
-          directory.mkdir(parents=True, exist_ok=True)
-          prepare_zip(fetch(data['artifacts'][name], name, False), directory, executable_members=(name[:-4],))
-          (directory / name[:-4]).chmod(0o755)
-          PY
-
       - name: Run the affected unit suites
         env:
           UNIT_PLAN: ${{ needs.detect.outputs.unit-plan }}
           PART: ${{ matrix.part }}
-        run: |
-          editor=".cache/reference/editors/4.3/Godot_v4.3-stable_linux.x86_64"
-          python3 scripts/unit_gate.py run --part "$PART" --godot "$editor"
+        run: python3 scripts/unit_gate.py run --part "$PART"
 
       - uses: actions/upload-artifact@v7.0.2
         if: always()
@@ -172,6 +153,8 @@ jobs:
 
       - uses: actions/checkout@v7.0.1
         if: github.event_name != 'merge_group'
+        with:
+          fetch-depth: 0
 
       - uses: actions/download-artifact@v8.0.2
         if: github.event_name != 'merge_group' && needs.unit-part.result == 'success'
@@ -182,13 +165,14 @@ jobs:
       - name: Verify partition receipts
         if: github.event_name != 'merge_group'
         env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'unavailable' }}
           DETECTED: ${{ needs.detect.result }}
           UNIT_PLAN: ${{ needs.detect.outputs.unit-plan }}
           STATUS: ${{ needs.unit-part.result }}
         run: |
           set -o pipefail
           test "$DETECTED" = success
-          python3 scripts/unit_gate.py verify --artifacts .cache/unit-artifacts --status "$STATUS" | tee "$RUNNER_TEMP/unit-selection.json"
+          python3 scripts/unit_gate.py verify --base "$EVENT_BASE" --artifacts .cache/unit-artifacts --status "$STATUS" | tee "$RUNNER_TEMP/unit-selection.json"
 
       - uses: actions/upload-artifact@v7.0.2
         if: github.event_name != 'merge_group' && success()

@@ -89,6 +89,20 @@ class SelectTests(unittest.TestCase):
                     (root / "scripts/reference/bridge.gd").write_text(expression)
                     self.assertEqual(selection([suite], ["scripts/oracle/p2p_lifecycle.py"], root)["reason"], "unresolved_resource")
 
+    def test_directory_operations_cover_new_descendants_with_either_spelling(self):
+        suite = "res://test.gd"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for operation in ("DirAccess.open", "DirAccess.get_files_at", "DirAccess.get_directories_at", "dir.change_dir"):
+                for slash in ("", "/"):
+                    with self.subTest(operation=operation, slash=slash):
+                        (root / "test.gd").write_text(f'const DIR = "res://addons/resources{slash}"\nfunc run():\n {operation}(DIR)')
+                        self.assertEqual(select([suite], ["addons/resources/new/nested.gd"], root), [suite])
+                        self.assertEqual(select([suite], ["addons/resources_other/nested.gd"], root), [])
+            for arg in ('"res://"', 'opaque_path', '"uid://dynamic"'):
+                (root / "test.gd").write_text(f"func run():\n dir.change_dir({arg})")
+                self.assertEqual(selection([suite], ["addons/data.gd"], root)["reason"], "unresolved_resource")
+
     def test_git_changes_include_renames_untracked_paths_and_every_dirty_layer(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.dict("os.environ", fixture_environment(), clear=True):
             root = Path(directory)

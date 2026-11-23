@@ -13,7 +13,7 @@ SOURCES = ("addons", "tests", "examples", "scripts")
 SCANNED = (".gd", ".tscn", ".tres", ".json", ".cfg")
 CLASS_NAME = re.compile(r"(?m)^(?:@\w+\s+)*class_name\s+(\w+)")
 LITERAL = re.compile(r"""(?P<quote>["'])(?P<value>[^"'\n]*)(?P=quote)""")
-ACCESS = re.compile(r"(?:(?<![\w.])(?:pre)?load|\.change_scene_to_file|ResourceLoader\.\w+"
+ACCESS = re.compile(r"(?:(?<![\w.])(?:pre)?load|\.(?:change_scene_to_file|change_dir)|ResourceLoader\.\w+"
                     r"|FileAccess\.(?:open\w*|get_file_as_\w+|file_exists)|DirAccess\.(?:open|get_\w+_at))\s*\(\s*")
 # These exact source versions have indirect reads of user files, supervisor output, SDK constants or selected suite paths.
 # A new reader or an edit to one of these files restores the conservative fallback until its inputs are reviewed.
@@ -113,7 +113,7 @@ def inputs(path: str, text: str) -> tuple[set[str], bool]:
                 target = prefix[:prefix.rfind("/") + 1]
             if target:
                 used.add(posixpath.normpath(target) + ("/" if target.endswith("/") else ""))
-            elif path != "tests/runner/abort_supervisor.gd":
+            else:
                 opaque = True
         elif value.startswith("uid://"):
             # Scenes usually also give a resource path, but a UID can resolve independently.
@@ -170,18 +170,23 @@ def selection(suites: list[str], changed: list[str], root: Path, old_names=froze
         if words.intersection(old_names):
             reached.add(p)
         for dep in used:
-            dependents[dep].add(p)
-    directories = [key for key in dependents if key.endswith("/")]
+            dependents[dep.rstrip("/")].add(p)
+
+    def targets(path: str):
+        # A directory literal may omit its trailing slash, and an enumerated child may be new or deleted.
+        yield path
+        yield from (parent.as_posix() for parent in PurePosixPath(path).parents)
 
     def consumers(paths):
         seen = set(paths)
         pending = list(seen)
         while pending:
             p = pending.pop()
-            for dep in dependents.get(p, set()).union(*(dependents[d] for d in directories if p.startswith(d))):
-                if dep not in seen:
-                    seen.add(dep)
-                    pending.append(dep)
+            for target in targets(p):
+                for dep in dependents.get(target, ()):
+                    if dep not in seen:
+                        seen.add(dep)
+                        pending.append(dep)
         return seen
 
     suite_paths = {s.removeprefix("res://") for s in suites}
@@ -196,7 +201,7 @@ def selection(suites: list[str], changed: list[str], root: Path, old_names=froze
             continue
         suffix = PurePosixPath(p).suffix
         if (p.split("/")[0] in SOURCES and suffix in (".gd", ".tscn", ".tres")
-                or suffix in SCANNED and (p in dependents or any(p.startswith(d) for d in directories))):
+                or suffix in SCANNED and any(target in dependents for target in targets(p))):
             continue
         return receipt("unknown_input", suites, path=p)
     affected = consumers(reached)
