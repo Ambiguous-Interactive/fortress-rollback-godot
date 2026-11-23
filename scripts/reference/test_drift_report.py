@@ -12,6 +12,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
@@ -94,8 +95,11 @@ class FakeIssues:
     def read_comment(self, comment_id):
         return next(dict(comment) for comments in self.comments.values() for comment in comments if comment['id'] == comment_id)
 
-    def artifact_live(self, artifact, checkout_sha=None):
+    def artifact_live(self, artifact):
         return True
+
+    def artifact_digest(self, artifact, checkout_sha):
+        return self.receipt_digest
 
     def add_comment(self, number, body, author=None):
         comment_id = 1 + sum(map(len, self.comments.values()))
@@ -133,6 +137,15 @@ class DriftReportTests(unittest.TestCase):
         self.candidate[revision] = make_archive(files, f'{stem}-{revision}',
                                                 Path(self._root.name) / f'candidate-{revision}.tar.gz')
 
+    def hosted_archive(self, directory, fake):
+        receipt = directory.with_suffix('.zip')
+        with zipfile.ZipFile(receipt, 'w') as archive:
+            for report in sorted(directory.glob('*.json')):
+                archive.write(report, report.name)
+        fake.receipt_digest = hashlib.sha256(receipt.read_bytes()).hexdigest()
+        fake.identity = drift_report.ACTIONS_REPORTER
+        return str(receipt)
+
     def run_report(self, latest, issues=None, resolve=None, override=True, extra=()):
         fake = issues if issues is not None else FakeIssues()
 
@@ -149,6 +162,9 @@ class DriftReportTests(unittest.TestCase):
             for flag, value in (('--run-id', url.split('/')[-3]), ('--artifact-id', url.split('/')[-1]), ('--checkout-sha', CHECKOUT_SHA)):
                 if flag not in argv:
                     argv += [flag, value]
+            if '--artifact-archive' not in argv:
+                directory = Path([value for flag, value in zip(argv, argv[1:]) if flag == '--output'][-1])
+                argv += ['--artifact-archive', self.hosted_archive(directory, fake)]
         with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'download_archive', fake_download), \
              patch.object(drift_report, 'resolve_latest', resolve or (lambda entry: latest)):
@@ -249,7 +265,8 @@ class DriftReportTests(unittest.TestCase):
             return self.run_report(None, issues=fake, resolve=self.fail, override=False,
                                    extra=['--publish-staged', '--artifact-url', url])[0]
 
-        for old_state in ('absent', 'blockquote', 'legacy', 'hidden-replay', 'prior-checkout', 'live', 'forbidden', 'network-error', 'foreign-host', 'foreign-repo',
+        for old_state in ('absent', 'blockquote', 'legacy', 'hidden-replay', 'unicode-replay', 'hidden-link',
+                          'fenced-link', 'prior-checkout', 'live', 'forbidden', 'network-error', 'foreign-host', 'foreign-repo',
                           'invalid-id', 'different-digest', 'foreign-author', 'replacement-absent', 'same-id-missing',
                           'archive-mismatch', 'oversize', 'edited', 'duplicate', 'comment-id-out-of-range', 'artifact-id-out-of-range'):
             with self.subTest(old_state=old_state):
@@ -270,17 +287,23 @@ class DriftReportTests(unittest.TestCase):
                     recorded['body'] = recorded['body'].replace(base + '21', base + '21%2f22')
                 if old_state == 'blockquote':
                     artifact_line = next(line for line in recorded['body'].splitlines() if base + '21' in line)
-                    recorded['body'] = f'> Human quote: {artifact_line}\n\n' + recorded['body']
+                    recorded['body'] += f'\n> Human quote: {artifact_line}\n'
                 if old_state == 'prior-checkout':
                     recorded['body'] = recorded['body'].replace(CHECKOUT_SHA, 'a' * 40)
                 if old_state == 'artifact-id-out-of-range':
                     recorded['body'] = recorded['body'].replace(base + '21', base + str(1 << 63))
-                if old_state in ('legacy', 'hidden-replay'):
+                if old_state in ('legacy', 'hidden-replay', 'unicode-replay', 'hidden-link', 'fenced-link'):
                     start = recorded['body'].index('Check out ')
                     end = recorded['body'].index('\n```\n', start) + len('\n```\n\n')
                     old_replay = recorded['body'][start:end]
                     recorded['body'] = recorded['body'][:start] + recorded['body'][end:]
                     recorded['body'] += '\nHuman note that must survive.\n'
+                    if old_state == 'unicode-replay':
+                        recorded['body'] = recorded['body'][:start] + old_replay.rstrip('\n').replace('\n', '\u2028') + '\n\n' + recorded['body'][start:]
+                    if old_state in ('hidden-link', 'fenced-link'):
+                        link_start = recorded['body'].rindex('Full per-path classification')
+                        opening, closing = ('<!--', '-->') if old_state == 'hidden-link' else ('~~~md', '~~~')
+                        recorded['body'] = recorded['body'][:link_start] + opening + '\n' + recorded['body'][link_start:start] + closing + '\n' + recorded['body'][start:]
                     if old_state == 'hidden-replay':
                         recorded['body'] += f'<!--\n{old_replay}-->\n'
                 if old_state == 'archive-mismatch':
@@ -298,17 +321,21 @@ class DriftReportTests(unittest.TestCase):
                 reads = []
                 changed = False
 
-                def artifact_live(artifact, checkout_sha=None):
+                def artifact_live(artifact):
                     reads.append(artifact)
-                    if checkout_sha is None:
-                        self.assertEqual(artifact, (42, 21))
-                        if old_state in ('forbidden', 'network-error'):
-                            raise drift_report.ToolingError(old_state)
-                        return old_state == 'live'
+                    self.assertEqual(artifact, (42, 21))
+                    if old_state in ('forbidden', 'network-error'):
+                        raise drift_report.ToolingError(old_state)
+                    return old_state == 'live'
+
+                def artifact_digest(artifact, checkout_sha):
+                    reads.append(artifact)
                     self.assertEqual(checkout_sha, CHECKOUT_SHA)
                     expected = {'oversize': 100, 'same-id-missing': 21}.get(old_state, 22)
                     self.assertEqual(artifact, (42, expected))
-                    return old_state not in ('replacement-absent', 'same-id-missing')
+                    if old_state in ('replacement-absent', 'same-id-missing'):
+                        raise drift_report.ToolingError(old_state)
+                    return fake.receipt_digest
 
                 def read_comment(comment_id):
                     nonlocal changed
@@ -323,23 +350,26 @@ class DriftReportTests(unittest.TestCase):
                     recorded['body'] = body
 
                 fake.artifact_live = artifact_live
+                fake.artifact_digest = artifact_digest
                 fake.read_comment = read_comment
                 fake.update_comment = update_comment
                 suffix = {'oversize': '100', 'same-id-missing': '21'}.get(old_state, '22')
                 failed = old_state in ('forbidden', 'network-error', 'replacement-absent', 'same-id-missing',
-                                       'archive-mismatch', 'oversize', 'edited', 'duplicate', 'comment-id-out-of-range', 'artifact-id-out-of-range')
+                                       'archive-mismatch', 'oversize', 'edited', 'duplicate', 'comment-id-out-of-range',
+                                       'artifact-id-out-of-range', 'hidden-link', 'fenced-link')
                 self.assertEqual(publish(fake, base + suffix), int(failed))
                 self.assertEqual(len(fake.comments[number]), 2 if old_state in ('different-digest', 'foreign-author', 'duplicate') else 1)
                 self.assertEqual(reads[0], (42, int(suffix)))
                 if old_state in ('absent', 'blockquote', 'prior-checkout'):
-                    leading, target = original['body'].rsplit(base + '21', 1)
-                    self.assertEqual(recorded['body'], leading + base + '22' + target)
+                    self.assertEqual(recorded['body'], original['body'].replace(base + '21', base + '22', 1))
                     self.assertEqual(reads, [(42, 22), (42, 21)])
                     self.assertEqual(recorded['id'], original['id'])
                     self.assertEqual(recorded['author'], original['author'])
-                elif old_state in ('legacy', 'hidden-replay'):
+                elif old_state in ('legacy', 'hidden-replay', 'unicode-replay'):
                     archive_line = f'{base}22)\n\nCheck out `{CHECKOUT_SHA}`'
                     self.assertIn(archive_line, recorded['body'])
+                    self.assertIn('--output ".cache/results/replay-', recorded['body'])
+                    self.assertIn('\n\n```sh\npython3', recorded['body'])
                     self.assertIn(f'--latest fortress={NEW_SHA}', recorded['body'])
                     self.assertIn('Human note that must survive.', recorded['body'])
                     if old_state == 'hidden-replay':
@@ -363,9 +393,15 @@ class DriftReportTests(unittest.TestCase):
         for flag, value in (('--run-id', '43'), ('--artifact-id', '22'), ('--run-id', str(1 << 63))):
             with self.subTest(flag=flag, value=value), self.assertRaisesRegex(drift_report.ToolingError, 'must match'):
                 self.run_report(None, issues=fake, override=False, extra=[*args, flag, value])
-        with patch.object(fake, 'artifact_live', return_value=False) as lookup:
+        with patch.object(fake, 'artifact_digest', side_effect=drift_report.ToolingError('missing')) as lookup:
             self.assertEqual(self.run_report(None, issues=fake, override=False, extra=args)[0], 1)
         lookup.assert_called_once_with((42, 21), CHECKOUT_SHA)
+
+        wrong_digest = 'f' * 64
+        with patch.object(fake, 'artifact_digest', return_value=wrong_digest):
+            self.assertEqual(self.run_report(None, issues=fake, override=False, extra=args)[0], 1)
+        with self.assertRaisesRegex(drift_report.ToolingError, 'disallows'):
+            self.run_report(None, issues=fake, override=False, extra=[*args, '--reporting-identity', 'human'])
         self.assertFalse(fake.issues)
 
     def test_repeated_observation_of_the_same_state_is_noise_free(self):
@@ -752,7 +788,8 @@ class DriftReportTests(unittest.TestCase):
         output = self.output.with_name('partial')
         artifact_url = 'https://github.com/example/fortress/actions/runs/1/artifacts/2'
         publish = [*argv, *staged, '--publish-staged', '--artifact-url', artifact_url,
-                   '--run-id', '1', '--artifact-id', '2', '--checkout-sha', CHECKOUT_SHA]
+                   '--run-id', '1', '--artifact-id', '2', '--checkout-sha', CHECKOUT_SHA,
+                   '--artifact-archive', self.hosted_archive(output, fake)]
         with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'resolve_latest', self.fail):
             code = drift_report.main_with_args(publish)
@@ -768,6 +805,7 @@ class DriftReportTests(unittest.TestCase):
                          reviewed_revision=fortress_entry['revision'], records=None)
         malformed['report_digest'] = drift_report.observation_digest(malformed)
         (output / 'fortress.json').write_text(json.dumps(malformed), encoding='utf-8')
+        self.hosted_archive(output, fake)
         with patch.object(drift_report, 'GhIssueClient', lambda repo, **kwargs: fake), \
              patch.object(drift_report, 'resolve_latest', self.fail):
             code = drift_report.main_with_args(publish)
@@ -850,7 +888,7 @@ class GhIssueClientTests(unittest.TestCase):
                 responses = [(stdout, int(code != 200))]
 
                 def get_artifact(client):
-                    return client.artifact_live((42, 21), CHECKOUT_SHA)
+                    return client.artifact_metadata((42, 21), CHECKOUT_SHA) is not None
 
                 if result is None:
                     with self.assertRaises(drift_report.ToolingError):

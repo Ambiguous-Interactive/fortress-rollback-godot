@@ -297,7 +297,7 @@ class DriftReportWorkflowTests(unittest.TestCase):
         self.assertIn('group: drift-report', active)
         # The Actions installation token cannot resolve `gh api user` (HTTP
         # 403), so the scheduled run names its reporting identity explicitly.
-        self.assertIn('--reporting-identity github-actions[bot]', active)
+        self.assertNotIn('--reporting-identity', active)
         self.assertIn('  actions: read', active)
         self.assertIn('--checkout-sha "$GITHUB_SHA"', active)
 
@@ -305,7 +305,7 @@ class DriftReportWorkflowTests(unittest.TestCase):
     # Value: protects=observations link uploaded evidence; fails_when=publish precedes upload or reruns replace receipts; why_new=only trigger checks; seam=none
     def test_drift_publication_requires_an_immutable_upload(self):
         active = active_lines(read(DRIFT_REPORT))
-        phases = ('--stage', 'uses: actions/upload-artifact@', 'uses: actions/download-artifact@', '--publish-staged')
+        phases = ('--stage', 'uses: actions/upload-artifact@', '/actions/artifacts/$ARTIFACT_ID/zip', '--publish-staged')
         for phase in phases:
             self.assertIn(phase, active)
         stage, upload, download, publish = map(active.index, phases)
@@ -317,15 +317,12 @@ class DriftReportWorkflowTests(unittest.TestCase):
         self.assertIn("!cancelled() && steps.evidence.outcome == 'success' && steps.evidence.outputs.artifact-url != ''",
                       active[upload:publish])
         self.assertIn('ARTIFACT_URL: ${{ steps.evidence.outputs.artifact-url }}', active[upload:publish])
-        self.assertIn('artifact-ids: ${{ steps.evidence.outputs.artifact-id }}', active[download:publish])
-        self.assertIn('run-id: ${{ github.run_id }}', active[download:publish])
-        self.assertIn('repository: ${{ github.repository }}', active[download:publish])
+        self.assertIn('gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip"', active[upload:publish])
         self.assertIn('ARTIFACT_ID: ${{ steps.evidence.outputs.artifact-id }}', active[download:publish])
         self.assertIn('--artifact-id "$ARTIFACT_ID" --run-id "$GITHUB_RUN_ID"', active[publish:])
-        self.assertIn("!cancelled() && steps.receipt.outcome == 'success'", active[download:publish])
+        self.assertIn("!cancelled() && steps.receipt.outcome == 'success'", active[upload:publish])
         self.assertIn('--artifact-url "$ARTIFACT_URL"', active[publish:])
-        self.assertIn('RECEIPT_PATH: ${{ steps.receipt.outputs.download-path }}', active[download:publish])
-        self.assertIn('--output "$RECEIPT_PATH"', active[publish:])
+        self.assertIn('--artifact-archive "$RUNNER_TEMP/drift-reports.zip"', active[publish:])
 
 
 if __name__ == '__main__':
