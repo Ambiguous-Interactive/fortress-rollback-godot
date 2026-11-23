@@ -63,7 +63,11 @@ func _initialize() -> void:
 		if not _qualify(addresses):
 			quit(1)
 			return
-	if not _qualify(PackedInt32Array([1, 1, 1, 1, 1, 1, 1, 2])) or not _qualify(PackedInt32Array([1, 2]), true):
+	for layout: Array in [[1, 1, 1, 1, 1, 1, 1, 2], [8, 2, 5, 8, 5, 2, 8, 5]]:
+		if not _qualify(PackedInt32Array(layout)):
+			quit(1)
+			return
+	if not _qualify(PackedInt32Array([1, 2]), true):
 		quit(1)
 		return
 	quit(0)
@@ -71,17 +75,25 @@ func _initialize() -> void:
 
 func _qualify(addresses: PackedInt32Array, abort_on_correction: bool = false) -> bool:
 	var players: int = addresses.size()
+	var endpoints: PackedInt32Array = PackedInt32Array()
+	for address: int in addresses:
+		if address not in endpoints:
+			endpoints.append(address)
 	var drivers: Array[Driver] = []
 	var games: Array[ObservedGame] = []
-	for endpoint: int in addresses[-1]:
+	for endpoint: int in endpoints:
 		var roster: PackedInt32Array = addresses.duplicate()
+		var local_slots: PackedInt32Array = PackedInt32Array()
 		for slot: int in players:
-			if roster[slot] == endpoint + 1:
+			if roster[slot] == endpoint:
 				roster[slot] = 0
+				local_slots.append(slot)
 		var game: ObservedGame = ObservedGame.new(players, Driver.Native.INPUT_BYTES)
 		var driver: Driver = Driver.new()
 		if driver.configure_native(roster, game, game.snapshot_bytes()) != Types.Code.OK:
 			return _failed(addresses, "native driver configuration")
+		if driver.local_players() != local_slots:
+			return _failed(addresses, "incorrect local slot order at endpoint %d" % endpoint)
 		games.append(game)
 		drivers.append(driver)
 	var expected: PackedByteArray = _expected_state(players)
@@ -128,10 +140,14 @@ func _qualify(addresses: PackedInt32Array, abort_on_correction: bool = false) ->
 					return _failed(addresses, "conflicting stalled sample was accepted")
 				conflict_checked = true
 			for packet: Dictionary in driver.drain_native_packets():
-				var to: int = packet.endpoint - 1
+				var destination: int = packet.endpoint
+				var to: int = endpoints.find(destination)
+				var sender: int = endpoints[endpoint]
+				if to < 0 or to == endpoint:
+					return _failed(addresses, "invalid destination %d from endpoint %d" % [destination, sender])
 				if holding and (to == drivers.size() - 1 or endpoint == drivers.size() - 1):
-					held.append({"to": to, "from": endpoint + 1, "bytes": packet.bytes})
-				elif not drivers[to].receive_native(endpoint + 1, packet.bytes):
+					held.append({"to": to, "from": sender, "bytes": packet.bytes})
+				elif not drivers[to].receive_native(sender, packet.bytes):
 					return _failed(addresses, "could not route native packet")
 		if _all_confirmed(drivers, TARGET_FRAME - 1):
 			if abort_on_correction:
@@ -145,9 +161,9 @@ func _qualify(addresses: PackedInt32Array, abort_on_correction: bool = false) ->
 				stalls += counts.prediction_stalls
 				for wrong: int in game.wrong_rows:
 					if wrong < TARGET_FRAME:
-						return _failed(addresses, "incorrect confirmed input at frame %d (endpoint %d)" % [wrong, endpoint + 1])
+						return _failed(addresses, "incorrect confirmed input at frame %d (endpoint %d)" % [wrong, endpoints[endpoint]])
 				if game.at_target != expected:
-					return _failed(addresses, "canonical state differs at frame %d (endpoint %d)" % [TARGET_FRAME, endpoint + 1])
+					return _failed(addresses, "canonical state differs at frame %d (endpoint %d)" % [TARGET_FRAME, endpoints[endpoint]])
 			if restores == 0 or stalls == 0 or not conflict_checked:
 				return _failed(addresses, "missing restore, stall or conflicting-input control")
 			print("Native driver slots=%s confirmed=%d restores=%d stalls=%d conflicting_sample=rejected sha256=%s" % [

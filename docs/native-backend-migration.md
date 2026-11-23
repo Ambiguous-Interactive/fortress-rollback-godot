@@ -32,9 +32,11 @@ The opt-in driver entry point is `FortressDriver.configure_native(endpoints, gam
 The input array lists endpoint IDs in frozen slot order. Use zero for local slots
 and assign every authenticated remote endpoint a stable ID from 1 to 8. An
 endpoint can own multiple slots. Supply four bytes per local slot in ascending
-slot order through `step_local(now_us, inputs)`. After a waiting result, pass the
-same sample or omit it with an empty byte array. Drain and route native datagrams
-with `drain_native_packets()` and `receive_native()` even during waits.
+slot order through `step_local(now_us, inputs)`. The installed-addon witness
+covers consecutive and interleaved shared slots, including sparse endpoint IDs.
+After a waiting result, pass the same sample or omit it with an empty byte array.
+Drain and route native datagrams with `drain_native_packets()` and
+`receive_native()` even during waits.
 `receive_native_result()` distinguishes full queues from rejected packets
 so a transport can retry the original datagram after servicing the driver.
 The driver uses the existing `save_state`, `load_state` and
@@ -51,7 +53,7 @@ or close it after the match starts. Each case compares at least 40 confirmed inp
 and canonical snapshots, including samples after the close. The live-close case then withholds gameplay on both
 routes to exercise the upstream disconnect timeout with the SDK roster intact.
 Automatic direct restoration requires a replacement link within the same room
-and plan. [SignalFish SDK #585](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/585)
+and plan. [SignalFish SDK #585](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/585) tracks that dependency.
 
 ## Protocol and saved data
 
