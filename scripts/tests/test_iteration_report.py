@@ -1,7 +1,7 @@
 """Measure whole-candidate latency, including queue pickup and failed-attempt recovery."""
 import unittest
 
-from github.iteration_report import candidate, compare_budget, summary
+from github.iteration_report import candidate, compare_budget, cost_groups, summary
 
 STAMP = '2026-11-23T00:00:%02dZ'
 
@@ -35,6 +35,6 @@ class IterationReportTests(unittest.TestCase):
             return dict(event='pull_request', tooling_controls=tooling, runner_s=seconds, outcome='success')
         baseline = [row(True, 90), row(False, 10)]
         candidate_rows = [row(True, 92), row(True, 92), row(False, 10)]
-        self.assertTrue(compare_budget(baseline, candidate_rows)['within_budget'])
-        self.assertFalse(compare_budget(baseline, [row(False, 11)])['within_budget'])
-        self.assertFalse(compare_budget(baseline[:1], candidate_rows)['comparable'])
+        self.assertTrue(compare_budget(cost_groups(baseline), candidate_rows)['within_budget'])
+        self.assertFalse(compare_budget(cost_groups(baseline), [row(False, 11)])['within_budget'])
+        self.assertFalse(compare_budget(cost_groups(baseline[:1]), candidate_rows)['comparable'])

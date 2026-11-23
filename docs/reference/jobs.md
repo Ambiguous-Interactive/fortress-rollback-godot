@@ -4,7 +4,9 @@ Every Reference Baseline job spends wall time on the same warm cache key. This
 file records that per-job time so a later change is compared against a table
 instead of against a single run.
 
-## Measured baseline
+For current end-to-end targets, cost and measurement commands, see [iteration measurements](iteration.md).
+
+## Historical measured baseline
 
 The workflow currently runs 48 jobs: 32 ownership parts (two engines, two
 browsers, two phases, four interleaved suite parts), six SignalFish legs, eight

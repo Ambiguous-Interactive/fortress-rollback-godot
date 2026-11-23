@@ -12,7 +12,8 @@ from urllib.parse import urlencode
 
 
 def ts(value):
-    return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+    stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    return (stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)).timestamp()
 
 
 def candidate(origin, required, jobs):
@@ -66,23 +67,23 @@ def summary(rows):
                 total_runner_minutes=round(sum(r['runner_s'] for r in rows)/60, 2))
 
 
-def compare_budget(before, after):
-    """Weight baseline cost by the new run's event, tooling mix and final outcome."""
-    def group(row):
-        return row['event'], row['tooling_controls'], row['outcome']
+def cost_groups(rows):
+    groups = defaultdict(list)
+    for row in rows:
+        key = (row['event'], row['tooling_controls'], row['outcome'])
+        groups[key].append(row['runner_s'])
+    return [dict(event=e, tooling_controls=t, outcome=o, count=len(values), mean_runner_s=mean(values))
+            for (e, t, o), values in sorted(groups.items())]
 
-    def grouped(rows):
-        cohorts = defaultdict(list)
-        for row in rows:
-            cohorts[group(row)].append(row['runner_s'])
-        return cohorts
 
-    history = grouped(before)
-    current = grouped(after)
-    if not current or any(key not in history for key in current):
+def compare_budget(history, after):
+    """Weight baseline cost by the new sample's event, tooling mix and final outcome."""
+    costs = {(g['event'], g['tooling_controls'], g['outcome']): g['mean_runner_s'] for g in history}
+    try:
+        expected = sum(costs[r['event'], r['tooling_controls'], r['outcome']] for r in after)
+    except KeyError:
         return {'comparable': False}
-    expected = sum(mean(history[key]) * len(values) for key, values in current.items())
-    observed = sum(sum(values) for values in current.values())
+    observed = sum(r['runner_s'] for r in after)
     if expected <= 0:
         return {'comparable': False}
     return dict(comparable=True, observed_runner_minutes=round(observed / 60, 2), expected_runner_minutes=round(expected / 60, 2),
@@ -136,7 +137,7 @@ def collect(repo, since, until):
                                       for j in executed for step in j['steps'])
         result.append(dict(event=event, ref=ref, sha=sha, start=start, runs=[r['id'] for r in runs], **row))
     return dict(repo=repo, since=since, until=until, required=sorted(required), candidates=result,
-                summary={event: summary([r for r in result if r['event'] == event]) for event in ('pull_request', 'merge_group')})
+                cost_groups=cost_groups(result), summary={event: summary([r for r in result if r['event'] == event]) for event in ('pull_request', 'merge_group')})
 
 
 def main():
@@ -153,8 +154,7 @@ def main():
         if before['repo'] != args.repo or ts(before['until']) >= ts(args.since):
             parser.error('baseline must cover an earlier window in the same repository')
         for event, metrics in report['summary'].items():
-            metrics['budget'] = compare_budget([r for r in before['candidates'] if r['event'] == event],
-                                               [r for r in report['candidates'] if r['event'] == event])
+            metrics['budget'] = compare_budget(before['cost_groups'], [r for r in report['candidates'] if r['event'] == event])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, separators=(',', ':')) + '\n')
     print(json.dumps(report['summary'], indent=2))
