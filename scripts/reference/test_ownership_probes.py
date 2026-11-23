@@ -387,7 +387,8 @@ class OwnershipReceiptTests(unittest.TestCase):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory) / 'root'
                 cache = Path(directory) / 'cache'
-                files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+                files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/ownership_schedule.py', 'scripts/reference/web_templates.py',
+                                'scripts/reference/browser/ownership.cjs',
                                 'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
                                 'scripts/reference/browser/replay_chooser.cjs',
                                        'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
