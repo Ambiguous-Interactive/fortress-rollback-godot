@@ -46,19 +46,25 @@ function instrumentNativeWire() {
   const relayRecipients = new Map();
   const relaySenders = new Map();
   const held = { mesh: 0, relay: 0 };
-  const controlDuringHold = { sent: 0, received: 0 };
+  const controlRoundTrips = { mesh: 0, relay: 0 };
+  const pendingReports = new Map();
   const nativeBytes = bytes => bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
     : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
   const matches = (bytes, offset) => session && offset + session.length < bytes.length
     && session.every((byte, index) => bytes[offset + index] === byte);
   const inputKind = 2;
-  function nativeKind(bytes, offset) {
+  function nativePacket(bytes, offset) {
     // The pinned Fortress codec uses an eight-byte header and a little-endian u32 body tag.
     const at = offset + session.length;
     if (bytes.length < at + 12 || bytes[at] !== 0xf5 || bytes[at + 1] !== 0x52 || bytes[at + 2] !== 2 || bytes[at + 3] !== 0) {
       throw new Error('native gameplay wire header differs from the pinned codec');
     }
-    return new DataView(bytes.buffer, bytes.byteOffset + at + 8, 4).getUint32(0, true);
+    const kind = new DataView(bytes.buffer, bytes.byteOffset + at + 8, 4).getUint32(0, true);
+    // A quality report carries an i16 followed by a u128. The reply echoes the u128.
+    const tokenOffset = kind === 4 ? at + 14 : at + 12;
+    const token = holding && !holdAll && (kind === 4 || kind === 5) && bytes.length === tokenOffset + 16
+      ? hex(bytes.subarray(tokenOffset)) : null;
+    return { kind, token };
   }
   const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
   function relayAddresses(data) {
@@ -69,23 +75,26 @@ function instrumentNativeWire() {
       if (view[index] === 70 && view[index + 1] === 83 && view[index + 2] === 82 && view[index + 3] === 49
           && view[index + 4] === 1 && matches(view, index + 5) && matches(view, index + 57)) {
         return { sender: hex(view.subarray(index + 21, index + 37)), recipient: hex(view.subarray(index + 37, index + 53)),
-          kind: nativeKind(view, index + 57) };
+          ...nativePacket(view, index + 57) };
       }
     }
     return null;
   }
   const increment = (counts, uuid) => counts.set(uuid, (counts.get(uuid) ?? 0) + 1);
   const ufrag = description => description?.sdp.match(/^a=ice-ufrag:([\w+/]+)\r?$/m)?.[1];
-  function receive(kind) {
-    if (holding && !holdAll && kind !== inputKind) controlDuringHold.received++;
+  function receive(route, link, packet) {
+    if (packet.kind === 5 && packet.token !== null && pendingReports.get(link) === packet.token) {
+      controlRoundTrips[route]++;
+      pendingReports.delete(link);
+    }
   }
-  function send(route, emit, data, kind) {
-    if (kind === null) return emit(data);
+  function send(route, link, emit, data, packet) {
+    if (!packet) return emit(data);
     counts[route]++;
     if (!holding) return emit(data);
-    if (!holdAll && kind !== inputKind) {
+    if (!holdAll && packet.kind !== inputKind) {
       const sent = emit(data);
-      controlDuringHold.sent++;
+      if (packet.kind === 4 && packet.token !== null) pendingReports.set(link, packet.token);
       return sent;
     }
     if (active.length >= 1024 || totalBytes + data.byteLength > 1024 * 1024) throw new Error('native packet hold exceeded bounds');
@@ -119,18 +128,18 @@ function instrumentNativeWire() {
       const view = nativeBytes(data);
       if (channel.id === 3 && view && matches(view, 0)) {
         record.received++;
-        receive(nativeKind(view, 0));
+        receive('mesh', channel, nativePacket(view, 0));
       }
     });
     resources.rtc.push(record);
     const nativeSend = channel.send;
     channel.send = data => {
       const view = nativeBytes(data);
-      const kind = channel.id === 3 && view && matches(view, 0) ? nativeKind(view, 0) : null;
-      return send('mesh', bytes => {
+      const packet = channel.id === 3 && view && matches(view, 0) ? nativePacket(view, 0) : null;
+      return send('mesh', channel, bytes => {
         nativeSend.call(channel, bytes);
-        if (kind !== null) record.sent++;
-      }, data, kind);
+        if (packet) record.sent++;
+      }, data, packet);
     };
     return channel;
   };
@@ -155,7 +164,7 @@ function instrumentNativeWire() {
       const packet = relayAddresses(data);
       if (packet && packet.recipient === localUuid) {
         increment(relaySenders, packet.sender);
-        receive(packet.kind);
+        receive('relay', packet.sender, packet);
       }
     });
     return socket;
@@ -163,10 +172,10 @@ function instrumentNativeWire() {
   const socketSend = nativeSocket.prototype.send;
   nativeSocket.prototype.send = function(data) {
     const packet = relayAddresses(data);
-    return send('relay', bytes => {
+    return send('relay', packet?.recipient, bytes => {
       socketSend.call(this, bytes);
       if (packet) increment(relayRecipients, packet.recipient);
-    }, data, packet?.kind ?? null);
+    }, data, packet);
   };
   window.fortressNativeWire = {
     bind(hash, uuid) {
@@ -188,6 +197,7 @@ function instrumentNativeWire() {
     release() {
       if (!holding || !active.length) throw new Error('native packet hold did not take effect');
       holding = false;
+      pendingReports.clear();
       for (const emit of active) {
         emit();
         released++;
@@ -215,7 +225,7 @@ function instrumentNativeWire() {
         return { local: record.local, remote: record.remote, closeAborts: record.closeAborts };
       });
       return { armed, holding, hold_ms: holdMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
-        control_during_hold: { ...controlDuringHold },
+        control_round_trips: { ...controlRoundTrips },
         relayRecipients: Object.fromEntries(relayRecipients), relaySenders: Object.fromEntries(relaySenders),
         ice: [...ice.values()], sctp,
         rtc: resources.rtc.map(({channel, sent, received}) => [channel.id, channel.readyState, sent, received]),
@@ -386,7 +396,7 @@ async function run(root, endpoint, mode, players, browserPair) {
         if (state === 'failed') return true;
         if (state !== 'playing' || stalls <= threshold.stalls || prediction < threshold.frame) return false;
         const wire = window.fortressNativeWire.status();
-        return wire.held[threshold.route] > 0 && wire.control_during_hold.sent > 0 && wire.control_during_hold.received > 0;
+        return wire.held[threshold.route] > 0 && wire.control_round_trips[threshold.route] > 0;
       },
       { route, stalls: armed[index].stalls, frame: GATE_FRAME }, 45000)));
       stalled = await observe();
@@ -449,7 +459,7 @@ async function run(root, endpoint, mode, players, browserPair) {
       assert.ok(peer.saves > 0 && peer.advances > peer.frame && peer.restores > before.restores, 'save, load and re-advance must run');
       assert.ok(before.frame > GATE_FRAME && before.confirmed < before.frame - 1, 'gate must force prediction beyond confirmation');
       assert.ok(before.wire.holding && before.wire.held[route] > 0, 'native bytes must be held on the selected physical route');
-      assert.ok(before.wire.control_during_hold.sent > 0 && before.wire.control_during_hold.received > 0, 'control traffic must keep flowing during the input hold');
+      assert.ok(before.wire.control_round_trips[route] > 0, 'native control must make a round trip on the selected route during the input hold');
       assert.ok(!peer.wire.holding && peer.wire.totalBytes > 0 && peer.wire.released === peer.wire.held[route], 'held originals must be released');
       assert.equal(peer.wire.counts[other], 0, 'native traffic must use the selected physical route');
       if (route === 'mesh') assert.equal(peer.wire.rtc.filter(([id, state]) => id === 3 && state === 'open').length, players - 1);

@@ -23,8 +23,9 @@ Retain the earlier browser-open tick count to diagnose event delivery lag.
 Require both views to be ready when a direct-only room starts.
 
 Withhold native input datagrams to force a prediction stall while the link
-can still carry control traffic. Verify control receipt during the hold and
-release the original input bytes. Use a separate full outage to prove expiry.
+can still carry control traffic. Match each player's quality reply to a report
+sent during the hold on the same physical link, then release the original
+input bytes. Use a separate full outage to prove expiry.
 
 Qualify cross-origin control services with actual browser preflight and authenticated fetch.
 Native HTTP success does not exercise browser origin enforcement; keep origin permission separate from role capabilities.
