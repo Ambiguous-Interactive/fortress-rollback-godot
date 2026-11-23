@@ -368,7 +368,8 @@ class ReceiptControls(unittest.TestCase):
 
     def test_verified_full_shard_requires_every_listed_case_in_both_processes(self) -> None:
         suites = RUNNER.discover("unit")
-        suite = suites[0]
+        shard = f"1of{len(suites)}"
+        suite, = RUNNER.select_shard(suites, shard, RUNNER.load_durations(ROOT / "scripts/unit_suite_seconds.json"))
         result = valid_result()
         result["records"][0]["suite"] = suite
         second = copy.deepcopy(result["records"][0])
@@ -388,7 +389,7 @@ class ReceiptControls(unittest.TestCase):
             )
             write_executable(engine, program)
             args = [sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", str(engine), "--verify-inventory",
-                    "--shard", f"1of{len(suites)}", "--jobs", "2", "--durations", str(root / "times"), "--results", str(output)]
+                    "--shard", shard, "--jobs", "2", "--durations", str(root / "times"), "--results", str(output)]
             env = dict(os.environ, FORTRESS_HOST_CAPACITY_DIR=str(root / "capacity"))
             for missing in (False, True):
                 if missing:
