@@ -107,6 +107,12 @@ def inputs(path: str, text: str) -> tuple[set[str], bool]:
     opaque = False
     for match in LITERAL.finditer(text):
         value = match["value"]
+        if "\\" in value:
+            # An escaped resource spelling is not a proven edge. Serialized resources can also encode the entire URI.
+            if ("://" in value or PurePosixPath(value).suffix in SCANNED
+                    or path == "project.godot" or path.endswith((".tscn", ".tres"))):
+                opaque = True
+                continue
         if path == "project.godot":
             value = value.removeprefix("*")  # Godot's global autoload notation.
         if value.startswith("res://"):
@@ -131,6 +137,8 @@ def inputs(path: str, text: str) -> tuple[set[str], bool]:
             arg = LITERAL.match(text, match.end())
             if not arg:
                 opaque |= not bound_argument(text, match.end(), constants)
+            elif "\\" in arg["value"]:
+                opaque = True
             elif not arg["value"].startswith(("res://", "user://")) and PurePosixPath(arg["value"]).suffix not in SCANNED:
                 opaque = True
             elif not text[arg.end():].lstrip().startswith((",", ")")):
