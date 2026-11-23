@@ -97,4 +97,8 @@ requires the controls and the complete matrix. A standalone qualification dispat
 Per engine, the matrix balances whole-unit suites by recorded time, runs integration and determinism
 separately, and distributes the upstream oracle launchers across four jobs. A common server build
 supplies the verified executable to the transport jobs. Chromium ownership assigns the download
-controls and expensive suites to parts by estimated cost. Firefox retains its nightly plan.
+controls and expensive suites to five parts on Godot 4.3 and four on 4.7.2. Firefox retains four
+parts per phase on each pin. Browser jobs share a verified Web-only subset of the upstream export
+templates. An unknown upstream digest uses the full pinned archive. Nightly refreshes the per-engine
+template and editor caches on main so future merge refs can restore them.
+[GitHub cache scope](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache)
