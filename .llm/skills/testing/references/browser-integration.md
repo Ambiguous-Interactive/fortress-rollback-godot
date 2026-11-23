@@ -151,6 +151,13 @@ absolute room/launcher/job ceiling. Packet counts, stage names and clocks do not
 prove progress. Fresh execution must still satisfy every acceptance gate.
 Capture bounded physical channel counters before destroying a failed room; keep
 the original rejection and bound each diagnostic independently of gameplay.
+Keep the pre-release snapshot when a stalled renderer may refuse later reads.
+Match addressed control reports and replies by peer and token, and record
+browser send and SDK receive queue peaks in the same phase. If release itself
+causes a measured fanout burst, pace the synthetic release in FIFO order while
+control traffic continues. Keep the original packet cap and correction deadline.
+Export the requested confirmed prefix once per browser. Keep recurring status
+snapshots small, and verify the exact receipt returned after readiness.
 Prepare shared ZIP tools through verified member comparison and atomic replacement;
 never truncate an executable inode held by another process. Exercise preparation
 with an actual live executable and a corrupt-cache control. Keep launcher-owned

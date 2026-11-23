@@ -161,6 +161,66 @@ class DriftReportTests(unittest.TestCase):
         self.assertIn('`src/session.rs`', comment)
         self.assertNotIn('docs/guide.md', comment)
 
+    # Value: protects=large drift publishes and preserves all paths; fails_when=comment exceeds GitHub's body budget; why_new=small archives fit; seam=none
+    def test_oversized_observation_keeps_complete_receipt_and_deduplicates(self):
+        candidate = {f'src/{index:04d}-' + '界' * 20 + '.rs': str(index) for index in range(360)}
+        self.prepare_candidate(NEW_SHA, candidate)
+        artifact_url = 'https://github.com/example/fortress/actions/runs/42/artifacts/99'
+        for hosted in (False, True):
+            with self.subTest(hosted=hosted):
+                fake = FakeIssues()
+                add_comment = fake.add_comment
+
+                def bounded_comment(number, body):
+                    if len(body.encode('utf-8')) > 65_536:
+                        raise drift_report.ToolingError('GitHub comment exceeds the 65536-byte budget')
+                    add_comment(number, body)
+
+                fake.add_comment = bounded_comment
+                if hosted:
+                    failed_output = self.output.with_name('failed_attempt')
+                    code, _ = self.run_report(NEW_SHA, issues=fake, extra=['--stage', '--output', str(failed_output)])
+                    self.assertEqual(code, 0)
+                    self.assertFalse(fake.issues)
+                    failed_receipt = (failed_output / 'fortress.json').read_bytes()
+                    self.prepare_candidate(NEWER_SHA, candidate)
+                    stage_output = self.output.with_name('succeeded_attempt')
+                    code, _ = self.run_report(NEWER_SHA, issues=fake, extra=['--stage', '--output', str(stage_output)])
+                    self.assertEqual(code, 0)
+                    self.assertFalse(fake.issues)
+                    publish = ['--publish-staged', '--artifact-url', artifact_url, '--output', str(stage_output)]
+                    invoke = lambda: self.run_report(None, issues=fake, resolve=self.fail, override=False, extra=publish)
+                else:
+                    stage_output = self.output
+                    invoke = lambda: self.run_report(NEW_SHA, issues=fake)
+
+                code, _ = invoke()
+                self.assertEqual(code, 0)
+                number = next(iter(fake.issues))
+                self.assertEqual(len(fake.comments[number]), 1)
+                body = fake.comments[number][0]['body']
+                self.assertIn('360 added', body)
+                self.assertIn('fortress.json', body)
+                self.assertEqual(artifact_url in body, hosted)
+                path = stage_output / 'fortress.json'
+                receipt = json.loads(path.read_text(encoding='utf-8'))
+                self.assertEqual({record['path'] for record in receipt['records']}, set(OLD_FILES) | set(candidate))
+                self.assertIn(f"report-digest: `{receipt['report_digest']}`", body)
+                self.assertIn(receipt['candidate_archive_sha256'], body)
+                if hosted:
+                    self.assertIn(NEWER_SHA, body)
+                    self.assertNotIn(NEW_SHA, body)
+                    self.assertEqual((failed_output / 'fortress.json').read_bytes(), failed_receipt)
+                code, _ = invoke()
+                self.assertEqual(code, 0)
+                self.assertEqual(len(fake.comments[number]), 1)
+                if hosted:
+                    receipt['files_added'] = 0
+                    path.write_text(json.dumps(receipt), encoding='utf-8')
+                    code, _ = invoke()
+                    self.assertEqual(code, 1)
+                    self.assertEqual(len(fake.comments[number]), 1)
+
     def test_repeated_observation_of_the_same_state_is_noise_free(self):
         self.prepare_candidate(NEW_SHA, NEW_FILES)
         code, fake = self.run_report(NEW_SHA)
@@ -534,14 +594,47 @@ class DriftReportTests(unittest.TestCase):
         streams = sorted(issue['title'] for issue in fake.issues.values())
         self.assertEqual(streams, ['Upstream drift report: sdk'])
 
+        fake = FakeIssues()
+        staged = ['--output', str(self.output.with_name('partial'))]
+        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+             patch.object(drift_report, 'download_archive', download), \
+             patch.object(drift_report, 'resolve_latest', resolve):
+            code = drift_report.main_with_args([*argv, *staged, '--stage'])
+        self.assertEqual(code, 1)
+        self.assertFalse(fake.issues)
+        output = self.output.with_name('partial')
+        artifact_url = 'https://github.com/example/fortress/actions/runs/1/artifacts/2'
+        publish = [*argv, *staged, '--publish-staged', '--artifact-url', artifact_url]
+        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+             patch.object(drift_report, 'resolve_latest', self.fail):
+            code = drift_report.main_with_args(publish)
+        self.assertEqual(code, 0)
+        self.assertEqual([issue['title'] for issue in fake.issues.values()], ['Upstream drift report: sdk'])
+        self.assertIn(artifact_url, next(iter(fake.comments.values()))[0]['body'])
+
+        fake = FakeIssues()
+        sdk_receipt = json.loads((output / 'sdk.json').read_text(encoding='utf-8'))
+        manifest = json.loads(self.pins.read_text(encoding='utf-8'))
+        fortress_entry = manifest['sources']['fortress']
+        malformed = dict(sdk_receipt, source='fortress', repository=fortress_entry['repository'],
+                         reviewed_revision=fortress_entry['revision'], records=None)
+        malformed['report_digest'] = drift_report.observation_digest(malformed)
+        (output / 'fortress.json').write_text(json.dumps(malformed), encoding='utf-8')
+        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+             patch.object(drift_report, 'resolve_latest', self.fail):
+            code = drift_report.main_with_args(publish)
+        self.assertEqual(code, 1)
+        self.assertEqual([issue['title'] for issue in fake.issues.values()], ['Upstream drift report: sdk'])
+        self.assertIn(artifact_url, next(iter(fake.comments.values()))[0]['body'])
+
 
 class GhIssueClientTests(unittest.TestCase):
     def run_client(self, argv_responses, call):
         """Drive one client method against scripted `gh api` responses."""
         calls = []
 
-        def fake_run(command, capture_output, encoding, timeout, check):
-            calls.append(command)
+        def fake_run(command, capture_output, encoding, timeout, check, input=None):
+            calls.append((command, input))
             stdout, code = argv_responses[len(calls) - 1]
             return subprocess.CompletedProcess(command, code, stdout, 'boom')
 
@@ -560,30 +653,35 @@ class GhIssueClientTests(unittest.TestCase):
                                         lambda client: client.list_issues())
         self.assertEqual(result, [{'number': 2, 'state': 'closed', 'title': '', 'body': 'carrier'},
                                   {'number': 3, 'state': 'open', 'title': '', 'body': ''}])
-        self.assertIn('--paginate', calls[0])
-        self.assertIn('--slurp', calls[0])
-        self.assertIn('repos/example/fortress/issues?state=all&per_page=100', calls[0])
+        argv, body = calls[0]
+        self.assertIn('--paginate', argv)
+        self.assertIn('--slurp', argv)
+        self.assertIn('repos/example/fortress/issues?state=all&per_page=100', argv)
+        self.assertIsNone(body)
 
-    def test_create_update_and_comment_construct_post_fields(self):
+    def test_create_update_and_comment_send_json_stdin(self):
         created = json.dumps({'number': 7})
+        body = 'line 1\n"quoted" \u754c'
 
         def exercise(client):
-            number = client.create_issue('Upstream drift report: fortress', 'body text')
-            client.update_issue(7, body='new body')
+            number = client.create_issue('Upstream drift report: fortress', body)
+            client.update_issue(7, body=body)
             client.update_issue(7, state='open')
-            client.add_comment(7, 'observation')
+            client.add_comment(7, body)
             client.list_comments(7)
             return number
 
         result, calls = self.run_client([(created, 0), ('{}', 0), ('{}', 0), ('{}', 0), ('[]', 0)], exercise)
         self.assertEqual(result, 7)
-        self.assertEqual(calls[1], ['gh', 'api', '-X', 'PATCH', 'repos/example/fortress/issues/7',
-                                    '-f', 'body=new body'])
-        self.assertEqual(calls[2], ['gh', 'api', '-X', 'PATCH', 'repos/example/fortress/issues/7',
-                                    '-f', 'state=open'])
-        self.assertIn('repos/example/fortress/issues/7/comments', calls[3])
-        self.assertIn('-f', calls[3])
-        self.assertIn('body=observation', calls[3])
+        for (argv, payload), (method, path, fields) in zip(calls[:4], [
+            ('POST', 'issues', {'title': 'Upstream drift report: fortress', 'body': body}),
+            ('PATCH', 'issues/7', {'body': body}),
+            ('PATCH', 'issues/7', {'state': 'open'}),
+            ('POST', 'issues/7/comments', {'body': body}),
+        ], strict=True):
+            with self.subTest(method=method, path=path, fields=fields):
+                self.assertEqual(argv, ['gh', 'api', '-X', method, f'repos/example/fortress/{path}', '--input', '-'])
+                self.assertEqual(json.loads(payload), fields)
 
     def test_a_failed_gh_call_raises_a_named_tooling_error(self):
         with self.assertRaises(drift_report.ToolingError) as caught:
@@ -607,7 +705,7 @@ class GhIssueClientTests(unittest.TestCase):
     def test_the_reporting_identity_is_resolved_and_validated(self):
         result, calls = self.run_client([('gh-bot\n', 0)], lambda client: client.current_login())
         self.assertEqual(result, 'gh-bot')
-        self.assertIn('user', calls[0])
+        self.assertIn('user', calls[0][0])
 
         import subprocess
 

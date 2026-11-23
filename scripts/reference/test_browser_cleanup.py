@@ -33,6 +33,7 @@ for (const expiry of [false, true]) {
     send(bytes) { seen.push(Array.from(bytes)); }
   }
   class Socket {
+    bufferedAmount = 4096;
     written = [];
     addEventListener(name, listener) { this[name] = listener; }
     send(bytes) { this.written.push(bytes); }
@@ -59,8 +60,10 @@ for (const expiry of [false, true]) {
     envelope.set([0xa1, 0x73, 0x01], 57 + data.length);
     return envelope;
   };
-  wire.bind('00'.repeat(16), local);
   const socket = new window.WebSocket();
+  socket.send('authenticate');
+  assert.deepEqual(socket.written.splice(0), ['authenticate']);
+  wire.bind('00'.repeat(16), local);
   const otherSocket = new window.WebSocket();
   channel.send(packet(4, 1));
   seen.length = 0;
@@ -86,11 +89,29 @@ for (const expiry of [false, true]) {
     socket.message({data: relay(2, 3, packet(5, 2))});
     assert.equal(wire.status().control_round_trips.relay, 0);
     socket.message({data: reply});
+    socket.message({data: relay(2, 1, packet(4, 4))});
+    socket.send(relay(1, 2, packet(5, 4)));
   }
   assert.equal(wire.status().held.mesh, expiry ? 4 : 1);
   assert.equal(wire.status().held.relay, expiry ? 1 : 0);
   assert.deepEqual({...wire.status().control_round_trips}, {mesh: expiry ? 0 : 1, relay: expiry ? 0 : 1});
-  assert.deepEqual(socket.written, expiry ? [] : [report]);
+  assert.deepEqual(socket.written, expiry ? [] : [report, relay(1, 2, packet(5, 4))]);
+  const relayTrace = wire.status().relay_trace;
+  assert.equal(relayTrace.buffered_bytes_peak, expiry ? 0 : 4096);
+  assert.equal(relayTrace.events.length, expiry ? 0 : 6);
+  if (!expiry) {
+    assert.deepEqual(JSON.parse(JSON.stringify(relayTrace.events)).map(({direction, kind, peer, token}) => [direction, kind, peer, token.slice(-2)]), [
+      ['send', 4, '02'.repeat(16), '02'], ['receive', 5, '02'.repeat(16), '02'],
+      ['receive', 5, '03'.repeat(16), '02'], ['receive', 5, '02'.repeat(16), '02'],
+      ['receive', 4, '02'.repeat(16), '04'], ['send', 5, '02'.repeat(16), '04'],
+    ]);
+    assert.equal(relayTrace.events.every(event => Number.isFinite(event.at_ms)), true);
+    for (let i = 0; i < 256; i++) socket.message({data: relay(2, 1, packet(4, i))});
+    const wrapped = wire.status().relay_trace;
+    assert.equal(wrapped.event_count, 262);
+    assert.equal(wrapped.events.length, 256);
+    assert.deepEqual(wrapped.events.map(event => parseInt(event.token.slice(-2), 16)).join(), Array.from({length: 256}, (_, i) => i).join());
+  }
   assert.throws(() => channel.send(packet(7, 0, 3)), /native gameplay wire header/);
   if (!expiry) {
     wire.release();
@@ -101,11 +122,133 @@ for (const expiry of [false, true]) {
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
+    def test_native_relay_release_drains_originals_in_order_while_control_passes(self):
+        # Value: protects=bounded FIFO recovery on the real socket hook; fails_when=release bursts or overtakes; seam=browser send
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire } = require(process.argv[1]);
+const released = [], turns = [];
+class Socket {
+  static OPEN = 1;
+  readyState = Socket.OPEN;
+  bufferedAmount = 0;
+  addEventListener() {}
+  send(bytes) { released.push(bytes.at(-1)); }
+}
+const realm = { window: {}, performance, Uint8Array, ArrayBuffer, DataView, WebSocket: Socket,
+  RTCPeerConnection: class {}, requestAnimationFrame(callback) { turns.push(callback); } };
+runInNewContext(`(${instrumentNativeWire})()`, realm);
+const wire = realm.window.fortressNativeWire;
+wire.bind('00'.repeat(16), '01'.repeat(16));
+const socket = new realm.window.WebSocket();
+const relay = (kind, value) => {
+  const bytes = new Uint8Array(57 + (kind === 4 ? 46 : 29));
+  bytes.set([70, 83, 82, 49, 1]);
+  bytes.fill(1, 21, 37);
+  bytes.fill(2, 37, 53);
+  new DataView(bytes.buffer).setUint32(53, bytes.length - 57, true);
+  bytes.set([0xf5, 0x52, 2, 0, 1, 0, 0, 0, kind, 0, 0, 0], 73);
+  bytes[bytes.length - 1] = value;
+  return bytes;
+};
+async function run() {
+  wire.arm();
+  for (let i = 0; i < 33; i++) socket.send(relay(2, i));
+  const recovery = wire.release();
+  assert.equal(released.length, 16);
+  socket.send(relay(2, 33));
+  socket.send(relay(4, 99));
+  assert.deepEqual(released.slice(-2), [15, 99]);
+  assert.equal(turns.length, 1);
+  while (turns.length) {
+    turns.shift()();
+    await Promise.resolve();
+  }
+  await recovery;
+  assert.deepEqual(released.filter(value => value !== 99), Array.from({length: 34}, (_, i) => i));
+  assert.equal(wire.status().released, 34);
+  assert.equal(wire.status().holding, false);
+  assert.equal(wire.status().held.relay, 34);
+  socket.send(relay(2, 34));
+  assert.equal(released.at(-1), 34);
+  const stopped = { ...realm, window: {}, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
+  runInNewContext(`(${instrumentNativeWire})()`, stopped);
+  const stoppedWire = stopped.window.fortressNativeWire;
+  const stoppedSocket = new stopped.window.WebSocket();
+  stoppedWire.bind('00'.repeat(16), '01'.repeat(16));
+  stoppedWire.arm();
+  stoppedSocket.send(relay(2, 55));
+  stoppedSocket.readyState = 3;
+  await assert.rejects(stoppedWire.release(), /closed before release send/);
+  assert.equal(stoppedWire.status().released, 0);
+
+  const full = { ...realm, window: {}, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
+  runInNewContext(`(${instrumentNativeWire})()`, full);
+  const fullWire = full.window.fortressNativeWire;
+  const fullSocket = new full.window.WebSocket();
+  fullWire.bind('00'.repeat(16), '01'.repeat(16));
+  fullWire.arm();
+  for (let i = 0; i < 1024; i++) fullSocket.send(relay(2, i));
+  const overflow = assert.rejects(fullWire.release(), /native packet hold exceeded bounds/);
+  assert.throws(() => fullSocket.send(relay(2, 33)), /native packet hold exceeded bounds/);
+  while (turns.length) {
+    turns.shift()();
+    await Promise.resolve();
+  }
+  await overflow;
+  assert.equal(fullWire.status().released, 16);
+}
+const timer = setTimeout(() => { throw new Error('release did not settle'); }, 1000);
+run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
+    def test_native_history_capture_rejects_stale_rows_and_snapshot_mutations(self):
+        # Value: protects=fresh confirmed history; fails_when=reusing a capture or skipping either comparison; why_new=per-render capture had no request boundary; seam=browser
+        script = r"""
+const assert = require('node:assert/strict');
+const { compareHistory, readConfirmedHistory } = require(process.argv[1]);
+
+async function run() {
+  const fresh = { frames: 2, rows: { 0: [1, 2], 1: [1, 2] }, snapshots: { 1: '01', 2: '02' } };
+  global.window = { fortressNativeHistory: { ...fresh, snapshots: { 1: 'ff', 2: 'ff' } } };
+  const page = { async evaluate(operation, value) { return operation(value); } };
+  const captured = await readConfirmedHistory(page, 2, async (owner, complete, frames) => {
+    assert.equal(owner, page);
+    assert.equal(window.fortressNativeCapture, 2);
+    assert.equal(complete(frames), false, 'an old capture for the same frame count must be invalidated');
+    window.fortressNativeHistory = fresh;
+    assert.equal(complete(frames), true);
+  });
+  assert.deepEqual(captured, fresh);
+  await assert.rejects(readConfirmedHistory(page, 2, async (_, complete, frames) => {
+    window.fortressNativeHistory = fresh;
+    assert.equal(complete(frames), true);
+    window.fortressNativeHistory = { ...fresh, frames: 3 };
+  }), /native history receipt changed/);
+
+  const peers = [0, 1].map(slot => ({ ...fresh, index: slot, slot, uuid: String(slot), session_id: '00'.repeat(16), room_id: 'room' }));
+  compareHistory(peers, 2);
+  for (const [field, mutation, error] of [
+    ['rows', { 1: [2, 1] }, /input row at frame 1/],
+    ['snapshots', { 2: 'ff' }, /canonical state at frame 2/],
+  ]) {
+    const changed = { ...peers[1], [field]: { ...peers[1][field], ...mutation } };
+    assert.throws(() => compareHistory([peers[0], changed], 2), error);
+  }
+}
+run().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
     def test_native_webkit_abort_must_belong_to_the_reported_closed_link(self):
         # Value: protects=departure attribution; fails_when=another link excuses the warning; seam=browser receipt validator
         script = r"""
 const assert = require('node:assert/strict');
-const { reportedChannel, receivedClose } = require(process.argv[1]);
+const { closeEvidence, reportedChannel } = require(process.argv[1]);
+const receivedClose = (index, channel, before, closed, closer, {sentAt, clocks} = {}) =>
+  Boolean(closeEvidence({index, channel, sentAt}, before, closed, closer, clocks).proof);
 const frame = '    at fortressNativeSend_5 (:5:27)';
 assert.deepEqual(reportedChannel('Error sending binary data\n' + frame), {channel:5, sentAt:null});
 assert.deepEqual(reportedChannel(frame + '\n' + frame), {channel:null, sentAt:null});
@@ -136,6 +279,91 @@ assert.ok(!receivedClose(1, 5, [link, other], [[counterpart, counterpart], close
 assert.ok(!receivedClose(1, 5, [link, other], [[counterpart], [link, {...other, closeAborts:1}]]));
 const same = {...link, remote:link.local};
 assert.ok(!receivedClose(1, 5, [same], [[], [{...same, closeAborts:2, closed:true}]]));
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
+    def test_native_webkit_close_receipt_names_the_ambiguous_link(self):
+        # Value: protects=failed causal attribution; fails_when=actual reciprocal channel or clock gap is lost; seam=browser receipt validator
+        script = r"""
+const assert = require('node:assert/strict');
+const { closeEvidence } = require(process.argv[1]);
+const before = {index:17, local:'survivor', remote:'leaver', closeAborts:1, closed:false};
+const sender = {...before, closed:true, connectionClosed:true, closedAt:50000};
+const closer = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
+const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
+const tagged = {index:1, channel:17, sentAt:47199};
+const fail = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks);
+assert.deepEqual(JSON.parse(JSON.stringify(fail)), {
+  ...tagged, closer:null, before, sender, counterparts:[{...closer, owner:0}], minimumGapUs:1999, proof:null,
+});
+const timed = closeEvidence({...tagged, sentAt:47200}, [before], [[closer], [sender]], null, clocks);
+assert.equal(timed.minimumGapUs, 2000);
+assert.equal(timed.proof, 'clock-order');
+const aborted = closeEvidence(tagged, [before], [[closer], [{...sender, closeAborts:2}]], null, clocks);
+assert.equal(aborted.minimumGapUs, 1999);
+assert.equal(aborted.proof, 'sctp-abort');
+const missing = closeEvidence(tagged, [before], [[], [sender]], null, clocks);
+assert.deepEqual(missing.counterparts, []);
+assert.equal(missing.minimumGapUs, null);
+assert.equal(missing.proof, null);
+const duplicate = closeEvidence(tagged, [before], [[closer], [sender], [closer]], null, clocks);
+assert.deepEqual(duplicate.counterparts, [{...closer, owner:0}, {...closer, owner:2}]);
+assert.equal(duplicate.proof, null);
+const stream = closeEvidence(tagged, [before], [[{...closer, connectionClosed:false, closedAt:null}], [sender]], 0, undefined);
+assert.equal(stream.closer, 0);
+assert.equal(stream.minimumGapUs, null);
+assert.equal(stream.proof, 'stream-close');
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
+    def test_native_webkit_close_rechecks_the_remote_page_without_an_abort(self):
+        # Value: protects=late reciprocal close; fails_when=only sender abort is retried or missing snapshots excuse an error; seam=room verifier
+        script = r"""
+const assert = require('node:assert/strict');
+const { waitForCloseProofs } = require(process.argv[1]);
+const before = {index:17, local:'survivor', remote:'leaver', closeAborts:0, closed:false};
+const reciprocal = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
+const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
+const sample = links => ({ evaluate: async () => links() });
+const initial = [{wire:{sctp:[reciprocal]}}, {wire:{sctp:[before]}}];
+const warning = [{index:1, channel:17, sentAt:47200}];
+const sender = sample(() => [before]);
+
+(async () => {
+  let rounds = 0;
+  let now = 0;
+  const clock = () => now;
+  const pause = async ms => { now += ms; };
+  const report = {};
+  const late = sample(() => ++rounds === 1 ? [{...reciprocal, connectionClosed:false, closedAt:null}] : [reciprocal]);
+  assert.deepEqual(await waitForCloseProofs([late, sender], initial, warning, report, { clocks, clock, delay: pause }), [[reciprocal], [before]]);
+  assert.equal(rounds, 2);
+  assert.equal(report.proofs[0].proof, 'clock-order');
+
+  now = 0;
+  let attempts = 0;
+  const ambiguous = sample(() => { attempts++; return [{...reciprocal, closedAt:30001}]; });
+  const expire = async () => { now = 5000; };
+  await assert.rejects(waitForCloseProofs([ambiguous, sender], initial, warning, report, { clocks, clock, delay: expire }),
+    /WebKit close evidence deadline .*peer 1 channel 17/);
+  assert.equal(attempts, 1);
+  assert.equal(report.proofs[0].minimumGapUs, 1999);
+  assert.equal(report.proofs[0].proof, null);
+
+  now = 0;
+  const crashed = { evaluate: async () => { throw Error('Page crashed'); } };
+  await assert.rejects(waitForCloseProofs([late, crashed], initial, warning, report, { clocks, clock, delay: pause }),
+    error => error instanceof AggregateError && error.errors[0].message.includes('peer 1') && error.errors[0].cause.message === 'Page crashed');
+  assert.deepEqual(report.snapshotErrors, [{index:1, reason:'Error: Page crashed'}]);
+  assert.deepEqual(report.proofs, []);
+
+  const lateReply = sample(() => { now = 5000; return [reciprocal]; });
+  now = 0;
+  await assert.rejects(waitForCloseProofs([lateReply, sender], initial, warning, report, { clocks, clock, delay: pause }),
+    /WebKit close evidence deadline/);
+})().catch(error => { console.error(error); process.exitCode = 1; });
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)

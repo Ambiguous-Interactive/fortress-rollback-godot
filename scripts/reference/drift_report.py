@@ -33,7 +33,7 @@ no-drift report.
 Usage:
     python3 scripts/reference/drift_report.py [--source NAME]... [--latest NAME=SHA]...
         [--pins PATH] [--ledger PATH] [--cache DIR] [--output DIR] [--repo OWNER/REPO]
-        [--summary FILE]
+        [--summary FILE] [--stage | --publish-staged --artifact-url URL]
 
 Exit codes: 0 every source reported or no-op, 1 at least one source failed.
 """
@@ -60,12 +60,14 @@ from fetch import digest
 ROOT = Path(__file__).resolve().parents[2]
 MARKER_PREFIX = 'fortress-drift-report'
 REPORT_PREFIX = 'fortress-drift-report-comment'
+MAX_COMMENT_BYTES = 65_536
 # One pinned upstream tar.gz holds tens of megabytes; anything larger is not a
 # candidate archive, so the download refuses instead of filling the disk.
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 DOWNLOAD_ATTEMPTS = 4
 GH_TIMEOUT = 120
 REVISION_PATTERN = re.compile(r'[0-9a-f]{40}\Z')
+SHA256_PATTERN = re.compile(r'[0-9a-f]{64}\Z')
 
 
 class ToolingError(Exception):
@@ -162,9 +164,13 @@ class GhIssueClient:
     def __init__(self, repo):
         self.repo = repo
 
-    def _api(self, args):
+    def _api(self, args, fields=None):
+        payload = None
+        if fields is not None:
+            args = [*args, '--input', '-']
+            payload = json.dumps(fields, ensure_ascii=False)
         try:
-            result = subprocess.run(['gh', 'api', *args], capture_output=True, encoding='utf-8',
+            result = subprocess.run(['gh', 'api', *args], input=payload, capture_output=True, encoding='utf-8',
                                     timeout=GH_TIMEOUT, check=False)
         except subprocess.TimeoutExpired as error:
             raise ToolingError(f'gh api timed out after {GH_TIMEOUT}s: {args}') from error
@@ -183,27 +189,20 @@ class GhIssueClient:
                  'body': item.get('body') or ''} for item in issues]
 
     def create_issue(self, title, body):
-        created = json.loads(self._api(['-X', 'POST', f'repos/{self.repo}/issues',
-                                        '-f', f'title={title}', '-f', f'body={body}']))
+        created = json.loads(self._api(['-X', 'POST', f'repos/{self.repo}/issues'],
+                                       {'title': title, 'body': body}))
         return created['number']
 
     def update_issue(self, number, body=None, state=None):
-        fields = []
-        if body is not None:
-            fields.append(f'body={body}')
-        if state is not None:
-            fields.append(f'state={state}')
-        flat = []
-        for field in fields:
-            flat += ['-f', field]
-        self._api(['-X', 'PATCH', f'repos/{self.repo}/issues/{number}', *flat])
+        fields = {key: value for key, value in (('body', body), ('state', state)) if value is not None}
+        self._api(['-X', 'PATCH', f'repos/{self.repo}/issues/{number}'], fields)
 
     def list_comments(self, number):
         return [{'author': (item.get('user') or {}).get('login') or '', 'body': item.get('body') or ''}
                 for item in self._paged(f'repos/{self.repo}/issues/{number}/comments?per_page=100')]
 
     def add_comment(self, number, body):
-        self._api(['-X', 'POST', f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={body}'])
+        self._api(['-X', 'POST', f'repos/{self.repo}/issues/{number}/comments'], {'body': body})
 
     def current_login(self):
         """The identity this run reports as; digest evidence is trusted only from it."""
@@ -246,27 +245,45 @@ def render_body(source, entry, latest, report_digest, today):
     ]) + '\n'
 
 
-def render_comment(source, entry, latest, report, report_digest, archive_digest, today):
-    """One observation comment: its digest identity plus the full per-path classification."""
+def render_comment(source, entry, latest, report, report_digest, archive_digest, today, artifact_url=None):
+    """Keep a readable observation within GitHub's body limit and retain its digest."""
     affected = [f"`{record['path']}`: " + ', '.join(f'`{test}`' for test in record['ledger']['port_test_ids'])
                 for record in report['records']
                 if isinstance(record['ledger'], dict) and record['ledger'].get('port_test_ids')]
-    lines = [
+    heading = [
         f'<!-- {REPORT_PREFIX}:{source} -->',
         f'## Observation {today}: `{entry["revision"]}` → `{latest}`',
         '',
         f'report-digest: `{report_digest}`',
         f'candidate archive sha256: `{archive_digest}`',
         '',
+    ]
+    if artifact_url:
+        heading += [f'Full per-path classification is in `{source}.json`. [Download report artifact]({artifact_url})', '']
+    summary = drift.summarize(report)
+    details = [
         '```',
-        drift.summarize(report),
+        summary,
         '```',
         '',
         f'Requires review: {", ".join(f"`{path}`" for path in report["requires_review"]) or "none"}.',
         f'Ledger-unmapped paths: {", ".join(f"`{path}`" for path in report["ledger_unmapped"]) or "none"}.',
         f'Affected port tests: {"; ".join(affected) or "none"}.',
     ]
-    return '\n'.join(lines) + '\n'
+    comment = ('\n'.join(heading + details) + '\n').encode('utf-8', errors='backslashreplace')
+    if len(comment) <= MAX_COMMENT_BYTES:
+        return comment.decode('utf-8')
+
+    overview = summary.partition('\n')[0]
+    local_receipt = [] if artifact_url else ['', f'Full per-path classification is in `{source}.json` in the reporter output.']
+    return '\n'.join(heading + [
+        overview,
+        '',
+        f'- Paths requiring review: {len(report["requires_review"])}',
+        f'- Ledger-unmapped paths: {len(report["ledger_unmapped"])}',
+        *local_receipt,
+        '',
+    ])
 
 
 def comment_digest(comment_body):
@@ -277,27 +294,8 @@ def comment_digest(comment_body):
     return None
 
 
-def report_source(source, entry, latest, cache, output, issues, ledger, today, identity=None):
-    """One source: bind both trees, classify, then update the single carrier issue.
-
-    The reviewed tree is extracted from the digest-verified pinned archive that
-    `fetch.fetch` guarantees, so its identity is bound by construction; the
-    candidate tree is extracted from the downloaded archive under its expected
-    root. The carrier check runs before any comparison work, so a broken
-    stream fails closed without writing a report. Adoption needs the tool's
-    title AND the stream marker; an issue carrying only one of them is named
-    on stderr because it will silently fork the stream. The reporting identity
-    comes from the caller when it is known (the scheduled workflow's Actions
-    token cannot resolve `gh api user`), otherwise from the issue client.
-    Returns the per-source result record.
-    """
-    validate_revision(latest)
-    # Digest evidence is trusted only from comments this identity authored:
-    # the marker line and the digest are both public, so authorship is the
-    # one thing a foreign comment cannot borrow. A run under a different
-    # identity (a maintainer's manual run after the scheduled bot) therefore
-    # re-observes once before settling into its own quiet cadence.
-    identity = identity if identity is not None else issues.current_login()
+def find_carrier(source, issues):
+    """Require both stream identifiers and reject duplicate carriers."""
     expected_title = f'Upstream drift report: {source}'
     marker = f'<!-- {MARKER_PREFIX}:{source} -->'
     all_issues = issues.list_issues()
@@ -315,56 +313,89 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today, i
                            f'({", ".join("#" + str(issue["number"]) for issue in carriers)}); '
                            'remove the marker from or retitle all but one — closing them does '
                            'not help because closed issues are still scanned')
+    return carriers[0] if carriers else None
+
+
+def observation_digest(report):
+    # Local extraction paths and later receipt metadata are outside the stable drift identity.
+    identity = {key: value for key, value in report.items()
+                if key not in ('old_tree', 'new_tree', 'report_digest', 'candidate_archive_sha256')}
+    return hashlib.sha256((json.dumps(identity, indent=2, sort_keys=True) + '\n').encode('utf-8')).hexdigest()
+
+
+def stage_report(source, entry, latest, cache, path, ledger):
+    """Classify the verified pin and candidate and write a complete observation receipt."""
+    validate_revision(latest)
     reviewed_archive = fetch.fetch(entry['archive'], f'{entry["revision"]}.tar.gz', offline=False, cache=cache)
     with tempfile.TemporaryDirectory(dir=Path(cache)) as work:
         reviewed_tree = extract_archive(reviewed_archive, entry['root'], Path(work) / 'reviewed')
         if latest == entry['revision']:
-            return {'source': source, 'action': 'noop', 'reason': 'latest is the reviewed pin', 'issue': None}
+            return None
         candidate_archive = download_archive(entry, latest, Path(work))
         archive_digest = digest(candidate_archive)
         candidate_tree = extract_archive(candidate_archive, candidate_root(entry, latest), Path(work) / 'candidate')
         report = drift.build_report(source, reviewed_tree, candidate_tree, ledger=ledger,
                                     repository=entry['repository'], old_revision=entry['revision'],
                                     new_revision=latest)
-        # The digest identity excludes the extraction paths: two observations of
-        # the same upstream state must produce the same digest wherever they run,
-        # so a repeated scheduled run stays noise-free. The written report keeps
-        # the full local evidence plus the identity digest it was reported with.
-        report_identity = {key: value for key, value in report.items() if key not in ('old_tree', 'new_tree')}
-        report_digest = hashlib.sha256(
-            (json.dumps(report_identity, indent=2, sort_keys=True) + '\n').encode('utf-8')).hexdigest()
-        report['report_digest'] = report_digest
-        report_bytes = json.dumps(report, indent=2, sort_keys=True) + '\n'
-        output.mkdir(parents=True, exist_ok=True)
-        (output / f'{source}.json').write_text(report_bytes, encoding='utf-8')
-        body = render_body(source, entry, latest, report_digest, today)
-        comment = render_comment(source, entry, latest, report, report_digest, archive_digest, today)
-        if not carriers:
-            number = issues.create_issue(f'Upstream drift report: {source}', body)
-            action = 'created'
-        else:
-            number = carriers[0]['number']
-            action = 'commented'
-        # The digest is read only from tool-authored comments (marker-carried
-        # and authored by this run's identity): a foreign comment pasting the
-        # digest — with or without a copied marker — must never suppress the
-        # observation's classification evidence.
+        report['report_digest'] = observation_digest(report)
+        report['candidate_archive_sha256'] = archive_digest
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=path.parent) as temporary:
+        draft = Path(temporary) / path.name
+        draft.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+        draft.replace(path)
+    return report
+
+
+def read_staged_report(path, source, entry):
+    report = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(report, dict) or (
+            report.get('schema_version'), report.get('source'), report.get('repository'), report.get('reviewed_revision')
+    ) != (1, source, entry['repository'], entry['revision']):
+        raise ToolingError(f'{path.name}: staged report does not match its pinned source')
+    archive_digest = report.get('candidate_archive_sha256')
+    if (report.get('report_digest') != observation_digest(report)
+            or not isinstance(archive_digest, str) or not SHA256_PATTERN.fullmatch(archive_digest)):
+        raise ToolingError(f'{path.name}: staged report digest is invalid')
+    validate_revision(report.get('candidate_revision'))
+    if not isinstance(report.get('drift'), bool) or any(
+        not isinstance(report.get(key), list) for key in ('records', 'requires_review', 'ledger_unmapped')
+    ):
+        raise ToolingError(f'{path.name}: staged report classification is invalid')
+    return report
+
+
+def publish_report(report, entry, issues, carrier, today, identity, artifact_url):
+    """Publish one observation unless this identity already recorded its digest."""
+    source = report['source']
+    latest = report['candidate_revision']
+    report_digest = report['report_digest']
+    identity = identity if identity is not None else issues.current_login()
+    if carrier:
+        number = carrier['number']
         recorded = [comment_digest(item['body']) for item in issues.list_comments(number)
-                    if f'<!-- {REPORT_PREFIX}:{source} -->' in item['body']
-                    and item.get('author') == identity]
-        if report_digest not in recorded:
-            if carriers and carriers[0]['state'] != 'open':
-                issues.update_issue(number, state='open')
-                action = 'reopened'
-            if carriers and carriers[0]['body'] != body:
-                issues.update_issue(number, body=body)
-            issues.add_comment(number, comment)
-        else:
-            # The state was already observed and recorded: no reopen, no body
-            # rewrite, no comment — a maintainer-muted stream stays quiet.
-            action = 'digest-known'
-    return {'source': source, 'action': action, 'latest': latest, 'drift': report['drift'],
-            'requires_review': report['requires_review'], 'report_digest': report_digest, 'issue': number}
+                    if f'<!-- {REPORT_PREFIX}:{source} -->' in item['body'] and item.get('author') == identity]
+        if report_digest in recorded:
+            return 'digest-known', number
+
+    try:
+        comment = render_comment(source, entry, latest, report, report_digest,
+                                 report['candidate_archive_sha256'], today, artifact_url)
+    except (KeyError, TypeError) as error:
+        raise ToolingError(f'{source}: cannot render report classification: {error}') from error
+    body = render_body(source, entry, latest, report_digest, today)
+    if carrier:
+        action = 'commented'
+        if carrier['state'] != 'open':
+            issues.update_issue(number, state='open')
+            action = 'reopened'
+        if carrier['body'] != body:
+            issues.update_issue(number, body=body)
+    else:
+        number = issues.create_issue(f'Upstream drift report: {source}', body)
+        action = 'created'
+    issues.add_comment(number, comment)
+    return action, number
 
 
 def main_with_args(argv):
@@ -379,6 +410,10 @@ def main_with_args(argv):
     parser.add_argument('--repo', default=os.environ.get('GITHUB_REPOSITORY'),
                         help='owner/repo for the issue stream (defaults to GITHUB_REPOSITORY)')
     parser.add_argument('--summary', type=Path, help='append one markdown line per source here')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--stage', action='store_true', help='write JSON reports to a fresh output directory without accessing GitHub issues')
+    mode.add_argument('--publish-staged', action='store_true', help='publish existing staged JSON without reclassifying')
+    parser.add_argument('--artifact-url', help='link to the artifact containing the staged reports')
     parser.add_argument('--reporting-identity', metavar='LOGIN',
                         help='the identity this run reports as; omit to resolve it through `gh api user`. '
                              'The scheduled workflow passes github-actions[bot] because the Actions '
@@ -401,15 +436,20 @@ def main_with_args(argv):
     unknown = [name for name in names if name not in pins['sources']]
     if unknown:
         raise ToolingError(f'pins manifest has no source named: {", ".join(unknown)}')
-    if args.repo is None or not args.repo.strip():
+    if args.publish_staged != bool(args.artifact_url) or (args.publish_staged and overrides):
+        raise ToolingError('--publish-staged requires --artifact-url and cannot use --latest')
+    if not args.stage and (args.repo is None or not args.repo.strip()):
         raise ToolingError('--repo is required when GITHUB_REPOSITORY is unset')
     if args.reporting_identity is not None and not args.reporting_identity.strip():
         # An empty identity would own no comments, so every run would
         # re-observe: refuse it instead of silently degrading the cadence.
         raise ToolingError('--reporting-identity must name a login when present')
-    issues = GhIssueClient(args.repo)
+    issues = None if args.stage else GhIssueClient(args.repo)
+    if args.stage:
+        args.output.mkdir(parents=True)
+
     ledger = args.ledger if args.ledger.exists() else None
-    if ledger is None:
+    if ledger is None and not args.publish_staged:
         print(f'parity ledger not found at {args.ledger}: every changed path reports as ledger-unmapped',
               file=sys.stderr)
     today = time.strftime('%Y-%m-%d', time.gmtime())
@@ -417,21 +457,35 @@ def main_with_args(argv):
     results, failures = [], []
     for name in names:
         entry = pins['sources'][name]
+        path = args.output / f'{name}.json'
         try:
-            latest = overrides.get(name) or resolve_latest(entry)
-            result = report_source(name, entry, latest, args.cache, args.output, issues, ledger, today,
-                                   identity=args.reporting_identity)
-            results.append(result)
-            if result['issue'] is not None:
-                review = len(result.get('requires_review') or [])
-                print(f"{name}: {result['action']} at {result['latest']} issue=#{result['issue']}"
-                      f" drift={result['drift']} requires_review={review}")
+            if args.publish_staged:
+                if not path.exists():
+                    continue
+                report = read_staged_report(path, name, entry)
+                carrier = find_carrier(name, issues)
             else:
-                print(f"{name}: {result['action']} ({result.get('reason')})")
+                latest = overrides.get(name) or resolve_latest(entry)
+                carrier = None if args.stage else find_carrier(name, issues)
+                report = stage_report(name, entry, latest, args.cache, path, ledger)
+            if report is None:
+                results.append({'source': name, 'action': 'noop', 'reason': 'latest is the reviewed pin'})
+                print(f'{name}: noop (latest is the reviewed pin)')
+                continue
+            action, issue = ('staged', None) if args.stage else publish_report(
+                report, entry, issues, carrier, today, args.reporting_identity, args.artifact_url)
+            result = {'source': name, 'action': action, 'latest': report['candidate_revision'],
+                      'requires_review': report['requires_review']}
+            results.append(result)
+            issue_label = f' issue=#{issue}' if issue is not None else ''
+            print(f"{name}: {action} at {result['latest']}{issue_label}"
+                  f" drift={report['drift']} requires_review={len(report['requires_review'])}")
         except (ToolingError, ValueError, KeyError, OSError, tarfile.TarError,
                 subprocess.SubprocessError) as error:
             failures.append(f'{name}: {error}')
             print(f'{name}: tooling error: {error}', file=sys.stderr)
+    if args.publish_staged and not results and not failures:
+        raise ToolingError('no staged reports for the selected sources')
     if args.summary is not None:
         lines = (f"- {result['source']}: {result['action']} at `{result.get('latest', 'n/a')}`"
                  f" (requires_review: {len(result.get('requires_review') or [])})"

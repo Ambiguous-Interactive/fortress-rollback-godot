@@ -10,11 +10,11 @@ The project has pinned reference baselines, a deterministic test runner, bounded
 queues/snapshots, a shared rollback engine and fixed-membership byte sessions.
 Optional SignalFish membership freezes UUID slots and validates SDK plans; its
 binary relay adapter bounds packet ownership, pressure and recipient filtering.
-Direct WebRTC bytes and a bounded per-peer relay fallback coordinator are implemented;
-exported Chromium validates mixed paths under injected send pressure and preserves
-relay gameplay after actual unreliable-channel loss.
-ICE restoration and the browser release matrix remain planned. The intended
-primary backend is the pinned upstream Rust crate. The [migration contract](../docs/native-backend-migration.md)
+Direct WebRTC bytes and a bounded per-peer relay fallback coordinator are implemented.
+Exported Chromium verifies relay gameplay after the unreliable channel closes.
+The native witness also runs Firefox, WebKit and alternating browser rooms.
+Direct-link replacement and the remaining qualification gates are tracked in [PLAN.md](../PLAN.md).
+The intended primary backend is the pinned upstream Rust crate. The [migration contract](../docs/native-backend-migration.md)
 sets the gates for switching away from the current GDScript backend.
 Treat this file as the canonical operating manual.
 
