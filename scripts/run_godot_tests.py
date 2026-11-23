@@ -601,22 +601,37 @@ def discover(category: str, root: Path = ROOT) -> list[str]:
     return sorted(paths)
 
 
-def select_shard(suites: list[str], shard: str) -> list[str]:
-    """Split one whole-inventory run across same-tree jobs by name interleave.
+def suite_weights(suites: list[str], hints: dict) -> dict:
+    weights = {}
+    for suite in suites:
+        seconds = hints.get(suite)
+        weights[suite] = seconds if type(seconds) in (float, int) and math.isfinite(seconds) and 0 < seconds <= 3600 else 10
+    return weights
 
-    Two CI jobs each run half the unit inventory on its own runner, so the wall
-    time of the CPU-saturated engine wave halves without dropping a suite: the
-    union of all shards of one total is exactly the discovered inventory, and
-    the shards are disjoint. The interleaved order keeps every shard's suite
-    count within one of the ideal share.
-    """
+
+def balance_suites(weights: dict, count: int) -> list[list[str]]:
+    loads = [0.0] * min(count, len(weights))
+    groups = [[] for _ in loads]
+    for suite in sorted(weights, key=lambda s: (-weights[s], s)):
+        index = min(range(len(loads)), key=loads.__getitem__)
+        groups[index].append(suite)
+        loads[index] += weights[suite]
+    return [sorted(group) for group in groups]
+
+
+def select_shard(suites: list[str], shard: str, hints: dict | None = None) -> list[str]:
+    """Give each suite one deterministic owner on all jobs for this source snapshot."""
     match = re.fullmatch(r"([1-9][0-9]*)of([1-9][0-9]*)", shard)
     if not match:
         raise ValueError("shard must be NofM with positive whole numbers, such as 1of2")
     index, total = int(match.group(1)), int(match.group(2))
     if index > total:
         raise ValueError("shard index must not exceed its total")
-    return suites[index - 1::total]
+    if not hints:
+        return suites[index - 1::total]
+    if index > len(suites):
+        return []
+    return balance_suites(suite_weights(suites, hints), total)[index - 1]
 
 
 def merge(reports: list[dict], filtered: bool) -> dict:
@@ -749,7 +764,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                         help="parallel Godot processes; each suite runs in its own pair of fresh processes")
     parser.add_argument("--host-wait", type=float, default=600, help="seconds to wait for exclusive host capacity before engine execution")
-    parser.add_argument("--shard", default="", help="N/M name-interleaved whole-inventory shard for parallel CI jobs (unit only)")
+    parser.add_argument("--shard", default="", help="NofM whole-inventory shard balanced using checked-in durations for parallel CI jobs (unit only)")
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be finite and positive")
@@ -857,7 +872,7 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
             return 0
     suites = sorted(args.suite) or discover(args.category, snapshot.path)
     if args.shard:
-        suites = select_shard(suites, args.shard)
+        suites = select_shard(suites, args.shard, load_durations(snapshot.path / "scripts/unit_suite_seconds.json"))
     durations = load_durations(args.durations)
     version_probe = None
     try:

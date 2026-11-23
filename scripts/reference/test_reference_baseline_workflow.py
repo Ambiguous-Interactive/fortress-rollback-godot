@@ -131,7 +131,12 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         module = importlib.util.module_from_spec(runner)
         runner.loader.exec_module(module)
         suites = module.discover('unit')
-        executed = [suite for n in range(1, 4) for suite in module.select_shard(suites, f'{n}of3')]
+        hints = module.load_durations(ROOT / 'scripts/unit_suite_seconds.json')
+        groups = [module.select_shard(suites, f'{n}of3', hints) for n in range(1, 4)]
+        weights = module.suite_weights(suites, hints)
+        self.assertTrue(all(groups))
+        self.assertLessEqual(max(sum(weights[s] for s in group) for group in groups), sum(weights.values()) / 3 + max(weights.values()))
+        executed = [suite for group in groups for suite in group]
         self.assertCountEqual(executed, suites)
         for invalid in ('0/2', '1/', '3/2', 'x/y', '1/2', '0of2', '3of2'):
             with self.subTest(shard=invalid), self.assertRaises(ValueError):

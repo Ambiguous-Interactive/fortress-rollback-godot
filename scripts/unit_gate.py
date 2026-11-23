@@ -15,7 +15,7 @@ import sys
 
 from changed_suites import from_base, git
 from native_source_snapshot import SourceSnapshot, inventory, inventory_sha256, source_paths
-from run_godot_tests import HELPERS, ROOT, discover, load_durations, validate_result, verified_cases
+from run_godot_tests import HELPERS, ROOT, balance_suites, discover, load_durations, suite_weights, validate_result, verified_cases
 
 WEIGHTS = ROOT / "scripts/unit_suite_seconds.json"
 # One repetition's suite seconds on the 4-vCPU hosted runner. Two repetitions and startup share the PR budget.
@@ -25,18 +25,9 @@ RESULTS = Path(".cache/tests/latest.json")
 
 
 def partitions(suites: list[str], hints: dict) -> list[list[str]]:
-    weights = {}
-    for suite in suites:
-        value = hints.get(suite)
-        weights[suite] = value if type(value) in (float, int) and math.isfinite(value) and 0 < value <= 3600 else 10
+    weights = suite_weights(suites, hints)
     count = min(8, len(suites), math.ceil(sum(weights.values()) / PART_SECONDS))
-    groups = [[] for _ in range(count)]
-    totals = [0.0] * count
-    for suite in sorted(suites, key=lambda s: (-weights[s], s)):
-        index = min(range(count), key=totals.__getitem__)
-        groups[index].append(suite)
-        totals[index] += weights[suite]
-    return [sorted(group) for group in groups]
+    return balance_suites(weights, count)
 
 
 def plan(base: str) -> dict:
