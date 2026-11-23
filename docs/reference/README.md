@@ -221,10 +221,12 @@ upstream archive only when a later fetch verifies it.
 
 An observation that exceeds the issue comment budget keeps its counts and
 digests in the issue. Read every changed path and affected test in
-`<source>.json` inside the linked run's `drift-reports` artifact or in the local
-`--output` directory. When the artifact expires, use the run's checkout revision
-for the same pins and ledger, and compare the two revisions in the comment
-with the classifier procedure above. The suite covers oversized observations,
+`<source>.json` inside the linked artifact or in the local `--output` directory.
+The workflow stages all successful reports, uploads them under an attempt-specific
+artifact name, and publishes from those staged files after upload succeeds.
+When the artifact expires, use the workflow run named in its URL to find the
+checkout revision. Use that revision's pins and ledger and compare the two
+revisions in the comment with the classifier procedure above. The suite covers oversized observations,
 digest-quiet repeats, carrier adoption, resolver and archive-binding failures,
 and the `gh api` JSON input contract.
 

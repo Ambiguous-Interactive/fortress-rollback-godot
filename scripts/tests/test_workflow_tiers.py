@@ -300,5 +300,22 @@ class DriftReportWorkflowTests(unittest.TestCase):
         self.assertIn('--reporting-identity github-actions[bot]', active)
 
 
+    # Value: protects=observations link uploaded evidence; fails_when=publish precedes upload or reruns replace receipts; why_new=only trigger checks; seam=none
+    def test_drift_publication_requires_an_immutable_upload(self):
+        active = active_lines(read(DRIFT_REPORT))
+        phases = ('--stage', 'uses: actions/upload-artifact@', '--publish-staged')
+        for phase in phases:
+            self.assertIn(phase, active)
+        stage, upload, publish = map(active.index, phases)
+        self.assertLess(stage, upload)
+        self.assertLess(upload, publish)
+        self.assertIn('name: drift-reports-${{ github.run_attempt }}', active)
+        self.assertNotIn('overwrite:', active)
+        self.assertIn("!cancelled() && steps.evidence.outcome == 'success' && steps.evidence.outputs.artifact-url != ''",
+                      active[upload:publish])
+        self.assertIn('ARTIFACT_URL: ${{ steps.evidence.outputs.artifact-url }}', active[upload:publish])
+        self.assertIn('--artifact-url "$ARTIFACT_URL"', active[publish:])
+
+
 if __name__ == '__main__':
     unittest.main()

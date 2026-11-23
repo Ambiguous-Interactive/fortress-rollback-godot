@@ -31,21 +31,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Report upstream drift
+      - name: Stage complete drift reports
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/reference/drift_report.py --summary "$GITHUB_STEP_SUMMARY" \
-            --reporting-identity github-actions[bot] --output "$RUNNER_TEMP/drift-report" \
-            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          python3 scripts/reference/drift_report.py --stage --summary "$GITHUB_STEP_SUMMARY" \
+            --output "$RUNNER_TEMP/drift-report"
       - name: Upload complete drift reports
+        id: evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: drift-reports
+          name: drift-reports-${{ github.run_attempt }}
           path: ${{ runner.temp }}/drift-report/*.json
           if-no-files-found: ignore
-          overwrite: true
+      - name: Publish drift observations
+        if: ${{ !cancelled() && steps.evidence.outcome == 'success' && steps.evidence.outputs.artifact-url != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_URL: ${{ steps.evidence.outputs.artifact-url }}
+        run: |
+          python3 scripts/reference/drift_report.py --publish-staged --artifact-url "$ARTIFACT_URL" \
+            --summary "$GITHUB_STEP_SUMMARY" --output "$RUNNER_TEMP/drift-report" \
+            --reporting-identity github-actions[bot]
       - name: Failure summary
         if: failure()
         run: |
