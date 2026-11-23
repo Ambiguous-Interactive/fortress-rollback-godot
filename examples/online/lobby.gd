@@ -19,6 +19,8 @@ extends "%s"
 func _make_peer() -> SFWebSocketPeerAdapterScript:
 	var socket: WebSocketPeer = WebSocketPeer.new()
 	socket.inbound_buffer_size = 1048576
+	# The SDK's soft queue and frame caps must fit below the engine's hard limit.
+	socket.outbound_buffer_size = 1048576
 	return SFWebSocketPeerAdapterScript.new(socket)
 """
 

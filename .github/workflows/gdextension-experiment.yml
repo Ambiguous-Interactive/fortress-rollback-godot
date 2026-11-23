@@ -1,6 +1,13 @@
 name: Qualify Fortress GDExtension
+run-name: Qualify Fortress GDExtension (${{ inputs.qualification || 'platforms' }})
 on:
   workflow_dispatch:
+    inputs:
+      qualification:
+        description: All platforms or a browser profile for Web only
+        type: choice
+        default: platforms
+        options: [platforms, chromium, firefox, webkit, chromium-firefox, chromium-webkit, firefox-webkit]
   push:
     branches: [experiment/upstream-gdextension, experiment/upstream-gdextension-landing]
     paths:
@@ -16,15 +23,8 @@ jobs:
       fail-fast: false
       matrix:
         version: ["4.3", "4.7.2"]
-        target: [linux, windows, macos, android, ios, web]
-        include:
-          - {target: web, runner: ubuntu-24.04}
-          - {target: linux, runner: ubuntu-24.04}
-          - {target: windows, runner: windows-2025}
-          - {target: macos, runner: macos-15}
-          - {target: android, runner: ubuntu-24.04}
-          - {target: ios, runner: macos-15}
-    runs-on: ${{ matrix.runner }}
+        target: ${{ fromJSON(inputs.qualification && inputs.qualification != 'platforms' && '["web"]' || '["linux","windows","macos","android","ios","web"]') }}
+    runs-on: ${{ fromJSON('{"web":"ubuntu-24.04","linux":"ubuntu-24.04","windows":"windows-2025","macos":"macos-15","android":"ubuntu-24.04","ios":"macos-15"}')[matrix.target] }}
     timeout-minutes: 70
     defaults:
       run:
@@ -141,13 +141,26 @@ jobs:
           fi
       - name: Qualify the playable native SignalFish rooms
         if: matrix.target == 'web'
+        env:
+          BROWSER_PAIR: ${{ inputs.qualification == 'platforms' && 'chromium' || inputs.qualification || 'chromium' }}
         run: |
           python scripts/reference/fetch.py
           server_source=".cache/reference/$(jq -r .sources.server.root docs/reference/pins.json)"
           python scripts/reference/signalfish_build_server.py --cargo "$(rustup which cargo)" --source "$server_source" --output .cache/native-online-server
           export FORTRESS_CHROMIUM_EXECUTABLE="$(node -p 'require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE).chromium.executablePath()')"
+          export FORTRESS_FIREFOX_EXECUTABLE="$(node -p 'require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE).firefox.executablePath()')"
+          export FORTRESS_WEBKIT_EXECUTABLE="$(node -p 'require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE).webkit.executablePath()')"
+          if [[ "$BROWSER_PAIR" != chromium ]]; then
+            sudo systemctl mask --runtime coturn.service
+            sudo bash scripts/reference/retry_apt_fetch.sh apt-get install -y coturn
+          fi
+          if [[ "$BROWSER_PAIR" == *firefox* ]]; then
+            sudo bash scripts/reference/retry_apt_fetch.sh apt-get install -y xdotool
+            export FORTRESS_XDOTOOL_EXECUTABLE="$(command -v xdotool)"
+          fi
           output=".cache/native-experiment/${{ matrix.version }}/web"
-          python scripts/reference/native_online_probe.py --version "${{ matrix.version }}" --addon "$output/addon.zip" --output "$output/native-online"
+          xvfb-run -a -s '-screen 0 1920x1080x24' python scripts/reference/native_online_probe.py --version "${{ matrix.version }}" \
+            --browser-pair "$BROWSER_PAIR" --addon "$output/addon.zip" --output "$output/native-online"
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:

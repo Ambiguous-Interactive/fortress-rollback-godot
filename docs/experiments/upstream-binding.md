@@ -40,6 +40,40 @@ The script uses the booted simulator by default. Set `SIMULATOR_UDID` when sever
 This test uses an unsigned simulator app. Device signing and App Store installation are separate release checks.
 [Simulator build and test commands](../../.github/workflows/gdextension-experiment.yml)
 
+## Playable Web rooms
+
+The same exported online example qualifies native matches in Linux Chromium, Firefox and Playwright WebKit.
+Use one engine for the whole room or alternate two browsers in page order.
+Direct and SignalFish relay rooms run at 2, 4 and 8 players. Two four-player cases exercise a missing link at startup and a channel that closes during gameplay.
+Each cell compares at least 40 confirmed input rows and canonical states.
+The receipt records each peer's Playwright engine and version alongside packet, rollback and lifecycle observations.
+The recovery cells hold input datagrams while control traffic continues, then release the held originals.
+After the physical-close case confirms resumed play, it holds all datagrams to verify terminal expiry.
+
+```sh
+gh workflow run gdextension-experiment.yml --ref main -f qualification=chromium-webkit
+```
+
+The hosted selector runs both Godot pins. The default `platforms` covers the full platform inventory and runs the Web rooms in Chromium.
+Download `native-online.json` and the logs from each Web job to inspect the observations.
+
+For a local run, prepare the pinned browser and SignalFish tools, then use the matching Web addon archive.
+Set `FORTRESS_PLAYWRIGHT_PACKAGE` and `FORTRESS_<ENGINE>_EXECUTABLE` for each selected browser.
+Firefox needs the X11 display and `FORTRESS_XDOTOOL_EXECUTABLE` to keep each page's window partly visible.
+Mesh rooms that include Firefox or WebKit use a STUN-only listener on the host's IPv4 interface.
+Install Coturn or point `FORTRESS_STUN_EXECUTABLE` at its `turnserver` binary.
+Set `FORTRESS_STUN_ADDRESS` to the local interface address on hosts without a default IPv4 route.
+Chromium-only rooms and the relay-only cells can run without this tool.
+
+```sh
+xvfb-run -a -s '-screen 0 1920x1080x24' python3 scripts/reference/native_online_probe.py \
+  --version 4.7.2 --browser-pair chromium-webkit --cell mesh:2 --cell relay:2 \
+  --addon .cache/native-experiment/4.7.2/web/addon.zip --output progress/native-online
+```
+
+This Linux fixture exercises the WebKit build distributed with Playwright.
+Track branded Safari and real Internet ICE deployments independently in [#39](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39).
+
 ## Performance
 
 Headless Linux ARM64 measurements used the same four-byte inputs, 4096-byte snapshots and two-frame forced rewind for each backend.

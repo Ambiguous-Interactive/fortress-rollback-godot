@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Export the installed native online example and qualify live SignalFish rooms."""
+from contextlib import contextmanager, nullcontext
+from ipaddress import IPv4Address
 import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
 import socket
+import struct
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -17,6 +21,7 @@ from godot_smoke import prepare_editor, run
 from online_install import create_project, install_sdk, server_config
 from receipt_arguments import ReceiptParser
 from run import begin_results
+from signalfish_live_probe import wait_ready
 from signalfish_probe import inventory
 
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -24,12 +29,14 @@ import host_capacity  # noqa: E402
 from package_addon import ADDON, snapshot as runtime_snapshot  # noqa: E402
 
 CELLS = tuple(f'{route}:{count}' for route in ('mesh', 'relay') for count in (2, 4, 8)) + ('mesh-startup:4', 'mesh-close:4')
+BROWSER_PAIRS = ('chromium', 'firefox', 'webkit', 'chromium-firefox', 'chromium-webkit', 'firefox-webkit')
 BROWSER = ROOT / 'scripts/reference/browser'
 EXTENSION = 'addons/fortress_native/fortress.gdextension'
 TEMPLATE = 'web_dlink_nothreads_release.zip'
 REPORT = 'native-online.json'
 MIN_COMPARED_FRAMES = 40
 HISTORY_LIMIT = 128
+STUN_COOKIE = 0x2112A442
 
 
 def install_addon(project, archive):
@@ -89,15 +96,88 @@ def stage_export(root, output, editor, templates, sdk, addon, environment):
     return export, frozen
 
 
-def create_server_config(source, route, port):
+def local_port(address='127.0.0.1'):
+    with socket.socket() as selection:
+        selection.bind((address, 0))
+        return selection.getsockname()[1]
+
+
+def stun_address():
+    candidate = os.environ.get('FORTRESS_STUN_ADDRESS')
+    if not candidate:
+        with socket.socket(type=socket.SOCK_DGRAM) as route:
+            # Reading the selected route does not send a datagram.
+            route.connect(('192.0.2.1', 9))
+            candidate = route.getsockname()[0]
+    address = IPv4Address(candidate)
+    if address.is_loopback or address.is_unspecified:
+        raise ValueError('browser STUN witness requires a non-loopback IPv4 interface')
+    return str(address)
+
+
+def verify_stun_binding(address, port):
+    request = struct.pack('!HHI', 1, 0, STUN_COOKIE) + os.urandom(12)
+    try:
+        with socket.socket(type=socket.SOCK_DGRAM) as probe:
+            probe.settimeout(2)
+            probe.connect((address, port))
+            local_address, local_port_number = probe.getsockname()
+            probe.send(request)
+            response = probe.recv(2048)
+    except OSError as error:
+        raise ValueError('local listener did not answer a STUN Binding request') from error
+    if (len(response) <= 20 or response[:2] != b'\x01\x01' or response[4:20] != request[4:]
+            or int.from_bytes(response[2:4], 'big') != len(response) - 20):
+        raise ValueError('invalid STUN Binding response')
+    expected = struct.pack('!BBHI', 0, 1, local_port_number ^ (STUN_COOKIE >> 16), int(IPv4Address(local_address)) ^ STUN_COOKIE)
+    offset = 20
+    mapped = False
+    while offset + 4 <= len(response):
+        kind, size = struct.unpack_from('!HH', response, offset)
+        offset += 4
+        end = offset + ((size + 3) & ~3)
+        if end > len(response):
+            raise ValueError('truncated STUN Binding attribute')
+        if kind == 0x0020:
+            if mapped or response[offset:offset + size] != expected:
+                raise ValueError('invalid STUN Binding address')
+            mapped = True
+        offset = end
+    if not mapped or offset != len(response):
+        raise ValueError('missing valid STUN Binding address')
+
+
+@contextmanager
+def local_stun(tool, root, log):
+    address = stun_address()
+    port = local_port(address)
+    command = [str(tool), '-n', '--stun-only', '--no-auth', '--no-cli', '--no-tls', '--no-dtls',
+               f'--listening-ip={address}', f'--relay-ip={address}', '--relay-threads=1', f'--listening-port={port}',
+               f'--pidfile={root / "stun.pid"}', f'--userdb={root / "stun.sqlite"}', '--log-file=stdout', '--simple-log']
+    with log.open('wb') as stream, subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT) as server:
+        try:
+            wait_ready(server, port, address)
+            verify_stun_binding(address, port)
+            yield f'stun:{address}:{port}'
+            if server.poll() is not None:
+                raise ValueError('local STUN listener exited during gameplay')
+        finally:
+            if server.poll() is None:
+                server.kill()
+                server.wait(timeout=5)
+
+
+def create_server_config(source, route, port, stun_server=None):
     config = server_config(source, port, max_players=8, route=route)
+    if route == 'mesh' and stun_server is not None:
+        config['session']['ice_servers'] = [{'urls': [stun_server]}]
     for key in config['rate_limit']:
         if key.startswith('max_'):
             config['rate_limit'][key] = max(config['rate_limit'][key], 1000000)
     return config
 
 
-def validate_cell(evidence, mode, players):
+def validate_cell(evidence, mode, players, browser_pair):
     required_frames = MIN_COMPARED_FRAMES
     if mode != 'mesh-startup':
         boundary = evidence['afterClose' if mode == 'mesh-close' else 'stalled']
@@ -114,26 +194,32 @@ def validate_cell(evidence, mode, players):
     if (evidence.get('passed') is not True or evidence.get('route') != mode or evidence.get('players') != players
             or type(compared_frames) is not int or compared_frames != required_frames):
         raise ValueError(f'incomplete browser evidence: {mode}:{players}')
+    peers = evidence.get('browser_peers', [])
+    if not isinstance(peers, list) or len(peers) != players or any(
+            not isinstance(peer, dict) or type(peer.get('index')) is not int or peer['index'] != index
+            or peer.get('name') != browser_pair[index % len(browser_pair)]
+            or not isinstance(peer.get('version'), str) or not peer['version'].strip()
+            for index, peer in enumerate(peers)):
+        raise ValueError(f'wrong browser composition: {mode}:{players}')
 
 
-def play_cells(cells, export, environment, server_source, server_binary, output):
+def play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server):
     results = []
     for route in ('mesh', 'relay'):
         selected = [cell for cell in cells if cell.split(':')[0].split('-')[0] == route]
         if not selected:
             continue
-        with socket.socket() as selection:
-            selection.bind(('127.0.0.1', 0))
-            port = selection.getsockname()[1]
-        config = create_server_config(server_source, route, port)
+        port = local_port()
+        config = create_server_config(server_source, route, port, stun_server)
         server_environment = {'PATH': environment['PATH'], 'SIGNAL_FISH_CONFIG_JSON': json.dumps(config), 'RUST_LOG': 'error'}
         with (output / f'{route}-server.log').open('wb') as log:
             with OwnedServer(server_binary, server_environment, port, log) as server:
                 for cell in selected:
                     mode, players = cell.split(':')
-                    command = ['node', str(BROWSER / 'native_online.cjs'), str(export), f'ws://127.0.0.1:{port}/v3/ws', mode, players]
+                    command = ['node', str(BROWSER / 'native_online.cjs'), str(export), f'ws://127.0.0.1:{port}/v3/ws', mode, players,
+                               '-'.join(browser_pair)]
                     evidence = json.loads(run_browser(command, environment, output / f'{mode}-{players}.log', rooms=1))
-                    validate_cell(evidence, mode, int(players))
+                    validate_cell(evidence, mode, int(players), browser_pair)
                     results.append(evidence)
                     print(f'{cell} passed', flush=True)
                 server.verify_live()
@@ -144,13 +230,14 @@ def main():
     parser = ReceiptParser(description=__doc__, receipt=REPORT)
     parser.add_argument('--version', help='pinned Godot version, defaults to current stable')
     parser.add_argument('--cell', action='append', choices=CELLS)
+    parser.add_argument('--browser-pair', choices=BROWSER_PAIRS, default='chromium', help='single engine or alternating engines in each room')
     parser.add_argument('--cache', type=Path, default=ROOT / '.cache/reference')
     parser.add_argument('--addon', type=Path, required=True, help='complete Web addon archive for this revision')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     output, cache, addon = args.output.resolve(), args.cache.resolve(), args.addon.resolve()
     logs = [cell.replace(':', '-') + '.log' for cell in CELLS]
-    logs += ['mesh-server.log', 'relay-server.log', 'import.log', 'export.log', 'version.log', 'tls.log']
+    logs += ['mesh-server.log', 'relay-server.log', 'import.log', 'export.log', 'version.log', 'tls.log', 'stun.log']
     begin_results(output, REPORT, logs)
     receipt = output / REPORT
     manifest = load_manifest()
@@ -160,9 +247,20 @@ def main():
     elif args.version not in versions:
         parser.error(f'--version must be one of {", ".join(versions)}')
     environment = os.environ.copy()
-    for variable in ('FORTRESS_PLAYWRIGHT_PACKAGE', 'FORTRESS_CHROMIUM_EXECUTABLE'):
+    browser_pair = tuple(args.browser_pair.split('-'))
+    tools = {name: f'FORTRESS_{name.upper()}_EXECUTABLE' for name in browser_pair}
+    if 'firefox' in browser_pair:
+        tools['xdotool'] = 'FORTRESS_XDOTOOL_EXECUTABLE'
+    for variable in ('FORTRESS_PLAYWRIGHT_PACKAGE', *tools.values()):
         if not environment.get(variable):
             parser.error(f'{variable} must name the installed browser tool')
+    cells = tuple(dict.fromkeys(args.cell or CELLS))
+    stun_tool = None
+    if browser_pair != ('chromium',) and any(cell.startswith('mesh') for cell in cells):
+        stun = environment.get('FORTRESS_STUN_EXECUTABLE') or shutil.which('turnserver')
+        if not stun:
+            parser.error('install Coturn or set FORTRESS_STUN_EXECUTABLE to its turnserver binary')
+        stun_tool = Path(stun)
     stem = f'Godot_v{args.version}-stable'
     editor = prepare_editor(manifest, args.version, offline=True, cache=cache)
     templates = cache / f'downloads/{stem}_export_templates.tpz'
@@ -170,16 +268,19 @@ def main():
     sdk, server_source = (cache / pin['root'] for pin in (sdk_pin, server_pin))
     server_binary = cache / f"server-target/{server_pin['revision']}/debug/signal-fish-server"
     files = {'editor': editor, 'templates': templates, 'addon': addon, 'server': server_binary,
-             'server_config': server_source / 'config.example.json', 'chromium': Path(environment['FORTRESS_CHROMIUM_EXECUTABLE']),
+             'server_config': server_source / 'config.example.json', **{name: Path(environment[var]) for name, var in tools.items()},
              'runner': Path(__file__), 'editor_setup': BROWSER.parent / 'godot_smoke.py', 'artifact_helper': BROWSER.parent / 'fetch.py',
-             'client': BROWSER / 'native_online.cjs', 'host': BROWSER / 'online_host.cjs',
+             'client': BROWSER / 'native_online.cjs', 'host': BROWSER / 'online_host.cjs', 'display': BROWSER / 'webrtc_display.cjs',
+             'watchdog': BROWSER / 'webrtc_watchdog.cjs',
              'bridge': BROWSER / 'native_online_bridge.gd', 'sdk': sdk / 'addons/signal_fish',
              'runtime': ROOT / 'addons/fortress_rollback', 'example': ROOT / 'examples'}
+    if stun_tool is not None:
+        files['stun'] = stun_tool
+        files['stun_readiness'] = BROWSER.parent / 'signalfish_live_probe.py'
     frozen = inventory(files)
     template_pin = manifest['artifacts'][templates.name]
     if digest(templates, template_pin['algorithm']) != template_pin['digest']:
         raise ValueError('export template archive differs from the pinned digest')
-    cells = tuple(dict.fromkeys(args.cell or CELLS))
     with tempfile.TemporaryDirectory(prefix='native-online-', dir=output) as directory:
         root = Path(directory)
         for kind in ('CONFIG', 'CACHE', 'DATA'):
@@ -196,12 +297,15 @@ def main():
         if not host_capacity.acquire_when_free('native-online-witness', 600):
             raise ValueError('development host stayed busy')
         try:
-            results = play_cells(cells, export, environment, server_source, server_binary, output)
+            stun = local_stun(stun_tool, root, output / 'stun.log') if stun_tool is not None else nullcontext(None)
+            with stun as stun_server:
+                results = play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server)
         finally:
             host_capacity.release()
         if inventory(files) != frozen or inventory({'export': export}) != exported:
             raise ValueError('native browser witness inputs changed during execution')
-    receipt.write_text(json.dumps({'passed': True, 'engine': actual, 'cells': cells, 'inputs': frozen,
+    receipt.write_text(json.dumps({'passed': True, 'engine': actual, 'cells': cells, 'browser_pair': args.browser_pair,
+                                   'stun_server': stun_server, 'inputs': frozen,
                                    'staged': staged, 'export': exported, 'results': results}, indent=2) + '\n', encoding='utf-8')
 
 

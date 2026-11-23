@@ -378,12 +378,61 @@ class ReferenceContracts(unittest.TestCase):
                 ([39, 39, 39, 39], [0, 1, 2, 2], 41, 'incomplete post-fault frame boundary')):
             with self.subTest(frames=frames, indices=indices, count=count):
                 evidence = {'passed': True, 'route': 'mesh-close', 'players': 4, 'compared_frames': count,
-                            'afterClose': [{'index': index, 'frame': frame} for index, frame in zip(indices, frames)]}
+                            'afterClose': [{'index': index, 'frame': frame} for index, frame in zip(indices, frames)],
+                            'browser_peers': [{'index': i, 'name': 'chromium', 'version': '1'} for i in range(4)]}
                 if expected is None:
-                    native_online_runner.validate_cell(evidence, 'mesh-close', 4)
+                    native_online_runner.validate_cell(evidence, 'mesh-close', 4, ('chromium',))
                 else:
                     with self.assertRaisesRegex(ValueError, expected):
-                        native_online_runner.validate_cell(evidence, 'mesh-close', 4)
+                        native_online_runner.validate_cell(evidence, 'mesh-close', 4, ('chromium',))
+
+    def test_native_online_rejects_incomplete_or_wrong_browser_composition(self):
+        # Value: protects=mixed room evidence; fails_when=missing, duplicate or wrong peer identity passes; why_new=browser selection; seam=receipt
+        pair = ('chromium', 'firefox')
+        peers = [{'index': i, 'name': pair[i % 2], 'version': '1'} for i in range(4)]
+        evidence = {'passed': True, 'route': 'mesh-startup', 'players': 4, 'compared_frames': 40, 'browser_peers': peers}
+        native_online_runner.validate_cell(evidence, 'mesh-startup', 4, pair)
+        for wrong in (None, peers[:-1], [None, *peers[1:]], [{**peer, 'name': 'chromium'} for peer in peers],
+                      [{**peers[0], 'version': ''}, *peers[1:]], [peers[0], peers[1], peers[1], peers[3]]):
+            with self.subTest(peers=wrong), self.assertRaisesRegex(ValueError, 'wrong browser composition'):
+                native_online_runner.validate_cell({**evidence, 'browser_peers': wrong}, 'mesh-startup', 4, pair)
+
+    def test_native_online_stun_readiness_requires_a_udp_binding(self):
+        # Value: protects=STUN evidence; fails_when=TCP-only or fake mapped address qualifies; why_new=browser STUN fixture; seam=actual socket
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            script = f'#!{sys.executable}\n' + r'''
+import ipaddress, socket, struct, sys
+port = int(next(arg.split("=")[1] for arg in sys.argv if arg.startswith("--listening-port=")))
+address = ("127.0.0.1", port)
+with socket.create_server(address) as server, socket.socket(type=socket.SOCK_DGRAM) as udp:
+    if not sys.argv[0].endswith("tcp-only"):
+        udp.bind(address)
+        server.accept()[0].close()
+        request, sender = udp.recvfrom(2048)
+        mapped = struct.pack("!BBHI", 0, 1, sender[1] ^ 0x2112, int(ipaddress.IPv4Address(sender[0])) ^ 0x2112A442)
+        if sys.argv[0].endswith("empty-mapping"):
+            mapped = b""
+        elif sys.argv[0].endswith("wrong-mapping"):
+            mapped = mapped[:-1] + bytes([mapped[-1] ^ 1])
+        reply = struct.pack("!HH", 0x0101, 4 + len(mapped)) + request[4:20] + struct.pack("!HH", 0x0020, len(mapped)) + mapped
+        udp.sendto(reply, sender)
+    while True:
+        server.accept()[0].close()
+'''
+            with patch.object(native_online_runner, 'stun_address', return_value='127.0.0.1'):
+                for name in ('tcp-only', 'empty-mapping', 'wrong-mapping', 'valid-mapping'):
+                    with self.subTest(name=name):
+                        tool = root / name
+                        tool.write_text(script, encoding='utf-8')
+                        tool.chmod(0o700)
+                        stun = native_online_runner.local_stun(tool, root, root / 'stun.log')
+                        if name == 'valid-mapping':
+                            with stun as endpoint:
+                                self.assertRegex(endpoint, r'^stun:127\.0\.0\.1:[0-9]+$')
+                        else:
+                            with self.assertRaisesRegex(ValueError, 'STUN Binding'), stun:
+                                pass
 
     def test_native_online_invalidates_receipt_before_manifest_load(self):
         # Value: a missing or malformed pins file cannot leave a stale browser qualification result.

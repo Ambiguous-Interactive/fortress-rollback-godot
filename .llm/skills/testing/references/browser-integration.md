@@ -8,6 +8,25 @@ witness before the pinned 200 ms resend window opens after a multi-peer stall.
 Keep the sampled inputs and fault schedule tick-based and assert confirmation,
 rollback and final state, independent of exact retry counts.
 
+For a mixed-engine mesh that stalls before its first frame, record candidate
+categories and the last ICE state before cleanup closes the connections.
+If each browser exposes only mDNS host candidates, reproduce the connection
+with bare data channels before changing the game or SDK. Firefox can publish
+an mDNS name before it registers that name at the start of ICE checks.
+Use a STUN-only listener on the host's IPv4 interface to exercise
+server-reflexive discovery in the local browser matrix.
+Record the listener and verify its UDP Binding response before opening rooms.
+[Firefox candidate registration report](https://bugzilla.mozilla.org/show_bug.cgi?id=1605815)
+
+Count startup wait ticks only after the engine reports the full mesh ready.
+Retain the earlier browser-open tick count to diagnose event delivery lag.
+Require both views to be ready when a direct-only room starts.
+
+Withhold native input datagrams to force a prediction stall while the link
+can still carry control traffic. Match each player's quality reply to a report
+sent during the hold on the same physical link, then release the original
+input bytes. Use a separate full outage to prove expiry.
+
 Qualify cross-origin control services with actual browser preflight and authenticated fetch.
 Native HTTP success does not exercise browser origin enforcement; keep origin permission separate from role capabilities.
 Expected provisioning waits use non-error HTTP pending responses; keep actual console/network failures fatal.
