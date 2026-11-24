@@ -21,4 +21,19 @@ The slowest observed grouped job spent 459 seconds comparing native request
 traces on Godot 4.7.2. [Issue #479](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/479)
 tracks balancing that work with equivalent traces and runner cost.
 
+## Acceptance
+
+The [three-CPU Firefox commands and receipts](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/471#issuecomment-7141872916)
+printed `relay:4 passed` and `relay:8 passed` on both Godot pins at `08f5b011`.
+All eight captures reached the controller. Each room matched 40 confirmed rows
+and snapshots and passed teardown. Same-CPU Chromium printed `relay:8 passed`
+on both pins and `mesh-recovery:4 passed` on 4.7.2 with 111 compared frames.
+
+The [contended-cache comparison](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/478#issuecomment-7141160014)
+launched 570 shards per repetition on the old runner. Both candidate passes
+launched 409 and passed all 869 cases in both repetitions. Their complete
+records match the main control seeded with tracked timings. On `08f5b011`,
+`make gate` reported `{"passed": true}` and `make test-reference` reported
+`43 files, 0 failed`.
+
 State `findings-acted`.
