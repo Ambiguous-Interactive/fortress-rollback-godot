@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("godot_runner", ROOT / "scripts/run_godot_tests.py")
 RUNNER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNNER)
+from git_test_environment import fixture_environment  # noqa: E402
+
 GODOT: Path | None = None
 
 
@@ -366,42 +369,83 @@ class ReceiptControls(unittest.TestCase):
                     except ProcessLookupError:
                         pass
 
+    # Value: protects=verified shard receipts; fails_when=listed cases disappear or a process result is reused; seam=scripted engine and source image
     def test_verified_full_shard_requires_every_listed_case_in_both_processes(self) -> None:
-        suites = RUNNER.discover("unit")
-        shard = f"1of{len(suites)}"
-        suite, = RUNNER.select_shard(suites, shard, RUNNER.load_durations(ROOT / "scripts/unit_suite_seconds.json"))
+        suite = "res://tests/unit/test_selected.gd"
+        unselected = "res://tests/unit/test_unselected.gd"
         result = valid_result()
         result["records"][0]["suite"] = suite
         second = copy.deepcopy(result["records"][0])
         second["case"] = "second"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            engine, output, omit = root / "engine", root / "result.json", root / "omit"
+            project = root / "project"
+            launcher = project / "scripts/run_godot_tests.py"
+            for name in ("run_godot_tests.py", *RUNNER.HELPERS):
+                target = launcher.parent / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / "scripts" / name, target)
+            for resource, cases in {suite: ["pass", "second"], unselected: ["other"], "res://tests/runner/self_suite.gd": ["self"]}.items():
+                source = project / resource.removeprefix("res://")
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text(f"extends RefCounted\n\nfunc cases() -> PackedStringArray:\n\treturn PackedStringArray({json.dumps(cases)})\n",
+                                  encoding="utf-8")
+            (project / "project.godot").write_text("config_version=5\n", encoding="utf-8")
+            (launcher.parent / "unit_suite_seconds.json").write_text(json.dumps({suite: 20}), encoding="utf-8")
+            (project / ".gitignore").write_text(".cache/\n", encoding="utf-8")
+            env = dict(fixture_environment(), FORTRESS_HOST_CAPACITY_DIR=str(root / "capacity"))
+            for command in (["git", "init", "-q"], ["git", "add", "."],
+                            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base"]):
+                subprocess.run(command, cwd=project, env=env, check=True, capture_output=True, timeout=30)
+            engine, output, omission = root / "engine", root / "result.json", root / "omission"
+            process_ids = root / "process-ids"
+            omitted = root / "omitted"
             program = (
-                "import json,pathlib,sys\n"
+                "import json,os,pathlib,sys\n"
                 "if '--version' in sys.argv: print('test-engine');sys.exit(0)\n"
+                f"assert [sys.argv[i+1] for i,arg in enumerate(sys.argv) if arg == '--suite'] == [{suite!r}]\n"
+                "image = pathlib.Path(sys.argv[sys.argv.index('--path') + 1])\n"
+                f"assert image != pathlib.Path({str(project)!r})\n"
+                f"assert (image / {unselected.removeprefix('res://')!r}).is_file()\n"
+                f"source = (image / {suite.removeprefix('res://')!r}).read_text()\n"
                 "if '--list-cases' in sys.argv:\n"
-                f" print('FORTRESS_TEST_CASES '+json.dumps({{ {suite!r}: ['pass', 'second'] }}));sys.exit(0)\n"
+                " cases = json.loads(source.split('return PackedStringArray(')[1].split(')')[0])\n"
+                f" print('FORTRESS_TEST_CASES '+json.dumps({{ {suite!r}: cases }}));sys.exit(0)\n"
+                f"with open({str(process_ids)!r}, 'a') as pids: print(os.getpid(), file=pids)\n"
                 f"result = {result!r}\n"
-                f"if not pathlib.Path({str(omit)!r}).exists(): result['records'].append({second!r})\n"
+                f"mode = pathlib.Path({str(omission)!r}).read_text()\n"
+                "missing = mode == 'both'\n"
+                "if mode == 'one':\n"
+                " try:\n"
+                f"  pathlib.Path({str(omitted)!r}).touch(exist_ok=False)\n"
+                "  missing = True\n"
+                " except FileExistsError: pass\n"
+                f"if not missing: result['records'].append({second!r})\n"
                 "result['count'] = len(result['records'])\n"
                 "print('FORTRESS_TEST_RESULT '+json.dumps(result))\n"
             )
             write_executable(engine, program)
-            args = [sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", str(engine), "--verify-inventory",
-                    "--shard", shard, "--jobs", "2", "--durations", str(root / "times"), "--results", str(output)]
-            env = dict(os.environ, FORTRESS_HOST_CAPACITY_DIR=str(root / "capacity"))
-            for missing in (False, True):
-                if missing:
-                    omit.touch()
+            args = [sys.executable, str(launcher), "--godot", str(engine), "--verify-inventory",
+                    "--shard", "1of3", "--jobs", "2", "--durations", str(root / "times"), "--results", str(output)]
+            for mode in ("none", "one", "both"):
+                omission.write_text(mode, encoding="utf-8")
+                omitted.unlink(missing_ok=True)
+                process_ids.unlink(missing_ok=True)
                 execution = subprocess.run(args, env=env, capture_output=True, timeout=60)
                 report = json.loads(output.read_text())
-                self.assertEqual(execution.returncode, int(missing), report.get("failure"))
+                self.assertEqual(execution.returncode, int(mode != "none"), report.get("failure"))
+                self.assertIn("tests/runner/self_suite.gd", report["source_snapshot"]["files"])
                 self.assertEqual(report["case_inventory"], {suite: ["pass", "second"]})
+                pids = process_ids.read_text().splitlines()
+                self.assertEqual((len(pids), len(set(pids))), (2, 2))
                 first, second_run = report["runs"]
-                self.assertEqual(first["result"], second_run["result"])
-                self.assertEqual(first["result"]["count"], 1 if missing else 2)
-                self.assertEqual(first.get("failure"), "case_inventory_mismatch" if missing else None)
+                if mode == "one":
+                    self.assertEqual(sorted(run["result"]["count"] for run in report["runs"]), [1, 2])
+                    self.assertEqual(second_run.get("failure"), "fresh_process_divergence")
+                else:
+                    self.assertEqual(first["result"], second_run["result"])
+                    self.assertEqual(first["result"]["count"], 1 if mode == "both" else 2)
+                    self.assertEqual(first.get("failure"), "case_inventory_mismatch" if mode == "both" else None)
 
     # Value: protects=inventory loading has its own budget; fails_when=combined discovery consumes a shard timeout; why_new=fast listings hide the regression; seam=scripted engine
     def test_filtered_inventory_has_independent_budget(self) -> None:

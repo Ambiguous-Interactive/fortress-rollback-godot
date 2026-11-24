@@ -486,6 +486,7 @@ const packet = (kind, timestamp = 0, version = 2) => {
 
 for (const expiry of [false, true]) {
   const seen = [];
+  const milestones = [];
   class Channel {
     id = 3;
     addEventListener(name, listener) { this[name] = listener; }
@@ -499,7 +500,9 @@ for (const expiry of [false, true]) {
   }
   const channels = [new Channel(), new Channel()];
   const [channel, other] = channels;
-  const window = {};
+  const window = {
+    fortressNativePostRelease: { mark(kind, frames, { at_ms, queued, released }) { milestones.push([kind, at_ms, queued, released]); } },
+  };
   let now = 10;
   const realm = {
     window, performance: { now: () => now }, Uint8Array, ArrayBuffer, DataView, WebSocket: Socket,
@@ -532,6 +535,7 @@ for (const expiry of [false, true]) {
   assert.equal(wire.recordHoldReadiness('mesh'), null);
   assert.equal(wire.recordHoldReadiness('constructor'), null);
   channel.send(packet(2));
+  assert.deepEqual(milestones, expiry ? [] : [['hold_first_input', 10, 1, 0]]);
   channel.send(packet(4, 2));
   channel.send(packet(4, 3));
   channel.send(packet(255));
@@ -553,6 +557,7 @@ for (const expiry of [false, true]) {
     socket.message({data: relay(3, 1, packet(5, 2))});
     socket.message({data: relay(2, 3, packet(5, 2))});
     assert.equal(wire.status().control_round_trips.relay, 0);
+    assert.deepEqual(milestones, [['hold_first_input', 10, 1, 0], ['hold_first_control', 10, 1, 0]]);
     socket.message({data: reply});
     assert.equal(wire.recordHoldReadiness('relay'), null);
     socket.message({data: relay(2, 1, packet(4, 4))});
@@ -561,6 +566,7 @@ for (const expiry of [false, true]) {
   assert.equal(wire.status().held.mesh, expiry ? 4 : 1);
   assert.equal(wire.status().held.relay, expiry ? 1 : 0);
   assert.deepEqual({...wire.status().control_round_trips}, {mesh: expiry ? 0 : 1, relay: expiry ? 0 : 1});
+  assert.deepEqual(milestones, expiry ? [] : [['hold_first_input', 10, 1, 0], ['hold_first_control', 10, 1, 0]]);
   assert.deepEqual(socket.written, expiry ? [] : [report, relay(1, 2, packet(5, 4))]);
   const relayTrace = wire.status().relay_trace;
   assert.equal(relayTrace.buffered_bytes_peak, expiry ? 0 : 4096);
@@ -612,9 +618,9 @@ for (const expiry of [false, true]) {
     wire.release();
     assert.equal(wire.recordHoldReadiness('mesh'), null);
     assert.deepEqual(JSON.parse(JSON.stringify(wire.status().hold_boundaries)), {
-      armed: { at_ms: 10, held: { mesh: 0, relay: 0 }, bytes: 0 },
-      ready: { at_ms: 15, held: { mesh: 1, relay: 0 }, bytes: 28 },
-      release: { at_ms: 25, held: { mesh: 1, relay: 0 }, bytes: 28 },
+      armed: { at_ms: 10, held: { mesh: 0, relay: 0 }, bytes: 0, queued: 0, released: 0 },
+      ready: { at_ms: 15, held: { mesh: 1, relay: 0 }, bytes: 28, queued: 1, released: 0 },
+      release: { at_ms: 25, held: { mesh: 1, relay: 0 }, bytes: 28, queued: 1, released: 0 },
     });
     assert.deepEqual(seen, [packet(4, 2), packet(4, 3), packet(255), packet(2)].map(bytes => Array.from(bytes)));
   } else assert.deepEqual(seen, []);
@@ -775,7 +781,9 @@ async function run() {
   }
   await overflow;
   assert.equal(fullWire.status().released, 16);
-  assert.deepEqual(cap.map(sample => [sample.kind, sample.held.relay, sample.bytes]), [['hold_cap', 1024, 88064]]);
+  assert.deepEqual(cap.map(function (sample) {
+    return [sample.kind, sample.held.relay, sample.bytes, sample.queued, sample.released];
+  }), [['hold_first_input', 1, 86, 1, 0], ['hold_cap', 1024, 88064, 1008, 16]]);
 }
 const timer = setTimeout(() => { throw new Error('release did not settle'); }, 1000);
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
@@ -792,15 +800,16 @@ let now = 10, heartbeat;
 global.window = {
   fortressNative: { state: 'playing', turns: 20, frame: 24, confirmed: 16, restores: 2, stalls: 0, prediction: 12 },
   fortressNativeWire: {
-    arm: () => ({ at_ms: now, held: { mesh: 0, relay: 0 }, bytes: 0 }),
-    recordHoldReadiness: () => ({ at_ms: now, held: { mesh: 0, relay: 10 }, bytes: 880 }),
+    arm: () => ({ at_ms: now, held: { mesh: 0, relay: 0 }, bytes: 0, queued: 0, released: 0 }),
+    holdProgress: () => ({ at_ms: now, held: { mesh: 0, relay: 10 }, bytes: 880, queued: 10, released: 0 }),
+    recordHoldReadiness: () => window.fortressNative.stalls >= 3 ? window.fortressNativeWire.holdProgress() : null,
     status: () => { now += 2; return {}; },
     release: async () => { now++; },
   },
 };
 global.performance = { now: () => now };
 global.setInterval = callback => { heartbeat = callback; };
-global.requestAnimationFrame = callback => { window.fortressNative.stalls++; callback(); };
+global.requestAnimationFrame = callback => { now++; window.fortressNative.stalls++; callback(); };
 console.debug = text => postReleaseCheckpoint(checkpoints, text, now + 100);
 instrumentPostRelease('fortress native post-release ');
 const trace = window.fortressNativePostRelease;
@@ -823,7 +832,8 @@ const page = {
 async function run() {
   assert.equal((await armAndWaitForInput(page, 'relay')).ready.restores, 2);
   assert.deepEqual([checkpoints.hold_armed?.page_ms, checkpoints.hold_armed?.controller_ms, checkpoints.hold_armed?.held.relay], [10, 110, 0]);
-  assert.deepEqual([checkpoints.hold_ready?.page_ms, checkpoints.hold_ready?.controller_ms, checkpoints.hold_ready?.held.relay], [10, 110, 10]);
+  assert.equal(checkpoints.hold_first_prediction?.page_ms, 11);
+  assert.deepEqual([checkpoints.hold_ready?.page_ms, checkpoints.hold_ready?.controller_ms, checkpoints.hold_ready?.held.relay], [13, 113, 10]);
   trace.observe();
   assert.equal(checkpoints.correction, undefined, 'old restores do not prove correction');
   postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"correction"}', now);
@@ -840,23 +850,28 @@ async function run() {
     heartbeat();
   }
   postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"heartbeat"}', now);
-  assert.equal(checkpoints.release_dispatched_ms, 11);
-  assert.equal(checkpoints.release_entered.page_ms, 11);
-  assert.equal(checkpoints.release_entered.controller_ms, 111);
-  assert.equal(checkpoints.release_started.page_ms, 13);
-  assert.equal(checkpoints.release_completed.page_ms, 14);
-  assert.equal(checkpoints.correction.page_ms, 10, 'correction can precede local release');
+  assert.equal(checkpoints.release_dispatched_ms, 14);
+  assert.equal(checkpoints.release_entered.page_ms, 14);
+  assert.equal(checkpoints.release_entered.controller_ms, 114);
+  assert.deepEqual([checkpoints.release_started.page_ms, checkpoints.release_started.queued, checkpoints.release_started.released], [16, 10, 0]);
+  const malformed = {};
+  const cap = { ...checkpoints.release_started, kind: 'hold_cap', released: 1 };
+  postReleaseCheckpoint(malformed, 'fortress native post-release ' + JSON.stringify(cap), 116);
+  assert.match(malformed.checkpoint_error, /invalid hold sample/);
+  assert.equal(malformed.hold_cap, undefined);
+  assert.equal(checkpoints.release_completed.page_ms, 17);
+  assert.equal(checkpoints.correction.page_ms, 13, 'correction can precede local release');
   assert.equal(checkpoints.correction.turns, 21, 'retain the first observed correction');
   assert.equal(checkpoints.history_requested.frames, 40);
   assert.equal(checkpoints.history_published.frames, 40);
-  assert.equal(checkpoints.history_published.controller_ms, 116);
+  assert.equal(checkpoints.history_published.controller_ms, 119);
   assert.equal(checkpoints.history_received, undefined, 'publication does not prove receipt delivery');
-  assert.deepEqual(checkpoints.heartbeats.map(sample => [sample.page_ms, sample.turns, sample.confirmed]), [[20, 22, 40], [21, 22, 40]]);
+  assert.deepEqual(checkpoints.heartbeats.map(sample => [sample.page_ms, sample.turns, sample.confirmed]), [[23, 22, 40], [24, 22, 40]]);
   assert.match(checkpoints.checkpoint_error, /invalid post-release sample/);
   const failed = {};
   const unavailable = { async evaluate() { throw new Error('release evaluation unavailable'); } };
   await assert.rejects(captureAndReleaseInput(unavailable, 0, failed), /release evaluation unavailable/);
-  assert.deepEqual(failed, { release_dispatched_ms: 21 });
+  assert.deepEqual(failed, { release_dispatched_ms: 24 });
 }
 const timer = setTimeout(() => { throw new Error('post-release checkpoint control did not settle'); }, 1000);
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
