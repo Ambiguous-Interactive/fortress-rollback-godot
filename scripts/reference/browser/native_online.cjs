@@ -50,6 +50,13 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
           || !(cutoff.reason === 'failed' && cutoff.state === 'failed'
             || cutoff.reason === 'gate' && cutoff.state === 'playing' && cutoff.confirmed >= GATE_FRAME)))
           throw new Error('invalid warmup gate');
+        if (cutoff?.terminal_endpoint !== undefined || cutoff?.terminal_uuid !== undefined) {
+          const roster = [sample.recipient, ...sample.links.map(link => link.sender)].sort();
+          const { terminal_endpoint: endpoint, terminal_uuid: uuid } = cutoff;
+          if (cutoff.reason !== 'failed' || !Number.isInteger(endpoint) || endpoint < 1 || endpoint > players
+              || !isUuid(uuid) || uuid === sample.recipient || uuid !== roster[endpoint - 1])
+            throw new Error('invalid warmup expiry endpoint');
+        }
         checkpoints[index] = sample;
         if (cutoff?.reason !== 'gate' || receivedAt < startedAt || receivedAt >= deadline) return;
         received[index] = receivedAt;
@@ -175,6 +182,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   const channelReports = new Map();
   const socketReports = new WeakMap();
   const warmupLinks = new Map();
+  let warmupRoster = [];
   const warmupTicks = [];
   let warmupTickCount = 0;
   let warmupStarted = null;
@@ -492,15 +500,17 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     }, data, packet?.sender === localUuid ? packet : null);
   };
   window.fortressNativeWire = {
-    bind(hash, uuid, warmupRoster = []) {
+    bind(hash, uuid, roster = []) {
       if (session || !/^[0-9a-f]{32}$/.test(hash)) throw new Error('invalid native room session');
       localUuid = uuid.replaceAll('-', '');
       session = hash.match(/../g).map(value => parseInt(value, 16));
-      if (warmupPrefix) for (const member of warmupRoster.slice(0, 8)) {
-        const sender = member.replaceAll('-', '');
-        if (sender !== localUuid) warmupLinks.set(sender, {
-          packets: new Map(), evicted: 0, unretained: { sdk: 0, native: 0 }, discardedThroughToken: '', last_replied_report: null,
-        });
+      if (warmupPrefix) {
+        warmupRoster = roster.slice(0, 8).map(member => member.replaceAll('-', ''));
+        for (const sender of warmupRoster) {
+          if (sender !== localUuid) warmupLinks.set(sender, {
+            packets: new Map(), evicted: 0, unretained: { sdk: 0, native: 0 }, discardedThroughToken: '', last_replied_report: null,
+          });
+        }
       }
       if (warmupLinks.size) warmupStarted = performance.now();
     },
@@ -514,9 +524,14 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       warmupTickCount++;
       scheduleWarmupCheckpoint(at);
     },
-    finishWarmup(state, confirmed) {
+    finishWarmup(state, confirmed, terminalEndpoint = 0) {
       if (warmupLinks.size && !warmupCutoff) {
         warmupCutoff = { at_ms: performance.now(), reason: state === 'failed' ? 'failed' : 'gate', state, confirmed };
+        const uuid = warmupRoster[terminalEndpoint - 1];
+        if (state === 'failed' && warmupLinks.has(uuid)) {
+          warmupCutoff.terminal_endpoint = terminalEndpoint;
+          warmupCutoff.terminal_uuid = uuid;
+        }
         checkpointWarmup(warmupCutoff.at_ms);
       }
     },
@@ -1144,12 +1159,21 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       assert.ok(peer.terminated && peer.reason !== 0 && peer.message);
       if (liveClose) {
         assert.equal(peer.terminal_detail, 'disconnected', 'the native protocol must report expiry');
+        assert.deepEqual(peer.frozen_roster, roster, 'expiry must use the original frozen endpoint mapping');
+        assert.equal(peer.frozen_roster[peer.slot], peer.uuid, 'the local slot must match the frozen roster');
+        const endpoint = peer.terminal_endpoint;
+        assert.ok(Number.isInteger(endpoint) && endpoint > 0 && endpoint <= players && endpoint !== peer.slot + 1,
+          'native expiry must identify a remote endpoint');
+        assert.ok(interruption[index].interrupted.includes(endpoint),
+          `native expiry must identify an interrupted peer (${peer.frozen_roster[endpoint - 1]})`);
         assert.deepEqual(peer.sdk_roster.sort(), roster, 'the original SDK roster must survive until native expiry');
         assert.deepEqual(peer.wire.sockets, [1], 'SDK room must survive the outage until native expiry');
         assert.ok(peer.wire.deferredClose, 'the app must initiate native terminal cleanup');
         assert.deepEqual([peer.saves, peer.restores, peer.advances], peer.failure_tick_callbacks, 'no callback may run on or after native expiry');
+      } else {
+        assert.equal(peer.terminal_endpoint, 0, 'SDK departure must not report a native expiry endpoint');
       }
-      for (const key of ['frame', 'confirmed', 'reason', 'terminal_detail', 'message', 'game_frame', 'saves', 'restores', 'advances'])
+      for (const key of ['frame', 'confirmed', 'reason', 'terminal_detail', 'terminal_endpoint', 'message', 'game_frame', 'saves', 'restores', 'advances'])
         assert.equal(peer[key], before[key], `terminal ${key} changed for survivor ${index}`);
     }
     phase = 'teardown';

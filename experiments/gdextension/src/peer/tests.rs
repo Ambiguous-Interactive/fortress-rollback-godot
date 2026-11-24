@@ -223,18 +223,21 @@ fn check_timeout_policy(abort_on_event: bool) {
     let interrupted = peers[0].interrupted_endpoints().collect::<Vec<_>>();
     assert_eq!(interrupted, if abort_on_event { vec![2] } else { vec![] });
     assert!(peers[0].is_running());
+    assert_eq!(peers[0].terminal_endpoint(), 0);
 
     for (_, packet) in in_flight {
         assert_eq!(peers[0].receive_from(2, &packet), ReceiveCode::Accepted);
     }
     run_frame(&mut peers[0], &mut games[0], &[0]);
     assert_eq!(peers[0].interrupted_endpoints().count(), 0);
+    assert_eq!(peers[0].terminal_endpoint(), 0);
 
     time_ms.store(2700, Ordering::Relaxed);
     let frame = peers[0].current_frame();
     if !abort_on_event {
         assert_eq!(peers[0].step(&[0; 4], |_| panic!("paused upstream session")), 1);
         assert_eq!(peers[0].terminal_reason(), "");
+        assert_eq!(peers[0].terminal_endpoint(), 0);
         assert_eq!(peers[0].current_frame(), frame);
         assert_eq!(peers[0].session.current_state(), SessionState::Synchronizing);
         return;
@@ -243,6 +246,10 @@ fn check_timeout_policy(abort_on_event: bool) {
     assert_eq!(peers[0].terminal_reason(), "disconnected");
     assert_eq!(peers[0].current_frame(), frame);
     assert!(!peers[0].is_running());
+    assert_eq!(peers[0].terminal_endpoint(), 2);
+    assert_eq!(peers[0].step(&[], |_| panic!("terminal callback")), -1);
+    assert_eq!(peers[0].terminal_reason(), "disconnected");
+    assert_eq!(peers[0].terminal_endpoint(), 2);
 }
 
 #[test]
@@ -256,4 +263,5 @@ fn rejects_an_incomplete_local_batch_before_polling_or_simulating() {
     assert!(peer.drain().is_empty());
     assert_eq!(peer.step(&[0; 8], |_| panic!("terminal callback")), -1);
     assert_eq!(peer.terminal_reason(), "invalid_input");
+    assert_eq!(peer.terminal_endpoint(), 0);
 }

@@ -23,6 +23,7 @@ var _request_frame: int = -1
 var _request_kind: int = -1
 var _active_view: RefCounted
 var _terminal_detail: String
+var _terminal_endpoint: int
 var _busy: bool = false
 var _last_now: int = -1
 
@@ -82,6 +83,8 @@ func _step(now_us: int, samples: Array[PackedByteArray]) -> int:
 		return _status.reason
 	if code < 0:
 		_terminal_detail = _native.call("terminal_reason")
+		if _terminal_detail == "disconnected" and _native.has_method(&"terminal_endpoint"):
+			_terminal_endpoint = _native.call(&"terminal_endpoint")
 		match _terminal_detail:
 			"callback_failed":
 				terminate(Types.Code.CALLBACK_FAILED)
@@ -120,6 +123,11 @@ func interrupted_endpoints() -> PackedInt32Array:
 
 func terminal_detail() -> String:
 	return _terminal_detail
+
+
+## One-based native endpoint for a disconnect, or zero when unavailable.
+func terminal_endpoint() -> int:
+	return _terminal_endpoint
 
 
 func status() -> Types.Status:

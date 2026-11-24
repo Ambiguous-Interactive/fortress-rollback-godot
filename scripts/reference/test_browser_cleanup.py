@@ -253,6 +253,41 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
+    def test_native_relay_warmup_reports_expired_peer_in_failure_checkpoint(self):
+        # Value: protects=expiry attribution without a page RPC; fails_when=the frozen endpoint is lost or misattributed; seam=warmup console checkpoint
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { createWarmupBarrier, instrumentNativeWire, WARMUP_CHECKPOINT } = require(process.argv[1]);
+const roster = ['11', '22', '33'].map(pair => pair.repeat(16));
+for (const [endpoint, sender] of [[3, roster[2]], [0, undefined], [2, undefined], [4, undefined]]) {
+  const barrier = createWarmupBarrier(3, () => 2);
+  const window = {};
+  runInNewContext(`(${instrumentNativeWire})(false, "${WARMUP_CHECKPOINT}")`, {
+    window, performance: { now: () => 1 }, console: { debug: text => barrier.record(0, text) },
+    WebSocket: class {}, RTCPeerConnection: class {},
+  });
+  const wire = window.fortressNativeWire;
+  wire.bind('00'.repeat(16), roster[1], roster);
+  wire.finishWarmup('failed', 5, endpoint);
+  wire.finishWarmup('failed', 6, 1);
+  assert.deepEqual(barrier.errors, [null, null, null]);
+  const receipt = barrier.checkpoints[0];
+  assert.equal(receipt.cutoff.confirmed, 5, 'only the first cutoff is published');
+  assert.equal(receipt.cutoff.terminal_endpoint, sender === undefined ? undefined : endpoint);
+  assert.equal(receipt.cutoff.terminal_uuid, sender);
+  if (sender) {
+    assert.ok(receipt.links.some(link => link.sender === sender));
+    const wrong = { ...receipt, cutoff: { ...receipt.cutoff, terminal_uuid: roster[0] } };
+    barrier.record(1, WARMUP_CHECKPOINT + JSON.stringify(wrong));
+    assert.match(barrier.errors[1], /invalid warmup expiry endpoint/);
+    assert.equal(barrier.checkpoints[1], null);
+  }
+  assert.deepEqual(barrier.received, [null, null, null], 'failure cannot open the warmup gate');
+}
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
     def test_native_relay_warmup_preserves_stages_with_cutoff_and_eviction(self):
         # Value: protects=exact staged warmup attribution; fails_when=an unmatched reply implies processing; seam=raw socket and staged observers
         script = r"""
