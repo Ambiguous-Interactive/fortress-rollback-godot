@@ -65,7 +65,7 @@ function assertRecoveredRoom(direct, restored, peers, { pairs, targets }) {
     const healthy = peer.wire.sctp.filter(link => link.index !== original[index]?.index);
     return replacement[index] ? [...healthy, replacement[index]] : healthy;
   });
-  assertHealthy(links, restored, peers);
+  assert.ok(assertHealthy(links, restored, peers), 'direct gameplay must advance through final history capture');
 }
 
 function verifyReplacement(pair, direct, peers) {

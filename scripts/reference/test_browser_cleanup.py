@@ -98,6 +98,44 @@ assert.throws(() => assertStableRoom(direct, peers), /relay must stay within the
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_recovery.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
+    def test_native_recovery_requires_direct_progress_through_final_capture(self):
+        # Value: protects=direct gameplay through final capture; fails_when=open channels can stop carrying inputs; seam=recovery receipt
+        script = r"""
+const assert = require('node:assert/strict');
+const { assertRecoveredRoom } = require(process.argv[1]);
+const targets = [1, 0, 3, 2];
+const direct = ['first', 'second', 'third', 'fourth'].map((uuid, index, roster) => ({
+  uuid, state: 'playing', started_on_full_mesh: true, plan_events: 1, sdk_roster: roster,
+  wire: { sctp: [0, 1, 2].map(channel => ({ index: channel, open: true, closeEvents: 0, local: 'local', remote: 'remote',
+    inputsSent: 0, inputsReceived: 0 })) },
+}));
+const restored = direct.map((peer, index) => {
+  const sctp = peer.wire.sctp.map(link => ({ ...link, index: link.index === 0 ? 3 : link.index, inputsSent: 1, inputsReceived: 1 }));
+  const relay = { [direct[targets[index]].uuid]: 1 };
+  return { ...peer, wire: { sctp, sockets: [1], relayRecipients: relay, relaySenders: relay } };
+});
+const evidence = {
+  pairs: [[0, 1], [2, 3]].map(pair => ({
+    old: pair.map(index => direct[index].wire.sctp[0]),
+    replacement: pair.map(index => restored[index].wire.sctp[0]),
+  })),
+  targets,
+};
+const final = restored.map(peer => ({
+  ...peer, wire: { ...peer.wire, sctp: peer.wire.sctp.map(link => ({ ...link, inputsSent: 2, inputsReceived: 2 })) },
+}));
+assert.doesNotThrow(() => assertRecoveredRoom(direct, restored, final, evidence));
+for (const link of final.flatMap(peer => peer.wire.sctp)) {
+  for (const counter of ['inputsSent', 'inputsReceived']) {
+    link[counter] = 1;
+    assert.throws(() => assertRecoveredRoom(direct, restored, final, evidence), /direct gameplay must advance through final history capture/);
+    link[counter] = 2;
+  }
+}
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_recovery.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_native_relay_warmup_preserves_stages_with_cutoff_and_eviction(self):
         # Value: protects=exact staged warmup attribution; fails_when=missing SDK or rolled-out packets appear complete; seam=raw socket and staged observers
         script = r"""
