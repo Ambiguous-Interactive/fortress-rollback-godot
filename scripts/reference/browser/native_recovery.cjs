@@ -45,9 +45,9 @@ async function recoverPair(direct, { pages, wait, observe, command, pause, setPh
   assert.deepEqual([...initiators].sort(), [false, true]);
   const offerer = initiators.indexOf(true);
   const answerer = 1 - offerer;
-  await Promise.all(pair.map((peer, index) => pages[index].evaluate(scope => window.fortressNativeWire.holdRecovery(scope), {
+  await Promise.all(pair.map((peer, index) => pages[index].evaluate(scope => window.fortressNativeWire.observeRecovery(scope), {
     room: peer.room_id, generation: peer.plan.generation, peer: pair[1 - index].uuid,
-    localEpoch: peer.sdk_epochs[peer.uuid], peerEpoch: peer.sdk_epochs[pair[1 - index].uuid],
+    localEpoch: peer.sdk_epochs[peer.uuid], peerEpoch: peer.sdk_epochs[pair[1 - index].uuid], holdsOffer: index === offerer,
   })));
   setPhase('physical channel close');
   await command(pages[0], 'close_link', { uuid: pair[1].uuid });
@@ -119,6 +119,7 @@ async function recoverPair(direct, { pages, wait, observe, command, pause, setPh
   const held = restored[offerer].wire.recovery.held;
   assert.deepEqual(restored[offerer].wire.recovery.observed.map(event => event.attempt), [1]);
   const received = restored[answerer].wire.recovery;
+  assert.equal(received.pending, 0, 'answerer signaling must pass through');
   const queued = restored[offerer].wire.recovery.queuedKinds;
   assert.equal(released, queued.Offer + queued.IceCandidate);
   assert.equal(received.receivedKinds.Offer, 1);

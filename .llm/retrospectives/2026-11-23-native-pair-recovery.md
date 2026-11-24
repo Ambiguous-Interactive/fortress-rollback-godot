@@ -13,6 +13,7 @@ as distinct failure cases.
 | Relay liveness can hide disabled direct restoration. | The exported control without the lobby opt-in continued confirming gameplay to frames 168–169 on relay. Neither affected page sent a replacement offer, and the recovery witness exited 1 in the physical close phase. |
 | A route snapshot at either end of replacement can miss an unintended relay send. | The review control injects a relay recipient or sender on a healthy link while the current fallback set is empty. The before version reports `Missing expected exception`. The cumulative route check rejects both directions. |
 | Each WebKit close needs its own pre-fault snapshot. | The same tagged reciprocal error proved `stream-close` against the original channel. Rechecking it against the already-closed record returned `null`. The controller now collects physical-close and departure evidence independently. |
+| Observation and withholding need separate roles. | Both initial hosted receipts recovered while one answerer ICE candidate stayed queued. A socket control reproduced the dropped delivery. Only the offerer now holds outbound signaling. |
 
 ## Actions and pruning
 

@@ -328,7 +328,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       recovery.observed.push({ attempt: outgoing.attempt, at_ms: performance.now() });
       if (!recovery.held && outgoing.attempt === 1) recovery.held = { ...outgoing, at_ms: performance.now() };
     }
-    if (isFirstRecoveryOfferTraffic(outgoing) && !recovery.released) {
+    if (recovery.scope?.holdsOffer && isFirstRecoveryOfferTraffic(outgoing) && !recovery.released) {
       if (recovery.pending.length === 32) throw new Error('scoped SDP and ICE queue exceeded its bound');
       recovery.queuedKinds[outgoing.kind]++;
       recovery.pending.push(() => {
@@ -378,8 +378,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       }
     },
     blockRecovery() { blockRecovery = true; },
-    holdRecovery(scope) {
-      if (recovery.scope) throw new Error('recovery hold already armed');
+    observeRecovery(scope) {
+      if (recovery.scope) throw new Error('recovery scope already set');
       recovery.scope = scope;
     },
     releaseRecovery() {
