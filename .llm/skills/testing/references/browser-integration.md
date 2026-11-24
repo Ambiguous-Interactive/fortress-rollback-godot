@@ -151,6 +151,9 @@ absolute room/launcher/job ceiling. Packet counts, stage names and clocks do not
 prove progress. Fresh execution must still satisfy every acceptance gate.
 Capture bounded physical channel counters before destroying a failed room; keep
 the original rejection and bound each diagnostic independently of gameplay.
+When a one-time browser gate already emits a console checkpoint, use that
+receipt for the controller barrier. Require the original game-state
+predicate, one timely receipt per page, and the original deadline.
 Start readiness sampling in the same page call that arms a hold. Keep page
 clock marks and controller receipt times on their own clocks.
 When a room barrier permits release, save the pre-release snapshot and start

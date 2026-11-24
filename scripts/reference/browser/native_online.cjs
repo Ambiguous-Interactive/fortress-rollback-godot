@@ -11,6 +11,7 @@ const GATE_FRAME = 12;
 const HISTORY_FRAMES = 40;
 const PAGE_BOOT_MS = 60000;
 const PAGE_WAIT_MS = 30000;
+const WARMUP_WAIT_MS = 45000;
 const DIAGNOSTIC_MS = 5000;
 const CLOSE_MS = 10000;
 const CLOSE_CLOCK_POST_SAMPLES = 4;
@@ -18,6 +19,53 @@ const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.'
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
 const POST_RELEASE_MARKS = new Set(['release_started', 'release_completed', 'correction', 'history_requested', 'history_published']);
+
+function createWarmupBarrier(players, clock = () => performance.now()) {
+  const checkpoints = Array(players).fill(null);
+  const errors = Array(players).fill(null);
+  const received = Array(players).fill(null);
+  let startedAt = Infinity;
+  let deadline = Infinity;
+  let complete;
+  const ready = new Promise(resolve => { complete = resolve; });
+  return {
+    checkpoints, errors, received,
+    record(index, text) {
+      if (!text.startsWith(WARMUP_CHECKPOINT) || received[index] !== null) return;
+      const receivedAt = clock();
+      try {
+        const sample = JSON.parse(text.slice(WARMUP_CHECKPOINT.length));
+        const isUuid = value => typeof value === 'string' && /^[0-9a-f]{32}$/.test(value);
+        if (!isUuid(sample?.recipient) || !Number.isFinite(sample.started_ms) || sample.started_ms < 0
+          || !Number.isFinite(sample.through_ms) || sample.through_ms < sample.started_ms
+          || !Array.isArray(sample.links) || sample.links.length !== players - 1 || sample.links.some(link => !isUuid(link?.sender))
+          || !Array.isArray(sample.ticks) || sample.ticks.some(tick => !Number.isFinite(tick?.at_ms))
+          || !Number.isSafeInteger(sample.tick_count) || sample.tick_count < sample.ticks.length) throw new Error('invalid warmup checkpoint');
+        const { cutoff } = sample;
+        if (cutoff !== null && (cutoff?.at_ms !== sample.through_ms || !Number.isSafeInteger(cutoff.confirmed)
+          || !(cutoff.reason === 'failed' && cutoff.state === 'failed'
+            || cutoff.reason === 'gate' && cutoff.state === 'playing' && cutoff.confirmed >= GATE_FRAME)))
+          throw new Error('invalid warmup gate');
+        checkpoints[index] = sample;
+        if (cutoff?.reason !== 'gate' || receivedAt < startedAt || receivedAt >= deadline) return;
+        received[index] = receivedAt;
+        if (received.every(at => at !== null)) complete();
+      } catch (error) {
+        errors[index] ??= String(error);
+      }
+    },
+    async wait(start, timeout) {
+      startedAt = clock();
+      try {
+        await start();
+        deadline = clock() + timeout;
+        await boundedRoom(() => ready, timeout, 'native warmup');
+      } finally {
+        deadline = -Infinity;
+      }
+    },
+  };
+}
 
 function instrumentPostRelease(prefix) {
   let baseline;
@@ -418,9 +466,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       warmupTickCount++;
       scheduleWarmupCheckpoint(at);
     },
-    finishWarmup(reason) {
+    finishWarmup(state, confirmed) {
       if (warmupLinks.size && !warmupCutoff) {
-        warmupCutoff = { at_ms: performance.now(), reason };
+        warmupCutoff = { at_ms: performance.now(), reason: state === 'failed' ? 'failed' : 'gate', state, confirmed };
         checkpointWarmup(warmupCutoff.at_ms);
       }
     },
@@ -698,8 +746,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   const mixed = startup || liveClose || recovery;
   const route = mixed ? 'mesh' : mode;
   const traceWarmup = route === 'relay' && players === 8;
-  const warmup = traceWarmup ? Array(players).fill(null) : undefined;
-  const warmupCheckpointErrors = traceWarmup ? Array(players).fill(null) : undefined;
+  const warmupBarrier = traceWarmup ? createWarmupBarrier(players) : undefined;
   const postRelease = route === 'relay' ? Array.from({ length: players }, () => ({})) : undefined;
   const playwright = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY);
@@ -761,13 +808,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       page.on('crash', () => errors.push({ index, phase, text: 'Renderer crashed' }));
       page.on('console', message => {
         const text = message.text();
-        if (traceWarmup && text.startsWith(WARMUP_CHECKPOINT)) {
-          try {
-            warmup[index] = JSON.parse(text.slice(WARMUP_CHECKPOINT.length));
-          } catch (error) {
-            warmupCheckpointErrors[index] = String(error);
-          }
-        }
+        warmupBarrier?.record(index, text);
         if (postRelease) postReleaseCheckpoint(postRelease[index], text, performance.now());
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push({ index, phase, text });
       });
@@ -805,9 +846,15 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       await command(pages[1], 'block_startup', { uuid: joined[0].uuid });
     }
     phase = startup ? 'startup with one closed channel pair' : 'warmup';
-    await command(pages[0], 'start');
-    await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
-      && window.fortressNative.confirmed >= frame, GATE_FRAME, 45000)));
+    const start = () => command(pages[0], 'start');
+    if (warmupBarrier) {
+      await warmupBarrier.wait(start, WARMUP_WAIT_MS);
+      if (errors.length) throw new Error(JSON.stringify(errors));
+    } else {
+      await start();
+      await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
+        && window.fortressNative.confirmed >= frame, GATE_FRAME, WARMUP_WAIT_MS)));
+    }
     let direct, atClose, afterClose, restored, recoveryEvidence, closeLinks;
     if (liveClose || recovery) {
       direct = await observe();
@@ -996,7 +1043,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
       holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
-      departureClocks: closeReport.clocks ?? departureClocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])], warmup, warmupCheckpointErrors };
+      departureClocks: closeReport.clocks ?? departureClocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
+      warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupGateReceived: warmupBarrier?.received };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
@@ -1015,7 +1063,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
-      states: diagnostics, warmup, warmupCheckpointErrors, postRelease
+      states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
+      warmupGateReceived: warmupBarrier?.received, postRelease
     }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
@@ -1050,5 +1099,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { armAndWaitForInput, captureAndReleaseInput, closeEvidence, compareHistory, instrumentNativeWire, instrumentPostRelease,
-  postReleaseCheckpoint, readConfirmedHistory, reportedChannel, waitForCloseProofs, waitForCorrectedHistory };
+module.exports = { armAndWaitForInput, captureAndReleaseInput, closeEvidence, compareHistory, createWarmupBarrier, instrumentNativeWire, instrumentPostRelease,
+  postReleaseCheckpoint, readConfirmedHistory, reportedChannel, waitForCloseProofs, waitForCorrectedHistory, WARMUP_CHECKPOINT };

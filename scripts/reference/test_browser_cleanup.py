@@ -136,6 +136,68 @@ for (const link of final.flatMap(peer => peer.wire.sctp)) {
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_recovery.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
+    def test_native_relay_warmup_counts_only_timely_playing_gate_receipts(self):
+        # Value: protects=warmup without a page RPC; fails_when=invalid, duplicate or late receipts open the hold; seam=console delivery
+        script = r"""
+const assert = require('node:assert/strict');
+const { createWarmupBarrier, WARMUP_CHECKPOINT } = require(process.argv[1]);
+const checkpoint = (cutoff, extra = {}) => WARMUP_CHECKPOINT + JSON.stringify({
+  cutoff, started_ms: 2, through_ms: cutoff?.at_ms ?? 8, recipient: '01'.repeat(16),
+  links: [{ sender: '02'.repeat(16) }], ticks: [], tick_count: 0, ...extra,
+});
+const gate = { reason: 'gate', state: 'playing', confirmed: 12, at_ms: 8 };
+
+async function run() {
+  let now = 9;
+  const barrier = createWarmupBarrier(2, () => now);
+  barrier.record(1, checkpoint(gate));
+  assert.deepEqual(barrier.received, [null, null], 'a receipt must follow start dispatch');
+  let acknowledgeStart;
+  const wait = barrier.wait(() => new Promise(resolve => { acknowledgeStart = resolve; }), 1000);
+  let passed = false;
+  void wait.then(() => { passed = true; }, () => {});
+  now = 10;
+  barrier.record(0, checkpoint(gate));
+  now = 11;
+  acknowledgeStart();
+  barrier.record(0, checkpoint(gate));
+  now = 12;
+  barrier.record(1, checkpoint(null));
+  barrier.record(1, WARMUP_CHECKPOINT + 'null');
+  barrier.record(1, WARMUP_CHECKPOINT + '{');
+  barrier.record(1, checkpoint({ ...gate, reason: 'failed', state: 'failed' }));
+  barrier.record(1, checkpoint({ ...gate, state: 'failed' }));
+  barrier.record(1, checkpoint({ ...gate, confirmed: 11 }));
+  barrier.record(1, checkpoint({ ...gate, at_ms: 1 }));
+  barrier.record(1, checkpoint(gate, { recipient: null }));
+  barrier.record(1, checkpoint(gate, { links: [null] }));
+  barrier.record(1, checkpoint(gate, { ticks: [null], tick_count: 1 }));
+  await new Promise(setImmediate);
+  assert.equal(passed, false);
+  assert.equal(barrier.received[1], null);
+  assert.ok(barrier.errors[1]);
+  assert.equal(barrier.checkpoints[1].cutoff.reason, 'failed');
+  now = 13;
+  barrier.record(1, checkpoint(gate));
+  await wait;
+  assert.deepEqual(barrier.received, [10, 13]);
+
+  const late = createWarmupBarrier(2, () => now);
+  const pending = late.wait(() => {}, 5);
+  await Promise.resolve(); // The acknowledged start fixes the deadline at 18.
+  now = 17;
+  late.record(0, checkpoint(gate));
+  now = 18;
+  late.record(1, checkpoint(gate));
+  await assert.rejects(pending, /absolute native warmup deadline/);
+  assert.deepEqual(late.received, [17, null]);
+  assert.deepEqual(late.checkpoints[1].cutoff, gate);
+}
+const timer = setTimeout(() => { throw new Error('warmup barrier test did not settle'); }, 2000);
+run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
     def test_native_relay_warmup_preserves_stages_with_cutoff_and_eviction(self):
         # Value: protects=exact staged warmup attribution; fails_when=missing SDK or rolled-out packets appear complete; seam=raw socket and staged observers
         script = r"""
@@ -237,12 +299,15 @@ assert.equal(resurfaced.payload, bytes(8).toString('hex'));
 assert.equal(resurfaced.after_eviction, true);
 const wireBeforeCutoff = wire.status();
 assert.equal(tasks.length, 1);
-wire.finishWarmup('gate');
+wire.finishWarmup('playing', 12);
 const cutoff = JSON.stringify(wire.warmupStatus());
 assert.equal(JSON.stringify(JSON.parse(checkpoints.at(-1).slice('warmup '.length))), cutoff);
 assert.equal(wire.warmupStatus().recipient, local);
 assert.equal(wire.warmupStatus().started_ms, 1);
 assert.equal(wire.warmupStatus().cutoff.at_ms, 1051);
+assert.equal(wire.warmupStatus().cutoff.reason, 'gate');
+assert.equal(wire.warmupStatus().cutoff.state, 'playing');
+assert.equal(wire.warmupStatus().cutoff.confirmed, 12);
 assert.equal(wire.warmupStatus().ticks[0].budget, 256);
 tasks.shift()();
 assert.equal(checkpoints.length, 2);
@@ -251,7 +316,7 @@ raw(socket, bytes(30));
 sample('sdk', bytes(30));
 sample('native', bytes(30), 0);
 wire.recordWarmupTick(1200, 0, 256, 1000, true);
-wire.finishWarmup('failed');
+wire.finishWarmup('failed', 12);
 assert.equal(JSON.stringify(wire.warmupStatus()), cutoff);
 const after = wire.status();
 assert.equal(after.armed, false);

@@ -235,8 +235,9 @@ func _process(_delta: float) -> void:
 			command_id = int(value.id)
 			_command(value)
 	var match_status: Types.Status = lobby.game_match.status()
-	if warmup_match != null and (lobby.state == "failed" or match_status.confirmed_frame >= GATE_FRAME):
-		lobby.warmup_wire.finishWarmup("failed" if lobby.state == "failed" else "gate")
+	var warmup_ready: bool = lobby.state == "playing" and match_status.confirmed_frame >= GATE_FRAME
+	if warmup_match != null and (lobby.state == "failed" or warmup_ready):
+		lobby.warmup_wire.finishWarmup(lobby.state, match_status.confirmed_frame)
 		if is_instance_valid(lobby.client):
 			lobby.client.disconnect("game_data_binary_received", warmup_match.observe_sdk)
 		warmup_match.warmup_wire = null
