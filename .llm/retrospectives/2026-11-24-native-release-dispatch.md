@@ -24,3 +24,10 @@ release-start mark still measures the boundary after the snapshot.
 State `findings-acted`. The hold cap and its timing on hosted runners remain
 tracked in #467. Full native Firefox qualification remains tracked in
 [#458](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/458).
+
+The seven-CPU exported Firefox 4.3 run recorded all eight release traces.
+Entry receipts arrived 454.34–515.75 ms after dispatch. Page-side snapshot
+capture took 0.72–5.48 ms before release. All peers completed the 40-frame
+comparison. The run then timed out waiting for the departure acknowledgment.
+[Issue #475](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/475)
+tracks that boundary and the missing teardown proof.
