@@ -10,11 +10,55 @@ const INPUTS = [[1, ['KeyA']], [2, ['KeyD']], [4, ['KeyW']], [8, ['KeyS']],
 const GATE_FRAME = 12;
 const HISTORY_FRAMES = 40;
 const PAGE_BOOT_MS = 60000;
+const PAGE_WAIT_MS = 30000;
 const DIAGNOSTIC_MS = 5000;
 const CLOSE_MS = 10000;
 const CLOSE_CLOCK_POST_SAMPLES = 4;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
+const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
+const POST_RELEASE_MARKS = new Set(['release_started', 'release_completed', 'correction', 'history_requested', 'history_published']);
+
+function instrumentPostRelease(prefix) {
+  let baseline;
+  let corrected = false;
+  function mark(kind, frames) {
+    if (baseline === undefined) return;
+    const { state, turns, frame, confirmed, restores } = window.fortressNative;
+    console.debug(prefix + JSON.stringify({ kind, page_ms: performance.now(), state, turns, frame, confirmed, restores, frames }));
+  }
+  function observe() {
+    if (baseline === undefined || corrected || window.fortressNative.restores <= baseline) return;
+    corrected = true;
+    mark('correction');
+  }
+  window.fortressNativePostRelease = {
+    arm(restores) {
+      baseline = restores;
+      setInterval(() => mark('heartbeat'), 1000);
+    },
+    mark,
+    observe,
+  };
+}
+
+function postReleaseCheckpoint(peer, text, receivedAt) {
+  if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
+  try {
+    const { kind, page_ms, state, turns, frame, confirmed, restores, frames } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
+    if (kind !== 'heartbeat' && !POST_RELEASE_MARKS.has(kind)) return;
+    const capturesHistory = kind === 'history_requested' || kind === 'history_published';
+    if (!Number.isFinite(page_ms) || page_ms < 0 || typeof state !== 'string' || state.length > 32
+      || ![turns, frame, confirmed, restores].every(Number.isSafeInteger)
+      || (capturesHistory && (!Number.isSafeInteger(frames) || frames < 1))) throw new Error('invalid post-release sample');
+    const receipt = { page_ms, state, turns, frame, confirmed, restores, controller_ms: receivedAt };
+    if (capturesHistory) receipt.frames = frames;
+    if (kind === 'heartbeat') peer.heartbeats = [...(peer.heartbeats ?? []).slice(-1), receipt];
+    else peer[kind] ??= receipt;
+  } catch (error) {
+    peer.checkpoint_error ??= String(error);
+  }
+}
 
 function browserOptions(name) {
   const executablePath = process.env[`FORTRESS_${name.toUpperCase()}_EXECUTABLE`];
@@ -573,6 +617,7 @@ async function readConfirmedHistory(page, frames, wait) {
   await page.evaluate(frameCount => {
     window.fortressNativeHistory = null;
     window.fortressNativeCapture = frameCount;
+    window.fortressNativePostRelease?.mark('history_requested', frameCount);
   }, frames);
   await wait(page, frameCount => window.fortressNativeHistory?.frames === frameCount, frames);
   return page.evaluate(frameCount => {
@@ -616,7 +661,10 @@ function armAndWaitForInput(page, route) {
       if (state.state === 'failed') throw new Error(state.message);
       if (state.state === 'playing' && state.stalls > stalls && state.prediction >= gate && state.frame > gate && state.confirmed < state.frame - 1) {
         const ready = wire.recordHoldReadiness(route);
-        if (ready) return { armed, ready: { ...ready, frame: state.frame, confirmed: state.confirmed, restores: state.restores } };
+        if (ready) {
+          window.fortressNativePostRelease?.arm(state.restores);
+          return { armed, ready: { ...ready, frame: state.frame, confirmed: state.confirmed, restores: state.restores } };
+        }
       }
       await new Promise(resolve => requestAnimationFrame(resolve));
     }
@@ -629,7 +677,9 @@ function captureAndReleaseInput(page, index) {
     const stalled = structuredClone({ index, ...window.fortressNative, wire: wire.status() });
     window.fortressNativeStalled = stalled;
     if (stalled.state !== 'playing') throw new Error(stalled.message || 'peer stopped before input release');
+    window.fortressNativePostRelease?.mark('release_started');
     stalled.release = await wire.release();
+    window.fortressNativePostRelease?.mark('release_completed');
     return stalled;
   }, index);
 }
@@ -650,6 +700,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   const traceWarmup = route === 'relay' && players === 8;
   const warmup = traceWarmup ? Array(players).fill(null) : undefined;
   const warmupCheckpointErrors = traceWarmup ? Array(players).fill(null) : undefined;
+  const postRelease = route === 'relay' ? Array.from({ length: players }, () => ({})) : undefined;
   const playwright = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY);
   const origin = `https://127.0.0.1:${server.address().port}`;
@@ -668,10 +719,11 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   let sequence = 0;
   let departureClocks;
   let armed, stalled;
+  let comparedFrames = HISTORY_FRAMES;
   const holdReadyReceived = Array(players).fill(null);
   const physicalCloseReport = {};
   const closeReport = {};
-  const wait = async (page, condition, argument = null, timeout = 30000) => {
+  const wait = async (page, condition, argument = null, timeout = PAGE_WAIT_MS) => {
     const handle = await page.waitForFunction(condition, argument, { timeout });
     await handle.dispose();
     if (errors.length) throw new Error(JSON.stringify(errors));
@@ -716,6 +768,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
             warmupCheckpointErrors[index] = String(error);
           }
         }
+        if (postRelease) postReleaseCheckpoint(postRelease[index], text, performance.now());
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push({ index, phase, text });
       });
       page.on('requestfailed', request => {
@@ -723,8 +776,9 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         errors.push({ index, phase, host: url.host, path: url.pathname, method: request.method(), resource: request.resourceType(),
           code: request.failure()?.errorText });
       });
-      // Register the socket and warmup hooks in a single init script.
-      await page.addInitScript(`(${instrumentNativeWire})(${name === 'webkit'}, ${JSON.stringify(traceWarmup ? WARMUP_CHECKPOINT : '')})`);
+      // Register the browser observers in a single init script.
+      const wireScript = `(${instrumentNativeWire})(${name === 'webkit'}, ${JSON.stringify(traceWarmup ? WARMUP_CHECKPOINT : '')});`;
+      await page.addInitScript(postRelease ? wireScript + `(${instrumentPostRelease})(${JSON.stringify(POST_RELEASE_CHECKPOINT)});` : wireScript);
       await page.goto(`${origin}/index.html`);
       await wait(page, () => window.fortressNativeReady === true, null, PAGE_BOOT_MS);
       bootstrap_ms.push(Math.round(performance.now() - started));
@@ -755,7 +809,6 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
       && window.fortressNative.confirmed >= frame, GATE_FRAME, 45000)));
     let direct, atClose, afterClose, restored, recoveryEvidence, closeLinks;
-    let comparedFrames = HISTORY_FRAMES;
     if (liveClose || recovery) {
       direct = await observe();
       for (const peer of direct) {
@@ -806,7 +859,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       phase = 'corrected history';
       const correctionRemainingMs = Math.floor(correctionDeadline - performance.now());
       assert.ok(correctionRemainingMs > 0, 'native input release exhausted the correction deadline');
-      await waitForCorrectedHistory(pages, comparedFrames, holdReadyReceived, wait, correctionRemainingMs);
+      await boundedRoom(() => waitForCorrectedHistory(pages, comparedFrames, holdReadyReceived, wait, correctionRemainingMs),
+        correctionRemainingMs, 'native corrected history');
       assert.ok(performance.now() < correctionDeadline, 'native corrected history exceeded the correction deadline');
     } else {
       phase = 'mixed confirmed history';
@@ -814,11 +868,18 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         && window.fortressNative.confirmed >= frame, comparedFrames)));
     }
     // A waiting step can publish confirmation before dispatching a correction.
-    const confirmedHistory = await observe();
-    await Promise.all(pages.map((page, index) => wait(page, frame => window.fortressNative.state === 'playing'
-      && window.fortressNative.frame > frame, confirmedHistory[index].frame)));
+    phase = 'post-confirmation engine turn';
+    await boundedRoom(async () => {
+      const confirmedFrames = await Promise.all(pages.map(page => page.evaluate(() => window.fortressNative.frame)));
+      await Promise.all(pages.map((page, index) => wait(page, frame => window.fortressNative.state === 'playing'
+        && window.fortressNative.frame > frame, confirmedFrames[index])));
+    }, PAGE_WAIT_MS, 'native post-confirmation engine turn');
     phase = 'confirmed history capture';
-    const history = await Promise.all(pages.map(page => readConfirmedHistory(page, comparedFrames, wait)));
+    const history = await Promise.all(pages.map(async (page, index) => {
+      const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, wait), PAGE_WAIT_MS, `native peer ${index} confirmed history capture`);
+      if (postRelease) postRelease[index].history_received = { frames: receipt.frames, controller_ms: performance.now() };
+      return receipt;
+    }));
     const peers = (await observe()).map((peer, index) => ({ ...peer, rows: history[index].rows, snapshots: history[index].snapshots }));
     compareHistory(peers, comparedFrames);
     if (recovery) assertRecoveredRoom(direct, restored, peers, recoveryEvidence);
@@ -933,7 +994,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         && rtc.every(([, state]) => state === 'closed');
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
-      holdReadyReceived: mixed ? undefined : holdReadyReceived,
+      holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks ?? departureClocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])], warmup, warmupCheckpointErrors };
   } catch (error) {
@@ -949,12 +1010,12 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       return { status: state.status, value: current };
     });
     console.error(JSON.stringify({
-      phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors: [...physicalCloseErrors, ...departureErrors],
+      phase, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks ?? departureClocks,
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
-      states: diagnostics, warmup, warmupCheckpointErrors
+      states: diagnostics, warmup, warmupCheckpointErrors, postRelease
     }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
@@ -989,5 +1050,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { armAndWaitForInput, captureAndReleaseInput, closeEvidence, compareHistory, instrumentNativeWire, readConfirmedHistory,
-  reportedChannel, waitForCloseProofs, waitForCorrectedHistory };
+module.exports = { armAndWaitForInput, captureAndReleaseInput, closeEvidence, compareHistory, instrumentNativeWire, instrumentPostRelease,
+  postReleaseCheckpoint, readConfirmedHistory, reportedChannel, waitForCloseProofs, waitForCorrectedHistory };

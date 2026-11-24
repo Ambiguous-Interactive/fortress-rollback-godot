@@ -570,6 +570,76 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
+    def test_native_post_release_checkpoints_survive_a_missing_history_response(self):
+        # Value: protects=phase attribution; fails_when=final page reads are required; seam=page and controller checkpoints
+        script = r"""
+const assert = require('node:assert/strict');
+const { armAndWaitForInput, captureAndReleaseInput, instrumentPostRelease, postReleaseCheckpoint, readConfirmedHistory } = require(process.argv[1]);
+const checkpoints = {};
+let now = 10, heartbeat;
+global.window = {
+  fortressNative: { state: 'playing', turns: 20, frame: 24, confirmed: 16, restores: 2, stalls: 0, prediction: 12 },
+  fortressNativeWire: {
+    arm: () => ({ at_ms: now }),
+    recordHoldReadiness: () => ({ at_ms: now }),
+    status: () => ({}),
+    release: async () => { now++; },
+  },
+};
+global.performance = { now: () => now };
+global.setInterval = callback => { heartbeat = callback; };
+global.requestAnimationFrame = callback => { window.fortressNative.stalls++; callback(); };
+console.debug = text => postReleaseCheckpoint(checkpoints, text, now + 100);
+instrumentPostRelease('fortress native post-release ');
+const trace = window.fortressNativePostRelease;
+let evaluations = 0;
+const page = {
+  async evaluate(operation, value) {
+    if (++evaluations === 4) throw new Error('controller receipt unavailable');
+    return operation(value);
+  },
+};
+async function run() {
+  assert.equal((await armAndWaitForInput(page, 'relay')).ready.restores, 2);
+  trace.observe();
+  assert.equal(checkpoints.correction, undefined, 'old restores do not prove correction');
+  postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"correction"}', now);
+  Object.assign(window.fortressNative, { turns: 21, restores: 3 });
+  trace.observe();
+  now++;
+  await captureAndReleaseInput(page, 0);
+  now++;
+  Object.assign(window.fortressNative, { turns: 22, confirmed: 40 });
+  trace.observe();
+  await assert.rejects(readConfirmedHistory(page, 40, async (_, complete, frames) => {
+    assert.equal(window.fortressNativeCapture, 40);
+    assert.equal(complete(frames), false);
+    now++;
+    window.fortressNativeHistory = { frames };
+    trace.mark('history_published', frames);
+    assert.equal(complete(frames), true);
+  }), /controller receipt unavailable/);
+  for (let i = 0; i < 5; i++) {
+    now++;
+    heartbeat();
+  }
+  postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"heartbeat"}', now);
+  assert.equal(checkpoints.release_started.page_ms, 11);
+  assert.equal(checkpoints.release_completed.page_ms, 12);
+  assert.equal(checkpoints.correction.page_ms, 10, 'correction can precede local release');
+  assert.equal(checkpoints.correction.turns, 21, 'retain the first observed correction');
+  assert.equal(checkpoints.history_requested.frames, 40);
+  assert.equal(checkpoints.history_published.frames, 40);
+  assert.equal(checkpoints.history_published.controller_ms, 114);
+  assert.equal(checkpoints.history_received, undefined, 'publication does not prove receipt delivery');
+  assert.deepEqual(checkpoints.heartbeats.map(sample => [sample.page_ms, sample.turns, sample.confirmed]), [[18, 22, 40], [19, 22, 40]]);
+  assert.match(checkpoints.checkpoint_error, /invalid post-release sample/);
+}
+const timer = setTimeout(() => { throw new Error('post-release checkpoint control did not settle'); }, 1000);
+run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
     def test_native_history_capture_rejects_stale_rows_and_snapshot_mutations(self):
         # Value: protects=fresh confirmed history; fails_when=reusing a capture or skipping either comparison; why_new=per-render capture had no request boundary; seam=browser
         script = r"""

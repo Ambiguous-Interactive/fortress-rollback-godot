@@ -54,6 +54,11 @@ Each peer records its arm, first ready sample and release start on its page cloc
 Compare held counts at readiness and release to locate queue growth while the room waits.
 The ready sample also freezes the frame, confirmation and restore count before any page releases.
 The stalled receipt retains the release-start mark after the drain completes, even if a later page read times out.
+Relay results and failure logs include `postRelease` checkpoints for each page. They record release start and completion, the first observed
+restore beyond readiness, and the confirmed-history request, publication and controller receipt. Page and controller receipt clocks have
+different origins. The last two browser heartbeats carry the Godot turn and confirmation counters. A moving heartbeat with a fixed turn
+counter locates a pause in Godot service, while advancing turns with fixed confirmation locate a different stall. Missing checkpoints
+show where evidence stopped arriving. They cannot distinguish a stalled renderer from an unavailable browser control channel.
 After the physical-close case confirms resumed play, it holds all datagrams to verify terminal expiry.
 
 ```sh
