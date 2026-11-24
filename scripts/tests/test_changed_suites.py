@@ -7,9 +7,10 @@ from unittest import mock
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from changed_suites import changed_files, from_base, previous_class_names, select, selection  # noqa: E402
+from changed_suites import ROOT, changed_files, from_base, previous_class_names, select, selection  # noqa: E402
 
 from git_test_environment import fixture_environment  # noqa: E402
+from run_godot_tests import discover  # noqa: E402
 
 FILES = {
     "addons/a.gd": "@tool\nclass_name Alpha\n",
@@ -62,6 +63,52 @@ class SelectTests(unittest.TestCase):
             (root / "tests/unit/test_substring.gd").write_text("# Alpha.member and (Alpha) both name a complete class\n")
             self.assertEqual(select([substring], ["addons/a.gd"], root, {"Alpha"}), [substring])
 
+
+    # Value: protects=online lobby dependency selection; fails_when=optional transport hides the paths; why_new=synthetic fixtures miss checkout drift; seam=none
+    def test_lobby_keeps_only_its_reachable_suites(self):
+        suites = discover("unit", ROOT)
+        unrelated = selection(suites, ["PLAN.md"], ROOT)
+        self.assertEqual((unrelated["reason"], unrelated["suites"]), ("documentation_only", []), unrelated.get("path"))
+        for resource in ("addons/signal_fish/transport/sf_websocket_transport.gd",
+                         "addons/fortress_rollback/transport/signalfish_webrtc_connection.gd"):
+            with self.subTest(resource=resource):
+                affected = selection(suites, [resource], ROOT)
+                self.assertEqual(affected["reason"], "resource_dependency", affected.get("path"))
+                self.assertIn("res://tests/unit/test_online_example.gd", affected["suites"])
+                self.assertNotIn("res://tests/unit/test_input_queue.gd", affected["suites"])
+
+    # Value: protects=Markdown data consumers; fails_when=changes are skipped or run all; why_new=no file-lifecycle cases for docs; seam=none
+    def test_document_selection_keeps_consumers_on_add_delete_and_rename(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict("os.environ", fixture_environment(), clear=True):
+            root = Path(directory)
+
+            def git(*args):
+                subprocess.run(["git", *args], cwd=root, capture_output=True, check=True)
+
+            git("init")
+            (root / "reader.gd").write_text('var content = FileAccess.get_file_as_string("res://fixture.md")')
+            (root / "other.gd").touch()
+            (root / "unused.md").touch()
+            git("add", ".")
+            git("-c", "user.name=Fixture", "-c", "user.email=test@example.invalid", "commit", "-m", "base")
+            suites = ["res://reader.gd", "res://other.gd"]
+
+            def receipt():
+                return from_base("HEAD", suites, root, root, ["reader.gd", "other.gd", "fixture.md", "unused.md"])
+
+            (root / "unused.md").write_text("unrelated")
+            self.assertEqual(receipt()["suites"], [])
+            (root / "fixture.md").write_text("added")
+            self.assertEqual(receipt()["suites"], suites[:1])
+            git("add", "fixture.md")
+            git("-c", "user.name=Fixture", "-c", "user.email=test@example.invalid", "commit", "-m", "add fixture")
+            (root / "fixture.md").write_text("edited")
+            self.assertEqual(receipt()["suites"], suites[:1])
+            (root / "fixture.md").unlink()
+            self.assertEqual(receipt()["suites"], suites[:1])
+            git("restore", "fixture.md")
+            git("mv", "fixture.md", "renamed.md")
+            self.assertEqual(receipt()["suites"], suites[:1])
 
     def test_external_transitive_consumers_and_fail_closed_inputs(self):
         suite = "res://tests/unit/test_only.gd"

@@ -5,24 +5,12 @@ const Callbacks = preload("res://examples/online/callbacks.gd")
 const Match = preload("res://examples/online/match.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const Multiplayer = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_multiplayer_peer.gd")
+const NativeTransport = preload("res://examples/online/native_socket_transport.gd")
 const SDK_PATH: String = "res://addons/signal_fish/signal_fish_client.gd"
 const CONFIG_PATH: String = "res://addons/signal_fish/signal_fish_config.gd"
 const MESH_PATH: String = "res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd"
-const SDK_SOCKET_PATH: String = "res://addons/signal_fish/transport/sf_websocket_transport.gd"
 const START_TIMEOUT_US: int = 30_000_000
 const NATIVE_MESH_GRACE_US: int = 3_000_000
-# The optional SDK transport creates and connects the socket in one call.
-# Load this subclass only when the project installs the SDK.
-const NATIVE_TRANSPORT_SOURCE: String = """
-extends "%s"
-
-func _make_peer() -> SFWebSocketPeerAdapterScript:
-	var socket: WebSocketPeer = WebSocketPeer.new()
-	socket.inbound_buffer_size = 1048576
-	# The SDK's soft queue and frame caps must fit below the engine's hard limit.
-	socket.outbound_buffer_size = 1048576
-	return SFWebSocketPeerAdapterScript.new(socket)
-"""
 
 var game_match: Match = Match.new()
 var client: Node
@@ -88,15 +76,13 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 			return ERR_UNAVAILABLE
 	var native_transport: RefCounted
 	if backend_choice == "native":
-		if not ResourceLoader.exists(SDK_SOCKET_PATH):
+		if not NativeTransport.is_available():
 			message = "The SignalFish SDK is missing its WebSocket transport."
 			return ERR_UNAVAILABLE
-		var transport_script: GDScript = GDScript.new()
-		transport_script.source_code = NATIVE_TRANSPORT_SOURCE % SDK_SOCKET_PATH
-		if transport_script.reload() != OK:
+		native_transport = NativeTransport.create()
+		if native_transport == null:
 			message = "The SignalFish SDK could not configure the native WebSocket transport."
 			return ERR_UNAVAILABLE
-		native_transport = transport_script.new()
 	_sdk = load(SDK_PATH)
 	var config_script: Script = load(CONFIG_PATH)
 	var mesh_script: Script = load(MESH_PATH)
@@ -193,8 +179,8 @@ func _ready() -> Error:
 		roster.append(player.get("id"))
 	# Host entropy belongs to the transport lifetime, never to simulation state.
 	var incarnation: PackedByteArray = Crypto.new().generate_random_bytes(8)
-	var frozen: Error = game_match.freeze(client, mesh, roster, incarnation) if _native_name.is_empty() else (
-		game_match.freeze_native(client, mesh, roster, incarnation, _native_name)
+	var frozen: Error = (
+		game_match.freeze(client, mesh, roster, incarnation) if _native_name.is_empty() else (game_match.freeze_native(client, mesh, roster, incarnation, _native_name))
 	)
 	if revision != _connection_revision:
 		return ERR_UNAVAILABLE
