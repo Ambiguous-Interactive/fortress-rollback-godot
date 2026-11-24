@@ -52,6 +52,8 @@ The direct and relay cells hold input datagrams while control traffic continues,
 Each peer records its arm, first ready sample and release start on its page clock under `wire.hold_boundaries`.
 `holdReadyReceived` carries the ready sample and the controller's receipt time. The clocks have different origins.
 Compare held counts at readiness and release to locate queue growth while the room waits.
+The ready sample also freezes the frame, confirmation and restore count before any page releases.
+The stalled receipt retains the release-start mark after the drain completes, even if a later page read times out.
 After the physical-close case confirms resumed play, it holds all datagrams to verify terminal expiry.
 
 ```sh

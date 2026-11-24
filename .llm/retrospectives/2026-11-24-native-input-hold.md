@@ -15,6 +15,9 @@ and starts the existing FIFO drain in the stalled snapshot call.
 | The stalled snapshot can change while an asynchronous drain runs. | The browser cleanup control mutates nested state during release and verifies the captured state stays fixed. It also rejects a failed release and checks that its pre-release snapshot remains available. |
 | Page lifecycle commands can delay correction even after the FIFO drains. | The reviewed implementation awaited Playwright handle disposal before checking the shared correction deadline. The final page readiness call returns only the value and owns no remote handle. |
 | A failed warmup gives no release timing evidence. | The three-CPU Godot 4.7.2 Firefox two-call control timed out in warmup with two native disconnects and no arm marks. The hold path was never reached. |
+| Another peer's release can change the local restore count before capture. | CodeRabbit identified the ordering gap. The control records a restore between readiness and the release snapshot. Adding one to the ready baseline failed with `a restore before local release still counts`. |
+| A drained queue can outlive the renderer's ability to answer diagnostics. | The 4.3 Firefox corrected-history timeout rejected all eight diagnostic reads. A successful drain now returns its release-start mark with the saved snapshot. |
+| A pending promise cannot keep a mocked animation-frame test alive by itself. | The control that prevents readiness now exits 1 with `input hold test did not settle`. |
 
 ## Actions and pruning
 
@@ -24,6 +27,8 @@ controller boundaries. The [Web room guide](../../docs/experiments/upstream-bind
 names the fields and their clock domains. Keep warmup and correction failures
 with their existing issues [#458](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/458)
 and [#460](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/460).
+[Issue #471](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/471)
+tracks post-release stalls in the Firefox witness.
 
 The focused command
 `python3 -m unittest discover -s scripts/reference -p test_browser_cleanup.py`

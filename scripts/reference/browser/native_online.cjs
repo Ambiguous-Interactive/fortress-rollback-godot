@@ -426,6 +426,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       if (holdFailure) throw holdFailure;
       releasingRelay = false;
       releaseEnded = performance.now();
+      return hold.release;
     },
     // Let every peer report native expiry before a socket close can cause a room-departure event.
     holdTerminal() {
@@ -613,9 +614,9 @@ function armAndWaitForInput(page, route) {
     while (true) {
       const state = window.fortressNative;
       if (state.state === 'failed') throw new Error(state.message);
-      if (state.state === 'playing' && state.stalls > stalls && state.prediction >= gate) {
+      if (state.state === 'playing' && state.stalls > stalls && state.prediction >= gate && state.frame > gate && state.confirmed < state.frame - 1) {
         const ready = wire.recordHoldReadiness(route);
-        if (ready) return { armed, ready };
+        if (ready) return { armed, ready: { ...ready, frame: state.frame, confirmed: state.confirmed, restores: state.restores } };
       }
       await new Promise(resolve => requestAnimationFrame(resolve));
     }
@@ -628,9 +629,15 @@ function captureAndReleaseInput(page, index) {
     const stalled = structuredClone({ index, ...window.fortressNative, wire: wire.status() });
     window.fortressNativeStalled = stalled;
     if (stalled.state !== 'playing') throw new Error(stalled.message || 'peer stopped before input release');
-    await wire.release();
+    stalled.release = await wire.release();
     return stalled;
   }, index);
+}
+
+function waitForCorrectedHistory(pages, frame, readiness, wait, timeout) {
+  return Promise.all(pages.map((page, index) => wait(page, target => window.fortressNative.state === 'playing'
+    && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores,
+  { frame, restores: readiness[index].page.restores }, timeout)));
 }
 
 async function run(root, endpoint, mode, players, browserPair, omitSecond) {
@@ -799,9 +806,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       phase = 'corrected history';
       const correctionRemainingMs = Math.floor(correctionDeadline - performance.now());
       assert.ok(correctionRemainingMs > 0, 'native input release exhausted the correction deadline');
-      await Promise.all(pages.map((page, index) => wait(page, target => window.fortressNative.state === 'playing'
-        && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores,
-      { frame: comparedFrames, restores: stalled[index].restores }, correctionRemainingMs)));
+      await waitForCorrectedHistory(pages, comparedFrames, holdReadyReceived, wait, correctionRemainingMs);
       assert.ok(performance.now() < correctionDeadline, 'native corrected history exceeded the correction deadline');
     } else {
       phase = 'mixed confirmed history';
@@ -852,12 +857,13 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         continue;
       }
       const before = stalled[peer.index];
+      const ready = holdReadyReceived[peer.index].page;
       if (route === 'mesh') {
         assert.ok(peer.started_on_full_mesh, 'the direct-only room must start with every physical channel connected');
         assert.ok(peer.open_mesh_wait_ticks <= 2, 'a complete direct mesh must start when the engine sees its channels');
       }
-      assert.ok(peer.saves > 0 && peer.advances > peer.frame && peer.restores > before.restores, 'save, load and re-advance must run');
-      assert.ok(before.frame > GATE_FRAME && before.confirmed < before.frame - 1, 'gate must force prediction beyond confirmation');
+      assert.ok(peer.saves > 0 && peer.advances > peer.frame && peer.restores > ready.restores, 'save, load and re-advance must run');
+      assert.ok(ready.frame > GATE_FRAME && ready.confirmed < ready.frame - 1, 'gate must force prediction beyond confirmation');
       assert.ok(before.wire.holding && before.wire.held[route] > 0, 'native bytes must be held on the selected physical route');
       assert.ok(before.wire.control_round_trips[route] > 0, 'native control must make a round trip on the selected route during the input hold');
       assert.ok(!peer.wire.holding && peer.wire.totalBytes > 0 && peer.wire.released === peer.wire.held[route]
@@ -984,4 +990,4 @@ if (require.main === module) {
 }
 
 module.exports = { armAndWaitForInput, captureAndReleaseInput, closeEvidence, compareHistory, instrumentNativeWire, readConfirmedHistory,
-  reportedChannel, waitForCloseProofs };
+  reportedChannel, waitForCloseProofs, waitForCorrectedHistory };

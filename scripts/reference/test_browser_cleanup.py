@@ -419,8 +419,9 @@ for (const expiry of [false, true]) {
         # Value: protects=release start in the stalled snapshot turn; fails_when=capture and release need separate calls; seam=page evaluation
         script = r"""
 const assert = require('node:assert/strict');
-const { armAndWaitForInput, captureAndReleaseInput } = require(process.argv[1]);
+const { armAndWaitForInput, captureAndReleaseInput, waitForCorrectedHistory } = require(process.argv[1]);
 let evaluations = 0, holding = true, started = 0;
+const releaseMark = { at_ms: 80, held: { mesh: 0, relay: 9 }, bytes: 1440 };
 const turns = [];
 global.requestAnimationFrame = callback => turns.push(callback);
 global.window = {
@@ -430,7 +431,7 @@ global.window = {
     recordHoldReadiness(route) {
       assert.equal(route, 'relay');
       assert.equal(window.fortressNative.stalls, 3);
-      return 'ready mark';
+      return { at_ms: 30, held: { mesh: 0, relay: 3 }, bytes: 480 };
     },
     status: () => ({ holding }),
     async release() {
@@ -439,6 +440,7 @@ global.window = {
       started++;
       window.fortressNative.restores++;
       window.fortressNative.nested.count++;
+      return releaseMark;
     },
   },
 };
@@ -446,16 +448,30 @@ const page = { async evaluate(callback, argument) { evaluations++; return callba
 async function run() {
   const ready = armAndWaitForInput(page, 'relay');
   assert.equal(turns.length, 1);
+  window.fortressNative.frame = 21;
   window.fortressNative.prediction = 12;
   window.fortressNative.stalls++;
   turns.shift()();
-  assert.deepEqual(await ready, { armed: { frame: 13, confirmed: 12, stalls: 2, hold: 'arm mark' }, ready: 'ready mark' });
+  const receipt = await ready;
+  assert.deepEqual(receipt, { armed: { frame: 13, confirmed: 12, stalls: 2, hold: 'arm mark' },
+    ready: { at_ms: 30, held: { mesh: 0, relay: 3 }, bytes: 480, frame: 21, confirmed: 12, restores: 1 } });
 
+  // Another page can release before this page's stalled snapshot runs.
+  window.fortressNative.restores = 2;
   const before = await captureAndReleaseInput(page, 3);
-  assert.deepEqual(before, { index: 3, state: 'playing', frame: 13, confirmed: 12, stalls: 3, prediction: 12,
-    restores: 1, nested: { count: 0 }, wire: { holding: true } });
+  assert.deepEqual(before, { index: 3, state: 'playing', frame: 21, confirmed: 12, stalls: 3, prediction: 12,
+    restores: 2, nested: { count: 0 }, wire: { holding: true }, release: releaseMark });
   assert.equal(evaluations, 2);
   assert.equal(started, 1);
+  const confirm = (owner, predicate, target, timeout) => {
+    assert.equal(owner, page);
+    assert.equal(timeout, 200);
+    window.fortressNative = { state: 'playing', confirmed: 40, restores: before.restores };
+    assert.equal(predicate(target), true, 'a restore before local release still counts');
+    window.fortressNative.restores = receipt.ready.restores;
+    assert.equal(predicate(target), false, 'a restore must follow readiness');
+  };
+  await waitForCorrectedHistory([page], 40, [{ page: receipt.ready }], confirm, 200);
 
   window.fortressNative = { state: 'failed', message: 'left before release' };
   await assert.rejects(captureAndReleaseInput(page, 4), /left before release/);
@@ -466,7 +482,8 @@ async function run() {
   assert.equal(window.fortressNativeStalled.index, 5);
   assert.equal(window.fortressNativeStalled.state, 'playing');
 }
-run().catch(error => { console.error(error); process.exitCode = 1; });
+const timer = setTimeout(() => { throw new Error('input hold test did not settle'); }, 1000);
+run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
@@ -513,7 +530,8 @@ async function run() {
     turns.shift()();
     await Promise.resolve();
   }
-  await recovery;
+  const started = await recovery;
+  assert.equal(started.held.relay, 33);
   assert.deepEqual(released.filter(value => value !== 99), Array.from({length: 34}, (_, i) => i));
   assert.equal(wire.status().released, 34);
   assert.equal(wire.status().holding, false);

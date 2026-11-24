@@ -157,6 +157,10 @@ When a room barrier permits release, save the pre-release snapshot and start
 release in one page call. Keep that snapshot available to bounded diagnostics
 if release fails. Include the held count at readiness and release to locate
 queue growth. Do not make remote handle disposal part of the correction wait.
+Use the room's readiness samples for the correction baseline. One peer's
+release can correct another peer before its own release snapshot runs.
+Return the release-start mark when the drain completes so a later renderer
+stall cannot erase that boundary.
 Match addressed control reports and replies by peer and token, and record
 browser send and SDK receive queue peaks in the same phase. If release itself
 causes a measured fanout burst, pace the synthetic release in FIFO order while
