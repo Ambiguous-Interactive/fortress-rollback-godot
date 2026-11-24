@@ -182,6 +182,12 @@ held packets, pending packets and released packets at the cap. A cap can
 occur during a partial drain. Retain these checkpoints if the evaluation
 never returns.
 Emit the history request and publication separately from controller receipt.
+Sample a corrected frontier at the end of the physics turn that crosses it.
+A rendered snapshot can skip intervening physics turns. If late controller
+input raises the target, backfill from bounded page-local observations and
+retain the original observation time alongside the console emission time.
+For room departure, record the SDK removal and native expiry against the
+frozen peer identity before terminal cleanup can erase the causal order.
 An advancing browser heartbeat with a stationary Godot turn count locates
 a service stall. Missing heartbeats leave the browser or its control path
 unobserved.

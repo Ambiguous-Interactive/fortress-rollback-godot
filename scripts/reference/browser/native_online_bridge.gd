@@ -114,6 +114,7 @@ class ObservedLobby:
 	var relay_receive_peak: int = 0
 	var relay_send_peak: int = 0
 	var warmup_wire: JavaScriptObject
+	var relay_trace: JavaScriptObject
 	var _engine_mesh_open: bool = false
 	var _last_play_tick_us: int = -1
 	var _next_warmup_tick_us: int = 0
@@ -121,7 +122,17 @@ class ObservedLobby:
 	func _connect_callbacks() -> void:
 		if observe_recovery:
 			client.connect("session_plan", _record_plan)
+		if relay_trace != null:
+			client.connect("player_left", _record_departure)
 		super._connect_callbacks()
+
+	func _record_departure(player: String) -> void:
+		relay_trace.recordDeparture("sdk_departure", player)
+
+	func _fail(reason: String) -> void:
+		if state == "playing" and relay_trace != null and game_match.driver.native_terminal_detail() == "disconnected":
+			relay_trace.recordDeparture("native_expiry", game_match.driver.native_terminal_endpoint())
+		super._fail(reason)
 
 	func _record_plan(value: RefCounted) -> void:
 		plan = value.call("to_dict")
@@ -192,6 +203,9 @@ class ObservedLobby:
 			if frame >= GATE_FRAME and frame % 2 == 0:
 				buttons = 0
 		super.tick(now_us, buttons)
+		if relay_trace != null and state == "playing":
+			var status: Types.Status = game_match.status()
+			relay_trace.observe(state, turns, status.current_frame, status.confirmed_frame, observations.restores, observations.history_limit)
 		if state == "failed" and previous_state == "playing":
 			failure_tick_callbacks = callbacks
 		if warmup_wire != null and available >= 0 and (available >= budget or now_us >= _next_warmup_tick_us or state == "failed"):
@@ -305,7 +319,7 @@ func _process(_delta: float) -> void:
 				}
 			)
 		)
-	JavaScriptBridge.eval("window.fortressNative = " + JSON.stringify(result) + "; window.fortressNativePostRelease?.observe()")
+	JavaScriptBridge.eval("window.fortressNative = " + JSON.stringify(result))
 	if departure_id != 0:
 		JavaScriptBridge.eval(
 			(
@@ -347,6 +361,8 @@ func _command(value: Dictionary) -> void:
 		"connect":
 			lobby.wait_for_full_mesh = bool(value.get("wait_for_full_mesh", false))
 			lobby.observe_recovery = bool(value.get("observe_recovery", false))
+			if value.route == "relay":
+				lobby.relay_trace = JavaScriptBridge.get_interface("fortressNativePostRelease")
 			scene.endpoint.text = str(value.endpoint)
 			scene.player_name.text = str(value.name)
 			scene.room_code.text = str(value.room)
@@ -383,6 +399,8 @@ func _command(value: Dictionary) -> void:
 				warmup_match.warmup_session = session_id.hex_decode()
 				warmup_match.warmup_recipient = uuid.replace("-", "").hex_decode()
 			JavaScriptBridge.eval("window.fortressNativeWire.bind(...%s)" % JSON.stringify([session_id, uuid, roster]))
+			if lobby.relay_trace != null:
+				JavaScriptBridge.eval("window.fortressNativePostRelease.bindDeparture(...%s)" % JSON.stringify([uuid, lobby.game_match.membership.roster()]))
 		"block_startup":
 			blocked_uuid = str(value.uuid)
 			lobby.client.connect("session_plan", _close_link, CONNECT_ONE_SHOT)
