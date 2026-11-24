@@ -50,9 +50,10 @@ if '--list-cases' in sys.argv:
 while not (root / 'finish').exists():
     time.sleep(.01)
 suite = sys.argv[sys.argv.index('--suite') + 1]
+cases = [sys.argv[sys.argv.index('--case') + 1]] if '--case' in sys.argv else ['first', 'second']
 run = dict(assertions=1, failures=[], states=[])
-record = dict(suite=suite, case=sys.argv[sys.argv.index('--case') + 1], category='unit', seed='1701', runs=[run,run])
-print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=True, count=1, errors=[], records=[record])))
+records = [dict(suite=suite, case=case, category='unit', seed='1701', runs=[run,run]) for case in cases]
+print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=True, count=len(records), errors=[], records=records)))
 '''
         write_executable(self.engine, self.engine_program)
         (self.root / 'durations.json').write_text(json.dumps({'res://first.gd': 40, 'res://second.gd': 40}))
@@ -84,12 +85,12 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
         self.engine_program = self.engine_program.replace(before, after)
         write_executable(self.engine, self.engine_program)
 
-    def start(self, budget=None, timeout='5', jobs='4'):
+    def start(self, budget=None, timeout='5', jobs='4', selection=('--suite', 'res://first.gd', '--suite', 'res://second.gd')):
         env = dict(os.environ, FORTRESS_HOST_CAPACITY_DIR=str(host_capacity.LEASE_DIR))
         log = (self.root / 'launcher.log').open('w')
         self.streams.append(log)
         process = subprocess.Popen([sys.executable, str(self.checkout / 'scripts/run_godot_tests.py'),
-                                    '--godot', str(self.engine), '--suite', 'res://first.gd', '--suite', 'res://second.gd',
+                                    '--godot', str(self.engine), *selection,
                                     '--jobs', jobs, *(['--host-wait', budget] if budget is not None else []), '--timeout', timeout,
                                     '--results', str(self.root / 'result.json'), '--durations', str(self.root / 'durations.json')],
                                    env=env, stdout=subprocess.PIPE, stderr=log, text=True)
@@ -142,6 +143,31 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
         (self.root / 'finish').touch()
         output, error = process.communicate(timeout=10)
         self.assertEqual(process.returncode, 0, (output, error))
+
+    # Value: protects=changed-unit process count after a timing spike; fails_when=the local cache decides splits; why_new=lease tests use explicit suites; seam=engine fixture
+    def test_changed_unit_shards_ignore_local_timing_spikes(self):
+        whole = 'res://tests/runner/self_suite.gd'
+        split = 'res://tests/unit/test_second.gd'
+        for suite in (whole, split):
+            path = self.checkout / suite.removeprefix('res://')
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+        (self.checkout / 'scripts/unit_suite_seconds.json').write_text(json.dumps({whole: 1, split: 4}))
+        (self.root / 'durations.json').write_text(json.dumps({whole: 40, split: 1}))
+        (self.root / 'finish').touch()
+        expected_cases = [(suite, case) for suite in (whole, split) for case in ('first', 'second')]
+        for pass_index in range(2):
+            with self.subTest(pass_index=pass_index):
+                process = self.start(selection=('--changed', 'HEAD'))
+                output, error = process.communicate(timeout=10)
+                self.assertEqual(process.returncode, 0, (output, error))
+                report = json.loads((self.root / 'result.json').read_text())
+                self.assertTrue(report['passed'])
+                self.assertEqual(len(report['runs']), 2)
+                for run in report['runs']:
+                    records = run['result']['records']
+                    self.assertEqual([(r['suite'], r['case']) for r in records], expected_cases)
+                    self.assertEqual([shard['result']['count'] for shard in run['shards']], [2, 1, 1])
 
     # Value: contention diagnostics consume the original wait budget instead of starting a fresh wait afterward.
     def test_contention_diagnostics_cannot_restart_the_wait_budget(self):
