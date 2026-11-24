@@ -671,6 +671,8 @@ async function run() {
 
   const full = { ...realm, window: {}, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
   runInNewContext(`(${instrumentNativeWire})()`, full);
+  const cap = [];
+  full.window.fortressNativePostRelease = { mark(kind, frames, hold) { cap.push({ kind, ...hold }); } };
   const fullWire = full.window.fortressNativeWire;
   const fullSocket = new full.window.WebSocket();
   fullWire.bind('00'.repeat(16), '01'.repeat(16));
@@ -678,12 +680,14 @@ async function run() {
   for (let i = 0; i < 1024; i++) fullSocket.send(relay(2, i));
   const overflow = assert.rejects(fullWire.release(), /native packet hold exceeded bounds/);
   assert.throws(() => fullSocket.send(relay(2, 33)), /native packet hold exceeded bounds/);
+  assert.throws(() => fullSocket.send(relay(2, 34)), /native packet hold exceeded bounds/);
   while (turns.length) {
     turns.shift()();
     await Promise.resolve();
   }
   await overflow;
   assert.equal(fullWire.status().released, 16);
+  assert.deepEqual(cap.map(sample => [sample.kind, sample.held.relay, sample.bytes]), [['hold_cap', 1024, 88064]]);
 }
 const timer = setTimeout(() => { throw new Error('release did not settle'); }, 1000);
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
@@ -700,8 +704,8 @@ let now = 10, heartbeat;
 global.window = {
   fortressNative: { state: 'playing', turns: 20, frame: 24, confirmed: 16, restores: 2, stalls: 0, prediction: 12 },
   fortressNativeWire: {
-    arm: () => ({ at_ms: now }),
-    recordHoldReadiness: () => ({ at_ms: now }),
+    arm: () => ({ at_ms: now, held: { mesh: 0, relay: 0 }, bytes: 0 }),
+    recordHoldReadiness: () => ({ at_ms: now, held: { mesh: 0, relay: 10 }, bytes: 880 }),
     status: () => { now += 2; return {}; },
     release: async () => { now++; },
   },
@@ -721,6 +725,8 @@ const page = {
 };
 async function run() {
   assert.equal((await armAndWaitForInput(page, 'relay')).ready.restores, 2);
+  assert.deepEqual([checkpoints.hold_armed?.page_ms, checkpoints.hold_armed?.controller_ms, checkpoints.hold_armed?.held.relay], [10, 110, 0]);
+  assert.deepEqual([checkpoints.hold_ready?.page_ms, checkpoints.hold_ready?.controller_ms, checkpoints.hold_ready?.held.relay], [10, 110, 10]);
   trace.observe();
   assert.equal(checkpoints.correction, undefined, 'old restores do not prove correction');
   postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"correction"}', now);

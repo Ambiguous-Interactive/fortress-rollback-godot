@@ -20,6 +20,7 @@ const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
 const DEPARTURE_CHECKPOINT = 'fortress native departure ';
 const POST_RELEASE_MARKS = new Set(['release_entered', 'release_started', 'release_completed', 'correction', 'history_requested', 'history_published']);
+const HOLD_MARKS = new Set(['hold_armed', 'hold_ready', 'hold_cap']);
 
 function createWarmupBarrier(players, clock = () => performance.now()) {
   const checkpoints = Array(players).fill(null);
@@ -71,10 +72,11 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
 function instrumentPostRelease(prefix) {
   let baseline;
   let corrected = false;
-  function mark(kind, frames) {
-    if (baseline === undefined) return;
+  function mark(kind, frames, hold) {
+    if (baseline === undefined && !hold) return;
     const { state, turns, frame, confirmed, restores } = window.fortressNative;
-    console.debug(prefix + JSON.stringify({ kind, page_ms: performance.now(), state, turns, frame, confirmed, restores, frames }));
+    console.debug(prefix + JSON.stringify({ kind, page_ms: hold?.at_ms ?? performance.now(), state, turns, frame, confirmed, restores, frames,
+      held: hold?.held, bytes: hold?.bytes }));
   }
   function observe() {
     if (baseline === undefined || corrected || window.fortressNative.restores <= baseline) return;
@@ -94,14 +96,21 @@ function instrumentPostRelease(prefix) {
 function postReleaseCheckpoint(peer, text, receivedAt) {
   if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
   try {
-    const { kind, page_ms, state, turns, frame, confirmed, restores, frames } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
-    if (kind !== 'heartbeat' && !POST_RELEASE_MARKS.has(kind)) return;
+    const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
+    const capturesHold = HOLD_MARKS.has(kind);
+    if (kind !== 'heartbeat' && !POST_RELEASE_MARKS.has(kind) && !capturesHold) return;
     const capturesHistory = kind === 'history_requested' || kind === 'history_published';
     if (!Number.isFinite(page_ms) || page_ms < 0 || typeof state !== 'string' || state.length > 32
       || ![turns, frame, confirmed, restores].every(Number.isSafeInteger)
       || (capturesHistory && (!Number.isSafeInteger(frames) || frames < 1))) throw new Error('invalid post-release sample');
     const receipt = { page_ms, state, turns, frame, confirmed, restores, controller_ms: receivedAt };
     if (capturesHistory) receipt.frames = frames;
+    if (capturesHold) {
+      if (![held?.mesh, held?.relay, bytes].every(value => Number.isSafeInteger(value) && value >= 0)
+        || held.mesh + held.relay > 1024 || bytes > 1024 * 1024) throw new Error('invalid hold sample');
+      receipt.held = { mesh: held.mesh, relay: held.relay };
+      receipt.bytes = bytes;
+    }
     if (kind === 'heartbeat') peer.heartbeats = [...(peer.heartbeats ?? []).slice(-1), receipt];
     else peer[kind] ??= receipt;
   } catch (error) {
@@ -309,7 +318,10 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       return sent;
     }
     if (held.mesh + held.relay >= 1024 || totalBytes + data.byteLength > 1024 * 1024) {
-      holdFailure ??= new Error('native packet hold exceeded bounds');
+      if (!holdFailure) {
+        holdFailure = new Error('native packet hold exceeded bounds');
+        window.fortressNativePostRelease?.mark('hold_cap', undefined, holdMark());
+      }
       throw holdFailure;
     }
     const owned = nativeBytes(data).slice();
@@ -705,12 +717,14 @@ function armAndWaitForInput(page, route) {
     const wire = window.fortressNativeWire;
     const { frame, stalls, confirmed } = window.fortressNative;
     const armed = { frame, stalls, confirmed, hold: wire.arm() };
+    window.fortressNativePostRelease?.mark('hold_armed', undefined, armed.hold);
     while (true) {
       const state = window.fortressNative;
       if (state.state === 'failed') throw new Error(state.message);
       if (state.state === 'playing' && state.stalls > stalls && state.prediction >= gate && state.frame > gate && state.confirmed < state.frame - 1) {
         const ready = wire.recordHoldReadiness(route);
         if (ready) {
+          window.fortressNativePostRelease?.mark('hold_ready', undefined, ready);
           window.fortressNativePostRelease?.arm(state.restores);
           return { armed, ready: { ...ready, frame: state.frame, confirmed: state.confirmed, restores: state.restores } };
         }
