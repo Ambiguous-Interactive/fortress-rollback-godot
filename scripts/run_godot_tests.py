@@ -100,10 +100,10 @@ def _load_staged_helpers() -> None:
 PREFIX = "FORTRESS_TEST_RESULT "
 CASES_PREFIX = "FORTRESS_TEST_CASES "
 PROGRESS_PREFIX = "FORTRESS_TEST_PROGRESS "
-# A suite this slow in the last run is split into one process per case.
+# Suites at or above this duration run in one process per case.
 SPLIT_SECONDS = 4.0
 DEFAULT_RESULTS = ROOT / ".cache/tests/latest.json"
-# Seconds per suite from earlier runs. It only orders shards, so a stale or missing file is harmless.
+# Wall seconds from earlier runs, including process startup.
 DURATIONS = ROOT / ".cache/tests/durations.json"
 # The engine reports a script error as a header line, followed by an "at:" line
 # that names the aborting file and line.
@@ -765,7 +765,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results", type=Path, default=DEFAULT_RESULTS)
     parser.add_argument("--verify-inventory", action="store_true", help="require an independent case listing for every selected suite")
     parser.add_argument("--changed", metavar="BASE", help="run only suites that load files changed since BASE (e.g. origin/main)")
-    parser.add_argument("--durations", type=Path, default=DURATIONS, help="per-suite times that order and split shards")
+    parser.add_argument("--durations", type=Path, default=DURATIONS, help="local timing cache for launch order and adaptive splitting outside local unit inventory runs")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                         help="parallel Godot processes; each suite runs in its own pair of fresh processes")
     parser.add_argument("--host-wait", type=float, default=600, help="seconds to wait for exclusive host capacity before engine execution")
@@ -905,7 +905,11 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
                 matching = [suite for suite in suites if any(args.filter in name for name in inventory.get(suite, []))]
                 # Empty or invalid listings retain the original failure path, including zero matches.
                 suites = matching or suites
-            slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
+            split_durations = durations
+            if args.category == "unit" and not args.shard and (args.changed or not args.suite):
+                # Start times under load can reorder the next wave without increasing its process count.
+                split_durations = load_durations(snapshot.path / "scripts/unit_suite_seconds.json")
+            slow = [] if args.filter else [suite for suite in suites if split_durations.get(suite, 0) >= SPLIT_SECONDS]
             if expected:
                 cases = {suite: expected[suite] for suite in slow if len(expected[suite]) > 1}
             else:

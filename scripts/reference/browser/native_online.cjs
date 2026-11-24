@@ -14,12 +14,15 @@ const PAGE_WAIT_MS = 30000;
 const WARMUP_WAIT_MS = 45000;
 const DIAGNOSTIC_MS = 5000;
 const CLOSE_MS = 10000;
+const CANONICAL_SNAPSHOT = /^(?:[0-9a-f]{2})+$/;
 const CLOSE_CLOCK_POST_SAMPLES = 4;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
 const DEPARTURE_CHECKPOINT = 'fortress native departure ';
+const HISTORY_CHECKPOINT = 'fortress native history ';
 const POST_RELEASE_MARKS = new Set(['release_entered', 'release_started', 'release_completed', 'correction', 'history_requested', 'history_published']);
+const HOLD_MARKS = new Set(['hold_armed', 'hold_ready', 'hold_cap']);
 
 function createWarmupBarrier(players, clock = () => performance.now()) {
   const checkpoints = Array(players).fill(null);
@@ -71,10 +74,11 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
 function instrumentPostRelease(prefix) {
   let baseline;
   let corrected = false;
-  function mark(kind, frames) {
-    if (baseline === undefined) return;
+  function mark(kind, frames, hold) {
+    if (baseline === undefined && !hold) return;
     const { state, turns, frame, confirmed, restores } = window.fortressNative;
-    console.debug(prefix + JSON.stringify({ kind, page_ms: performance.now(), state, turns, frame, confirmed, restores, frames }));
+    console.debug(prefix + JSON.stringify({ kind, page_ms: hold?.at_ms ?? performance.now(), state, turns, frame, confirmed, restores, frames,
+      held: hold?.held, bytes: hold?.bytes }));
   }
   function observe() {
     if (baseline === undefined || corrected || window.fortressNative.restores <= baseline) return;
@@ -94,14 +98,21 @@ function instrumentPostRelease(prefix) {
 function postReleaseCheckpoint(peer, text, receivedAt) {
   if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
   try {
-    const { kind, page_ms, state, turns, frame, confirmed, restores, frames } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
-    if (kind !== 'heartbeat' && !POST_RELEASE_MARKS.has(kind)) return;
+    const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
+    const capturesHold = HOLD_MARKS.has(kind);
+    if (kind !== 'heartbeat' && !POST_RELEASE_MARKS.has(kind) && !capturesHold) return;
     const capturesHistory = kind === 'history_requested' || kind === 'history_published';
     if (!Number.isFinite(page_ms) || page_ms < 0 || typeof state !== 'string' || state.length > 32
       || ![turns, frame, confirmed, restores].every(Number.isSafeInteger)
       || (capturesHistory && (!Number.isSafeInteger(frames) || frames < 1))) throw new Error('invalid post-release sample');
     const receipt = { page_ms, state, turns, frame, confirmed, restores, controller_ms: receivedAt };
     if (capturesHistory) receipt.frames = frames;
+    if (capturesHold) {
+      if (![held?.mesh, held?.relay, bytes].every(value => Number.isSafeInteger(value) && value >= 0)
+        || held.mesh + held.relay > 1024 || bytes > 1024 * 1024) throw new Error('invalid hold sample');
+      receipt.held = { mesh: held.mesh, relay: held.relay };
+      receipt.bytes = bytes;
+    }
     if (kind === 'heartbeat') peer.heartbeats = [...(peer.heartbeats ?? []).slice(-1), receipt];
     else peer[kind] ??= receipt;
   } catch (error) {
@@ -193,8 +204,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     if (!warmupLinks.size) return null;
     return { recipient: localUuid, started_ms: warmupStarted, through_ms: warmupCutoff?.at_ms ?? performance.now(), cutoff: warmupCutoff,
       tick_count: warmupTickCount, ticks: warmupTicks.slice(),
-      links: Array.from(warmupLinks, ([sender, { packets, evicted, unretained }]) => ({
-        sender, evicted, unretained, packets: Array.from(packets, ([payload, stages]) => ({ payload, ...stages })),
+      links: Array.from(warmupLinks, ([sender, { packets, evicted, unretained, last_replied_report }]) => ({
+        sender, evicted, unretained, last_replied_report, packets: Array.from(packets, ([payload, stages]) => ({ payload, ...stages })),
       })) };
   }
   function checkpointWarmup(at) {
@@ -210,6 +221,12 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       if (!warmupCutoff) checkpointWarmup(performance.now());
     }, 0);
   }
+  const orderedWarmupToken = token => token.match(/../g).reverse().join('');
+  function forgetWarmupReport(link, payload) {
+    // The pinned u128 ping is little-endian. Keep a bounded exclusion watermark.
+    const token = orderedWarmupToken(payload.slice(-32));
+    if (token > link.discardedThroughToken) link.discardedThroughToken = token;
+  }
   function recordWarmup(stage, sender, payload, code) {
     const link = !warmupCutoff && warmupLinks.get(sender.replaceAll('-', ''));
     if (!link) return;
@@ -221,9 +238,12 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       // callbacks for evicted packets cannot reappear as missing raw observations.
       if (stage !== 'raw') {
         link.unretained[stage]++;
+        forgetWarmupReport(link, payload);
         return;
       }
-      link.packets.delete([...link.packets.keys()][8]);
+      const evicted = [...link.packets.keys()][8];
+      forgetWarmupReport(link, evicted);
+      link.packets.delete(evicted);
       link.evicted++;
     }
     if (!packet) {
@@ -238,6 +258,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       packet.native.last_code = code;
       if (code === 0) {
         packet.native.accepted_ms ??= at;
+        if (packet.raw) packet.native.accepted_after_raw_ms ??= at;
         packet.native.acceptances++;
       }
     } else {
@@ -245,6 +266,26 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       packet[stage].last_ms = at;
       packet[stage].count++;
     }
+  }
+  function recordWarmupReply({ recipient, bytes }) {
+    const link = !warmupCutoff && warmupLinks.get(recipient);
+    if (!link || bytes.length !== 44 || (bytes[28] & 3) !== 0) return;
+    const pong = hex(bytes.subarray(28));
+    if (orderedWarmupToken(pong) <= link.discardedThroughToken) return;
+    let matched;
+    for (const [payload, packet] of link.packets) {
+      if (!payload.endsWith(pong)) continue;
+      if (matched) return;
+      matched = [payload, packet];
+    }
+    if (!matched) return;
+    const [payload, packet] = matched;
+    if (packet.native?.accepted_after_raw_ms == null || packet.reply_observed_ms !== undefined || link.last_replied_report?.payload === payload) return;
+    const at = performance.now();
+    packet.reply_observed_ms = at;
+    // The echoed reply proves protocol processing after the native inbox accepted the report.
+    link.last_replied_report = { payload, raw_observed_ms: packet.raw.first_ms, native_enqueued_ms: packet.native.accepted_after_raw_ms, reply_observed_ms: at };
+    scheduleWarmupCheckpoint(at);
   }
   function relayAddresses(data) {
     const view = nativeBytes(data);
@@ -309,7 +350,10 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       return sent;
     }
     if (held.mesh + held.relay >= 1024 || totalBytes + data.byteLength > 1024 * 1024) {
-      holdFailure ??= new Error('native packet hold exceeded bounds');
+      if (!holdFailure) {
+        holdFailure = new Error('native packet hold exceeded bounds');
+        window.fortressNativePostRelease?.mark('hold_cap', undefined, holdMark());
+      }
       throw holdFailure;
     }
     const owned = nativeBytes(data).slice();
@@ -442,6 +486,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
         increment(relayRecipients, packet.recipient);
         if (packet.kind === inputKind) increment(relayInputRecipients, packet.recipient);
         bufferedBytesPeak = Math.max(bufferedBytesPeak, this.bufferedAmount);
+        if (packet.kind === 5) recordWarmupReply(packet);
         traceRelayQuality('send', packet.recipient, packet);
       }
     }, data, packet?.sender === localUuid ? packet : null);
@@ -453,7 +498,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       session = hash.match(/../g).map(value => parseInt(value, 16));
       if (warmupPrefix) for (const member of warmupRoster.slice(0, 8)) {
         const sender = member.replaceAll('-', '');
-        if (sender !== localUuid) warmupLinks.set(sender, { packets: new Map(), evicted: 0, unretained: { sdk: 0, native: 0 } });
+        if (sender !== localUuid) warmupLinks.set(sender, {
+          packets: new Map(), evicted: 0, unretained: { sdk: 0, native: 0 }, discardedThroughToken: '', last_replied_report: null,
+        });
       }
       if (warmupLinks.size) warmupStarted = performance.now();
     },
@@ -662,18 +709,48 @@ function historyThrough(peers) {
   return frames;
 }
 
-async function readConfirmedHistory(page, frames, wait) {
-  await page.evaluate(frameCount => {
-    window.fortressNativeHistory = null;
-    window.fortressNativeCapture = frameCount;
-    window.fortressNativePostRelease?.mark('history_requested', frameCount);
-  }, frames);
-  await wait(page, frameCount => window.fortressNativeHistory?.frames === frameCount, frames);
-  return page.evaluate(frameCount => {
-    const history = window.fortressNativeHistory;
-    if (history?.frames !== frameCount) throw new Error('native history receipt changed');
-    return history;
-  }, frames);
+async function readConfirmedHistory(page, frames, id, players) {
+  assert.ok(Number.isSafeInteger(id) && id > 0, 'native history request ID must be a positive safe integer');
+  assert.ok(Number.isSafeInteger(frames) && frames > 0, 'native history frame count must be a positive safe integer');
+  let receipt;
+  const deadline = performance.now() + PAGE_WAIT_MS;
+  const publication = page.waitForEvent('console', {
+    timeout: PAGE_WAIT_MS,
+    predicate(message) {
+      const text = message.text();
+      if (receipt || !text.startsWith(HISTORY_CHECKPOINT) || performance.now() >= deadline) return false;
+      let sample;
+      try {
+        sample = JSON.parse(text.slice(HISTORY_CHECKPOINT.length));
+      } catch {
+        return false;
+      }
+      if (sample?.id !== id || sample.frames !== frames) return false;
+      const { rows, snapshots } = sample;
+      if (!rows || typeof rows !== 'object' || Array.isArray(rows) || Object.keys(rows).length !== frames
+        || !snapshots || typeof snapshots !== 'object' || Array.isArray(snapshots) || Object.keys(snapshots).length !== frames) return false;
+      for (let frame = 0; frame < frames; frame++) {
+        const row = rows[frame];
+        const snapshot = snapshots[frame + 1];
+        if (!Array.isArray(row) || row.length !== players || !row.every(Number.isSafeInteger)
+          || typeof snapshot !== 'string' || !CANONICAL_SNAPSHOT.test(snapshot)) return false;
+      }
+      if (performance.now() >= deadline) return false;
+      receipt = { frames, rows, snapshots };
+      return true;
+    },
+  });
+  let dispatchError;
+  void Promise.resolve().then(() => page.evaluate(request => {
+    window.fortressNativeCapture = request;
+    window.fortressNativePostRelease?.mark('history_requested', request.frames);
+  }, { id, frames })).catch(error => { dispatchError = error; });
+  try {
+    await publication;
+  } catch (error) {
+    throw dispatchError ?? error;
+  }
+  return receipt;
 }
 
 function compareHistory(peers, frames = HISTORY_FRAMES) {
@@ -688,7 +765,7 @@ function compareHistory(peers, frames = HISTORY_FRAMES) {
     const expected = ordered.map(peer => frame >= GATE_FRAME && frame % 2 === 0 ? 0 : INPUTS[peer.index][0]);
     for (const peer of peers) {
       assert.deepEqual(peer.rows[frame], expected, `input row at frame ${frame}, slot ${peer.slot}`);
-      assert.match(peer.snapshots[frame + 1], /^(?:[0-9a-f]{2})+$/);
+      assert.match(peer.snapshots[frame + 1], CANONICAL_SNAPSHOT);
       assert.equal(peer.snapshots[frame + 1], peers[0].snapshots[frame + 1], `canonical state at frame ${frame + 1}, slot ${peer.slot}`);
     }
   }
@@ -705,12 +782,14 @@ function armAndWaitForInput(page, route) {
     const wire = window.fortressNativeWire;
     const { frame, stalls, confirmed } = window.fortressNative;
     const armed = { frame, stalls, confirmed, hold: wire.arm() };
+    window.fortressNativePostRelease?.mark('hold_armed', undefined, armed.hold);
     while (true) {
       const state = window.fortressNative;
       if (state.state === 'failed') throw new Error(state.message);
       if (state.state === 'playing' && state.stalls > stalls && state.prediction >= gate && state.frame > gate && state.confirmed < state.frame - 1) {
         const ready = wire.recordHoldReadiness(route);
         if (ready) {
+          window.fortressNativePostRelease?.mark('hold_ready', undefined, ready);
           window.fortressNativePostRelease?.arm(state.restores);
           return { armed, ready: { ...ready, frame: state.frame, confirmed: state.confirmed, restores: state.restores } };
         }
@@ -964,11 +1043,14 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     }, PAGE_WAIT_MS, 'native post-confirmation engine turn');
     phase = 'confirmed history capture';
     const history = await Promise.all(pages.map(async (page, index) => {
-      const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, wait), PAGE_WAIT_MS, `native peer ${index} confirmed history capture`);
+      const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence, players), PAGE_WAIT_MS,
+        `native peer ${index} confirmed history capture`);
       if (postRelease) postRelease[index].history_received = { frames: receipt.frames, controller_ms: performance.now() };
       return receipt;
     }));
-    const peers = (await observe()).map((peer, index) => ({ ...peer, rows: history[index].rows, snapshots: history[index].snapshots }));
+    phase = 'post-capture status';
+    const peers = (await boundedRoom(observe, PAGE_WAIT_MS, 'native post-capture status'))
+      .map((peer, index) => ({ ...peer, rows: history[index].rows, snapshots: history[index].snapshots }));
     compareHistory(peers, comparedFrames);
     if (recovery) assertRecoveredRoom(direct, restored, peers, recoveryEvidence);
     phase = 'route validation';

@@ -54,12 +54,14 @@ Use the default worker setting for full-suite verification. Explicit `--jobs 1`
 is useful for diagnosis, but normally puts the whole selection under one process budget.
 If it initially waits for the host, known slow suites retain their per-case watchdogs.
 
-Each run without `--filter` saves per-suite times to ignored `.cache/tests/durations.json`. The next
-run starts the slowest suites first, with both repetitions of a suite started together. A suite
-that took at least four seconds is listed with `--list-cases` and runs one fresh-process pair per
-case (`--case <name>`), still merged in inventory order. The times only change scheduling; a
-missing or stale file gives the same records. Pure engine run time makes a new suite shard freely,
-so split a slow case into smaller cases rather than lengthen it.
+Each parallel run without `--filter` saves per-suite wall times to ignored `.cache/tests/durations.json`.
+The next run starts the slowest suites first, with both repetitions of a suite started together.
+Full and changed local unit runs use the tracked `scripts/unit_suite_seconds.json` from the source
+snapshot to decide which suites to split. A local timing spike can change launch order. The tracked
+inventory keeps the process count stable. A suite absent from that inventory runs whole.
+Explicit suite runs, other categories and the CI `--shard` mode keep using local times for splitting.
+Suites at or above four seconds are listed with `--list-cases` and run one fresh-process pair per
+case (`--case <name>`). The runner merges records in inventory order.
 
 `make test-changed` selects suites against the merge base of `BASE` (default `origin/main`) and the
 committed, staged, unstaged and untracked paths. Selection follows resource literals, directory references and

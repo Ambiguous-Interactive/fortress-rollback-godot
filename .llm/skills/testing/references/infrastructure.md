@@ -138,8 +138,10 @@ native initialization and an independently deferred witness do not exercise that
 
 ## Faster local iteration
 
-`make test-godot` runs each suite in its own fresh-process pair across CPUs, slowest first from `.cache/tests/durations.json`;
-suites over four seconds run one pair per case. Its record matches `--jobs 1`. `make test-focus SUITE=res://tests/unit/x.gd`
+`make test-godot` runs each suite in its own fresh-process pair across CPUs, slowest first from `.cache/tests/durations.json`.
+The tracked unit timings set the four-second case split for full and changed local unit runs. The ignored cache includes
+engine startup and scheduling delays. Use it to order work without feeding a contention spike back into process count.
+The record matches `--jobs 1`. `make test-focus SUITE=res://tests/unit/x.gd`
 selects one suite. `make test-changed` runs only suites reaching files changed since `origin/main`. Deliver all suites.
 Direct launcher calls default to 30 seconds; pass `--timeout 180` when selecting long stress or full-duration replay cases, as the full Makefile target does.
 Compare the same case inventory by name and through changed-suite selection to isolate discovery time.

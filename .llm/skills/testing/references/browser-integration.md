@@ -159,6 +159,9 @@ receipt for the controller barrier. Require the original game-state
 predicate, one timely receipt per page, and the original deadline.
 Start readiness sampling in the same page call that arms a hold. Keep page
 clock marks and controller receipt times on their own clocks.
+Publish the arm, first readiness and first cap hit while the page runs. Keep
+packet and byte counts with each checkpoint so a failed final read keeps its
+earlier evidence.
 When a room barrier permits release, save the pre-release snapshot and start
 release in one page call. Keep that snapshot available to bounded diagnostics
 if release fails. Include the held count at readiness and release to locate
@@ -178,8 +181,14 @@ Match addressed control reports and replies by peer and token, and record
 browser send and SDK receive queue peaks in the same phase. If release itself
 causes a measured fanout burst, pace the synthetic release in FIFO order while
 control traffic continues. Keep the original packet cap and correction deadline.
+An inbox acceptance proves delivery to the native queue. A matching outgoing
+reply proves that the native protocol processed that report. Keep both marks on
+the recipient's clock, and leave the last timeout refresh open when other
+traffic could renew it.
 Export the requested confirmed prefix once per browser. Keep recurring status
-snapshots small, and verify the exact receipt returned after readiness.
+snapshots small. When a page can publish data before its evaluation reply
+arrives, arm a page-scoped listener before dispatch. Match the request ID and
+frame count and validate the complete receipt within the original deadline.
 Prepare shared ZIP tools through verified member comparison and atomic replacement;
 never truncate an executable inode held by another process. Exercise preparation
 with an actual live executable and a corrupt-cache control. Keep launcher-owned

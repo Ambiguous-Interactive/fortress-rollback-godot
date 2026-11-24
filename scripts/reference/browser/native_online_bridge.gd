@@ -317,7 +317,7 @@ func _process(_delta: float) -> void:
 
 
 func _capture_history(game: ObservedGame) -> void:
-	var frames: int = JavaScriptBridge.eval("window.fortressNativeCapture || 0")
+	var frames: int = JavaScriptBridge.eval("window.fortressNativeCapture?.frames || 0")
 	if frames < 1 or frames > game.history_limit:
 		return
 	var rows: Dictionary = {}
@@ -330,10 +330,12 @@ func _capture_history(game: ObservedGame) -> void:
 	var receipt: Dictionary = {"frames": frames, "rows": rows, "snapshots": snapshots}
 	JavaScriptBridge.eval(
 		(
-			"window.fortressNativeCapture = 0; window.fortressNativeHistory = "
+			"const {id} = window.fortressNativeCapture; window.fortressNativeCapture = null; const history = "
 			+ JSON.stringify(receipt)
-			+ "; window.fortressNativePostRelease?.mark('history_published', window.fortressNativeHistory.frames)"
-		)
+			+ "; window.fortressNativePostRelease?.mark('history_published', history.frames); "
+			+ "console.debug('fortress native history ' + JSON.stringify({id, ...history}))"
+		),
+		false
 	)
 
 

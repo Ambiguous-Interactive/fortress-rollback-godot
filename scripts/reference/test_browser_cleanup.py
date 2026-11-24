@@ -254,7 +254,7 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
     def test_native_relay_warmup_preserves_stages_with_cutoff_and_eviction(self):
-        # Value: protects=exact staged warmup attribution; fails_when=missing SDK or rolled-out packets appear complete; seam=raw socket and staged observers
+        # Value: protects=exact staged warmup attribution; fails_when=an unmatched reply implies processing; seam=raw socket and staged observers
         script = r"""
 const assert = require('node:assert/strict');
 const { runInNewContext } = require('node:vm');
@@ -267,16 +267,18 @@ const bytes = n => {
   result[45] = n;
   return result;
 };
-const raw = (socket, payload, recipient = local, sender = remote) => {
+const relayFrame = (payload, recipient, sender) => {
   const frame = Buffer.alloc(57 + payload.length);
   frame.set([70, 83, 82, 49, 1]);
   frame.set(Buffer.from(sender + recipient, 'hex'), 21);
   frame.writeUInt32LE(payload.length, 53);
   frame.set(payload, 57);
-  socket.message({data: frame});
+  return frame;
 };
+const raw = (socket, payload, recipient = local, sender = remote) => socket.message({data: relayFrame(payload, recipient, sender)});
 class Socket {
   addEventListener(name, listener) { this[name] = listener; }
+  send() {}
 }
 let time = 1;
 const window = {}, checkpoints = [], tasks = [];
@@ -288,10 +290,18 @@ const realm = {
 runInNewContext(`(${instrumentNativeWire})(false, 'warmup ')`, realm);
 const socket = new window.WebSocket();
 const wire = window.fortressNativeWire;
-wire.bind('00'.repeat(16), local, [local, remote]);
-const sample = (stage, value, code = -1) => wire.recordWarmup(stage, remote, value.toString('hex'), code);
+wire.bind('00'.repeat(16), local, [local, remote, other]);
+const sample = (stage, value, code = -1, sender = remote) => wire.recordWarmup(stage, sender, value.toString('hex'), code);
+const reply = (report, recipient = remote) => {
+  const payload = Buffer.alloc(44);
+  payload.set(report.subarray(0, 28));
+  payload[24] = 5;
+  payload.set(report.subarray(30), 28);
+  socket.send(relayFrame(payload, recipient, local));
+};
+const lastReply = () => wire.warmupStatus().links[0].last_replied_report;
 raw(socket, bytes(90), other);
-raw(socket, bytes(91), local, other);
+raw(socket, bytes(91), local, '44'.repeat(16));
 const excluded = bytes(92);
 excluded[30] = 1;
 raw(socket, excluded);
@@ -299,21 +309,34 @@ const quality = bytes(0);
 raw(socket, quality);
 time = 1.5;
 raw(socket, quality);
-const identicalToken = Buffer.from(quality);
-identicalToken[28] = 1;
+const sdkOnly = bytes(94);
 time = 2;
-sample('sdk', identicalToken);
+sample('sdk', sdkOnly);
 time = 3;
 sample('native', quality, 6);
+reply(quality);
+assert.equal(lastReply()?.reply_observed_ms, undefined);
 time = 4;
 sample('native', quality, 0);
+reply(quality, other);
+reply(bytes(93));
+assert.equal(lastReply()?.reply_observed_ms, undefined);
+assert.equal(wire.warmupStatus().links[1].last_replied_report?.reply_observed_ms, undefined);
+time = 5;
+reply(quality);
+assert.deepEqual(JSON.parse(JSON.stringify(lastReply() ?? null)), {
+  payload: quality.toString('hex'), raw_observed_ms: 1, native_enqueued_ms: 4, reply_observed_ms: 5,
+});
+time = 6;
+reply(quality);
+assert.equal(lastReply().reply_observed_ms, 5);
 assert.equal(checkpoints.length, 0);
 assert.equal(tasks.length, 1);
 tasks.shift()();
 assert.equal(checkpoints.length, 1);
 let [link] = wire.warmupStatus().links;
 assert.equal(link.sender, remote);
-assert.deepEqual(link.packets.map(packet => packet.payload).join(), [quality, identicalToken].map(b => b.toString('hex')).join());
+assert.deepEqual(link.packets.map(packet => packet.payload).join(), [quality, sdkOnly].map(b => b.toString('hex')).join());
 const [rawRecord, sdkRecord] = link.packets;
 // Missing SDK evidence stays absent even if the native enqueue was observed with the same payload.
 assert.equal(rawRecord.raw.first_ms, 1);
@@ -327,6 +350,14 @@ assert.equal(rawRecord.native.accepted_ms, 4);
 assert.equal(sdkRecord.raw, null);
 assert.equal(sdkRecord.sdk.first_ms, 2);
 assert.equal(sdkRecord.native, null);
+const collision = bytes(1);
+const incomplete = Buffer.from(collision);
+incomplete[28] = 1;
+sample('native', incomplete, 0, other);
+raw(socket, collision, local, other);
+sample('native', collision, 0, other);
+reply(collision, other);
+assert.equal(wire.warmupStatus().links[1].last_replied_report?.reply_observed_ms, undefined, 'an incomplete competing report can explain the reply');
 for (let i = 1; i < 30; i++) {
   time = i + 10;
   raw(socket, bytes(i));
@@ -345,6 +376,15 @@ assert.equal(link.unretained.native, 1);
 assert.equal(link.packets.some(packet => packet.payload === bytes(8).toString('hex')), false);
 assert.equal(link.packets[23].sdk.first_ms, 50);
 assert.equal(link.packets[23].native.accepted_ms, 50);
+reply(bytes(29));
+assert.equal(lastReply().reply_observed_ms, 50);
+for (let i = 31; i < 48; i++) {
+  time = i + 20;
+  raw(socket, bytes(i));
+}
+assert.equal(wire.warmupStatus().links[0].packets.length, 24);
+assert.equal(wire.warmupStatus().links[0].packets.some(packet => packet.payload === bytes(29).toString('hex')), false);
+assert.equal(lastReply().payload, bytes(29).toString('hex'));
 time = 1051;
 raw(socket, bytes(8));
 sample('sdk', bytes(8));
@@ -352,6 +392,14 @@ sample('native', bytes(8), 0);
 const resurfaced = wire.warmupStatus().links[0].packets.at(-1);
 assert.equal(resurfaced.payload, bytes(8).toString('hex'));
 assert.equal(resurfaced.after_eviction, true);
+reply(bytes(8));
+assert.equal(lastReply().payload, bytes(29).toString('hex'), 'a dropped report with the same token can explain the reply');
+const ambiguous = Buffer.from(bytes(8));
+ambiguous[28] = 1;
+raw(socket, ambiguous);
+sample('native', ambiguous, 0);
+reply(bytes(8));
+assert.equal(lastReply().payload, bytes(29).toString('hex'));
 const wireBeforeCutoff = wire.status();
 assert.equal(tasks.length, 1);
 wire.finishWarmup('playing', 12);
@@ -370,6 +418,7 @@ time = 1052;
 raw(socket, bytes(30));
 sample('sdk', bytes(30));
 sample('native', bytes(30), 0);
+reply(bytes(30));
 wire.recordWarmupTick(1200, 0, 256, 1000, true);
 wire.finishWarmup('failed', 12);
 assert.equal(JSON.stringify(wire.warmupStatus()), cutoff);
@@ -671,6 +720,8 @@ async function run() {
 
   const full = { ...realm, window: {}, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
   runInNewContext(`(${instrumentNativeWire})()`, full);
+  const cap = [];
+  full.window.fortressNativePostRelease = { mark(kind, frames, hold) { cap.push({ kind, ...hold }); } };
   const fullWire = full.window.fortressNativeWire;
   const fullSocket = new full.window.WebSocket();
   fullWire.bind('00'.repeat(16), '01'.repeat(16));
@@ -678,12 +729,14 @@ async function run() {
   for (let i = 0; i < 1024; i++) fullSocket.send(relay(2, i));
   const overflow = assert.rejects(fullWire.release(), /native packet hold exceeded bounds/);
   assert.throws(() => fullSocket.send(relay(2, 33)), /native packet hold exceeded bounds/);
+  assert.throws(() => fullSocket.send(relay(2, 34)), /native packet hold exceeded bounds/);
   while (turns.length) {
     turns.shift()();
     await Promise.resolve();
   }
   await overflow;
   assert.equal(fullWire.status().released, 16);
+  assert.deepEqual(cap.map(sample => [sample.kind, sample.held.relay, sample.bytes]), [['hold_cap', 1024, 88064]]);
 }
 const timer = setTimeout(() => { throw new Error('release did not settle'); }, 1000);
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
@@ -700,8 +753,8 @@ let now = 10, heartbeat;
 global.window = {
   fortressNative: { state: 'playing', turns: 20, frame: 24, confirmed: 16, restores: 2, stalls: 0, prediction: 12 },
   fortressNativeWire: {
-    arm: () => ({ at_ms: now }),
-    recordHoldReadiness: () => ({ at_ms: now }),
+    arm: () => ({ at_ms: now, held: { mesh: 0, relay: 0 }, bytes: 0 }),
+    recordHoldReadiness: () => ({ at_ms: now, held: { mesh: 0, relay: 10 }, bytes: 880 }),
     status: () => { now += 2; return {}; },
     release: async () => { now++; },
   },
@@ -712,15 +765,26 @@ global.requestAnimationFrame = callback => { window.fortressNative.stalls++; cal
 console.debug = text => postReleaseCheckpoint(checkpoints, text, now + 100);
 instrumentPostRelease('fortress native post-release ');
 const trace = window.fortressNativePostRelease;
-let evaluations = 0;
 const page = {
   async evaluate(operation, value) {
-    if (++evaluations === 4) throw new Error('controller receipt unavailable');
-    return operation(value);
+    const result = await operation(value);
+    if (value?.frames === 40) {
+      assert.deepEqual(window.fortressNativeCapture, { id: 4, frames: 40 });
+      now++;
+      trace.mark('history_published', value.frames);
+      throw new Error('controller receipt unavailable');
+    }
+    return result;
+  },
+  waitForEvent(event) {
+    assert.equal(event, 'console');
+    return new Promise((_, reject) => setImmediate(() => reject(new Error('history receipt timed out'))));
   },
 };
 async function run() {
   assert.equal((await armAndWaitForInput(page, 'relay')).ready.restores, 2);
+  assert.deepEqual([checkpoints.hold_armed?.page_ms, checkpoints.hold_armed?.controller_ms, checkpoints.hold_armed?.held.relay], [10, 110, 0]);
+  assert.deepEqual([checkpoints.hold_ready?.page_ms, checkpoints.hold_ready?.controller_ms, checkpoints.hold_ready?.held.relay], [10, 110, 10]);
   trace.observe();
   assert.equal(checkpoints.correction, undefined, 'old restores do not prove correction');
   postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"correction"}', now);
@@ -731,14 +795,7 @@ async function run() {
   now++;
   Object.assign(window.fortressNative, { turns: 22, confirmed: 40 });
   trace.observe();
-  await assert.rejects(readConfirmedHistory(page, 40, async (_, complete, frames) => {
-    assert.equal(window.fortressNativeCapture, 40);
-    assert.equal(complete(frames), false);
-    now++;
-    window.fortressNativeHistory = { frames };
-    trace.mark('history_published', frames);
-    assert.equal(complete(frames), true);
-  }), /controller receipt unavailable/);
+  await assert.rejects(readConfirmedHistory(page, 40, 4, 2), /controller receipt unavailable/);
   for (let i = 0; i < 5; i++) {
     now++;
     heartbeat();
@@ -768,28 +825,53 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
     def test_native_history_capture_rejects_stale_rows_and_snapshot_mutations(self):
-        # Value: protects=fresh confirmed history; fails_when=reusing a capture or skipping either comparison; why_new=per-render capture had no request boundary; seam=browser
+        # Value: protects=correlated confirmed history; fails_when=RPC completion governs receipt or stale rows pass; why_new=the publisher can outlive the RPC; seam=console
         script = r"""
 const assert = require('node:assert/strict');
 const { compareHistory, readConfirmedHistory } = require(process.argv[1]);
 
 async function run() {
   const fresh = { frames: 2, rows: { 0: [1, 2], 1: [1, 2] }, snapshots: { 1: '01', 2: '02' } };
-  global.window = { fortressNativeHistory: { ...fresh, snapshots: { 1: 'ff', 2: 'ff' } } };
-  const page = { async evaluate(operation, value) { return operation(value); } };
-  const captured = await readConfirmedHistory(page, 2, async (owner, complete, frames) => {
-    assert.equal(owner, page);
-    assert.equal(window.fortressNativeCapture, 2);
-    assert.equal(complete(frames), false, 'an old capture for the same frame count must be invalidated');
-    window.fortressNativeHistory = fresh;
-    assert.equal(complete(frames), true);
-  });
-  assert.deepEqual(captured, fresh);
-  await assert.rejects(readConfirmedHistory(page, 2, async (_, complete, frames) => {
-    window.fortressNativeHistory = fresh;
-    assert.equal(complete(frames), true);
-    window.fortressNativeHistory = { ...fresh, frames: 3 };
-  }), /native history receipt changed/);
+  const message = value => ({ text: () => 'fortress native history ' + JSON.stringify(value) });
+  let now = 100;
+  global.performance = { now: () => now };
+  global.window = {};
+  function fixture(id, outcome) {
+    let predicate, complete, reject;
+    return {
+      waitForEvent(event, options) {
+        assert.equal(event, 'console');
+        predicate = options.predicate;
+        return new Promise((resolve, fail) => { complete = resolve; reject = fail; });
+      },
+      evaluate(operation, request) {
+        assert.equal(typeof predicate, 'function', 'register the listener before dispatch');
+        operation(request);
+        setImmediate(() => {
+          assert.deepEqual(window.fortressNativeCapture, { id, frames: 2 });
+          assert.equal(predicate(message({ ...fresh, id: id - 1 })), false, 'same-frame receipt from an earlier request');
+          assert.equal(predicate(message({ ...fresh, id, frames: 3 })), false, 'wrong frame count');
+          assert.equal(predicate(message({ ...fresh, id, rows: null })), false, 'incomplete receipt');
+          assert.equal(predicate(message({ ...fresh, id, rows: { 0: [], 1: [] } })), false, 'empty rows cannot consume the receipt');
+          assert.equal(predicate(message({ ...fresh, id, snapshots: { 1: '', 2: 'gg' } })), false, 'invalid snapshot encoding cannot consume the receipt');
+          if (outcome === 'late') {
+            now += 30000;
+            assert.equal(predicate(message({ ...fresh, id })), false, 'receipt at the deadline');
+            reject(new Error('history receipt timed out'));
+            return;
+          }
+          assert.equal(predicate(message({ ...fresh, id })), true);
+          assert.equal(predicate(message({ ...fresh, id })), false, 'repeat publication');
+          complete();
+        });
+        if (outcome === 'rejected') return Promise.reject(new Error('dispatch response lost'));
+        return new Promise(() => {});
+      },
+    };
+  }
+  assert.deepEqual(await readConfirmedHistory(fixture(18, 'pending'), 2, 18, 2), fresh);
+  assert.deepEqual(await readConfirmedHistory(fixture(19, 'rejected'), 2, 19, 2), fresh);
+  await assert.rejects(readConfirmedHistory(fixture(20, 'late'), 2, 20, 2), /history receipt timed out/);
 
   const peers = [0, 1].map(slot => ({ ...fresh, index: slot, slot, uuid: String(slot), session_id: '00'.repeat(16), room_id: 'room' }));
   compareHistory(peers, 2);
@@ -801,7 +883,8 @@ async function run() {
     assert.throws(() => compareHistory([peers[0], changed], 2), error);
   }
 }
-run().catch(error => { console.error(error); process.exitCode = 1; });
+const timer = setTimeout(() => { throw new Error('matching history publication did not settle the request'); }, 500);
+run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
