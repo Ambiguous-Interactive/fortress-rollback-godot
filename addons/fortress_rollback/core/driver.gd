@@ -127,6 +127,11 @@ func native_terminal_detail() -> String:
 	return _native_backend.terminal_detail() if _native_backend != null else ""
 
 
+## One-based native endpoint for a disconnect, or zero when unavailable.
+func native_terminal_endpoint() -> int:
+	return _native_backend.terminal_endpoint() if _native_backend != null else 0
+
+
 static func _valid_game(game: RefCounted) -> bool:
 	for method: String in ["save_state", "load_state", "simulate_frame"]:
 		if not accepts_callback_arguments(game, method):

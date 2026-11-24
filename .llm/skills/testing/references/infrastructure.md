@@ -142,7 +142,10 @@ native initialization and an independently deferred witness do not exercise that
 The tracked unit timings set the four-second case split for full and changed local unit runs. The ignored cache includes
 engine startup and scheduling delays. Use it to order work without feeding a contention spike back into process count.
 The record matches `--jobs 1`. `make test-focus SUITE=res://tests/unit/x.gd`
-selects one suite. `make test-changed` runs only suites reaching files changed since `origin/main`. Deliver all suites.
+selects one suite. `make test-changed` runs suites that can reach files changed since `origin/main`.
+Merge-group qualification runs the full inventory. A reachable unresolved reader also selects the full inventory.
+If a fixed-input generated script needs a reviewed digest, isolate its source and literal inputs from the caller.
+Run the selector against the real checkout after moving it. Verify an unrelated document, a literal file read and an opaque dependency.
 Direct launcher calls default to 30 seconds; pass `--timeout 180` when selecting long stress or full-duration replay cases, as the full Makefile target does.
 Compare the same case inventory by name and through changed-suite selection to isolate discovery time.
 For competing CI layouts, compare the complete case records, longest job and summed runner-seconds on the same source revision.

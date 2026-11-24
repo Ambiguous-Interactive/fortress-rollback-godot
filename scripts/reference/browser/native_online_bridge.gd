@@ -241,7 +241,7 @@ func _process(_delta: float) -> void:
 	var match_status: Types.Status = lobby.game_match.status()
 	var warmup_ready: bool = lobby.state == "playing" and match_status.confirmed_frame >= GATE_FRAME
 	if warmup_match != null and (lobby.state == "failed" or warmup_ready):
-		lobby.warmup_wire.finishWarmup(lobby.state, match_status.confirmed_frame)
+		lobby.warmup_wire.finishWarmup(lobby.state, match_status.confirmed_frame, lobby.game_match.driver.native_terminal_endpoint())
 		if is_instance_valid(lobby.client):
 			lobby.client.disconnect("game_data_binary_received", warmup_match.observe_sdk)
 		warmup_match.warmup_wire = null
@@ -281,8 +281,10 @@ func _process(_delta: float) -> void:
 		"closed_channel_state": closed_channel_state,
 		"closed_channel_frame": closed_channel_frame,
 		"terminal_detail": lobby.game_match.driver.native_terminal_detail(),
+		"terminal_endpoint": lobby.game_match.driver.native_terminal_endpoint(),
 		"interrupted": lobby.game_match.driver.native_interrupted_endpoints(),
 		"sdk_roster": _sdk_roster(),
+		"frozen_roster": lobby.game_match.membership.roster(),
 		"relay_peers": lobby.game_match.fallback.status().relay_peers,
 		"plan": lobby.plan,
 		"plan_events": lobby.plan_events,

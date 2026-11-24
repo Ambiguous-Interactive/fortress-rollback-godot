@@ -39,6 +39,9 @@ Drain and route native datagrams with `drain_native_packets()` and
 `receive_native()` even during waits.
 `receive_native_result()` distinguishes full queues from rejected packets
 so a transport can retry the original datagram after servicing the driver.
+`native_terminal_endpoint()` returns the configured remote endpoint ID from
+the first native disconnect. It returns zero until an endpoint is known,
+including after a room departure or when running with an older native addon.
 The driver uses the existing `save_state`, `load_state` and
 `simulate_frame` callbacks and expires views when each callback returns.
 

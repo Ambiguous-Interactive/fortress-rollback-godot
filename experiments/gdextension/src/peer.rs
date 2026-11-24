@@ -57,6 +57,7 @@ pub(crate) struct Peer {
     remote_endpoints: u16,
     interrupted: u16,
     terminal: &'static str,
+    terminal_endpoint: u16,
     current_frame: i32,
     confirmed_frame: i32,
     abort_on_event: bool,
@@ -114,6 +115,7 @@ impl Peer {
             remote_endpoints,
             interrupted: 0,
             terminal: "",
+            terminal_endpoint: 0,
             abort_on_event: true,
         })
     }
@@ -154,6 +156,10 @@ impl Peer {
 
     pub(crate) fn terminal_reason(&self) -> &'static str {
         self.terminal
+    }
+
+    pub(crate) fn terminal_endpoint(&self) -> i32 {
+        i32::from(self.terminal_endpoint)
     }
 
     pub(crate) fn interrupted_endpoints(&self) -> impl Iterator<Item = i32> + '_ {
@@ -233,7 +239,10 @@ impl Peer {
         let mut terminal = "";
         for event in self.session.events() {
             match event {
-                FortressEvent::Disconnected { .. } => terminal = "disconnected",
+                FortressEvent::Disconnected { addr } => {
+                    terminal = "disconnected";
+                    self.terminal_endpoint = addr;
+                }
                 FortressEvent::DesyncDetected { .. } => terminal = "desync",
                 FortressEvent::SyncTimeout { .. } => terminal = "sync_timeout",
                 FortressEvent::NetworkInterrupted { addr, .. } => self.interrupted |= 1 << addr,

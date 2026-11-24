@@ -11,7 +11,9 @@ const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["asymmetric_direct", "asymmetric_relay", "early_validation", "native_relay_plan", "native_ingress_pressure"])
+	return PackedStringArray([
+		"asymmetric_direct", "asymmetric_relay", "early_validation", "native_relay_plan", "native_ingress_pressure", "native_terminal_endpoint"
+	])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -25,6 +27,10 @@ func run_case(name: String, context: RefCounted) -> void:
 		return
 	if name == "native_ingress_pressure":
 		_native_ingress_pressure(context)
+		context.finish()
+		return
+	if name == "native_terminal_endpoint":
+		_native_terminal_endpoint(context)
 		context.finish()
 		return
 	var helper: RefCounted = Example.new()
@@ -305,3 +311,49 @@ class NativeIngress:
 			return Match.Driver.Native.ReceiveCode.FULL
 		accepted.append(bytes)
 		return Match.Driver.Native.ReceiveCode.ACCEPTED
+
+
+
+class LegacyTerminal:
+	extends RefCounted
+
+	var detail: String = "disconnected"
+
+	func step_roster(_sample: PackedByteArray, _callbacks: RefCounted) -> int:
+		return -1
+
+	func terminal_reason() -> String:
+		return detail
+
+
+class TerminalWithEndpoint:
+	extends LegacyTerminal
+
+	func terminal_endpoint() -> int:
+		return 2
+
+
+# Value: protects=first native expiry diagnostic across teardown and older extension builds;
+# fails_when=cleanup drops the endpoint or calls an absent method; seam=public driver lifecycle with both extension method sets
+func _native_terminal_endpoint(context: RefCounted) -> void:
+	var samples: Array[PackedByteArray] = [PackedByteArray([1, 0, 0, 0])]
+	for detail: String in ["disconnected", "legacy", "desync", "room_departure"]:
+		var driver: Match.Driver = Match.Driver.new()
+		context.equal(driver.native_terminal_endpoint(), 0, "no native session")
+		var backend: Match.Driver.Native = Match.Driver.Native.new()
+		var binding: LegacyTerminal = LegacyTerminal.new() if detail == "legacy" else TerminalWithEndpoint.new()
+		if detail == "desync":
+			binding.detail = detail
+		backend._native = binding
+		backend._local_players = PackedInt32Array([0])
+		driver._native_backend = backend
+		context.equal(driver.native_terminal_endpoint(), 0, "before terminal step " + detail)
+		if detail == "room_departure":
+			driver.terminate()
+		else:
+			driver.step_local(0, samples)
+		context.equal(driver.status().lifecycle, Match.Types.Lifecycle.TERMINATED, "terminal status " + detail)
+		context.equal(backend._native, null, "native owner dropped " + detail)
+		driver.terminate()
+		driver.step_local(1, samples)
+		context.equal(driver.native_terminal_endpoint(), 2 if detail == "disconnected" else 0, "latched diagnostic " + detail)

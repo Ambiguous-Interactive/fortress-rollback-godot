@@ -121,6 +121,11 @@ impl FortressNativeSession {
     }
 
     #[func]
+    fn terminal_endpoint(&self) -> i32 {
+        self.peer.as_ref().map_or(0, Peer::terminal_endpoint)
+    }
+
+    #[func]
     fn interrupted_endpoints(&self) -> PackedInt32Array {
         self.peer
             .iter()

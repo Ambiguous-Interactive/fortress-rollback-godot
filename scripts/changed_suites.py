@@ -13,13 +13,18 @@ SOURCES = ("addons", "tests", "examples", "scripts")
 SCANNED = (".gd", ".tscn", ".tres", ".json", ".cfg")
 CLASS_NAME = re.compile(r"(?m)^(?:@\w+\s+)*class_name\s+(\w+)")
 LITERAL = re.compile(r""""[^"\\\n]*(?:\\[^\n][^"\\\n]*)*"|'[^'\\\n]*(?:\\[^\n][^'\\\n]*)*'""")
-ACCESS = re.compile(r"(?:(?<![\w])(?:pre)?load|\.(?:change_scene_to_file|change_dir|load_from_file)|ResourceLoader\.\w+"
-                    r"|FileAccess\.(?!get_open_error\b)\w+|DirAccess\.(?:open|get_\w+_at|dir_exists_absolute))\s*\(\s*")
+# Consume multiline strings before looking for # in the surrounding code.
+GD_COMMENTS = re.compile(r'"""(?:\\[\s\S]|(?!""")[^\\])*"""|' r"'''(?:\\[\s\S]|(?!''')[^\\])*'''|"
+                         + LITERAL.pattern + r"|(?P<comment>#[^\n]*)")
+MEMBER = r"\s*\.\s*"
+ACCESS = re.compile(rf"(?:(?<![\w])(?:pre)?load|\.\s*(?:change_scene_to_file|change_dir|load_from_file)|ResourceLoader{MEMBER}\w+"
+                    rf"|FileAccess{MEMBER}(?:(?P<file_read>open|get_file_as_string|get_file_as_bytes|get_sha256|get_md5|file_exists)\b|(?!get_open_error\b)\w+)"
+                    rf"|DirAccess{MEMBER}(?:open|get_\w+_at|dir_exists_absolute))\s*\(\s*")
 # These exact source versions have indirect reads of user files, supervisor output, SDK constants or selected suite paths.
 # A new reader or an edit to one of these files restores the conservative fallback until its inputs are reviewed.
 REVIEWED_READERS = {
     "examples/online/diagnostic_scene.gd": "7659c077fa390489ca7134ac5ec96146ca305362c4c657433976b1d408b0ff8f",
-    "examples/online/lobby.gd": "bfd344360dd6b7de99dbcda9da250644dbe9be8b3f7c711572d007f194b59b45",
+    "examples/online/native_socket_transport.gd": "90656e152ea87dfd108e95952a58d9acef8e5e418a50a5fb564c8f198b126bb2",
     "examples/online/replay_scene.gd": "c19e23dc7a92e4228538e21a1247c98a4e62ff957acdc6a4b8f7786733298866",
     "tests/oracle/p2p_trace.gd": "40fd08dd8fb4a34f08425e4006458d69120cc02890c1862d748c6da382182226",
     "tests/oracle/replay_session_trace.gd": "8cbabef01cca3cfa627555b73420a26884fe74451b0bb491f29b3c2854ad4955",
@@ -102,14 +107,43 @@ def bound_argument(text: str, offset: int, constants: dict) -> bool:
     return bool(local and re.fullmatch(r"[a-zA-Z0-9_-]+\.[a-zA-Z0-9]+", constants.get(local[1], "")))
 
 
-def inputs(path: str, text: str) -> tuple[set[str], bool]:
+def inputs(path: str, text: str) -> tuple[set[str], set[str], bool]:
     used = set()
+    documents = set()
     opaque = False
     # Numeric fixtures contain many quoted fields but no resource spellings. A relative
     # resource needs a dot, a URI needs ://, and serialized scenes can escape both.
     if not path.endswith(".gd") and "." not in text and "://" not in text and "\\" not in text:
-        return used, opaque
-    for value in {match[0][1:-1] for match in LITERAL.finditer(text)}:
+        return used, documents, opaque
+    literal_documents = set()
+    if path.endswith(".gd"):
+        source = GD_COMMENTS.sub(lambda token: "" if token.lastgroup == "comment" else token[0], text)
+        opaque = bool(re.search(r"\.\s*source_code\s*=", source))
+        constants = dict(re.findall(r'^const (\w+)(?:: String)? = "([^"\n]*)"\s*$', source, re.MULTILINE))
+        for match in ACCESS.finditer(source):
+            arg = LITERAL.match(source, match.end())
+            if not arg:
+                opaque |= not bound_argument(source, match.end(), constants)
+                continue
+            value = arg[0][1:-1]
+            if "\\" in value or not source[arg.end():].lstrip().startswith((",", ")")):
+                opaque = True
+            elif match["file_read"] and PurePosixPath(value).suffix == ".md":
+                literal_documents.add(arg.start())
+            elif not value.startswith(("res://", "user://")) and PurePosixPath(value).suffix not in SCANNED:
+                opaque = True
+    else:
+        source = text
+    for literal in LITERAL.finditer(source):
+        value = literal[0][1:-1]
+        if literal.start() in literal_documents:
+            if value.startswith("res://"):
+                documents.add(posixpath.normpath(value[6:]))
+            elif "://" not in value:
+                documents.update((posixpath.normpath(value), posixpath.normpath(posixpath.join(posixpath.dirname(path), value))))
+            elif not value.startswith("user://"):
+                opaque = True
+            continue
         if "\\" in value:
             # An escaped resource spelling is not a proven edge. Serialized resources can also encode the entire URI.
             if ("://" in value or PurePosixPath(value).suffix in SCANNED
@@ -133,28 +167,12 @@ def inputs(path: str, text: str) -> tuple[set[str], bool]:
             opaque = True
         elif "." in value and "://" not in value and PurePosixPath(value).suffix in SCANNED:
             used.update((posixpath.normpath(value), posixpath.normpath(posixpath.join(posixpath.dirname(path), value))))
-    if path.endswith(".gd"):
-        opaque |= bool(re.search(r"\.source_code\s*=", text))
-        constants = dict(re.findall(r'^const (\w+)(?:: String)? = "([^"\n]*)"\s*$', text, re.MULTILINE))
-        for match in ACCESS.finditer(text):
-            arg = LITERAL.match(text, match.end())
-            if not arg:
-                opaque |= not bound_argument(text, match.end(), constants)
-                continue
-            value = arg[0][1:-1]
-            if "\\" in value:
-                opaque = True
-            elif not value.startswith(("res://", "user://")) and PurePosixPath(value).suffix not in SCANNED:
-                opaque = True
-            elif not text[arg.end():].lstrip().startswith((",", ")")):
-                # A computed suffix can escape a literal directory through parent components.
-                opaque = True
     if opaque and hashlib.sha256(text.encode()).hexdigest() == REVIEWED_READERS.get(path):
         opaque = False
         if path == "tests/runner/run_tests.gd":
             # _discover enumerates the selected category. discover() already includes each test in that directory.
             used.discard("tests/")
-    return used, opaque
+    return used, documents, opaque
 
 
 def selection(suites: list[str], changed: list[str], root: Path, old_names=frozenset(), paths=None) -> dict:
@@ -181,12 +199,13 @@ def selection(suites: list[str], changed: list[str], root: Path, old_names=froze
     old_names = set(old_names)
     prefixes = {name[:4] for name in classes.keys() | old_names}
     for p, text in texts.items():
-        used, opaque = inputs(p, text)
+        used, documents, opaque = inputs(p, text)
         for target in used:
             # A binary scene/resource or an unsupported authored format can contain unobserved references.
             suffix = PurePosixPath(target).suffix
             if suffix and suffix not in SCANNED and (target in available or suffix in (".res", ".scn")):
                 opaque = True
+        used.update(documents)
         if opaque:
             opaque_paths.add(p)
         words = set(re.findall(r"\w+", text)) if any(prefix in text for prefix in prefixes) else set()
