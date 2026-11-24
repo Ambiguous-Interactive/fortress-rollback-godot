@@ -254,7 +254,7 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
     def test_native_relay_warmup_preserves_stages_with_cutoff_and_eviction(self):
-        # Value: protects=exact staged warmup attribution; fails_when=missing SDK or rolled-out packets appear complete; seam=raw socket and staged observers
+        # Value: protects=exact staged warmup attribution; fails_when=an unmatched reply implies processing; seam=raw socket and staged observers
         script = r"""
 const assert = require('node:assert/strict');
 const { runInNewContext } = require('node:vm');
@@ -267,16 +267,18 @@ const bytes = n => {
   result[45] = n;
   return result;
 };
-const raw = (socket, payload, recipient = local, sender = remote) => {
+const relayFrame = (payload, recipient, sender) => {
   const frame = Buffer.alloc(57 + payload.length);
   frame.set([70, 83, 82, 49, 1]);
   frame.set(Buffer.from(sender + recipient, 'hex'), 21);
   frame.writeUInt32LE(payload.length, 53);
   frame.set(payload, 57);
-  socket.message({data: frame});
+  return frame;
 };
+const raw = (socket, payload, recipient = local, sender = remote) => socket.message({data: relayFrame(payload, recipient, sender)});
 class Socket {
   addEventListener(name, listener) { this[name] = listener; }
+  send() {}
 }
 let time = 1;
 const window = {}, checkpoints = [], tasks = [];
@@ -288,10 +290,18 @@ const realm = {
 runInNewContext(`(${instrumentNativeWire})(false, 'warmup ')`, realm);
 const socket = new window.WebSocket();
 const wire = window.fortressNativeWire;
-wire.bind('00'.repeat(16), local, [local, remote]);
+wire.bind('00'.repeat(16), local, [local, remote, other]);
 const sample = (stage, value, code = -1) => wire.recordWarmup(stage, remote, value.toString('hex'), code);
+const reply = (report, recipient = remote) => {
+  const payload = Buffer.alloc(44);
+  payload.set(report.subarray(0, 28));
+  payload[24] = 5;
+  payload.set(report.subarray(30), 28);
+  socket.send(relayFrame(payload, recipient, local));
+};
+const lastReply = () => wire.warmupStatus().links[0].last_replied_report;
 raw(socket, bytes(90), other);
-raw(socket, bytes(91), local, other);
+raw(socket, bytes(91), local, '44'.repeat(16));
 const excluded = bytes(92);
 excluded[30] = 1;
 raw(socket, excluded);
@@ -305,8 +315,22 @@ time = 2;
 sample('sdk', identicalToken);
 time = 3;
 sample('native', quality, 6);
+reply(quality);
+assert.equal(lastReply()?.reply_observed_ms, undefined);
 time = 4;
 sample('native', quality, 0);
+reply(quality, other);
+reply(bytes(93));
+assert.equal(lastReply()?.reply_observed_ms, undefined);
+assert.equal(wire.warmupStatus().links[1].last_replied_report?.reply_observed_ms, undefined);
+time = 5;
+reply(quality);
+assert.deepEqual(JSON.parse(JSON.stringify(lastReply() ?? null)), {
+  payload: quality.toString('hex'), raw_observed_ms: 1, native_enqueued_ms: 4, reply_observed_ms: 5,
+});
+time = 6;
+reply(quality);
+assert.equal(lastReply().reply_observed_ms, 5);
 assert.equal(checkpoints.length, 0);
 assert.equal(tasks.length, 1);
 tasks.shift()();
@@ -345,6 +369,15 @@ assert.equal(link.unretained.native, 1);
 assert.equal(link.packets.some(packet => packet.payload === bytes(8).toString('hex')), false);
 assert.equal(link.packets[23].sdk.first_ms, 50);
 assert.equal(link.packets[23].native.accepted_ms, 50);
+reply(bytes(29));
+assert.equal(lastReply().reply_observed_ms, 50);
+for (let i = 31; i < 48; i++) {
+  time = i + 20;
+  raw(socket, bytes(i));
+}
+assert.equal(wire.warmupStatus().links[0].packets.length, 24);
+assert.equal(wire.warmupStatus().links[0].packets.some(packet => packet.payload === bytes(29).toString('hex')), false);
+assert.equal(lastReply().payload, bytes(29).toString('hex'));
 time = 1051;
 raw(socket, bytes(8));
 sample('sdk', bytes(8));
@@ -352,6 +385,12 @@ sample('native', bytes(8), 0);
 const resurfaced = wire.warmupStatus().links[0].packets.at(-1);
 assert.equal(resurfaced.payload, bytes(8).toString('hex'));
 assert.equal(resurfaced.after_eviction, true);
+const ambiguous = Buffer.from(bytes(8));
+ambiguous[28] = 1;
+raw(socket, ambiguous);
+sample('native', ambiguous, 0);
+reply(bytes(8));
+assert.equal(lastReply().payload, bytes(29).toString('hex'));
 const wireBeforeCutoff = wire.status();
 assert.equal(tasks.length, 1);
 wire.finishWarmup('playing', 12);
@@ -370,6 +409,7 @@ time = 1052;
 raw(socket, bytes(30));
 sample('sdk', bytes(30));
 sample('native', bytes(30), 0);
+reply(bytes(30));
 wire.recordWarmupTick(1200, 0, 256, 1000, true);
 wire.finishWarmup('failed', 12);
 assert.equal(JSON.stringify(wire.warmupStatus()), cutoff);

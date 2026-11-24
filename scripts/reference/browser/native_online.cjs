@@ -202,8 +202,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     if (!warmupLinks.size) return null;
     return { recipient: localUuid, started_ms: warmupStarted, through_ms: warmupCutoff?.at_ms ?? performance.now(), cutoff: warmupCutoff,
       tick_count: warmupTickCount, ticks: warmupTicks.slice(),
-      links: Array.from(warmupLinks, ([sender, { packets, evicted, unretained }]) => ({
-        sender, evicted, unretained, packets: Array.from(packets, ([payload, stages]) => ({ payload, ...stages })),
+      links: Array.from(warmupLinks, ([sender, { packets, evicted, unretained, last_replied_report }]) => ({
+        sender, evicted, unretained, last_replied_report, packets: Array.from(packets, ([payload, stages]) => ({ payload, ...stages })),
       })) };
   }
   function checkpointWarmup(at) {
@@ -247,6 +247,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       packet.native.last_code = code;
       if (code === 0) {
         packet.native.accepted_ms ??= at;
+        if (packet.raw) packet.native.accepted_after_raw_ms ??= at;
         packet.native.acceptances++;
       }
     } else {
@@ -254,6 +255,25 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       packet[stage].last_ms = at;
       packet[stage].count++;
     }
+  }
+  function recordWarmupReply({ recipient, bytes }) {
+    const link = !warmupCutoff && warmupLinks.get(recipient);
+    if (!link || bytes.length !== 44 || (bytes[28] & 3) !== 0) return;
+    const pong = hex(bytes.subarray(28));
+    let matched;
+    for (const [payload, packet] of link.packets) {
+      if (packet.native?.accepted_after_raw_ms == null || !payload.endsWith(pong)) continue;
+      if (matched) return;
+      matched = [payload, packet];
+    }
+    if (!matched) return;
+    const [payload, packet] = matched;
+    if (packet.reply_observed_ms !== undefined || link.last_replied_report?.payload === payload) return;
+    const at = performance.now();
+    packet.reply_observed_ms = at;
+    // The echoed reply proves protocol processing after the native inbox accepted the report.
+    link.last_replied_report = { payload, raw_observed_ms: packet.raw.first_ms, native_enqueued_ms: packet.native.accepted_after_raw_ms, reply_observed_ms: at };
+    scheduleWarmupCheckpoint(at);
   }
   function relayAddresses(data) {
     const view = nativeBytes(data);
@@ -454,6 +474,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
         increment(relayRecipients, packet.recipient);
         if (packet.kind === inputKind) increment(relayInputRecipients, packet.recipient);
         bufferedBytesPeak = Math.max(bufferedBytesPeak, this.bufferedAmount);
+        if (packet.kind === 5) recordWarmupReply(packet);
         traceRelayQuality('send', packet.recipient, packet);
       }
     }, data, packet?.sender === localUuid ? packet : null);
@@ -465,7 +486,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       session = hash.match(/../g).map(value => parseInt(value, 16));
       if (warmupPrefix) for (const member of warmupRoster.slice(0, 8)) {
         const sender = member.replaceAll('-', '');
-        if (sender !== localUuid) warmupLinks.set(sender, { packets: new Map(), evicted: 0, unretained: { sdk: 0, native: 0 } });
+        if (sender !== localUuid) warmupLinks.set(sender, { packets: new Map(), evicted: 0, unretained: { sdk: 0, native: 0 }, last_replied_report: null });
       }
       if (warmupLinks.size) warmupStarted = performance.now();
     },
