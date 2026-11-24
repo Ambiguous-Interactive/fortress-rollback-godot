@@ -14,6 +14,7 @@ const PAGE_WAIT_MS = 30000;
 const WARMUP_WAIT_MS = 45000;
 const DIAGNOSTIC_MS = 5000;
 const CLOSE_MS = 10000;
+const CANONICAL_SNAPSHOT = /^(?:[0-9a-f]{2})+$/;
 const CLOSE_CLOCK_POST_SAMPLES = 4;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
@@ -708,7 +709,7 @@ function historyThrough(peers) {
   return frames;
 }
 
-async function readConfirmedHistory(page, frames, id) {
+async function readConfirmedHistory(page, frames, id, players) {
   assert.ok(Number.isSafeInteger(id) && id > 0, 'native history request ID must be a positive safe integer');
   assert.ok(Number.isSafeInteger(frames) && frames > 0, 'native history frame count must be a positive safe integer');
   let receipt;
@@ -729,8 +730,12 @@ async function readConfirmedHistory(page, frames, id) {
       if (!rows || typeof rows !== 'object' || Array.isArray(rows) || Object.keys(rows).length !== frames
         || !snapshots || typeof snapshots !== 'object' || Array.isArray(snapshots) || Object.keys(snapshots).length !== frames) return false;
       for (let frame = 0; frame < frames; frame++) {
-        if (!Array.isArray(rows[frame]) || typeof snapshots[frame + 1] !== 'string') return false;
+        const row = rows[frame];
+        const snapshot = snapshots[frame + 1];
+        if (!Array.isArray(row) || row.length !== players || !row.every(Number.isSafeInteger)
+          || typeof snapshot !== 'string' || !CANONICAL_SNAPSHOT.test(snapshot)) return false;
       }
+      if (performance.now() >= deadline) return false;
       receipt = { frames, rows, snapshots };
       return true;
     },
@@ -760,7 +765,7 @@ function compareHistory(peers, frames = HISTORY_FRAMES) {
     const expected = ordered.map(peer => frame >= GATE_FRAME && frame % 2 === 0 ? 0 : INPUTS[peer.index][0]);
     for (const peer of peers) {
       assert.deepEqual(peer.rows[frame], expected, `input row at frame ${frame}, slot ${peer.slot}`);
-      assert.match(peer.snapshots[frame + 1], /^(?:[0-9a-f]{2})+$/);
+      assert.match(peer.snapshots[frame + 1], CANONICAL_SNAPSHOT);
       assert.equal(peer.snapshots[frame + 1], peers[0].snapshots[frame + 1], `canonical state at frame ${frame + 1}, slot ${peer.slot}`);
     }
   }
@@ -1038,12 +1043,14 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     }, PAGE_WAIT_MS, 'native post-confirmation engine turn');
     phase = 'confirmed history capture';
     const history = await Promise.all(pages.map(async (page, index) => {
-      const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence), PAGE_WAIT_MS, `native peer ${index} confirmed history capture`);
+      const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence, players), PAGE_WAIT_MS,
+        `native peer ${index} confirmed history capture`);
       if (postRelease) postRelease[index].history_received = { frames: receipt.frames, controller_ms: performance.now() };
       return receipt;
     }));
     phase = 'post-capture status';
-    const peers = (await observe()).map((peer, index) => ({ ...peer, rows: history[index].rows, snapshots: history[index].snapshots }));
+    const peers = (await boundedRoom(observe, PAGE_WAIT_MS, 'native post-capture status'))
+      .map((peer, index) => ({ ...peer, rows: history[index].rows, snapshots: history[index].snapshots }));
     compareHistory(peers, comparedFrames);
     if (recovery) assertRecoveredRoom(direct, restored, peers, recoveryEvidence);
     phase = 'route validation';

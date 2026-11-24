@@ -795,7 +795,7 @@ async function run() {
   now++;
   Object.assign(window.fortressNative, { turns: 22, confirmed: 40 });
   trace.observe();
-  await assert.rejects(readConfirmedHistory(page, 40, 4), /controller receipt unavailable/);
+  await assert.rejects(readConfirmedHistory(page, 40, 4, 2), /controller receipt unavailable/);
   for (let i = 0; i < 5; i++) {
     now++;
     heartbeat();
@@ -845,13 +845,15 @@ async function run() {
         return new Promise((resolve, fail) => { complete = resolve; reject = fail; });
       },
       evaluate(operation, request) {
+        assert.equal(typeof predicate, 'function', 'register the listener before dispatch');
         operation(request);
         setImmediate(() => {
-          if (!predicate) return;
           assert.deepEqual(window.fortressNativeCapture, { id, frames: 2 });
           assert.equal(predicate(message({ ...fresh, id: id - 1 })), false, 'same-frame receipt from an earlier request');
           assert.equal(predicate(message({ ...fresh, id, frames: 3 })), false, 'wrong frame count');
           assert.equal(predicate(message({ ...fresh, id, rows: null })), false, 'incomplete receipt');
+          assert.equal(predicate(message({ ...fresh, id, rows: { 0: [], 1: [] } })), false, 'empty rows cannot consume the receipt');
+          assert.equal(predicate(message({ ...fresh, id, snapshots: { 1: '', 2: 'gg' } })), false, 'invalid snapshot encoding cannot consume the receipt');
           if (outcome === 'late') {
             now += 30000;
             assert.equal(predicate(message({ ...fresh, id })), false, 'receipt at the deadline');
@@ -867,9 +869,9 @@ async function run() {
       },
     };
   }
-  assert.deepEqual(await readConfirmedHistory(fixture(18, 'pending'), 2, 18), fresh);
-  assert.deepEqual(await readConfirmedHistory(fixture(19, 'rejected'), 2, 19), fresh);
-  await assert.rejects(readConfirmedHistory(fixture(20, 'late'), 2, 20), /history receipt timed out/);
+  assert.deepEqual(await readConfirmedHistory(fixture(18, 'pending'), 2, 18, 2), fresh);
+  assert.deepEqual(await readConfirmedHistory(fixture(19, 'rejected'), 2, 19, 2), fresh);
+  await assert.rejects(readConfirmedHistory(fixture(20, 'late'), 2, 20, 2), /history receipt timed out/);
 
   const peers = [0, 1].map(slot => ({ ...fresh, index: slot, slot, uuid: String(slot), session_id: '00'.repeat(16), room_id: 'room' }));
   compareHistory(peers, 2);
