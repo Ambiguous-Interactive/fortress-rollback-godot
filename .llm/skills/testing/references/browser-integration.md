@@ -186,7 +186,9 @@ reply proves that the native protocol processed that report. Keep both marks on
 the recipient's clock, and leave the last timeout refresh open when other
 traffic could renew it.
 Export the requested confirmed prefix once per browser. Keep recurring status
-snapshots small, and verify the exact receipt returned after readiness.
+snapshots small. When a page can publish data before its evaluation reply
+arrives, arm a page-scoped listener before dispatch. Match the request ID and
+frame count and validate the complete receipt within the original deadline.
 Prepare shared ZIP tools through verified member comparison and atomic replacement;
 never truncate an executable inode held by another process. Exercise preparation
 with an actual live executable and a corrupt-cache control. Keep launcher-owned
