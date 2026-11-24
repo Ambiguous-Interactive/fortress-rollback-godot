@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add `native_terminal_endpoint()` to identify the remote endpoint that disconnected in an upstream Fortress match. [Native driver guide](docs/native-backend-migration.md#session-boundary)
+
 - Test two simultaneous WebRTC link replacements in a packaged four-player native match, including recovery after a lost signaling Offer. [Browser qualification](docs/native-backend-migration.md)
 
 - Compare verified local edit times by command and count required CI verdicts reaching seven minutes. [Iteration measurements](docs/reference/iteration.md)

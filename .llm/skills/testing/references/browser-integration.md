@@ -162,6 +162,11 @@ clock marks and controller receipt times on their own clocks.
 Publish the arm, first readiness and first cap hit while the page runs. Keep
 packet and byte counts with each checkpoint so a failed final read keeps its
 earlier evidence.
+Name the native expiry endpoint in the warmup cutoff while the frozen roster
+is available. Match its UUID to retained quality traffic and service samples.
+Check roster uniqueness before accepting an endpoint-to-UUID receipt.
+Capture interrupted status in the same observation that satisfies the
+interruption predicate. Another peer's wait can outlast the first peer.
 When a room barrier permits release, save the pre-release snapshot and start
 release in one page call. Keep that snapshot available to bounded diagnostics
 if release fails. Include the held count at readiness and release to locate
