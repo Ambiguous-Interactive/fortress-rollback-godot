@@ -13,10 +13,12 @@ SOURCES = ("addons", "tests", "examples", "scripts")
 SCANNED = (".gd", ".tscn", ".tres", ".json", ".cfg")
 CLASS_NAME = re.compile(r"(?m)^(?:@\w+\s+)*class_name\s+(\w+)")
 LITERAL = re.compile(r""""[^"\\\n]*(?:\\[^\n][^"\\\n]*)*"|'[^'\\\n]*(?:\\[^\n][^'\\\n]*)*'""")
-GD_COMMENTS = re.compile(LITERAL.pattern + r"|(?P<comment>#[^\n]*)")
+# Consume multiline strings before looking for # in the surrounding code.
+GD_COMMENTS = re.compile(r'"""(?:\\[\s\S]|(?!""")[^\\])*"""|' r"'''(?:\\[\s\S]|(?!''')[^\\])*'''|"
+                         + LITERAL.pattern + r"|(?P<comment>#[^\n]*)")
 MEMBER = r"\s*\.\s*"
 ACCESS = re.compile(rf"(?:(?<![\w])(?:pre)?load|\.\s*(?:change_scene_to_file|change_dir|load_from_file)|ResourceLoader{MEMBER}\w+"
-                    rf"|FileAccess{MEMBER}(?:(?P<file_read>open|get_file_as_string|get_file_as_bytes)\b|(?!get_open_error\b)\w+)"
+                    rf"|FileAccess{MEMBER}(?:(?P<file_read>open|get_file_as_string|get_file_as_bytes|get_sha256|get_md5|file_exists)\b|(?!get_open_error\b)\w+)"
                     rf"|DirAccess{MEMBER}(?:open|get_\w+_at|dir_exists_absolute))\s*\(\s*")
 # These exact source versions have indirect reads of user files, supervisor output, SDK constants or selected suite paths.
 # A new reader or an edit to one of these files restores the conservative fallback until its inputs are reviewed.

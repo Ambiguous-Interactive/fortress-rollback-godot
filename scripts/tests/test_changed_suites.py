@@ -142,6 +142,7 @@ class SelectTests(unittest.TestCase):
             for expression in ('load(dynamic_path)', 'ResourceLoader.load_threaded_request(path)',
                                'FileAccess . get_file_as_string(path)', 'FileAccess.get_sha256(path)', 'Image.load_from_file(path)',
                                'script . source_code = source',
+                               'func read(path: String):\n print("""Help\n# Markdown heading""", FileAccess.get_file_as_string(path))',
                                'DirAccess.dir_exists_absolute(path)', 'config.load(path)', 'load("res://scenes/" + filename)',
                                r'load("res://addons/\u0061.gd")', r'const PATH = "res://addons/\u0061.gd"' + '\nload(PATH)',
                                'load("uid://unknown")', 'load("res://prefix" + suffix)'):
