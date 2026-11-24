@@ -30,6 +30,8 @@
 
 ### Fixed
 
+- Restore a closed direct link during native WebRTC matches. The affected pair uses relay while the pinned SignalFish SDK creates a replacement.
+
 - Fix native online matches ending when the WebSocket buffer fills before the SDK can apply backpressure. [Native online setup](docs/online-example.md#try-the-native-backend)
 
 - Fix native WebRTC startup when a direct link is unavailable. The match uses relay for that peer after a short grace period.

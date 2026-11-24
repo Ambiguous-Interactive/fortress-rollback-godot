@@ -15,7 +15,7 @@ on:
         description: One Web browser room, or all rooms for qualification
         type: choice
         default: all
-        options: [all, 'mesh:2', 'mesh:4', 'mesh:8', 'mesh-startup:4', 'mesh-close:4', 'relay:2', 'relay:4', 'relay:8']
+        options: [all, 'mesh:2', 'mesh:4', 'mesh:8', 'mesh-startup:4', 'mesh-close:4', 'mesh-recovery:4', 'relay:2', 'relay:4', 'relay:8']
   push:
     branches: [experiment/upstream-gdextension, experiment/upstream-gdextension-landing]
     paths:

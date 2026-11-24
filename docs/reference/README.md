@@ -309,7 +309,7 @@ or independent trust proof. Review intentional pin updates together with evidenc
 - [Upstream session interface](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/sessions/session_trait.rs)
 - [Confirmed-state simulation oracle](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/tests/simulation/harness/oracle.rs)
 - [Handshake runtime-to-model trace contract](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/specs/tla/traces/sync-handshake-v1/README.md)
-- [Pinned SignalFish Godot SDK](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/tree/8e1475ed12a618fb41660bd1c8a1b0c934dee77f)
+- [Pinned SignalFish Godot SDK](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/tree/2b66860cc4778d649af3e0c845edce3980985c1b)
 - [SignalFish transport fallback contract](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560/docs/architecture/transport-fallback.md)
 - [SignalFish delivery and incarnation contract](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560/docs/adr/0006-protocol-v3-delivery-reliability.md)
 - [Godot packed-array ownership](https://docs.godotengine.org/en/4.3/classes/class_packedbytearray.html)

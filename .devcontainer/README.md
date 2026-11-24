@@ -144,9 +144,10 @@ image requires major version 2. (Claude Code comes from a devcontainer
 feature instead, locked by digest in `devcontainer-lock.json`.)
 
 The build resolves each CLI's latest wrapper once and keeps that exact version.
-If matching native packages are still publishing, it retries readiness and installation
-up to 30 times within a ten-minute total budget per CLI. Build output retains the
-first npm failure, each retry, and the final installed version. Authentication,
+The build caches each matching native archive before installation. If npm advertises
+the version before serving the archive, it retries up to 30 times within a ten-minute
+total budget per CLI. Build output retains the first npm failure, each retry,
+and the final installed version. Authentication,
 permissions, unsupported package metadata, and runtime failures stop immediately.
 An expired budget fails the build; it never substitutes an older release.
 Codex's native npm aliases use the same checks. The pinned Godot MCP package and

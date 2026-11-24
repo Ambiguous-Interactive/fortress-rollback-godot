@@ -104,6 +104,8 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 	if native_transport != null:
 		client.set("transport", native_transport)
 	mesh = mesh_script.new()
+	if backend_choice == "native" and route == "mesh" and "pair_recovery_enabled" in mesh:
+		mesh.set("pair_recovery_enabled", true)
 	_config = config_script.new()
 	_config.set("app_id", "fortress-live-webrtc")
 	_config.set("endpoint_url", endpoint)

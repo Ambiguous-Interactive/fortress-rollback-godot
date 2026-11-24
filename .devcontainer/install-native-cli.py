@@ -13,10 +13,11 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlsplit
 
 
 class PublicationPending(Exception):
-    """Only a known native dependency's missing registry version is retryable."""
+    """A known native dependency is not fully published yet."""
 
 
 QUERY_CREDENTIALS = re.compile(r'(https?://[^\s?#]+)\?[^\s]*')
@@ -278,7 +279,7 @@ class Installer:
             for line in tail:
                 print(line, file=sys.stderr, flush=True)
 
-    def command(self, command, publication=False, *, phase, merged=False):
+    def command(self, command, publication=False, *, phase, merged=False, archive=None):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             if merged and self._journaled:
@@ -349,7 +350,8 @@ class Installer:
             raise ValueError(f'CLI installation command timed out during {phase} within publication retry budget{note}') from failure
         result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         if result.returncode:
-            combined = redact_query_strings((result.stdout or '') + (result.stderr or ''))
+            raw = (result.stdout or '') + (result.stderr or '')
+            combined = redact_query_strings(raw)
             print(combined, end='', file=sys.stderr)
             # Never retry authentication, permissions, malformed metadata or wrapper lookup.
             codes = set(re.findall(r'npm (?:ERR!|error) code ([A-Z0-9_]+)', combined))
@@ -357,8 +359,11 @@ class Installer:
             tokens = {token.removesuffix('.') for token in re.findall(
                 r'(?<![A-Za-z0-9_@/.+-])(@[a-z0-9._-]+/[a-z0-9._-]+@[0-9A-Za-z.+_-]+)(?![A-Za-z0-9_@/.+-])', combined)}
             missing = publication is True or (publication and any(spec in tokens for spec in publication))
+            if archive is not None:
+                requests = re.findall(r'(?m)^npm (?:ERR!|error) 404 .*? - GET (https?://\S+)(?:[ \t]+- .*)?[ \t]*$', raw)
+                missing = archive in requests
             if missing and codes and codes <= {'ETARGET', 'E404'}:
-                raise PublicationPending(command[2] if publication is True else 'matching native dependency during install')
+                raise PublicationPending(phase if publication is True or archive else 'matching native dependency during install')
             if merged and self._journaled:
                 self._print_journal_tail(merged)
                 note = f'; partial output retained at {journal_path(self.args.package)}'
@@ -374,7 +379,7 @@ class Installer:
         return result.stdout.strip()
 
     def metadata(self, spec, publication=False):
-        phase = 'native metadata' if publication else 'wrapper metadata'
+        phase = f'native metadata for {spec}' if publication else 'wrapper metadata'
         return json.loads(self.command(['npm', 'view', spec, '--json', '--prefer-online'], publication, phase=phase))
 
     def install(self):
@@ -415,6 +420,14 @@ class Installer:
                     native = self.metadata(spec, publication=True)
                     if not isinstance(native, dict) or native.get('version') != spec.rsplit('@', 1)[1]:
                         raise ValueError(f'native package metadata does not match selected version: {spec}')
+                    dist = native.get('dist')
+                    archive = dist.get('tarball') if isinstance(dist, dict) else None
+                    parsed = urlsplit(archive) if isinstance(archive, str) else None
+                    if not parsed or parsed.scheme not in ('http', 'https') or not parsed.hostname or not parsed.path:
+                        raise ValueError(f'invalid native archive metadata: {spec}')
+                    # npm can return success after silently discarding a missing optional archive.
+                    self.command(['npm', 'cache', 'add', spec, '--prefer-online'],
+                                 phase=f'native archive for {spec}', archive=archive)
                 # Frozen exact latest: the release cannot change while readiness or installation retries.
                 # Foreground scripts stream the wrapper's postinstall (native version probe plus
                 # nested fallback npm) into the merged stream, and the http loglevel names each
@@ -424,7 +437,7 @@ class Installer:
                 # redacted and on disk at a fixed, discoverable path (issue #249). npm never
                 # prints authorization material at this level, and the merged stream is only
                 # printed on failure or timeout, in its original order.
-                self.command(['npm', 'install', '-g', '--include=optional', '--prefer-online',
+                self.command(['npm', 'install', '-g', '--include=optional', '--prefer-offline',
                               '--foreground-scripts', '--loglevel=http', package + '@' + version],
                              install_specs, phase='global installation', merged=True)
                 break

@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 import host_capacity  # noqa: E402
 from package_addon import ADDON, snapshot as runtime_snapshot  # noqa: E402
 
-CELLS = tuple(f'{route}:{count}' for route in ('mesh', 'relay') for count in (2, 4, 8)) + ('mesh-startup:4', 'mesh-close:4')
+CELLS = tuple(f'{route}:{count}' for route in ('mesh', 'relay') for count in (2, 4, 8)) + ('mesh-startup:4', 'mesh-close:4', 'mesh-recovery:4')
 BROWSER_PAIRS = ('chromium', 'firefox', 'webkit', 'chromium-firefox', 'chromium-webkit', 'firefox-webkit')
 BROWSER = ROOT / 'scripts/reference/browser'
 EXTENSION = 'addons/fortress_native/fortress.gdextension'
@@ -36,6 +36,7 @@ TEMPLATE = 'web_dlink_nothreads_release.zip'
 REPORT = 'native-online.json'
 MIN_COMPARED_FRAMES = 40
 HISTORY_LIMIT = 128
+RECOVERY_HISTORY_LIMIT = 512
 STUN_COOKIE = 0x2112A442
 
 
@@ -180,11 +181,12 @@ def create_server_config(source, route, port, stun_server=None):
 def validate_cell(evidence, mode, players, browser_pair):
     required_frames = MIN_COMPARED_FRAMES
     if mode != 'mesh-startup':
-        boundary = evidence['afterClose' if mode == 'mesh-close' else 'stalled']
+        boundary = evidence[{'mesh-close': 'afterClose', 'mesh-recovery': 'restored'}.get(mode, 'stalled')]
+        limit = RECOVERY_HISTORY_LIMIT if mode == 'mesh-recovery' else HISTORY_LIMIT
         indices = set()
         for peer in boundary:
             index, frame = peer['index'], peer['frame']
-            if type(index) is not int or type(frame) is not int or not 0 <= frame <= HISTORY_LIMIT - 2:
+            if type(index) is not int or type(frame) is not int or not 0 <= frame <= limit - 2:
                 raise ValueError(f'invalid post-fault frame boundary: {mode}:{players}')
             indices.add(index)
             required_frames = max(required_frames, frame + 2)
@@ -271,7 +273,7 @@ def main():
              'server_config': server_source / 'config.example.json', **{name: Path(environment[var]) for name, var in tools.items()},
              'runner': Path(__file__), 'editor_setup': BROWSER.parent / 'godot_smoke.py', 'artifact_helper': BROWSER.parent / 'fetch.py',
              'client': BROWSER / 'native_online.cjs', 'host': BROWSER / 'online_host.cjs', 'display': BROWSER / 'webrtc_display.cjs',
-             'watchdog': BROWSER / 'webrtc_watchdog.cjs',
+             'watchdog': BROWSER / 'webrtc_watchdog.cjs', 'recovery': BROWSER / 'native_recovery.cjs',
              'bridge': BROWSER / 'native_online_bridge.gd', 'sdk': sdk / 'addons/signal_fish',
              'runtime': ROOT / 'addons/fortress_rollback', 'example': ROOT / 'examples'}
     if stun_tool is not None:
