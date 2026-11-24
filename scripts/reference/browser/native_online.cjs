@@ -219,6 +219,12 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       if (!warmupCutoff) checkpointWarmup(performance.now());
     }, 0);
   }
+  const orderedWarmupToken = token => token.match(/../g).reverse().join('');
+  function forgetWarmupReport(link, payload) {
+    // The pinned u128 ping is little-endian. Keep a bounded exclusion watermark.
+    const token = orderedWarmupToken(payload.slice(-32));
+    if (token > link.discardedThroughToken) link.discardedThroughToken = token;
+  }
   function recordWarmup(stage, sender, payload, code) {
     const link = !warmupCutoff && warmupLinks.get(sender.replaceAll('-', ''));
     if (!link) return;
@@ -230,9 +236,12 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       // callbacks for evicted packets cannot reappear as missing raw observations.
       if (stage !== 'raw') {
         link.unretained[stage]++;
+        forgetWarmupReport(link, payload);
         return;
       }
-      link.packets.delete([...link.packets.keys()][8]);
+      const evicted = [...link.packets.keys()][8];
+      forgetWarmupReport(link, evicted);
+      link.packets.delete(evicted);
       link.evicted++;
     }
     if (!packet) {
@@ -260,15 +269,16 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     const link = !warmupCutoff && warmupLinks.get(recipient);
     if (!link || bytes.length !== 44 || (bytes[28] & 3) !== 0) return;
     const pong = hex(bytes.subarray(28));
+    if (orderedWarmupToken(pong) <= link.discardedThroughToken) return;
     let matched;
     for (const [payload, packet] of link.packets) {
-      if (packet.native?.accepted_after_raw_ms == null || !payload.endsWith(pong)) continue;
+      if (!payload.endsWith(pong)) continue;
       if (matched) return;
       matched = [payload, packet];
     }
     if (!matched) return;
     const [payload, packet] = matched;
-    if (packet.reply_observed_ms !== undefined || link.last_replied_report?.payload === payload) return;
+    if (packet.native?.accepted_after_raw_ms == null || packet.reply_observed_ms !== undefined || link.last_replied_report?.payload === payload) return;
     const at = performance.now();
     packet.reply_observed_ms = at;
     // The echoed reply proves protocol processing after the native inbox accepted the report.
@@ -486,7 +496,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       session = hash.match(/../g).map(value => parseInt(value, 16));
       if (warmupPrefix) for (const member of warmupRoster.slice(0, 8)) {
         const sender = member.replaceAll('-', '');
-        if (sender !== localUuid) warmupLinks.set(sender, { packets: new Map(), evicted: 0, unretained: { sdk: 0, native: 0 }, last_replied_report: null });
+        if (sender !== localUuid) warmupLinks.set(sender, {
+          packets: new Map(), evicted: 0, unretained: { sdk: 0, native: 0 }, discardedThroughToken: '', last_replied_report: null,
+        });
       }
       if (warmupLinks.size) warmupStarted = performance.now();
     },
