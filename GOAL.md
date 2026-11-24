@@ -36,6 +36,14 @@ is not a result.
 - **Small, coherent commits** — keep behavior changes and refactors separate; ship the regression test with its fix; each commit leaves the tree green and easy to revert.
 - **Make the change easy, then make the easy change.** Refactor under green tests before adding behavior.
 - Commit and push freely.
+- Treat confirmed CodeRabbit rate limiting on the current PR head as non-blocking once all
+  prior CodeRabbit findings are addressed and a complete feedback scan meets the repository's review
+  requirements. Check inline threads, submitted review bodies, and PR comments, including out-of-diff
+  findings. Record the head SHA, the CodeRabbit rate-limit evidence, and the disposition of its prior
+  findings. A pending or missing review alone is insufficient evidence of throttling. Continue through
+  normal required CI, review, and approval gates without waiting for another CodeRabbit run. A stale
+  CodeRabbit changes request that still blocks GitHub can be dismissed only with existing repository
+  authorization and a recorded rationale tied to the addressed head.
 - Address all non-trivial reviewer feedback and CI failures before moving to the next task.
 - Prefer a deterministic check (test, linter, generator) over a rule the agent must remember.
 - **Extract determinism.** If you correct the same thing twice, encode it as a check, a script or a skill; do not rely on prose to prevent a repeat.
