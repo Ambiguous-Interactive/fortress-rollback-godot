@@ -159,8 +159,12 @@ if release fails. Include the held count at readiness and release to locate
 queue growth. Do not make remote handle disposal part of the correction wait.
 Use the room's readiness samples for the correction baseline. One peer's
 release can correct another peer before its own release snapshot runs.
-Return the release-start mark when the drain completes so a later renderer
-stall cannot erase that boundary.
+Retain release and first-correction checkpoints in the controller while the
+room is live. A failed final page read can hide even a successful drain.
+Emit the history request and publication separately from controller receipt.
+An advancing browser heartbeat with a stationary Godot turn count locates
+a service stall. Missing heartbeats leave the browser or its control path
+unobserved.
 Match addressed control reports and replies by peer and token, and record
 browser send and SDK receive queue peaks in the same phase. If release itself
 causes a measured fanout burst, pace the synthetic release in FIFO order while

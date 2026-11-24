@@ -298,8 +298,9 @@ func _process(_delta: float) -> void:
 				}
 			)
 		)
+	JavaScriptBridge.eval("window.fortressNative = " + JSON.stringify(result) + "; window.fortressNativePostRelease?.observe()")
+	if game != null:
 		_capture_history(game)
-	JavaScriptBridge.eval("window.fortressNative = " + JSON.stringify(result))
 
 
 func _capture_history(game: ObservedGame) -> void:
@@ -314,7 +315,13 @@ func _capture_history(game: ObservedGame) -> void:
 		rows[row_key] = game.rows.get(row_key)
 		snapshots[snapshot_key] = game.snapshots.get(snapshot_key)
 	var receipt: Dictionary = {"frames": frames, "rows": rows, "snapshots": snapshots}
-	JavaScriptBridge.eval("window.fortressNativeCapture = 0; window.fortressNativeHistory = " + JSON.stringify(receipt))
+	JavaScriptBridge.eval(
+		(
+			"window.fortressNativeCapture = 0; window.fortressNativeHistory = "
+			+ JSON.stringify(receipt)
+			+ "; window.fortressNativePostRelease?.mark('history_published', window.fortressNativeHistory.frames)"
+		)
+	)
 
 
 func _command(value: Dictionary) -> void:
