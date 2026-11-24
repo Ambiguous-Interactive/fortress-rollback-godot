@@ -144,6 +144,12 @@ prove artifact absence.
 
 ## Evidence and retry boundaries
 
+Prefer fewer GitHub API requests. Use local Git and existing artifacts for
+facts they establish. Batch related remote reads where supported, reuse
+evidence for the same head and observation point, and poll long-running checks
+at measured intervals. Refresh mutable state at delivery gates and after
+uncertain writes. Fetch all pages needed for complete evidence.
+
 Read every page and nested connection needed by the task. An MCP or CLI result
 that is truncated, rate limited, unauthorized or incomplete cannot prove a
 clean review or green CI. For feedback scans, read all four surfaces and thread

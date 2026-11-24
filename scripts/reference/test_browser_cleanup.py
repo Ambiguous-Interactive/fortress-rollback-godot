@@ -647,7 +647,7 @@ global.window = {
   fortressNativeWire: {
     arm: () => ({ at_ms: now }),
     recordHoldReadiness: () => ({ at_ms: now }),
-    status: () => ({}),
+    status: () => { now += 2; return {}; },
     release: async () => { now++; },
   },
 };
@@ -672,7 +672,7 @@ async function run() {
   Object.assign(window.fortressNative, { turns: 21, restores: 3 });
   trace.observe();
   now++;
-  await captureAndReleaseInput(page, 0);
+  await captureAndReleaseInput(page, 0, checkpoints);
   now++;
   Object.assign(window.fortressNative, { turns: 22, confirmed: 40 });
   trace.observe();
@@ -689,16 +689,23 @@ async function run() {
     heartbeat();
   }
   postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"heartbeat"}', now);
-  assert.equal(checkpoints.release_started.page_ms, 11);
-  assert.equal(checkpoints.release_completed.page_ms, 12);
+  assert.equal(checkpoints.release_dispatched_ms, 11);
+  assert.equal(checkpoints.release_entered.page_ms, 11);
+  assert.equal(checkpoints.release_entered.controller_ms, 111);
+  assert.equal(checkpoints.release_started.page_ms, 13);
+  assert.equal(checkpoints.release_completed.page_ms, 14);
   assert.equal(checkpoints.correction.page_ms, 10, 'correction can precede local release');
   assert.equal(checkpoints.correction.turns, 21, 'retain the first observed correction');
   assert.equal(checkpoints.history_requested.frames, 40);
   assert.equal(checkpoints.history_published.frames, 40);
-  assert.equal(checkpoints.history_published.controller_ms, 114);
+  assert.equal(checkpoints.history_published.controller_ms, 116);
   assert.equal(checkpoints.history_received, undefined, 'publication does not prove receipt delivery');
-  assert.deepEqual(checkpoints.heartbeats.map(sample => [sample.page_ms, sample.turns, sample.confirmed]), [[18, 22, 40], [19, 22, 40]]);
+  assert.deepEqual(checkpoints.heartbeats.map(sample => [sample.page_ms, sample.turns, sample.confirmed]), [[20, 22, 40], [21, 22, 40]]);
   assert.match(checkpoints.checkpoint_error, /invalid post-release sample/);
+  const failed = {};
+  const unavailable = { async evaluate() { throw new Error('release evaluation unavailable'); } };
+  await assert.rejects(captureAndReleaseInput(unavailable, 0, failed), /release evaluation unavailable/);
+  assert.deepEqual(failed, { release_dispatched_ms: 21 });
 }
 const timer = setTimeout(() => { throw new Error('post-release checkpoint control did not settle'); }, 1000);
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));

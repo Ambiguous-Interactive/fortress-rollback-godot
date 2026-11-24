@@ -49,9 +49,9 @@ outside-input decision is not addressed feedback and must remain explicit.
    artifact upload can follow a failed probe.
    Investigate a skipped job's condition; it is acceptable only when the job
    does not apply to this candidate. Never bypass required checks or protection.
-   Watch runs in the background (`gh run watch` or an equivalent background
-   task) instead of sleeping in a poll loop, and use the wait for retrospectives,
-   issue drafts or other session work.
+   Track the exact run in the background with `gh run watch --interval 60`
+   or a batched status read at phase boundaries. Use the interval for
+   retrospectives, issue drafts or other session work.
 
 ## Scan feedback after the Gate is green
 

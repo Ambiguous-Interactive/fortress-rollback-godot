@@ -164,6 +164,9 @@ Use the room's readiness samples for the correction baseline. One peer's
 release can correct another peer before its own release snapshot runs.
 Retain release and first-correction checkpoints in the controller while the
 room is live. A failed final page read can hide even a successful drain.
+To bracket release delays, record controller dispatch, evaluation entry and
+release start. Compare durations within each clock and retain a dispatch
+timestamp even if the page evaluation never returns.
 Emit the history request and publication separately from controller receipt.
 An advancing browser heartbeat with a stationary Godot turn count locates
 a service stall. Missing heartbeats leave the browser or its control path
