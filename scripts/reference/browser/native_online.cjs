@@ -1125,11 +1125,19 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     if (liveClose) {
       phase = 'native interruption';
       await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.holdTerminal())));
-      await Promise.all(pages.map(page => wait(page, () => {
-        const { interrupted, state, terminal_endpoint } = window.fortressNative;
-        return interrupted.length > 0 && state === 'playing' && terminal_endpoint === 0;
-      })));
-      interruption = await observe();
+      interruption = await boundedRoom(() => Promise.all(pages.map(async (page, index) => {
+        const handle = await page.waitForFunction(index => {
+          const status = window.fortressNative;
+          if (!status.interrupted.length || status.state !== 'playing' || status.terminal_endpoint !== 0) return null;
+          return structuredClone({ index, ...status, wire: window.fortressNativeWire.status() });
+        }, index, { timeout: PAGE_WAIT_MS });
+        try {
+          return await handle.jsonValue();
+        } finally {
+          await handle.dispose();
+        }
+      })), PAGE_WAIT_MS, 'native interruption snapshots');
+      if (errors.length) throw new Error(JSON.stringify(errors));
       for (const peer of interruption) {
         assert.deepEqual(peer.sdk_roster.sort(), roster);
         assert.deepEqual(peer.wire.sockets, [1], 'SDK signaling must remain connected during the outage');
