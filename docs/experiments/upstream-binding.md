@@ -48,6 +48,9 @@ Direct and SignalFish relay rooms run at 2, 4 and 8 players. Four-player cases e
 sustained route loss and direct-link replacement. Chromium and alternating Chromium–Firefox also exercise two overlapping replacements.
 Each cell compares at least 40 confirmed input rows and canonical states.
 The receipt records each peer's Playwright engine and version alongside packet, rollback and lifecycle observations.
+In the eight-player relay cell, the controller waits for every page's warmup cutoff with playing state and confirmation through frame 12.
+The cutoff records when Godot reached the gate on the page clock. `warmupGateReceived` records when the existing console checkpoint
+arrived on the controller clock. Every page's receipt must arrive before the 45-second warmup deadline to arm the input hold.
 The direct and relay cells hold input datagrams while control traffic continues, then release the held originals.
 Each peer records its arm, first ready sample and release start on its page clock under `wire.hold_boundaries`.
 `holdReadyReceived` carries the ready sample and the controller's receipt time. The clocks have different origins.
