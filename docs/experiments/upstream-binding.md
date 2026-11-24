@@ -49,6 +49,9 @@ sustained route loss and direct-link replacement. Chromium and alternating Chrom
 Each cell compares at least 40 confirmed input rows and canonical states.
 The receipt records each peer's Playwright engine and version alongside packet, rollback and lifecycle observations.
 The direct and relay cells hold input datagrams while control traffic continues, then release the held originals.
+Each peer records its arm, first ready sample and release start on its page clock under `wire.hold_boundaries`.
+`holdReadyReceived` carries the ready sample and the controller's receipt time. The clocks have different origins.
+Compare held counts at readiness and release to locate queue growth while the room waits.
 After the physical-close case confirms resumed play, it holds all datagrams to verify terminal expiry.
 
 ```sh

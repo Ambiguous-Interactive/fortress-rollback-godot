@@ -151,7 +151,12 @@ absolute room/launcher/job ceiling. Packet counts, stage names and clocks do not
 prove progress. Fresh execution must still satisfy every acceptance gate.
 Capture bounded physical channel counters before destroying a failed room; keep
 the original rejection and bound each diagnostic independently of gameplay.
-Keep the pre-release snapshot when a stalled renderer may refuse later reads.
+Start readiness sampling in the same page call that arms a hold. Keep page
+clock marks and controller receipt times on their own clocks.
+When a room barrier permits release, save the pre-release snapshot and start
+release in one page call. Keep that snapshot available to bounded diagnostics
+if release fails. Include the held count at readiness and release to locate
+queue growth. Do not make remote handle disposal part of the correction wait.
 Match addressed control reports and replies by peer and token, and record
 browser send and SDK receive queue peaks in the same phase. If release itself
 causes a measured fanout burst, pace the synthetic release in FIFO order while
