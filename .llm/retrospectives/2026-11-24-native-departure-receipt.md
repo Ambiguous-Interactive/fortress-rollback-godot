@@ -15,4 +15,14 @@ departure acknowledgment. The separate teardown check still requires offline
 pages, terminated survivors and closed sockets and channels. Existing browser
 evidence guidance now covers the dispatch-rejection race at its source.
 
+## Exported acceptance
+
+On both pinned Godot engines, `native_online_probe.py --browser-pair firefox
+--cell relay:4 --cell relay:8` printed `relay:4 passed` and `relay:8 passed`.
+Chromium printed `relay:8 passed` on both pins. Each room matched 40 confirmed
+input rows and snapshots, verified every leave receipt and passed teardown.
+The Firefox eight-player departure took 9.89 and 9.38 seconds from dispatch to
+receipt. Page entry to publication took 1.72 and 1.16 ms respectively. Bounded
+host warmup and correction still belong to [issue #458](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/458).
+
 State `findings-acted`.
