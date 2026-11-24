@@ -49,7 +49,7 @@ and initial route. Both byte routes add the same 16-byte room/roster tag.
 The raw binding used for stock Rust interoperability carries no room tag.
 
 The exported four-player cases cover a missing startup link, a sustained
-gameplay outage and a temporary direct close. Each compares at least 40
+gameplay outage and temporary direct closes. Each compares at least 40
 confirmed input rows and canonical snapshots. The sustained outage holds
 gameplay on both routes until native disconnect while the SDK roster stays
 intact. The temporary close holds replacement signaling while the pair
@@ -57,11 +57,19 @@ exchanges gameplay over relay. Once released, a fresh reciprocal channel
 carries gameplay over WebRTC without changing the accepted plan or room.
 Unaffected links stay direct throughout.
 
+The overlapping close cell closes two pairs in one match, discards the first
+replacement Offer for one pair, and requires gameplay on both fresh links.
+It runs with Chromium and alternating Chromium–Firefox on both Godot pins.
+The receipt identifies each replacement by its exact signaling envelope and
+reciprocal ICE credentials. A local control withholds all replacement Offers
+for the second pair and reports which pair is still missing.
+
 To isolate a hosted browser failure on both Godot pins, select the room in the
 manual workflow dispatch.
 
 ```sh
 gh workflow run gdextension-experiment.yml -f qualification=chromium-webkit -f cell=relay:8
+gh workflow run gdextension-experiment.yml -f qualification=chromium-firefox -f cell=mesh-recovery-overlap:4
 ```
 
 The run name identifies the browser profile and room. Keep the default `cell=all`

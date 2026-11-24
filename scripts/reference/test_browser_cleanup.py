@@ -40,6 +40,40 @@ for (const holdsOffer of [true, false]) {
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
+    def test_native_recovery_drops_only_selected_first_offer(self):
+        # Value: protects=exact Offer-only loss; fails_when=the fault drops ICE, a later offer or unrelated traffic; seam=SDK socket
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire } = require(process.argv[1]);
+const sent = [], window = {};
+class Socket {
+  static OPEN = 1;
+  readyState = 1;
+  send(data) { sent.push(data); }
+  addEventListener() {}
+}
+runInNewContext(`(${instrumentNativeWire})(false, '')`, {
+  window, WebSocket: Socket, RTCPeerConnection: class {}, performance: { now: () => 1 },
+});
+const wire = window.fortressNativeWire;
+wire.observeRecovery({ room: 'room', generation: 'gen', peer: 'peer', localEpoch: 1, peerEpoch: 2, holdsOffer: true });
+function signal(kind, attempt = 1, room = 'room') {
+  return JSON.stringify({ type: 'Signal', data: { generation: 'gen', to: 'peer',
+    signal: { MeshRecovery: { v: 1, room, from_epoch: 1, to_epoch: 2, attempt, kind, body: 'body' } } } });
+}
+const socket = new window.WebSocket();
+const ice = signal('IceCandidate'), other = signal('Offer', 1, 'other'), retry = signal('Offer', 2);
+for (const data of [signal('Offer'), ice, other]) socket.send(data);
+assert.deepEqual(sent, [other]);
+assert.equal(wire.releaseRecovery('drop-first-offer'), 1);
+socket.send(retry);
+assert.deepEqual(sent, [other, ice, retry], 'only the scoped first Offer must be lost');
+assert.equal(wire.status().recovery.droppedOffers, 1);
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_native_recovery_checks_cumulative_relay_routes(self):
         # Value: protects=healthy links stay direct; fails_when=transient relay on a healthy link is overlooked; seam=recovery receipt
         script = r"""

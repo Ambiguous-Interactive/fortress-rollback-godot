@@ -44,10 +44,11 @@ This test uses an unsigned simulator app. Device signing and App Store installat
 
 The same exported online example qualifies native matches in Linux Chromium, Firefox and Playwright WebKit.
 Use one engine for the whole room or alternate two browsers in page order.
-Direct and SignalFish relay rooms run at 2, 4 and 8 players. Two four-player cases exercise a missing link at startup and a channel that closes during gameplay.
+Direct and SignalFish relay rooms run at 2, 4 and 8 players. Four-player cases exercise missing startup links,
+sustained route loss and direct-link replacement. Chromium and alternating Chromium–Firefox also exercise two overlapping replacements.
 Each cell compares at least 40 confirmed input rows and canonical states.
 The receipt records each peer's Playwright engine and version alongside packet, rollback and lifecycle observations.
-The recovery cells hold input datagrams while control traffic continues, then release the held originals.
+The direct and relay cells hold input datagrams while control traffic continues, then release the held originals.
 After the physical-close case confirms resumed play, it holds all datagrams to verify terminal expiry.
 
 ```sh
@@ -70,6 +71,9 @@ xvfb-run -a -s '-screen 0 1920x1080x24' python3 scripts/reference/native_online_
   --version 4.7.2 --browser-pair chromium-webkit --cell mesh:2 --cell relay:2 \
   --addon .cache/native-experiment/4.7.2/web/addon.zip --output progress/native-online
 ```
+
+To exercise the overlapping replacement control, select `--cell mesh-recovery-overlap:4` and add `--omit-second-replacement`.
+The command exits nonzero with `missing replacement for pair 2-3` after proving the first replacement.
 
 This Linux fixture exercises the WebKit build distributed with Playwright.
 Track branded Safari and real Internet ICE deployments independently in [#39](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39).
