@@ -46,7 +46,16 @@ if args[:1] == ['view']:
             print('npm error code ' + scenario.get('code', 'ETARGET'), file=sys.stderr)
             print('first publication failure ' + args[1], file=sys.stderr)
             sys.exit(1)
-        print(json.dumps({'version': args[1].rsplit('@', 1)[1]}))
+        print(json.dumps({'version': args[1].rsplit('@', 1)[1], 'dist': {'tarball': scenario.get('tarball', 'https://registry.example/native.tgz')}}))
+elif args[:2] == ['cache', 'add']:
+    counter = root / 'archive_attempts'
+    attempt = int(counter.read_text()) + 1 if counter.exists() else 1
+    counter.write_text(str(attempt))
+    if attempt <= scenario.get('archive_failures', 0):
+        print('npm error code ' + scenario.get('archive_error', 'E404'), file=sys.stderr)
+        print('npm error 404 native tarball unavailable - GET https://registry.example/' + scenario.get('archive_path', 'native.tgz') + ' - Not found', file=sys.stderr)
+        sys.exit(1)
+    (root / 'archive_ready').touch()
 elif args[:1] == ['install']:
     if '--foreground-scripts' in args and '--loglevel=http' in args:
         print('npm http fetch GET https://registry.example/' + package, flush=True)
@@ -89,7 +98,7 @@ class NativeCliInstallTests(unittest.TestCase):
         # the install phase merges its streams so diagnostics keep npm's original interleaving.
         helper = self.load_helper()
         outer = self
-        for phase in ('wrapper metadata', 'native metadata', 'global installation', 'global root lookup', 'runtime version'):
+        for phase in ('wrapper metadata', 'native metadata', 'native archive', 'global installation', 'global root lookup', 'runtime version'):
             for timeout in (True, False):
                 with self.subTest(phase=phase, timeout=timeout):
                     calls = []
@@ -99,13 +108,13 @@ class NativeCliInstallTests(unittest.TestCase):
                             return 'runtime version'
                         if command[1] == 'view':
                             return 'wrapper metadata' if command[2].endswith('@latest') else 'native metadata'
-                        return {'install': 'global installation', 'root': 'global root lookup'}[command[1]]
+                        return {'cache': 'native archive', 'install': 'global installation', 'root': 'global root lookup'}[command[1]]
 
                     def metadata(command):
                         if phase_of(command) == 'wrapper metadata':
                             return json.dumps({'version': '2.0.30', 'optionalDependencies': {
                                 '@opencode/cli-linux-arm64': '2.0.30'}})
-                        return json.dumps({'version': '2.0.30'})
+                        return json.dumps({'version': '2.0.30', 'dist': {'tarball': 'https://registry.example/native.tgz'}})
 
                     class FakePopen:
                         pid = 4321
@@ -495,7 +504,8 @@ class NativeCliInstallTests(unittest.TestCase):
             npm.chmod(0o755)
             for name in ('opencode', 'codex'):
                 cli = root / name
-                cli.write_text('#!/bin/sh\necho "' + name + ' final runtime version"\nexit ' + str(scenario.get('runtime_exit', 0)) + '\n')
+                archive_check = '[ -f "$FAKE_ROOT/archive_ready" ] || exit 1\n' if scenario.get('archive_failures') else ''
+                cli.write_text('#!/bin/sh\n' + archive_check + 'echo "' + name + ' final runtime version"\nexit ' + str(scenario.get('runtime_exit', 0)) + '\n')
                 cli.chmod(0o755)
             # The journal follows TMPDIR, so each invocation owns its evidence file
             # and suites and concurrent installs never share or clean each other's.
@@ -523,6 +533,38 @@ class NativeCliInstallTests(unittest.TestCase):
                         self.assertNotIn('@latest', installs[0][-1])
                         natives = [call[1] for call in calls if call[0] == 'view' and not call[1].endswith('@latest')]
                         self.assertTrue(all('linux-' + native_arch in spec for spec in natives), natives)
+
+    def test_native_archive_publication_can_lag_its_version_metadata(self):
+        for package, native in (('@openai/codex', '@openai/codex@0.163.0-linux-arm64'),
+                                ('@opencode/cli', '@opencode/cli-linux-arm64@2.0.30')):
+            with self.subTest(package=package):
+                result, calls = self.invoke(package, 'arm64', archive_failures=1)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('native tarball unavailable', result.stderr)
+                self.assertIn('retry 2/3', result.stderr)
+                cache_calls = [call for call in calls if call[:2] == ['cache', 'add']]
+                self.assertEqual([call[2] for call in cache_calls], [native, native])
+                installs = [call for call in calls if call[0] == 'install']
+                self.assertEqual(len(installs), 1)
+                self.assertIn('--prefer-offline', installs[0])
+                self.assertIn('final runtime version', result.stdout)
+
+    def test_native_archive_access_errors_do_not_retry(self):
+        for code in ('E401', 'EACCES'):
+            with self.subTest(code=code):
+                result, calls = self.invoke(archive_failures=1, archive_error=code)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('npm error code ' + code, result.stderr)
+                self.assertNotIn('retry 2/3', result.stderr)
+                self.assertFalse(any(call[0] == 'install' for call in calls))
+
+    def test_unrelated_archive_404_and_invalid_archive_metadata_do_not_retry(self):
+        for scenario in ({'archive_failures': 1, 'archive_path': 'unrelated.tgz'}, {'tarball': 'invalid'}):
+            with self.subTest(scenario=scenario):
+                result, calls = self.invoke(**scenario)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('retry 2/3', result.stderr)
+                self.assertFalse(any(call[0] == 'install' for call in calls))
 
     def test_terminal_registry_install_and_metadata_errors_do_not_retry(self):
         for scenario in ({'failures': 10, 'code': 'E401'}, {'failures': 10, 'code': 'EACCES'},

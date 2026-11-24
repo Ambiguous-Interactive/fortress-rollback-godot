@@ -15,6 +15,19 @@ as distinct failure cases.
 | Each WebKit close needs its own pre-fault snapshot. | The same tagged reciprocal error proved `stream-close` against the original channel. Rechecking it against the already-closed record returned `null`. The controller now collects physical-close and departure evidence independently. |
 | Observation and withholding need separate roles. | Both initial hosted receipts recovered while one answerer ICE candidate stayed queued. A socket control reproduced the dropped delivery. Only the offerer now holds outbound signaling. |
 
+## Native CLI publication
+
+ARM64 Devcontainer Verify selected Codex 0.172.0 but the wrapper could not
+find its native package. A clean npm install reproduced the wrapper failure.
+The npm log shows a 404 fetching the ARM64 archive after version metadata
+succeeded. npm discarded the optional dependency and returned success. The
+same install passed once the registry served the archive.
+
+The installer now caches the exact native archive within the existing
+publication retry budget. [The devcontainer guide](../../.devcontainer/README.md)
+records the archive check. The regression simulates a visible version with
+an unavailable archive for both Codex and OpenCode.
+
 ## Actions and pruning
 
 The [transport tooling note](../knowledge/transport-tooling.md) records the
