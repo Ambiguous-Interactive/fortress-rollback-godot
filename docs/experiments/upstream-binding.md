@@ -51,6 +51,11 @@ The receipt records each peer's Playwright engine and version alongside packet, 
 In the eight-player relay cell, the controller waits for every page's warmup cutoff with playing state and confirmation through frame 12.
 The cutoff records when Godot reached the gate on the page clock. `warmupGateReceived` records when the existing console checkpoint
 arrived on the controller clock. Every page's receipt must arrive before the 45-second warmup deadline to arm the input hold.
+Each warmup link records raw browser receipt, SDK delivery and native inbox acceptance. When the browser
+observes a native reply to a sampled report, `last_replied_report` records that report and the three page times
+for raw receipt, inbox acceptance and reply send. The reply proves processing of that quality report.
+The witness omits attribution when a retained or discarded report could share the echoed token.
+Other accepted traffic can refresh the native deadline.
 The direct and relay cells hold input datagrams while control traffic continues, then release the held originals.
 Each peer records its arm, first ready sample and release start on its page clock under `wire.hold_boundaries`.
 `holdReadyReceived` carries the ready sample and the controller's receipt time. The clocks have different origins.
@@ -59,6 +64,8 @@ The ready sample also freezes the frame, confirmation and restore count before a
 The stalled receipt retains the release-start mark after the drain completes, even if a later page read times out.
 Relay results and failure logs include `postRelease` checkpoints for each page. They record controller dispatch, page entry,
 release start and completion, the first restore beyond readiness, and the confirmed-history request, publication and receipt.
+The same log retains `hold_armed`, `hold_ready` and the first `hold_cap` before any final status read.
+These records include the page's last published game state and its held packet and byte counts.
 Subtract `release_dispatched_ms` from `release_entered.controller_ms` to measure dispatch through entry receipt.
 Subtract `release_entered.page_ms` from `release_started.page_ms` to measure page-side work before release.
 The last two browser heartbeats carry the Godot turn and confirmation counters. A moving heartbeat with a fixed turn
