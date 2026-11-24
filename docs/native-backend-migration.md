@@ -87,6 +87,20 @@ renderer read times out. A missing observation can reflect sampling, eviction,
 or the end of observation. Identical repeated bytes can obscure per-packet
 latency. Native enqueue represents accepted input to the native socket queue.
 
+Relay receipts separate the first corrected confirmation, the next advancing
+physics turn, and history publication. The normal 40-frame target is observed
+immediately. If the comparison expands to cover later samples, the page uses
+its bounded turn history to report the original crossing. Compare controller
+receipt against the controller deadline. The page's observation and emission
+timestamps show how long a backfilled observation waited on that page.
+
+Departure receipts name the remote UUID and its one-based endpoint in the
+frozen roster. Native expiry is sampled before failure cleanup. SignalFish
+player removal is sampled when the SDK emits `player_left`. Compare their order
+within each survivor's clock, and use controller receipt times to relate the
+survivor events to the leaving page's command. Missing receipts leave the
+corresponding event unobserved.
+
 ## Protocol and saved data
 
 Native gameplay packets use the codec in the [pinned upstream crate](reference/pins.json).

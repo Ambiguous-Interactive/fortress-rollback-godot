@@ -15,6 +15,7 @@ const WARMUP_WAIT_MS = 45000;
 const DIAGNOSTIC_MS = 5000;
 const CLOSE_MS = 10000;
 const CANONICAL_SNAPSHOT = /^(?:[0-9a-f]{2})+$/;
+const FROZEN_UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const CLOSE_CLOCK_POST_SAMPLES = 4;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
@@ -22,6 +23,8 @@ const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
 const DEPARTURE_CHECKPOINT = 'fortress native departure ';
 const HISTORY_CHECKPOINT = 'fortress native history ';
 const POST_RELEASE_MARKS = new Set(['release_entered', 'release_completed', 'correction', 'history_requested', 'history_published']);
+const FRONTIER_MARKS = new Set(['corrected_frontier', 'corrected_advance']);
+const LIFETIME_MARKS = new Set(['native_expiry', 'sdk_departure']);
 const HOLD_MARKS = new Set(['hold_armed', 'hold_first_input', 'hold_first_control', 'hold_first_prediction', 'hold_ready', 'hold_cap', 'release_started']);
 
 function createWarmupBarrier(players, clock = () => performance.now()) {
@@ -80,43 +83,124 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
   };
 }
 
-function instrumentPostRelease(prefix) {
+function instrumentPostRelease(prefix, minimumFrames) {
   let baseline;
   let corrected = false;
+  const targets = new Map([[minimumFrames, 0]]);
+  const frontiers = [];
+  let through = minimumFrames - 1;
+  let pending = [];
+  let roster = [], local;
+  let expired = false;
+  const departed = new Set();
   function mark(kind, frames, hold) {
     if (baseline === undefined && !hold) return;
     const { state, turns, frame, confirmed, restores } = window.fortressNative;
     console.debug(prefix + JSON.stringify({ kind, page_ms: hold?.at_ms ?? performance.now(), state, turns, frame, confirmed, restores, frames,
       held: hold?.held, bytes: hold?.bytes, queued: hold?.queued, released: hold?.released }));
   }
-  function observe() {
-    if (baseline === undefined || corrected || window.fortressNative.restores <= baseline) return;
-    corrected = true;
-    mark('correction');
+  function observe(state, turns, frame, confirmed, restores, historyLimit) {
+    if (baseline === undefined || restores <= baseline) return;
+    const snapshot = () => ({ state, turns, frame, confirmed, restores, page_ms: performance.now() });
+    if (!corrected) {
+      corrected = true;
+      console.debug(prefix + JSON.stringify({ ...snapshot(), kind: 'correction' }));
+    }
+    if (state !== 'playing') return;
+    const limit = Math.min(confirmed, historyLimit);
+    if (pending.some(entry => frame > entry.first.frame) || limit > through) {
+      const sample = snapshot();
+      pending = pending.filter(entry => {
+        if (frame <= entry.first.frame) return true;
+        entry.next = sample;
+        return false;
+      });
+      if (limit > through) {
+        const entry = { first: sample };
+        frontiers.push({ through: limit, entry });
+        pending.push(entry);
+        through = limit;
+      }
+    }
+    publishFrontiers();
+  }
+  function publishFrontiers() {
+    for (const [frames, published] of targets) {
+      if (published === 2 || frames > through) continue;
+      const { entry } = frontiers.find(frontier => frontier.through >= frames);
+      if (published === 0) {
+        console.debug(prefix + JSON.stringify({ ...entry.first, kind: 'corrected_frontier', frames, emitted_ms: performance.now() }));
+        targets.set(frames, 1);
+      }
+      if (entry.next) {
+        console.debug(prefix + JSON.stringify({ ...entry.next, kind: 'corrected_advance', frames, emitted_ms: performance.now() }));
+        targets.set(frames, 2);
+      }
+    }
   }
   window.fortressNativePostRelease = {
     arm(restores) {
       baseline = restores;
       setInterval(() => mark('heartbeat'), 1000);
     },
+    setTarget(frames) {
+      if (targets.size !== 1 || !Number.isSafeInteger(frames) || frames <= minimumFrames
+          || frames > window.fortressNative.history_limit) return;
+      targets.set(frames, 0);
+      publishFrontiers();
+    },
+    bindDeparture(uuid, frozen) {
+      local = uuid;
+      roster = frozen;
+    },
+    recordDeparture(kind, remote) {
+      const sdk = kind === 'sdk_departure';
+      const endpoint = sdk ? roster.indexOf(remote) + 1 : remote;
+      const uuid = roster[endpoint - 1];
+      if (!uuid || uuid === local || (sdk ? departed.has(uuid) : expired)) return;
+      if (sdk) departed.add(uuid);
+      else expired = true;
+      console.debug(prefix + JSON.stringify({ kind, endpoint, uuid, page_ms: performance.now() }));
+    },
     mark,
     observe,
   };
 }
 
-function postReleaseCheckpoint(peer, text, receivedAt) {
+function postReleaseCheckpoint(peer, text, receivedAt, roster, local, comparedTarget = HISTORY_FRAMES) {
   if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
   try {
-    const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes, queued, released } =
+    const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes, queued, released, emitted_ms, endpoint, uuid } =
       JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
+    if (LIFETIME_MARKS.has(kind)) {
+      if (!Number.isFinite(page_ms) || page_ms < 0 || !Number.isSafeInteger(endpoint) || endpoint < 1
+        || endpoint > INPUTS.length || typeof uuid !== 'string' || !FROZEN_UUID.test(uuid)) throw new Error('invalid room departure sample');
+      retainDepartureCheckpoint(peer, { kind, endpoint, uuid, page_ms, controller_ms: receivedAt }, roster, local);
+      return;
+    }
     const capturesHold = HOLD_MARKS.has(kind);
-    if (kind !== 'heartbeat' && !POST_RELEASE_MARKS.has(kind) && !capturesHold) return;
-    const capturesHistory = kind === 'history_requested' || kind === 'history_published';
+    const capturesFrontier = FRONTIER_MARKS.has(kind);
+    if (kind !== 'heartbeat' && !POST_RELEASE_MARKS.has(kind) && !capturesHold && !capturesFrontier) return;
+    const capturesHistory = capturesFrontier || kind === 'history_requested' || kind === 'history_published';
     if (!Number.isFinite(page_ms) || page_ms < 0 || typeof state !== 'string' || state.length > 32
       || ![turns, frame, confirmed, restores].every(Number.isSafeInteger)
       || (capturesHistory && (!Number.isSafeInteger(frames) || frames < 1))) throw new Error('invalid post-release sample');
     const receipt = { page_ms, state, turns, frame, confirmed, restores, controller_ms: receivedAt };
     if (capturesHistory) receipt.frames = frames;
+    if (capturesFrontier) {
+      const ready = peer.hold_ready;
+      if ((frames !== HISTORY_FRAMES && frames !== comparedTarget) || !ready
+        || page_ms < ready.page_ms || turns <= ready.turns || restores <= ready.restores
+        || state !== 'playing' || !Number.isFinite(emitted_ms) || emitted_ms < page_ms
+        || kind === 'corrected_frontier' && confirmed < frames) throw new Error('invalid corrected frontier sample');
+      receipt.emitted_ms = emitted_ms;
+      const frontier = peer.frontiers?.[frames];
+      const first = frontier?.corrected_frontier;
+      if (kind === 'corrected_advance' && (!first || frame <= first.frame || turns <= first.turns || page_ms < first.page_ms))
+        throw new Error('invalid corrected advance sample');
+      ((peer.frontiers ??= {})[frames] ??= {})[kind] ??= receipt;
+      return;
+    }
     if (capturesHold) {
       if (![held?.mesh, held?.relay, bytes, queued, released].every(value => Number.isSafeInteger(value) && value >= 0)
         || held.mesh + held.relay > 1024 || bytes > 1024 * 1024 || queued + released > held.mesh + held.relay) throw new Error('invalid hold sample');
@@ -130,6 +214,26 @@ function postReleaseCheckpoint(peer, text, receivedAt) {
   } catch (error) {
     peer.checkpoint_error ??= String(error);
   }
+}
+
+function retainDepartureCheckpoint(peer, { kind, ...receipt }, roster, local) {
+  const { uuid, endpoint } = receipt;
+  if (!roster) {
+    const waiting = peer.unbound_lifetime ??= [];
+    if (waiting.length < INPUTS.length && !waiting.some(sample => sample.kind === kind && sample.endpoint === endpoint && sample.uuid === uuid))
+      waiting.push({ kind, ...receipt });
+  } else if (!local || uuid === local || roster[endpoint - 1] !== uuid) {
+    peer.checkpoint_error ??= 'invalid room departure identity';
+  } else if (kind === 'native_expiry') {
+    peer.native_expiry ??= receipt;
+  } else {
+    (peer.sdk_departures ??= {})[uuid] ??= receipt;
+  }
+}
+
+function bindDepartureCheckpoints(peer, roster, local) {
+  for (const sample of peer.unbound_lifetime ?? []) retainDepartureCheckpoint(peer, sample, roster, local);
+  delete peer.unbound_lifetime;
 }
 
 function browserOptions(name) {
@@ -843,8 +947,11 @@ function captureAndReleaseInput(page, index, checkpoints) {
 }
 
 function waitForCorrectedHistory(pages, frame, readiness, wait, timeout) {
-  return Promise.all(pages.map((page, index) => wait(page, target => window.fortressNative.state === 'playing'
-    && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores,
+  return Promise.all(pages.map((page, index) => wait(page, target => {
+    window.fortressNativePostRelease?.setTarget(target.frame);
+    return window.fortressNative.state === 'playing'
+      && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores;
+  },
   { frame, restores: readiness[index].page.restores }, timeout)));
 }
 
@@ -903,9 +1010,10 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   const browsers = [];
   const browserPeers = [];
   let result;
+  let roomIdentities;
   let phase = 'launch';
   let sequence = 0;
-  let departureClocks;
+  let departureClocks, correctionDeadline;
   let armed, stalled;
   let comparedFrames = HISTORY_FRAMES;
   const holdReadyReceived = Array(players).fill(null);
@@ -922,6 +1030,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     await wait(page, expected => window.fortressNative?.command_id === expected, id);
     const state = await page.evaluate(() => window.fortressNative);
     assert.equal(state.command_code, 0, `${kind} failed: ${state.message}`);
+    return state;
   };
   const leave = async (page, index) => {
     const trace = { id: ++sequence, index, phase };
@@ -956,7 +1065,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       page.on('console', message => {
         const text = message.text();
         warmupBarrier?.record(index, text);
-        if (postRelease) postReleaseCheckpoint(postRelease[index], text, performance.now());
+        if (postRelease)
+          postReleaseCheckpoint(postRelease[index], text, performance.now(), roomIdentities?.roster, roomIdentities?.uuids[index], comparedFrames);
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push({ index, phase, text });
       });
       page.on('requestfailed', request => {
@@ -966,7 +1076,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       });
       // Register the browser observers in a single init script.
       const wireScript = `(${instrumentNativeWire})(${name === 'webkit'}, ${JSON.stringify(traceWarmup ? WARMUP_CHECKPOINT : '')});`;
-      await page.addInitScript(postRelease ? wireScript + `(${instrumentPostRelease})(${JSON.stringify(POST_RELEASE_CHECKPOINT)});` : wireScript);
+      await page.addInitScript(postRelease ? wireScript + `(${instrumentPostRelease})(${JSON.stringify(POST_RELEASE_CHECKPOINT)}, ${HISTORY_FRAMES});` : wireScript);
       await page.goto(`${origin}/index.html`);
       await wait(page, () => window.fortressNativeReady === true, null, PAGE_BOOT_MS);
       bootstrap_ms.push(Math.round(performance.now() - started));
@@ -981,7 +1091,15 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     const room = await pages[0].evaluate(() => window.fortressNative.room);
     await Promise.all(pages.slice(1).map((page, index) => connect(page, index + 1, room)));
     await Promise.all(pages.map(page => wait(page, () => window.fortressNative.ready_enabled)));
-    await Promise.all(pages.map(page => command(page, 'ready')));
+    const ready = await Promise.all(pages.map(page => command(page, 'ready')));
+    if (postRelease) {
+      const uuids = ready.map(peer => peer.uuid);
+      const roster = [...uuids].sort();
+      assert.ok(roster.every(uuid => FROZEN_UUID.test(uuid)) && new Set(uuids).size === players);
+      for (const peer of ready) assert.deepEqual(peer.frozen_roster, roster, 'native departure requires the frozen roster');
+      roomIdentities = { uuids, roster };
+      postRelease.forEach((peer, index) => bindDepartureCheckpoints(peer, roster, uuids[index]));
+    }
     await wait(pages[0], () => window.fortressNative.start_enabled);
     await Promise.all(pages.map(async (page, index) => {
       for (const key of INPUTS[index][1]) await page.keyboard.down(key);
@@ -1044,7 +1162,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       if (errors.length) throw new Error(JSON.stringify(errors));
       phase = 'input release';
       const correctionBudgetMs = 45000;
-      const correctionDeadline = performance.now() + correctionBudgetMs;
+      correctionDeadline = performance.now() + correctionBudgetMs;
       stalled = Array(players).fill(null);
       await Promise.all(pages.map(async (page, index) => {
         stalled[index] = await boundedRoom(() => captureAndReleaseInput(page, index, postRelease?.[index]),
@@ -1210,7 +1328,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         && rtc.every(([, state]) => state === 'closed');
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
-      holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, departureCommands,
+      holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, departureCommands, roomIdentities,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks ?? departureClocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupGateReceived: warmupBarrier?.received };
@@ -1228,12 +1346,12 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     });
     console.error(JSON.stringify({
       phase, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors: [...physicalCloseErrors, ...departureErrors],
-      departureClocks: closeReport.clocks ?? departureClocks, departureCommands,
+      departureClocks: closeReport.clocks ?? departureClocks, departureCommands, roomIdentities,
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
-      warmupGateReceived: warmupBarrier?.received, postRelease
+      warmupGateReceived: warmupBarrier?.received, postRelease, correctionDeadline
     }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
@@ -1268,5 +1386,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = { armAndWaitForInput, captureAndReleaseInput, closeEvidence, compareHistory, createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt,
+module.exports = { armAndWaitForInput, bindDepartureCheckpoints, captureAndReleaseInput, closeEvidence, compareHistory,
+  createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt,
   postReleaseCheckpoint, readConfirmedHistory, reportedChannel, waitForCloseProofs, waitForCorrectedHistory, WARMUP_CHECKPOINT };
