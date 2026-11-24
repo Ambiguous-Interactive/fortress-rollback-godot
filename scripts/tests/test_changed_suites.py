@@ -86,28 +86,28 @@ class SelectTests(unittest.TestCase):
                 subprocess.run(["git", *args], cwd=root, capture_output=True, check=True)
 
             git("init")
-            (root / "reader.gd").write_text('var content = FileAccess.get_file_as_string("res://fixture.md")')
-            (root / "other.gd").touch()
+            (root / "reader.gd").write_text('var content = FileAccess . get_file_as_string("res://100%{fixture}.md")')
+            (root / "other.gd").write_text('# FileAccess.get_file_as_string("res://unused.md")\nprint("See unused.md")')
             (root / "unused.md").touch()
             git("add", ".")
             git("-c", "user.name=Fixture", "-c", "user.email=test@example.invalid", "commit", "-m", "base")
             suites = ["res://reader.gd", "res://other.gd"]
 
             def receipt():
-                return from_base("HEAD", suites, root, root, ["reader.gd", "other.gd", "fixture.md", "unused.md"])
+                return from_base("HEAD", suites, root, root, ["reader.gd", "other.gd", "100%{fixture}.md", "unused.md"])
 
             (root / "unused.md").write_text("unrelated")
             self.assertEqual(receipt()["suites"], [])
-            (root / "fixture.md").write_text("added")
+            (root / "100%{fixture}.md").write_text("added")
             self.assertEqual(receipt()["suites"], suites[:1])
-            git("add", "fixture.md")
+            git("add", "100%{fixture}.md")
             git("-c", "user.name=Fixture", "-c", "user.email=test@example.invalid", "commit", "-m", "add fixture")
-            (root / "fixture.md").write_text("edited")
+            (root / "100%{fixture}.md").write_text("edited")
             self.assertEqual(receipt()["suites"], suites[:1])
-            (root / "fixture.md").unlink()
+            (root / "100%{fixture}.md").unlink()
             self.assertEqual(receipt()["suites"], suites[:1])
-            git("restore", "fixture.md")
-            git("mv", "fixture.md", "renamed.md")
+            git("restore", "100%{fixture}.md")
+            git("mv", "100%{fixture}.md", "renamed.md")
             self.assertEqual(receipt()["suites"], suites[:1])
 
     def test_external_transitive_consumers_and_fail_closed_inputs(self):
@@ -140,7 +140,8 @@ class SelectTests(unittest.TestCase):
                 self.assertEqual(selection([suite], ["addons/reader's/a.gd"], root)["reason"], "unresolved_resource")
             (root / suite[6:]).write_text(files[suite[6:]])
             for expression in ('load(dynamic_path)', 'ResourceLoader.load_threaded_request(path)',
-                               'FileAccess.get_file_as_string(path)', 'FileAccess.get_sha256(path)', 'Image.load_from_file(path)',
+                               'FileAccess . get_file_as_string(path)', 'FileAccess.get_sha256(path)', 'Image.load_from_file(path)',
+                               'script . source_code = source',
                                'DirAccess.dir_exists_absolute(path)', 'config.load(path)', 'load("res://scenes/" + filename)',
                                r'load("res://addons/\u0061.gd")', r'const PATH = "res://addons/\u0061.gd"' + '\nload(PATH)',
                                'load("uid://unknown")', 'load("res://prefix" + suffix)'):
@@ -158,6 +159,9 @@ class SelectTests(unittest.TestCase):
             (root / "project.godot").unlink()
             suite = "res://observes.gd"
             (root / "observes.gd").write_text('const NODE = preload("res://scripts/opaque.scn")')
+            self.assertEqual(selection([suite], ["scripts/another.gd"], root)["reason"], "unresolved_resource")
+            (root / "scripts/manifest.md").touch()
+            (root / "observes.gd").write_text('var resource = ResourceLoader.load("res://scripts/manifest.md")')
             self.assertEqual(selection([suite], ["scripts/another.gd"], root)["reason"], "unresolved_resource")
 
     def test_directory_operations_cover_new_descendants_with_either_spelling(self):
