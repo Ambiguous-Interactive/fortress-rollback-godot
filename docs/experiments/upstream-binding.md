@@ -64,6 +64,8 @@ The ready sample also freezes the frame, confirmation and restore count before a
 The stalled receipt retains the release-start mark after the drain completes, even if a later page read times out.
 Relay results and failure logs include `postRelease` checkpoints for each page. They record controller dispatch, page entry,
 release start and completion, the first restore beyond readiness, and the confirmed-history request, publication and receipt.
+A page publishes its bounded input rows and canonical snapshots as a console event with the capture request ID.
+The controller listens on that page before dispatch and requires the matching ID and frame count.
 The same log retains `hold_armed`, `hold_ready` and the first `hold_cap` before any final status read.
 These records include the page's last published game state and its held packet and byte counts.
 Subtract `release_dispatched_ms` from `release_entered.controller_ms` to measure dispatch through entry receipt.

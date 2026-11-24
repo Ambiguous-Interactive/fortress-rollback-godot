@@ -19,6 +19,7 @@ const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.'
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
 const DEPARTURE_CHECKPOINT = 'fortress native departure ';
+const HISTORY_CHECKPOINT = 'fortress native history ';
 const POST_RELEASE_MARKS = new Set(['release_entered', 'release_started', 'release_completed', 'correction', 'history_requested', 'history_published']);
 const HOLD_MARKS = new Set(['hold_armed', 'hold_ready', 'hold_cap']);
 
@@ -707,18 +708,44 @@ function historyThrough(peers) {
   return frames;
 }
 
-async function readConfirmedHistory(page, frames, wait) {
-  await page.evaluate(frameCount => {
-    window.fortressNativeHistory = null;
-    window.fortressNativeCapture = frameCount;
-    window.fortressNativePostRelease?.mark('history_requested', frameCount);
-  }, frames);
-  await wait(page, frameCount => window.fortressNativeHistory?.frames === frameCount, frames);
-  return page.evaluate(frameCount => {
-    const history = window.fortressNativeHistory;
-    if (history?.frames !== frameCount) throw new Error('native history receipt changed');
-    return history;
-  }, frames);
+async function readConfirmedHistory(page, frames, id) {
+  assert.ok(Number.isSafeInteger(id) && id > 0, 'native history request ID must be a positive safe integer');
+  assert.ok(Number.isSafeInteger(frames) && frames > 0, 'native history frame count must be a positive safe integer');
+  let receipt;
+  const deadline = performance.now() + PAGE_WAIT_MS;
+  const publication = page.waitForEvent('console', {
+    timeout: PAGE_WAIT_MS,
+    predicate(message) {
+      const text = message.text();
+      if (receipt || !text.startsWith(HISTORY_CHECKPOINT) || performance.now() >= deadline) return false;
+      let sample;
+      try {
+        sample = JSON.parse(text.slice(HISTORY_CHECKPOINT.length));
+      } catch {
+        return false;
+      }
+      if (sample?.id !== id || sample.frames !== frames) return false;
+      const { rows, snapshots } = sample;
+      if (!rows || typeof rows !== 'object' || Array.isArray(rows) || Object.keys(rows).length !== frames
+        || !snapshots || typeof snapshots !== 'object' || Array.isArray(snapshots) || Object.keys(snapshots).length !== frames) return false;
+      for (let frame = 0; frame < frames; frame++) {
+        if (!Array.isArray(rows[frame]) || typeof snapshots[frame + 1] !== 'string') return false;
+      }
+      receipt = { frames, rows, snapshots };
+      return true;
+    },
+  });
+  let dispatchError;
+  void Promise.resolve().then(() => page.evaluate(request => {
+    window.fortressNativeCapture = request;
+    window.fortressNativePostRelease?.mark('history_requested', request.frames);
+  }, { id, frames })).catch(error => { dispatchError = error; });
+  try {
+    await publication;
+  } catch (error) {
+    throw dispatchError ?? error;
+  }
+  return receipt;
 }
 
 function compareHistory(peers, frames = HISTORY_FRAMES) {
@@ -1011,10 +1038,11 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     }, PAGE_WAIT_MS, 'native post-confirmation engine turn');
     phase = 'confirmed history capture';
     const history = await Promise.all(pages.map(async (page, index) => {
-      const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, wait), PAGE_WAIT_MS, `native peer ${index} confirmed history capture`);
+      const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence), PAGE_WAIT_MS, `native peer ${index} confirmed history capture`);
       if (postRelease) postRelease[index].history_received = { frames: receipt.frames, controller_ms: performance.now() };
       return receipt;
     }));
+    phase = 'post-capture status';
     const peers = (await observe()).map((peer, index) => ({ ...peer, rows: history[index].rows, snapshots: history[index].snapshots }));
     compareHistory(peers, comparedFrames);
     if (recovery) assertRecoveredRoom(direct, restored, peers, recoveryEvidence);
