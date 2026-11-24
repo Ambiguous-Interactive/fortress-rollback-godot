@@ -190,21 +190,22 @@ fn reports_interruption_resume_and_disconnect_using_protocol_clock() {
     check_timeout_policy(false);
 }
 
+fn clocked_builder(time_ms: &Arc<AtomicU64>, now: Instant) -> SessionBuilder<Game> {
+    let time_ms = time_ms.clone();
+    SessionBuilder::new().with_protocol_config(ProtocolConfig {
+        clock: Some(Arc::new(move || {
+            now + Duration::from_millis(time_ms.load(Ordering::Relaxed))
+        })),
+        ..ProtocolConfig::deterministic(42)
+    })
+}
+
 fn check_timeout_policy(abort_on_event: bool) {
     let time_ms = Arc::new(AtomicU64::new(0));
     let now = Instant::now();
-    let builder = || {
-        let time_ms = time_ms.clone();
-        SessionBuilder::new().with_protocol_config(ProtocolConfig {
-            clock: Some(Arc::new(move || {
-                now + Duration::from_millis(time_ms.load(Ordering::Relaxed))
-            })),
-            ..ProtocolConfig::deterministic(42)
-        })
-    };
     let mut peers = [
-        Peer::build(&[0, 2], builder()).unwrap(),
-        Peer::build(&[1, 0], builder()).unwrap(),
+        Peer::build(&[0, 2], clocked_builder(&time_ms, now)).unwrap(),
+        Peer::build(&[1, 0], clocked_builder(&time_ms, now)).unwrap(),
     ];
     let mut games = [Simulation::default(), Simulation::default()];
     for _ in 0..15 {
@@ -250,6 +251,48 @@ fn check_timeout_policy(abort_on_event: bool) {
     assert_eq!(peers[0].step(&[], |_| panic!("terminal callback")), -1);
     assert_eq!(peers[0].terminal_reason(), "disconnected");
     assert_eq!(peers[0].terminal_endpoint(), 2);
+}
+
+#[test]
+fn identifies_the_expired_endpoint_among_multiple_remotes() {
+    let time_ms = Arc::new(AtomicU64::new(0));
+    let now = Instant::now();
+    let mut peers = [
+        Peer::build(&[0, 2, 3], clocked_builder(&time_ms, now)).unwrap(),
+        Peer::build(&[1, 0, 3], clocked_builder(&time_ms, now)).unwrap(),
+        Peer::build(&[1, 2, 0], clocked_builder(&time_ms, now)).unwrap(),
+    ];
+    let mut games = std::array::from_fn::<_, 3, _>(|_| Simulation::default());
+    for _ in 0..15 {
+        transfer(&mut peers);
+        for (index, (peer, game)) in peers.iter_mut().zip(&mut games).enumerate() {
+            run_frame(peer, game, &[index as u8]);
+        }
+    }
+    assert!(peers.iter().all(Peer::is_running));
+    let deliver_live = |peers: &mut [Peer; 3]| {
+        let mut delivered = false;
+        for (recipient, packet) in peers[1].drain() {
+            if recipient == 1 {
+                assert_eq!(peers[0].receive_from(2, &packet), ReceiveCode::Accepted);
+                delivered = true;
+            }
+        }
+        assert!(delivered);
+    };
+
+    time_ms.store(600, Ordering::Relaxed);
+    deliver_live(&mut peers);
+    run_frame(&mut peers[0], &mut games[0], &[0]);
+    assert_eq!(peers[0].interrupted_endpoints().collect::<Vec<_>>(), [3]);
+    assert_eq!(peers[0].terminal_endpoint(), 0);
+    run_frame(&mut peers[1], &mut games[1], &[1]);
+
+    time_ms.store(2100, Ordering::Relaxed);
+    deliver_live(&mut peers);
+    assert_eq!(peers[0].step(&[0; 4], |_| panic!("terminal callback")), -1);
+    assert_eq!(peers[0].terminal_reason(), "disconnected");
+    assert_eq!(peers[0].terminal_endpoint(), 3);
 }
 
 #[test]

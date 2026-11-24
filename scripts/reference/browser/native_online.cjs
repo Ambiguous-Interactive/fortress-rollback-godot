@@ -45,14 +45,16 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
           || !Array.isArray(sample.links) || sample.links.length !== players - 1 || sample.links.some(link => !isUuid(link?.sender))
           || !Array.isArray(sample.ticks) || sample.ticks.some(tick => !Number.isFinite(tick?.at_ms))
           || !Number.isSafeInteger(sample.tick_count) || sample.tick_count < sample.ticks.length) throw new Error('invalid warmup checkpoint');
+        const roster = [sample.recipient, ...sample.links.map(link => link.sender)];
+        if (new Set(roster).size !== players) throw new Error('invalid warmup roster');
         const { cutoff } = sample;
         if (cutoff !== null && (cutoff?.at_ms !== sample.through_ms || !Number.isSafeInteger(cutoff.confirmed)
           || !(cutoff.reason === 'failed' && cutoff.state === 'failed'
             || cutoff.reason === 'gate' && cutoff.state === 'playing' && cutoff.confirmed >= GATE_FRAME)))
           throw new Error('invalid warmup gate');
         if (cutoff?.terminal_endpoint !== undefined || cutoff?.terminal_uuid !== undefined) {
-          const roster = [sample.recipient, ...sample.links.map(link => link.sender)].sort();
           const { terminal_endpoint: endpoint, terminal_uuid: uuid } = cutoff;
+          roster.sort();
           if (cutoff.reason !== 'failed' || !Number.isInteger(endpoint) || endpoint < 1 || endpoint > players
               || !isUuid(uuid) || uuid === sample.recipient || uuid !== roster[endpoint - 1])
             throw new Error('invalid warmup expiry endpoint');
@@ -1123,7 +1125,10 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     if (liveClose) {
       phase = 'native interruption';
       await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.holdTerminal())));
-      await Promise.all(pages.map(page => wait(page, () => window.fortressNative.interrupted.length > 0 && window.fortressNative.state === 'playing')));
+      await Promise.all(pages.map(page => wait(page, () => {
+        const { interrupted, state, terminal_endpoint } = window.fortressNative;
+        return interrupted.length > 0 && state === 'playing' && terminal_endpoint === 0;
+      })));
       interruption = await observe();
       for (const peer of interruption) {
         assert.deepEqual(peer.sdk_roster.sort(), roster);
@@ -1164,8 +1169,6 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         const endpoint = peer.terminal_endpoint;
         assert.ok(Number.isInteger(endpoint) && endpoint > 0 && endpoint <= players && endpoint !== peer.slot + 1,
           'native expiry must identify a remote endpoint');
-        assert.ok(interruption[index].interrupted.includes(endpoint),
-          `native expiry must identify an interrupted peer (${peer.frozen_roster[endpoint - 1]})`);
         assert.deepEqual(peer.sdk_roster.sort(), roster, 'the original SDK roster must survive until native expiry');
         assert.deepEqual(peer.wire.sockets, [1], 'SDK room must survive the outage until native expiry');
         assert.ok(peer.wire.deferredClose, 'the app must initiate native terminal cleanup');

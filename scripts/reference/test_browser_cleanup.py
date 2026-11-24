@@ -282,6 +282,10 @@ for (const [endpoint, sender] of [[3, roster[2]], [0, undefined], [2, undefined]
     barrier.record(1, WARMUP_CHECKPOINT + JSON.stringify(wrong));
     assert.match(barrier.errors[1], /invalid warmup expiry endpoint/);
     assert.equal(barrier.checkpoints[1], null);
+    const duplicate = { ...receipt, links: [receipt.links[1], receipt.links[1]] };
+    barrier.record(2, WARMUP_CHECKPOINT + JSON.stringify(duplicate));
+    assert.match(barrier.errors[2], /invalid warmup roster/);
+    assert.equal(barrier.checkpoints[2], null);
   }
   assert.deepEqual(barrier.received, [null, null, null], 'failure cannot open the warmup gate');
 }
