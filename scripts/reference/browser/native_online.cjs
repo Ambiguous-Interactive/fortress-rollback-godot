@@ -21,8 +21,8 @@ const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
 const DEPARTURE_CHECKPOINT = 'fortress native departure ';
 const HISTORY_CHECKPOINT = 'fortress native history ';
-const POST_RELEASE_MARKS = new Set(['release_entered', 'release_started', 'release_completed', 'correction', 'history_requested', 'history_published']);
-const HOLD_MARKS = new Set(['hold_armed', 'hold_ready', 'hold_cap']);
+const POST_RELEASE_MARKS = new Set(['release_entered', 'release_completed', 'correction', 'history_requested', 'history_published']);
+const HOLD_MARKS = new Set(['hold_armed', 'hold_first_input', 'hold_first_control', 'hold_first_prediction', 'hold_ready', 'hold_cap', 'release_started']);
 
 function createWarmupBarrier(players, clock = () => performance.now()) {
   const checkpoints = Array(players).fill(null);
@@ -87,7 +87,7 @@ function instrumentPostRelease(prefix) {
     if (baseline === undefined && !hold) return;
     const { state, turns, frame, confirmed, restores } = window.fortressNative;
     console.debug(prefix + JSON.stringify({ kind, page_ms: hold?.at_ms ?? performance.now(), state, turns, frame, confirmed, restores, frames,
-      held: hold?.held, bytes: hold?.bytes }));
+      held: hold?.held, bytes: hold?.bytes, queued: hold?.queued, released: hold?.released }));
   }
   function observe() {
     if (baseline === undefined || corrected || window.fortressNative.restores <= baseline) return;
@@ -107,7 +107,8 @@ function instrumentPostRelease(prefix) {
 function postReleaseCheckpoint(peer, text, receivedAt) {
   if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
   try {
-    const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
+    const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes, queued, released } =
+      JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
     const capturesHold = HOLD_MARKS.has(kind);
     if (kind !== 'heartbeat' && !POST_RELEASE_MARKS.has(kind) && !capturesHold) return;
     const capturesHistory = kind === 'history_requested' || kind === 'history_published';
@@ -117,10 +118,12 @@ function postReleaseCheckpoint(peer, text, receivedAt) {
     const receipt = { page_ms, state, turns, frame, confirmed, restores, controller_ms: receivedAt };
     if (capturesHistory) receipt.frames = frames;
     if (capturesHold) {
-      if (![held?.mesh, held?.relay, bytes].every(value => Number.isSafeInteger(value) && value >= 0)
-        || held.mesh + held.relay > 1024 || bytes > 1024 * 1024) throw new Error('invalid hold sample');
+      if (![held?.mesh, held?.relay, bytes, queued, released].every(value => Number.isSafeInteger(value) && value >= 0)
+        || held.mesh + held.relay > 1024 || bytes > 1024 * 1024 || queued + released > held.mesh + held.relay) throw new Error('invalid hold sample');
       receipt.held = { mesh: held.mesh, relay: held.relay };
       receipt.bytes = bytes;
+      receipt.queued = queued;
+      receipt.released = released;
     }
     if (kind === 'heartbeat') peer.heartbeats = [...(peer.heartbeats ?? []).slice(-1), receipt];
     else peer[kind] ??= receipt;
@@ -177,7 +180,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   let relayBroadcasts = 0;
   const held = { mesh: 0, relay: 0 };
   const controlRoundTrips = { mesh: 0, relay: 0 };
-  const holdMark = () => ({ at_ms: performance.now(), held: { ...held }, bytes: totalBytes });
+  const holdMark = () => ({ at_ms: performance.now(), held: { ...held }, bytes: totalBytes, queued: active.length, released });
   // The pinned protocol sends one report per peer at intervals above 200 ms.
   // Keep enough relay tokens for the 45-second stall witness despite FIFO delay.
   const pendingReportLimit = { mesh: 16, relay: 256 };
@@ -342,6 +345,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     if (tokens?.get(packet.token)) {
       tokens.set(packet.token, false);
       controlRoundTrips[route]++;
+      if (controlRoundTrips.mesh + controlRoundTrips.relay === 1) window.fortressNativePostRelease?.mark('hold_first_control', undefined, holdMark());
     }
   }
   function send(route, reports, peer, emit, data, packet) {
@@ -370,6 +374,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     active.push(() => emit(owned));
     totalBytes += owned.byteLength;
     held[route]++;
+    if (!holdAll && held.mesh + held.relay === 1) window.fortressNativePostRelease?.mark('hold_first_input', undefined, holdMark());
   }
   const instant = () => Math.round(performance.now() * 1000);
   const closeConnection = RTCPeerConnection.prototype.close;
@@ -599,6 +604,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       if (!holding || !(held[route] > 0 && controlRoundTrips[route] > 0)) return null;
       return hold.ready ??= holdMark();
     },
+    holdProgress: holdMark,
     status() {
       const holdMs = hold.armed === null ? null : Math.round((hold.release?.at_ms ?? performance.now()) - hold.armed.at_ms);
       const sctp = resources.rtc.filter(({channel}) => channel.id === 3).map(record => {
@@ -800,10 +806,15 @@ function armAndWaitForInput(page, route) {
     const { frame, stalls, confirmed } = window.fortressNative;
     const armed = { frame, stalls, confirmed, hold: wire.arm() };
     window.fortressNativePostRelease?.mark('hold_armed', undefined, armed.hold);
+    let sawPrediction = false;
     while (true) {
       const state = window.fortressNative;
       if (state.state === 'failed') throw new Error(state.message);
       if (state.state === 'playing' && state.stalls > stalls && state.prediction >= gate && state.frame > gate && state.confirmed < state.frame - 1) {
+        if (!sawPrediction) {
+          sawPrediction = true;
+          window.fortressNativePostRelease?.mark('hold_first_prediction', undefined, wire.holdProgress());
+        }
         const ready = wire.recordHoldReadiness(route);
         if (ready) {
           window.fortressNativePostRelease?.mark('hold_ready', undefined, ready);
@@ -824,7 +835,7 @@ function captureAndReleaseInput(page, index, checkpoints) {
     const stalled = structuredClone({ index, ...window.fortressNative, wire: wire.status() });
     window.fortressNativeStalled = stalled;
     if (stalled.state !== 'playing') throw new Error(stalled.message || 'peer stopped before input release');
-    window.fortressNativePostRelease?.mark('release_started');
+    window.fortressNativePostRelease?.mark('release_started', undefined, wire.holdProgress());
     stalled.release = await wire.release();
     window.fortressNativePostRelease?.mark('release_completed');
     return stalled;
