@@ -18,7 +18,7 @@ const CLOSE_CLOCK_POST_SAMPLES = 4;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
-const POST_RELEASE_MARKS = new Set(['release_started', 'release_completed', 'correction', 'history_requested', 'history_published']);
+const POST_RELEASE_MARKS = new Set(['release_entered', 'release_started', 'release_completed', 'correction', 'history_requested', 'history_published']);
 
 function createWarmupBarrier(players, clock = () => performance.now()) {
   const checkpoints = Array(players).fill(null);
@@ -719,8 +719,10 @@ function armAndWaitForInput(page, route) {
   }, { route, gate: GATE_FRAME });
 }
 
-function captureAndReleaseInput(page, index) {
+function captureAndReleaseInput(page, index, checkpoints) {
+  if (checkpoints) checkpoints.release_dispatched_ms = performance.now();
   return page.evaluate(async index => {
+    window.fortressNativePostRelease?.mark('release_entered');
     const wire = window.fortressNativeWire;
     const stalled = structuredClone({ index, ...window.fortressNative, wire: wire.status() });
     window.fortressNativeStalled = stalled;
@@ -900,7 +902,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       const correctionDeadline = performance.now() + correctionBudgetMs;
       stalled = Array(players).fill(null);
       await Promise.all(pages.map(async (page, index) => {
-        stalled[index] = await boundedRoom(() => captureAndReleaseInput(page, index), correctionBudgetMs, `native peer ${index} input release`);
+        stalled[index] = await boundedRoom(() => captureAndReleaseInput(page, index, postRelease?.[index]),
+          correctionBudgetMs, `native peer ${index} input release`);
       }));
       comparedFrames = historyThrough(stalled);
       phase = 'corrected history';
