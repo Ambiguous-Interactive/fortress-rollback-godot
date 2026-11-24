@@ -45,8 +45,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   let holdFailure;
   let holdAll = false;
   let armed = false;
-  let holdStarted = null;
-  let holdEnded = null;
+  const hold = { armed: null, ready: null, release: null };
   let totalBytes = 0;
   let released = 0;
   const counts = { mesh: 0, relay: 0 };
@@ -65,6 +64,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   let relayBroadcasts = 0;
   const held = { mesh: 0, relay: 0 };
   const controlRoundTrips = { mesh: 0, relay: 0 };
+  const holdMark = () => ({ at_ms: performance.now(), held: { ...held }, bytes: totalBytes });
   // The pinned protocol sends one report per peer at intervals above 200 ms.
   // Keep enough relay tokens for the 45-second stall witness despite FIFO delay.
   const pendingReportLimit = { mesh: 16, relay: 256 };
@@ -405,14 +405,15 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
         armed = true;
         holdAll = all;
         holding = true;
-        holdStarted = performance.now();
+        hold.armed = holdMark();
       }
+      return hold.armed;
     },
     async release() {
       if (!holding || !active.length) throw new Error('native packet hold did not take effect');
       holding = false;
       releasingRelay = held.relay > 0;
-      holdEnded = performance.now();
+      hold.release = holdMark();
       // Each relay send fans out to the room. Keep originals ahead of newly sampled inputs.
       const batchSize = releasingRelay ? 16 : active.length;
       while (active.length > 0 && !holdFailure) {
@@ -425,6 +426,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       if (holdFailure) throw holdFailure;
       releasingRelay = false;
       releaseEnded = performance.now();
+      return hold.release;
     },
     // Let every peer report native expiry before a socket close can cause a room-departure event.
     holdTerminal() {
@@ -436,11 +438,12 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       holdTerminalClose = false;
       deferredClose();
     },
-    hasHeldInputAndControl(route) {
-      return held[route] > 0 && controlRoundTrips[route] > 0;
+    recordHoldReadiness(route) {
+      if (!holding || !(held[route] > 0 && controlRoundTrips[route] > 0)) return null;
+      return hold.ready ??= holdMark();
     },
     status() {
-      const holdMs = holdStarted === null ? null : Math.round((holdEnded ?? performance.now()) - holdStarted);
+      const holdMs = hold.armed === null ? null : Math.round((hold.release?.at_ms ?? performance.now()) - hold.armed.at_ms);
       const sctp = resources.rtc.filter(({channel}) => channel.id === 3).map(record => {
         if ((!record.local || !record.remote) && record.connection.signalingState !== 'closed') {
           record.local = ufrag(record.connection.localDescription) ?? record.local;
@@ -456,8 +459,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       });
       const events = [...qualityEvents.send, ...qualityEvents.receive].sort((a, b) => a.sequence - b.sequence)
         .map(({ direction, peer, kind, token, at_ms }) => ({ direction, peer, kind, token, at_ms }));
-      const releaseMs = holdEnded === null ? null : Math.round((releaseEnded ?? performance.now()) - holdEnded);
+      const releaseMs = hold.release === null ? null : Math.round((releaseEnded ?? performance.now()) - hold.release.at_ms);
       return { armed, holding, hold_ms: holdMs, release_ms: releaseMs, deferredClose: Boolean(deferredClose), counts: { ...counts }, held: { ...held }, released, totalBytes,
+        hold_boundaries: { ...hold },
         control_round_trips: { ...controlRoundTrips },
         relayRecipients: Object.fromEntries(relayRecipients), relaySenders: Object.fromEntries(relaySenders),
         relayInputRecipients: Object.fromEntries(relayInputRecipients), relayInputSenders: Object.fromEntries(relayInputSenders),
@@ -602,6 +606,40 @@ async function closeAll(items, close, kind) {
   return settled.filter(result => result.status === 'rejected').map(result => result.reason);
 }
 
+function armAndWaitForInput(page, route) {
+  return page.evaluate(async ({ route, gate }) => {
+    const wire = window.fortressNativeWire;
+    const { frame, stalls, confirmed } = window.fortressNative;
+    const armed = { frame, stalls, confirmed, hold: wire.arm() };
+    while (true) {
+      const state = window.fortressNative;
+      if (state.state === 'failed') throw new Error(state.message);
+      if (state.state === 'playing' && state.stalls > stalls && state.prediction >= gate && state.frame > gate && state.confirmed < state.frame - 1) {
+        const ready = wire.recordHoldReadiness(route);
+        if (ready) return { armed, ready: { ...ready, frame: state.frame, confirmed: state.confirmed, restores: state.restores } };
+      }
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+  }, { route, gate: GATE_FRAME });
+}
+
+function captureAndReleaseInput(page, index) {
+  return page.evaluate(async index => {
+    const wire = window.fortressNativeWire;
+    const stalled = structuredClone({ index, ...window.fortressNative, wire: wire.status() });
+    window.fortressNativeStalled = stalled;
+    if (stalled.state !== 'playing') throw new Error(stalled.message || 'peer stopped before input release');
+    stalled.release = await wire.release();
+    return stalled;
+  }, index);
+}
+
+function waitForCorrectedHistory(pages, frame, readiness, wait, timeout) {
+  return Promise.all(pages.map((page, index) => wait(page, target => window.fortressNative.state === 'playing'
+    && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores,
+  { frame, restores: readiness[index].page.restores }, timeout)));
+}
+
 async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   const startup = mode === 'mesh-startup';
   const liveClose = mode === 'mesh-close';
@@ -629,7 +667,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   let phase = 'launch';
   let sequence = 0;
   let departureClocks;
-  let stalled;
+  let armed, stalled;
+  const holdReadyReceived = Array(players).fill(null);
   const physicalCloseReport = {};
   const closeReport = {};
   const wait = async (page, condition, argument = null, timeout = 30000) => {
@@ -715,7 +754,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     await command(pages[0], 'start');
     await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
       && window.fortressNative.confirmed >= frame, GATE_FRAME, 45000)));
-    let armed, direct, atClose, afterClose, restored, recoveryEvidence, closeLinks;
+    let direct, atClose, afterClose, restored, recoveryEvidence, closeLinks;
     let comparedFrames = HISTORY_FRAMES;
     if (liveClose || recovery) {
       direct = await observe();
@@ -749,34 +788,25 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       phase = 'prediction stall';
       // Arming on each local frame can strand a slower peer before its own
       // gate. Let every endpoint confirm the warmup while routes are open.
-      armed = await Promise.all(pages.map(page => page.evaluate(() => {
-        const { frame, stalls, confirmed } = window.fortressNative;
-        window.fortressNativeWire.arm();
-        return { frame, stalls, confirmed };
-      })));
-      await Promise.all(pages.map((page, index) => wait(page, threshold => {
-        const { state, stalls, prediction } = window.fortressNative;
-        if (state === 'failed') return true;
-        if (state !== 'playing' || stalls <= threshold.stalls || prediction < threshold.frame) return false;
-        return window.fortressNativeWire.hasHeldInputAndControl(threshold.route);
-      },
-      { route, stalls: armed[index].stalls, frame: GATE_FRAME }, 45000)));
-      stalled = await observe();
-      for (const peer of stalled) {
-        assert.equal(peer.state, 'playing', peer.message);
-      }
-      comparedFrames = historyThrough(stalled);
+      armed = Array(players).fill(null);
+      await Promise.all(pages.map(async (page, index) => {
+        const receipt = await boundedRoom(() => armAndWaitForInput(page, route), 45000, `native peer ${index} prediction stall`);
+        holdReadyReceived[index] = { controller_ms: performance.now(), page: receipt.ready };
+        armed[index] = receipt.armed;
+      }));
+      if (errors.length) throw new Error(JSON.stringify(errors));
       phase = 'input release';
       const correctionBudgetMs = 45000;
       const correctionDeadline = performance.now() + correctionBudgetMs;
-      await Promise.all(pages.map((page, index) => boundedRoom(() => page.evaluate(() => window.fortressNativeWire.release()),
-        correctionBudgetMs, `native peer ${index} input release`)));
+      stalled = Array(players).fill(null);
+      await Promise.all(pages.map(async (page, index) => {
+        stalled[index] = await boundedRoom(() => captureAndReleaseInput(page, index), correctionBudgetMs, `native peer ${index} input release`);
+      }));
+      comparedFrames = historyThrough(stalled);
       phase = 'corrected history';
       const correctionRemainingMs = Math.floor(correctionDeadline - performance.now());
       assert.ok(correctionRemainingMs > 0, 'native input release exhausted the correction deadline');
-      await Promise.all(pages.map((page, index) => wait(page, target => window.fortressNative.state === 'playing'
-        && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores,
-      { frame: comparedFrames, restores: stalled[index].restores }, correctionRemainingMs)));
+      await waitForCorrectedHistory(pages, comparedFrames, holdReadyReceived, wait, correctionRemainingMs);
       assert.ok(performance.now() < correctionDeadline, 'native corrected history exceeded the correction deadline');
     } else {
       phase = 'mixed confirmed history';
@@ -827,12 +857,13 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         continue;
       }
       const before = stalled[peer.index];
+      const ready = holdReadyReceived[peer.index].page;
       if (route === 'mesh') {
         assert.ok(peer.started_on_full_mesh, 'the direct-only room must start with every physical channel connected');
         assert.ok(peer.open_mesh_wait_ticks <= 2, 'a complete direct mesh must start when the engine sees its channels');
       }
-      assert.ok(peer.saves > 0 && peer.advances > peer.frame && peer.restores > before.restores, 'save, load and re-advance must run');
-      assert.ok(before.frame > GATE_FRAME && before.confirmed < before.frame - 1, 'gate must force prediction beyond confirmation');
+      assert.ok(peer.saves > 0 && peer.advances > peer.frame && peer.restores > ready.restores, 'save, load and re-advance must run');
+      assert.ok(ready.frame > GATE_FRAME && ready.confirmed < ready.frame - 1, 'gate must force prediction beyond confirmation');
       assert.ok(before.wire.holding && before.wire.held[route] > 0, 'native bytes must be held on the selected physical route');
       assert.ok(before.wire.control_round_trips[route] > 0, 'native control must make a round trip on the selected route during the input hold');
       assert.ok(!peer.wire.holding && peer.wire.totalBytes > 0 && peer.wire.released === peer.wire.held[route]
@@ -902,20 +933,28 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         && rtc.every(([, state]) => state === 'closed');
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
+      holdReadyReceived: mixed ? undefined : holdReadyReceived,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks ?? departureClocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])], warmup, warmupCheckpointErrors };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
-      ...window.fortressNative, wire: window.fortressNativeWire?.status(), warmup: window.fortressNativeWire?.warmupStatus()
+      ...window.fortressNative, wire: window.fortressNativeWire?.status(), warmup: window.fortressNativeWire?.warmupStatus(),
+      stalled: window.fortressNativeStalled,
     })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
-    const diagnostics = states.map(state => state.status === 'fulfilled' ? state : { status: state.status, reason: String(state.reason) });
+    const diagnostics = states.map((state, index) => {
+      if (state.status === 'rejected') return { status: state.status, reason: String(state.reason) };
+      const { stalled: saved, ...current } = state.value;
+      if (stalled && !stalled[index] && saved) stalled[index] = saved;
+      return { status: state.status, value: current };
+    });
     console.error(JSON.stringify({
       phase, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks ?? departureClocks,
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
-      closeSnapshotErrors: closeReport.snapshotErrors, stalled, states: diagnostics, warmup, warmupCheckpointErrors
+      closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
+      states: diagnostics, warmup, warmupCheckpointErrors
     }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
@@ -950,4 +989,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { closeEvidence, compareHistory, instrumentNativeWire, readConfirmedHistory, reportedChannel, waitForCloseProofs };
+module.exports = { armAndWaitForInput, captureAndReleaseInput, closeEvidence, compareHistory, instrumentNativeWire, readConfirmedHistory,
+  reportedChannel, waitForCloseProofs, waitForCorrectedHistory };

@@ -292,8 +292,9 @@ for (const expiry of [false, true]) {
   const channels = [new Channel(), new Channel()];
   const [channel, other] = channels;
   const window = {};
+  let now = 10;
   const realm = {
-    window, performance, Uint8Array, ArrayBuffer, DataView, WebSocket: Socket,
+    window, performance: { now: () => now }, Uint8Array, ArrayBuffer, DataView, WebSocket: Socket,
     RTCPeerConnection: class { addEventListener() {} createDataChannel() { return channels.shift(); } },
   };
   runInNewContext(`(${instrumentNativeWire})()`, realm);
@@ -320,6 +321,8 @@ for (const expiry of [false, true]) {
   seen.length = 0;
   if (expiry) wire.holdTerminal();
   else wire.arm();
+  assert.equal(wire.recordHoldReadiness('mesh'), null);
+  assert.equal(wire.recordHoldReadiness('constructor'), null);
   channel.send(packet(2));
   channel.send(packet(4, 2));
   channel.send(packet(4, 3));
@@ -333,13 +336,17 @@ for (const expiry of [false, true]) {
     channel.message({data: packet(5, 2).subarray(0, 43)});
     other.message({data: packet(5, 2)});
     assert.deepEqual({...wire.status().control_round_trips}, {mesh: 0, relay: 0});
+    assert.equal(wire.recordHoldReadiness('mesh'), null);
     channel.message({data: packet(5, 2)});
     channel.message({data: packet(5, 2)});
+    now = 15;
+    assert.equal(wire.recordHoldReadiness('mesh').at_ms, 15);
     otherSocket.message({data: reply});
     socket.message({data: relay(3, 1, packet(5, 2))});
     socket.message({data: relay(2, 3, packet(5, 2))});
     assert.equal(wire.status().control_round_trips.relay, 0);
     socket.message({data: reply});
+    assert.equal(wire.recordHoldReadiness('relay'), null);
     socket.message({data: relay(2, 1, packet(4, 4))});
     socket.send(relay(1, 2, packet(5, 4)));
   }
@@ -392,13 +399,93 @@ for (const expiry of [false, true]) {
   }
   assert.throws(() => channel.send(packet(7, 0, 3)), /native gameplay wire header/);
   if (!expiry) {
+    now = 25;
+    assert.equal(wire.recordHoldReadiness('mesh').at_ms, 15);
     wire.release();
+    assert.equal(wire.recordHoldReadiness('mesh'), null);
+    assert.deepEqual(JSON.parse(JSON.stringify(wire.status().hold_boundaries)), {
+      armed: { at_ms: 10, held: { mesh: 0, relay: 0 }, bytes: 0 },
+      ready: { at_ms: 15, held: { mesh: 1, relay: 0 }, bytes: 28 },
+      release: { at_ms: 25, held: { mesh: 1, relay: 0 }, bytes: 28 },
+    });
     assert.deepEqual(seen, [packet(4, 2), packet(4, 3), packet(255), packet(2)].map(bytes => Array.from(bytes)));
   } else assert.deepEqual(seen, []);
 }
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
+
+    def test_native_stalled_snapshot_starts_release_before_returning_to_controller(self):
+        # Value: protects=release start in the stalled snapshot turn; fails_when=capture and release need separate calls; seam=page evaluation
+        script = r"""
+const assert = require('node:assert/strict');
+const { armAndWaitForInput, captureAndReleaseInput, waitForCorrectedHistory } = require(process.argv[1]);
+let evaluations = 0, holding = true, started = 0;
+const releaseMark = { at_ms: 80, held: { mesh: 0, relay: 9 }, bytes: 1440 };
+const turns = [];
+global.requestAnimationFrame = callback => turns.push(callback);
+global.window = {
+  fortressNative: { state: 'playing', frame: 13, confirmed: 12, stalls: 2, prediction: -1, restores: 1, nested: { count: 0 } },
+  fortressNativeWire: {
+    arm: () => 'arm mark',
+    recordHoldReadiness(route) {
+      assert.equal(route, 'relay');
+      assert.equal(window.fortressNative.stalls, 3);
+      return { at_ms: 30, held: { mesh: 0, relay: 3 }, bytes: 480 };
+    },
+    status: () => ({ holding }),
+    async release() {
+      assert.equal(evaluations, 2);
+      holding = false;
+      started++;
+      window.fortressNative.restores++;
+      window.fortressNative.nested.count++;
+      return releaseMark;
+    },
+  },
+};
+const page = { async evaluate(callback, argument) { evaluations++; return callback(argument); } };
+async function run() {
+  const ready = armAndWaitForInput(page, 'relay');
+  assert.equal(turns.length, 1);
+  window.fortressNative.frame = 21;
+  window.fortressNative.prediction = 12;
+  window.fortressNative.stalls++;
+  turns.shift()();
+  const receipt = await ready;
+  assert.deepEqual(receipt, { armed: { frame: 13, confirmed: 12, stalls: 2, hold: 'arm mark' },
+    ready: { at_ms: 30, held: { mesh: 0, relay: 3 }, bytes: 480, frame: 21, confirmed: 12, restores: 1 } });
+
+  // Another page can release before this page's stalled snapshot runs.
+  window.fortressNative.restores = 2;
+  const before = await captureAndReleaseInput(page, 3);
+  assert.deepEqual(before, { index: 3, state: 'playing', frame: 21, confirmed: 12, stalls: 3, prediction: 12,
+    restores: 2, nested: { count: 0 }, wire: { holding: true }, release: releaseMark });
+  assert.equal(evaluations, 2);
+  assert.equal(started, 1);
+  const confirm = (owner, predicate, target, timeout) => {
+    assert.equal(owner, page);
+    assert.equal(timeout, 200);
+    window.fortressNative = { state: 'playing', confirmed: 40, restores: before.restores };
+    assert.equal(predicate(target), true, 'a restore before local release still counts');
+    window.fortressNative.restores = receipt.ready.restores;
+    assert.equal(predicate(target), false, 'a restore must follow readiness');
+  };
+  await waitForCorrectedHistory([page], 40, [{ page: receipt.ready }], confirm, 200);
+
+  window.fortressNative = { state: 'failed', message: 'left before release' };
+  await assert.rejects(captureAndReleaseInput(page, 4), /left before release/);
+  assert.equal(started, 1);
+  window.fortressNative = { state: 'playing' };
+  window.fortressNativeWire.release = async () => { throw new Error('send failed'); };
+  await assert.rejects(captureAndReleaseInput(page, 5), /send failed/);
+  assert.equal(window.fortressNativeStalled.index, 5);
+  assert.equal(window.fortressNativeStalled.state, 'playing');
+}
+const timer = setTimeout(() => { throw new Error('input hold test did not settle'); }, 1000);
+run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
     def test_native_relay_release_drains_originals_in_order_while_control_passes(self):
         # Value: protects=bounded FIFO recovery on the real socket hook; fails_when=release bursts or overtakes; seam=browser send
@@ -443,7 +530,8 @@ async function run() {
     turns.shift()();
     await Promise.resolve();
   }
-  await recovery;
+  const started = await recovery;
+  assert.equal(started.held.relay, 33);
   assert.deepEqual(released.filter(value => value !== 99), Array.from({length: 34}, (_, i) => i));
   assert.equal(wire.status().released, 34);
   assert.equal(wire.status().holding, false);
