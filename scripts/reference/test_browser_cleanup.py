@@ -12,6 +12,61 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_native_leave_requires_a_correlated_publication(self):
+        # Value: protects=departure receipt; fails_when=stale or incomplete evidence passes; seam=Playwright console event
+        script = r"""
+const assert = require('node:assert/strict');
+const { leaveWithReceipt } = require(process.argv[1]);
+const message = (id, stage, data = {}) => ({ text: () => 'fortress native departure ' + JSON.stringify({ id, stage, page_ms: 4, ...data }) });
+function fixture(published, dispatchError = false) {
+  let predicate, resolve, reject;
+  return {
+    waitForEvent(event, options) {
+      assert.equal(event, 'console');
+      predicate = options.predicate;
+      return new Promise((yes, no) => { resolve = yes; reject = no; });
+    },
+    async evaluate(_publish, command) {
+      assert.deepEqual(command, { id: 18, kind: 'leave' });
+      assert.equal(typeof predicate, 'function');
+      assert.equal(predicate(message(17, 'published', { code: 0, state: 'offline' })), false);
+      assert.equal(predicate(message(18, 'published', { code: 0, state: 'offline' })), false);
+      assert.equal(predicate(message(18, 'entered')), false);
+      setImmediate(() => {
+        if (published && predicate(message(18, 'published', published))) {
+          resolve();
+          predicate(message(18, 'published', { code: 0, state: 'offline' }));
+        } else {
+          reject(Error('departure timed out'));
+        }
+      });
+      if (dispatchError) throw Error('dispatch response lost');
+    }
+  };
+}
+let completed = false;
+process.on('beforeExit', () => {
+  if (!completed) process.exitCode = 1;
+});
+(async () => {
+  const trace = { id: 18 };
+  await leaveWithReceipt(fixture({ code: 0, state: 'offline' }), trace);
+  assert.ok(trace.controller_dispatch_ms <= trace.published.controller_ms);
+  assert.equal(trace.entered.page_ms, 4);
+  assert.equal(trace.published.code, 0);
+  for (const [published, pattern, error] of [[null, /departure timed out/], [{ code: 0, state: 'offline' }, /dispatch response lost/, true],
+    [{ code: 1, state: 'offline' }, /leave failed/], [{ code: 0, state: 'playing' }, /leave failed/]]) {
+    const partial = { id: 18 };
+    await assert.rejects(leaveWithReceipt(fixture(published, error), partial), pattern);
+    assert.equal(partial.entered.page_ms, 4);
+    if (published) assert.deepEqual({ code: partial.published.code, state: partial.published.state }, published);
+    else assert.equal(partial.published, undefined);
+  }
+  completed = true;
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
     def test_native_recovery_holds_only_offerers_signaling(self):
         # Value: protects=unmodified responder signaling; fails_when=answerer ICE stays queued; seam=browser socket
         script = r"""

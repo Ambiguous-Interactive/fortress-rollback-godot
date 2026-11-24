@@ -48,6 +48,9 @@ Preserve those observations when browser operations reject, including later resu
 If cleanup also rejects, retain both the operation and cleanup causes; test each independently.
 Failure reporting must not replace owned-operation errors. Guard reporting and disable custom inspection; test opaque and primitive rejections.
 Bounded optional observations may record unavailable metadata. Owned event waits must observe command and event rejections before starting the command.
+When a command's reply and completion event can arrive independently, arm the observer before dispatch and settle both bounded operations before reporting failure.
+Correlate command receipts to the issuing page and command ID. Record entry and publication on the page clock and receipt on the controller clock.
+Test an acknowledgment arriving after a dispatch rejection and require the asynchronous test to reach its final assertion.
 Await all owned context and browser closures after sibling rejection, then await server closure. Preserve context-before-browser order for Firefox.
 When a cleanup callback contract changes, update every dependent test double and run the complete CI control command, including sibling test files.
 Route callbacks run outside the runner's awaited stack. Forward their failures into the same owner and fence every callback continuation before starting another browser action.

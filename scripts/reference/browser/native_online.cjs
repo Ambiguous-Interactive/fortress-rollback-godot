@@ -18,6 +18,7 @@ const CLOSE_CLOCK_POST_SAMPLES = 4;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
+const DEPARTURE_CHECKPOINT = 'fortress native departure ';
 const POST_RELEASE_MARKS = new Set(['release_entered', 'release_started', 'release_completed', 'correction', 'history_requested', 'history_published']);
 
 function createWarmupBarrier(players, clock = () => performance.now()) {
@@ -740,6 +741,36 @@ function waitForCorrectedHistory(pages, frame, readiness, wait, timeout) {
   { frame, restores: readiness[index].page.restores }, timeout)));
 }
 
+async function leaveWithReceipt(page, trace) {
+  const publication = page.waitForEvent('console', {
+    timeout: PAGE_WAIT_MS,
+    predicate(message) {
+      const text = message.text();
+      if (!text.startsWith(DEPARTURE_CHECKPOINT)) return false;
+      let sample;
+      try {
+        sample = JSON.parse(text.slice(DEPARTURE_CHECKPOINT.length));
+      } catch {
+        return false;
+      }
+      if (sample?.id !== trace.id || !Number.isFinite(sample.page_ms) || sample.page_ms < 0) return false;
+      const controller_ms = performance.now();
+      if (sample.stage === 'entered') trace.entered ??= { page_ms: sample.page_ms, controller_ms };
+      if (sample.stage !== 'published' || trace.published || !trace.entered || sample.page_ms < trace.entered.page_ms
+        || !Number.isSafeInteger(sample.code) || typeof sample.state !== 'string') return false;
+      trace.published = { page_ms: sample.page_ms, controller_ms, code: sample.code, state: sample.state };
+      return true;
+    },
+  });
+  trace.controller_dispatch_ms = performance.now();
+  const [dispatch, receipt] = await Promise.allSettled([boundedRoom(() => page.evaluate(value => { window.fortressNativeCommand = value; },
+    { id: trace.id, kind: 'leave' }), PAGE_WAIT_MS, 'native leave dispatch'), publication]);
+  if (dispatch.status === 'rejected') throw dispatch.reason;
+  if (receipt.status === 'rejected') throw receipt.reason;
+  assert.ok(trace.published.code === 0 && trace.published.state === 'offline',
+    `leave failed: command ${trace.id} returned code ${trace.published.code} in state ${trace.published.state}`);
+}
+
 async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   const startup = mode === 'mesh-startup';
   const liveClose = mode === 'mesh-close';
@@ -760,6 +791,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   const errors = [];
   const physicalCloseErrors = [];
   const departureErrors = [];
+  const departureCommands = [];
   const failures = [];
   const browsers = [];
   const browserPeers = [];
@@ -783,6 +815,12 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     await wait(page, expected => window.fortressNative?.command_id === expected, id);
     const state = await page.evaluate(() => window.fortressNative);
     assert.equal(state.command_code, 0, `${kind} failed: ${state.message}`);
+  };
+  const leave = async (page, index) => {
+    const trace = { id: ++sequence, index, phase };
+    departureCommands.push(trace);
+    await leaveWithReceipt(page, trace);
+    if (errors.length) throw new Error(JSON.stringify(errors));
   };
   const observe = (group = pages) => Promise.all(group.map((page, index) => page.evaluate(index => ({
     index, ...window.fortressNative, wire: window.fortressNativeWire.status()
@@ -1012,9 +1050,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         }));
       }
       phase = 'departure';
-      const departing = pages.at(-1);
-      await command(departing, 'leave');
-      await wait(departing, () => window.fortressNative.state === 'offline');
+      await leave(pages.at(-1), players - 1);
     }
     await Promise.all(survivors.map(page => wait(page, () => window.fortressNative.state === 'failed' && window.fortressNative.terminated)));
     const terminal = await observe(survivors);
@@ -1037,14 +1073,16 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     phase = 'teardown';
     if (!liveClose) closeLinks = await waitForCloseProofs(pages, peers, departureErrors, closeReport, { clocks: departureClocks }) ?? closeLinks;
     if (liveClose) await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.releaseTerminal())));
-    await Promise.all(survivors.map(page => command(page, 'leave')));
+    const teardown = await Promise.allSettled(survivors.map(leave));
+    const leaveErrors = teardown.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
+    if (leaveErrors.length) throw new AggregateError(leaveErrors, 'native teardown leave failed');
     await Promise.all(pages.map(page => wait(page, () => {
       const { sockets, rtc } = window.fortressNativeWire.status();
       return window.fortressNative.state === 'offline' && sockets.every(state => state === WebSocket.CLOSED)
         && rtc.every(([, state]) => state === 'closed');
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
-      holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease,
+      holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, departureCommands,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks ?? departureClocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupGateReceived: warmupBarrier?.received };
@@ -1062,7 +1100,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     });
     console.error(JSON.stringify({
       phase, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors: [...physicalCloseErrors, ...departureErrors],
-      departureClocks: closeReport.clocks ?? departureClocks,
+      departureClocks: closeReport.clocks ?? departureClocks, departureCommands,
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
@@ -1102,5 +1140,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { armAndWaitForInput, captureAndReleaseInput, closeEvidence, compareHistory, createWarmupBarrier, instrumentNativeWire, instrumentPostRelease,
+module.exports = { armAndWaitForInput, captureAndReleaseInput, closeEvidence, compareHistory, createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt,
   postReleaseCheckpoint, readConfirmedHistory, reportedChannel, waitForCloseProofs, waitForCorrectedHistory, WARMUP_CHECKPOINT };
