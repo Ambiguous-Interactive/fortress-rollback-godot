@@ -64,6 +64,10 @@ Subtract `release_entered.page_ms` from `release_started.page_ms` to measure pag
 The last two browser heartbeats carry the Godot turn and confirmation counters. A moving heartbeat with a fixed turn
 counter locates a pause in Godot service, while advancing turns with fixed confirmation locate a different stall. Missing checkpoints
 show where evidence stopped arriving. They cannot distinguish a stalled renderer from an unavailable browser control channel.
+The `departureCommands` records correlate each leave command to its issuing page and phase.
+Compare `controller_dispatch_ms` with `published.controller_ms` for end-to-end acknowledgment, and `entered.page_ms` with
+`published.page_ms` for page execution and publication. A successful acknowledgment carries code zero and offline state.
+The witness still checks survivor termination and waits for every socket and data channel to close.
 After the physical-close case confirms resumed play, it holds all datagrams to verify terminal expiry.
 
 ```sh

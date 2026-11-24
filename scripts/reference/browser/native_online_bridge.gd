@@ -228,11 +228,15 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	var departure_id: int = 0
 	var text: String = JavaScriptBridge.eval("JSON.stringify(window.fortressNativeCommand || {})")
 	if text.length() <= 1024:
 		var value: Variant = JSON.parse_string(text)
 		if value is Dictionary and int(value.get("id", 0)) > command_id:
 			command_id = int(value.id)
+			if value.get("kind") == "leave":
+				departure_id = command_id
+				JavaScriptBridge.eval("console.debug('fortress native departure ' + JSON.stringify({id: %d, stage: 'entered', page_ms: performance.now()}))" % departure_id)
 			_command(value)
 	var match_status: Types.Status = lobby.game_match.status()
 	var warmup_ready: bool = lobby.state == "playing" and match_status.confirmed_frame >= GATE_FRAME
@@ -300,6 +304,14 @@ func _process(_delta: float) -> void:
 			)
 		)
 	JavaScriptBridge.eval("window.fortressNative = " + JSON.stringify(result) + "; window.fortressNativePostRelease?.observe()")
+	if departure_id != 0:
+		JavaScriptBridge.eval(
+			(
+				"const { command_id: id, command_code: code, state } = window.fortressNative; "
+				+ "console.debug('fortress native departure ' + JSON.stringify({id, stage: 'published', code, state, page_ms: performance.now()}))"
+			),
+			false
+		)
 	if game != null:
 		_capture_history(game)
 
