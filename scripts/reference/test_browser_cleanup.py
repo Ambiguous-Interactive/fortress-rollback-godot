@@ -40,6 +40,40 @@ for (const holdsOffer of [true, false]) {
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
+    def test_native_recovery_drops_only_selected_first_offer(self):
+        # Value: protects=exact Offer-only loss; fails_when=the fault drops ICE, a later offer or unrelated traffic; seam=SDK socket
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire } = require(process.argv[1]);
+const sent = [], window = {};
+class Socket {
+  static OPEN = 1;
+  readyState = 1;
+  send(data) { sent.push(data); }
+  addEventListener() {}
+}
+runInNewContext(`(${instrumentNativeWire})(false, '')`, {
+  window, WebSocket: Socket, RTCPeerConnection: class {}, performance: { now: () => 1 },
+});
+const wire = window.fortressNativeWire;
+wire.observeRecovery({ room: 'room', generation: 'gen', peer: 'peer', localEpoch: 1, peerEpoch: 2, holdsOffer: true });
+function signal(kind, attempt = 1, room = 'room') {
+  return JSON.stringify({ type: 'Signal', data: { generation: 'gen', to: 'peer',
+    signal: { MeshRecovery: { v: 1, room, from_epoch: 1, to_epoch: 2, attempt, kind, body: 'body' } } } });
+}
+const socket = new window.WebSocket();
+const ice = signal('IceCandidate'), other = signal('Offer', 1, 'other'), retry = signal('Offer', 2);
+for (const data of [signal('Offer'), ice, other]) socket.send(data);
+assert.deepEqual(sent, [other]);
+assert.equal(wire.releaseRecovery('drop-first-offer'), 1);
+socket.send(retry);
+assert.deepEqual(sent, [other, ice, retry], 'only the scoped first Offer must be lost');
+assert.equal(wire.status().recovery.droppedOffers, 1);
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_native_recovery_checks_cumulative_relay_routes(self):
         # Value: protects=healthy links stay direct; fails_when=transient relay on a healthy link is overlooked; seam=recovery receipt
         script = r"""
@@ -60,6 +94,44 @@ assert.throws(() => assertStableRoom(direct, peers), /relay must stay within the
 delete peers[0].wire.relayRecipients.healthya;
 peers[1].wire.relaySenders.healthyb = 1;
 assert.throws(() => assertStableRoom(direct, peers), /relay must stay within the recovering pair/);
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_recovery.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
+    def test_native_recovery_requires_direct_progress_through_final_capture(self):
+        # Value: protects=direct gameplay through final capture; fails_when=open channels can stop carrying inputs; seam=recovery receipt
+        script = r"""
+const assert = require('node:assert/strict');
+const { assertRecoveredRoom } = require(process.argv[1]);
+const targets = [1, 0, 3, 2];
+const direct = ['first', 'second', 'third', 'fourth'].map((uuid, index, roster) => ({
+  uuid, state: 'playing', started_on_full_mesh: true, plan_events: 1, sdk_roster: roster,
+  wire: { sctp: [0, 1, 2].map(channel => ({ index: channel, open: true, closeEvents: 0, local: 'local', remote: 'remote',
+    inputsSent: 0, inputsReceived: 0 })) },
+}));
+const restored = direct.map((peer, index) => {
+  const sctp = peer.wire.sctp.map(link => ({ ...link, index: link.index === 0 ? 3 : link.index, inputsSent: 1, inputsReceived: 1 }));
+  const relay = { [direct[targets[index]].uuid]: 1 };
+  return { ...peer, wire: { sctp, sockets: [1], relayRecipients: relay, relaySenders: relay } };
+});
+const evidence = {
+  pairs: [[0, 1], [2, 3]].map(pair => ({
+    old: pair.map(index => direct[index].wire.sctp[0]),
+    replacement: pair.map(index => restored[index].wire.sctp[0]),
+  })),
+  targets,
+};
+const final = restored.map(peer => ({
+  ...peer, wire: { ...peer.wire, sctp: peer.wire.sctp.map(link => ({ ...link, inputsSent: 2, inputsReceived: 2 })) },
+}));
+assert.doesNotThrow(() => assertRecoveredRoom(direct, restored, final, evidence));
+for (const link of final.flatMap(peer => peer.wire.sctp)) {
+  for (const counter of ['inputsSent', 'inputsReceived']) {
+    link[counter] = 1;
+    assert.throws(() => assertRecoveredRoom(direct, restored, final, evidence), /direct gameplay must advance through final history capture/);
+    link[counter] = 2;
+  }
+}
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_recovery.cjs')]
         subprocess.run(command, check=True, timeout=10)

@@ -1,4 +1,4 @@
-const { assertStableRoom, recoverPair } = require('./native_recovery.cjs');
+const { assertRecoveredRoom, recoverPairs } = require('./native_recovery.cjs');
 const assert = require('node:assert/strict');
 const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
 const { createHost } = require('./online_host.cjs');
@@ -55,7 +55,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   const relayInputRecipients = new Map();
   const relayInputSenders = new Map();
   let blockRecovery = false;
-  const recovery = { scope: null, held: null, released: 0, delivered: [], pending: [], observed: [],
+  const recovery = { scope: null, released: 0, delivered: [], pending: [], observed: [], drops: null, droppedOffers: 0,
     queuedKinds: { Offer: 0, IceCandidate: 0 }, receivedKinds: { Offer: 0, IceCandidate: 0 } };
   const qualityEvents = { send: [], receive: [] };
   const qualityEventCounts = { send: 0, receive: 0 };
@@ -325,16 +325,19 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     if (blockRecovery && outgoing) return;
     if (outgoing?.kind === 'Offer') {
       if (recovery.observed.length === 8) throw new Error('recovery sent too many scoped offers');
-      recovery.observed.push({ attempt: outgoing.attempt, at_ms: performance.now() });
-      if (!recovery.held && outgoing.attempt === 1) recovery.held = { ...outgoing, at_ms: performance.now() };
+      recovery.observed.push({ ...outgoing, at_ms: performance.now() });
+      if (recovery.drops === 'drop-all-offers') {
+        recovery.droppedOffers++;
+        return;
+      }
     }
     if (recovery.scope?.holdsOffer && isFirstRecoveryOfferTraffic(outgoing) && !recovery.released) {
       if (recovery.pending.length === 32) throw new Error('scoped SDP and ICE queue exceeded its bound');
       recovery.queuedKinds[outgoing.kind]++;
-      recovery.pending.push(() => {
+      recovery.pending.push({ kind: outgoing.kind, emit: () => {
         if (this.readyState !== nativeSocket.OPEN) throw new Error('recovery signaling socket closed before release');
         socketSend.call(this, data);
-      });
+      } });
       return;
     }
     const packet = relayAddresses(data);
@@ -382,12 +385,16 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       if (recovery.scope) throw new Error('recovery scope already set');
       recovery.scope = scope;
     },
-    releaseRecovery() {
-      if (!recovery.held || !recovery.pending.length || recovery.released) throw new Error('recovery SDP was not held');
+    releaseRecovery(drops = null) {
+      if (recovery.queuedKinds.Offer !== 1 || !recovery.pending.length || recovery.released) throw new Error('recovery SDP was not held');
+      recovery.drops = drops;
       recovery.released = performance.now();
       const pending = recovery.pending.splice(0);
-      for (const emit of pending) emit();
-      return pending.length;
+      for (const { kind, emit } of pending) {
+        if (drops && kind === 'Offer') recovery.droppedOffers++;
+        else emit();
+      }
+      return pending.length - recovery.droppedOffers;
     },
     meshOpen(peers) {
       return resources.rtc.filter(({channel, connection}) => channel.readyState === 'open' && connection.connectionState === 'connected').length === peers * 3;
@@ -454,7 +461,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
         control_round_trips: { ...controlRoundTrips },
         relayRecipients: Object.fromEntries(relayRecipients), relaySenders: Object.fromEntries(relaySenders),
         relayInputRecipients: Object.fromEntries(relayInputRecipients), relayInputSenders: Object.fromEntries(relayInputSenders),
-        recovery: { held: recovery.held, released: recovery.released, pending: recovery.pending.length,
+        recovery: { released: recovery.released, pending: recovery.pending.length, droppedOffers: recovery.droppedOffers,
           queuedKinds: { ...recovery.queuedKinds }, receivedKinds: { ...recovery.receivedKinds },
           delivered: [...recovery.delivered], observed: [...recovery.observed] },
         relay_trace: { buffered_bytes_peak: bufferedBytesPeak, broadcasts: relayBroadcasts, events,
@@ -595,10 +602,11 @@ async function closeAll(items, close, kind) {
   return settled.filter(result => result.status === 'rejected').map(result => result.reason);
 }
 
-async function run(root, endpoint, mode, players, browserPair) {
+async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   const startup = mode === 'mesh-startup';
   const liveClose = mode === 'mesh-close';
-  const recovery = mode === 'mesh-recovery';
+  const overlap = mode === 'mesh-recovery-overlap';
+  const recovery = mode === 'mesh-recovery' || overlap;
   const mixed = startup || liveClose || recovery;
   const route = mixed ? 'mesh' : mode;
   const traceWarmup = route === 'relay' && players === 8;
@@ -653,7 +661,7 @@ async function run(root, endpoint, mode, players, browserPair) {
       const display = name === 'firefox' ? await placeFirefox(page, index) : null;
       browserPeers.push({ index, name, version: browser.version(), display });
       page.on('pageerror', error => {
-        const physicalClose = (liveClose || recovery) && phase === 'physical channel close' && index === 1;
+        const physicalClose = (liveClose || mode === 'mesh-recovery') && phase === 'physical channel close' && index === 1;
         const departure = route === 'mesh' && phase === 'departure' && index < players - 1;
         const webkitSend = name === 'webkit' && error.name === '' && error.message === WEBKIT_CLOSED_STREAM;
         const errorList = !webkitSend ? errors : physicalClose ? physicalCloseErrors : departure ? departureErrors : errors;
@@ -718,11 +726,12 @@ async function run(root, endpoint, mode, players, browserPair) {
       }
     }
     if (recovery) {
-      ({ atClose, afterClose, restored, recoveryEvidence } = await recoverPair(direct, {
-        pages, wait, observe, command, pause, setPhase: value => { phase = value; },
+      ({ atClose, afterClose, restored, recoveryEvidence } = await recoverPairs(direct, {
+        pages, observe: () => boundedRoom(observe, 3000, 'native recovery snapshot'), command, pause, overlap, omitSecond,
+        setPhase: value => { phase = value; },
       }));
       comparedFrames = historyThrough(restored);
-      closeLinks = await waitForCloseProofs(pages, direct, physicalCloseErrors, physicalCloseReport, { closer: 0 });
+      if (!overlap) closeLinks = await waitForCloseProofs(pages, direct, physicalCloseErrors, physicalCloseReport, { closer: 0 });
     }
     if (liveClose) {
       // Keep the fault on both routes for the independent native-expiry cell.
@@ -782,7 +791,7 @@ async function run(root, endpoint, mode, players, browserPair) {
     const history = await Promise.all(pages.map(page => readConfirmedHistory(page, comparedFrames, wait)));
     const peers = (await observe()).map((peer, index) => ({ ...peer, rows: history[index].rows, snapshots: history[index].snapshots }));
     compareHistory(peers, comparedFrames);
-    if (recovery) assertStableRoom(direct, peers);
+    if (recovery) assertRecoveredRoom(direct, restored, peers, recoveryEvidence);
     phase = 'route validation';
     const other = route === 'mesh' ? 'relay' : 'mesh';
     for (const peer of peers) {
@@ -925,15 +934,17 @@ async function run(root, endpoint, mode, players, browserPair) {
 }
 
 if (require.main === module) {
-  const [root, endpoint, route, size, profile = 'chromium'] = process.argv.slice(2);
+  const [root, endpoint, route, size, profile = 'chromium', control] = process.argv.slice(2);
   const browserPair = profile.split('-');
   const validPair = browserPair.length <= 2 && new Set(browserPair).size === browserPair.length
     && browserPair.every(name => ['chromium', 'firefox', 'webkit'].includes(name));
-  const validRoom = (['mesh-startup', 'mesh-close', 'mesh-recovery'].includes(route) && size === '4') || (['mesh', 'relay'].includes(route) && ['2', '4', '8'].includes(size));
-  if (!validRoom || !validPair) {
-    console.error('usage: native_online.cjs EXPORT ENDPOINT mesh|relay 2|4|8, or mesh-startup|mesh-close|mesh-recovery 4, with optional browser pair');
+  const overlap = route === 'mesh-recovery-overlap';
+  const validOverlap = overlap && ['chromium', 'chromium-firefox'].includes(profile) && (!control || control === '--omit-second-replacement');
+  const validFault = size === '4' && (validOverlap || (!control && ['mesh-startup', 'mesh-close', 'mesh-recovery'].includes(route)));
+  if (!(validFault || (!control && ['mesh', 'relay'].includes(route) && ['2', '4', '8'].includes(size))) || !validPair) {
+    console.error('usage: native_online.cjs EXPORT ENDPOINT MODE SIZE [BROWSER_PROFILE] [--omit-second-replacement]');
     process.exitCode = 1;
-  } else run(root, endpoint, route, Number(size), browserPair).then(result => console.log(JSON.stringify(result))).catch(error => {
+  } else run(root, endpoint, route, Number(size), browserPair, Boolean(control)).then(result => console.log(JSON.stringify(result))).catch(error => {
     console.error(error);
     process.exitCode = 1;
   });

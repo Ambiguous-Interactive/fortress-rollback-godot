@@ -29,6 +29,9 @@ import host_capacity  # noqa: E402
 from package_addon import ADDON, snapshot as runtime_snapshot  # noqa: E402
 
 CELLS = tuple(f'{route}:{count}' for route in ('mesh', 'relay') for count in (2, 4, 8)) + ('mesh-startup:4', 'mesh-close:4', 'mesh-recovery:4')
+OVERLAP_CELL = 'mesh-recovery-overlap:4'
+RECOVERY_MODES = ('mesh-recovery', 'mesh-recovery-overlap')
+OVERLAP_PROFILES = ('chromium', 'chromium-firefox')
 BROWSER_PAIRS = ('chromium', 'firefox', 'webkit', 'chromium-firefox', 'chromium-webkit', 'firefox-webkit')
 BROWSER = ROOT / 'scripts/reference/browser'
 EXTENSION = 'addons/fortress_native/fortress.gdextension'
@@ -181,8 +184,8 @@ def create_server_config(source, route, port, stun_server=None):
 def validate_cell(evidence, mode, players, browser_pair):
     required_frames = MIN_COMPARED_FRAMES
     if mode != 'mesh-startup':
-        boundary = evidence[{'mesh-close': 'afterClose', 'mesh-recovery': 'restored'}.get(mode, 'stalled')]
-        limit = RECOVERY_HISTORY_LIMIT if mode == 'mesh-recovery' else HISTORY_LIMIT
+        boundary = evidence['restored' if mode in RECOVERY_MODES else 'afterClose' if mode == 'mesh-close' else 'stalled']
+        limit = RECOVERY_HISTORY_LIMIT if mode in RECOVERY_MODES else HISTORY_LIMIT
         indices = set()
         for peer in boundary:
             index, frame = peer['index'], peer['frame']
@@ -205,7 +208,7 @@ def validate_cell(evidence, mode, players, browser_pair):
         raise ValueError(f'wrong browser composition: {mode}:{players}')
 
 
-def play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server):
+def play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server, omit_second=False):
     results = []
     for route in ('mesh', 'relay'):
         selected = [cell for cell in cells if cell.split(':')[0].split('-')[0] == route]
@@ -220,6 +223,8 @@ def play_cells(cells, export, environment, server_source, server_binary, output,
                     mode, players = cell.split(':')
                     command = ['node', str(BROWSER / 'native_online.cjs'), str(export), f'ws://127.0.0.1:{port}/v3/ws', mode, players,
                                '-'.join(browser_pair)]
+                    if omit_second:
+                        command.append('--omit-second-replacement')
                     evidence = json.loads(run_browser(command, environment, output / f'{mode}-{players}.log', rooms=1))
                     validate_cell(evidence, mode, int(players), browser_pair)
                     results.append(evidence)
@@ -231,14 +236,15 @@ def play_cells(cells, export, environment, server_source, server_binary, output,
 def main():
     parser = ReceiptParser(description=__doc__, receipt=REPORT)
     parser.add_argument('--version', help='pinned Godot version, defaults to current stable')
-    parser.add_argument('--cell', action='append', choices=CELLS)
+    parser.add_argument('--cell', action='append', choices=(*CELLS, OVERLAP_CELL))
+    parser.add_argument('--omit-second-replacement', action='store_true', help='negative control for the overlapping recovery cell')
     parser.add_argument('--browser-pair', choices=BROWSER_PAIRS, default='chromium', help='single engine or alternating engines in each room')
     parser.add_argument('--cache', type=Path, default=ROOT / '.cache/reference')
     parser.add_argument('--addon', type=Path, required=True, help='complete Web addon archive for this revision')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     output, cache, addon = args.output.resolve(), args.cache.resolve(), args.addon.resolve()
-    logs = [cell.replace(':', '-') + '.log' for cell in CELLS]
+    logs = [cell.replace(':', '-') + '.log' for cell in (*CELLS, OVERLAP_CELL)]
     logs += ['mesh-server.log', 'relay-server.log', 'import.log', 'export.log', 'version.log', 'tls.log', 'stun.log']
     begin_results(output, REPORT, logs)
     receipt = output / REPORT
@@ -256,7 +262,12 @@ def main():
     for variable in ('FORTRESS_PLAYWRIGHT_PACKAGE', *tools.values()):
         if not environment.get(variable):
             parser.error(f'{variable} must name the installed browser tool')
-    cells = tuple(dict.fromkeys(args.cell or CELLS))
+    overlap_cells = (OVERLAP_CELL,) if args.browser_pair in OVERLAP_PROFILES else ()
+    cells = tuple(dict.fromkeys(args.cell or (*CELLS, *overlap_cells)))
+    if OVERLAP_CELL in cells and not overlap_cells:
+        parser.error(f'{OVERLAP_CELL} requires one of: {", ".join(OVERLAP_PROFILES)}')
+    if args.omit_second_replacement and cells != (OVERLAP_CELL,):
+        parser.error(f'--omit-second-replacement requires --cell {OVERLAP_CELL}')
     stun_tool = None
     if browser_pair != ('chromium',) and any(cell.startswith('mesh') for cell in cells):
         stun = environment.get('FORTRESS_STUN_EXECUTABLE') or shutil.which('turnserver')
@@ -301,11 +312,13 @@ def main():
         try:
             stun = local_stun(stun_tool, root, output / 'stun.log') if stun_tool is not None else nullcontext(None)
             with stun as stun_server:
-                results = play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server)
+                results = play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server, args.omit_second_replacement)
         finally:
             host_capacity.release()
         if inventory(files) != frozen or inventory({'export': export}) != exported:
             raise ValueError('native browser witness inputs changed during execution')
+    if args.omit_second_replacement:
+        raise ValueError('overlapping recovery passed with the second replacement omitted')
     receipt.write_text(json.dumps({'passed': True, 'engine': actual, 'cells': cells, 'browser_pair': args.browser_pair,
                                    'stun_server': stun_server, 'inputs': frozen,
                                    'staged': staged, 'export': exported, 'results': results}, indent=2) + '\n', encoding='utf-8')

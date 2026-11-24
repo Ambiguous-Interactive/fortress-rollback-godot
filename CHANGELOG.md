@@ -4,6 +4,8 @@
 
 ### Added
 
+- Test two simultaneous WebRTC link replacements in a packaged four-player native match, including recovery after a lost signaling Offer. [Browser qualification](docs/native-backend-migration.md)
+
 - Compare verified local edit times by command and count required CI verdicts reaching seven minutes. [Iteration measurements](docs/reference/iteration.md)
 
 - Add the GDScript runtime to each prebuilt native addon archive so both addon directories install together. [Installation guide](experiments/gdextension/README.md#install-and-use)
