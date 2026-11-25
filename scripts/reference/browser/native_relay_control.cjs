@@ -262,6 +262,7 @@ function checkSameLinkRetention(server, browsers, before, resumed, ordinals) {
       const arrival = raw.get(key);
       assert.ok(event.kind === kind && event.socket_ordinal > original.socket_ordinal && expected.delete(event.socket_ordinal)
         && row.send !== null && row.write.length && arrival?.delivery_blocked === true
+        && arrival.delivery_gate === resumed.delivery_gate
         && arrival.at_ms >= before.started_ms && arrival.at_ms <= resumed.resumed_ms
         && !row.sdk.length && !row.native.length, `same-link pressure did not stop at raw arrival for ${key}`);
     }

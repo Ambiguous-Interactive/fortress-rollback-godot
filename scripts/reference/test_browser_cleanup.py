@@ -133,8 +133,8 @@ const trace = {
     return packet;
   },
   retentionSample: () => ({ frontier: ['input', 'quality'] }),
-  hasBlockedRelayStamps(sender, _gateStart, stamps) {
-    return stamps.every(stamp => packets.some(packet => packet.delivery_blocked && packet.sender === sender
+  hasBlockedRelayStamps(sender, gate, stamps) {
+    return stamps.every(stamp => packets.some(packet => packet.delivery_gate === gate && packet.sender === sender
       && packet.kind === stamp.kind && packet.epoch === stamp.epoch && packet.seq === stamp.seq));
   },
 };
@@ -169,6 +169,9 @@ assert.equal(wire.resumeBlockedRelay(pressureStamps), null, 'duplicates and anot
 assert.deepEqual(seen.splice(0), [13]);
 deliver(13);
 assert.equal(wire.resumeBlockedRelay(pressureStamps).reports, 3);
+wire.blockRelayLink(source);
+assert.equal(wire.resumeBlockedRelay(pressureStamps), null, 'an earlier gate must not qualify at the same page clock tick');
+wire.resumeBlockedRelay();
 deliver(14);
 assert.deepEqual(seen.splice(0), [14]);
 wire.holdRelayControl();
@@ -343,16 +346,16 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
   assert.deepEqual(wrapped.events.map(event => Number(event.seq)), Array.from({ length: 512 }, (_, index) => index + 9));
   const gateTrace = createRelayWireTrace();
   gateTrace.bind(room, local, [source, local, other]);
-  gateTrace.record('raw', delivered(packet, 1n)).delivery_blocked = true;
-  gateTrace.record('raw', delivered(envelope(other, local, 4), 2n, other)).delivery_blocked = true;
+  gateTrace.record('raw', delivered(packet, 1n)).delivery_gate = 1;
+  gateTrace.record('raw', delivered(envelope(other, local, 4), 2n, other)).delivery_gate = 1;
   const report = gateTrace.record('raw', delivered(envelope(source, local, 4), 2n));
   const blocked = [{ kind: 2, epoch: 1, seq: '1' }, { kind: 4, epoch: 1, seq: '2' }];
-  assert.equal(gateTrace.hasBlockedRelayStamps(source, 0, blocked), false);
-  report.delivery_blocked = true;
-  assert.equal(gateTrace.hasBlockedRelayStamps(source, 0, blocked), true);
-  assert.equal(gateTrace.hasBlockedRelayStamps(source, report.at_ms + 1, blocked), false);
-  assert.equal(gateTrace.hasBlockedRelayStamps(source, 0, [{ kind: 2, epoch: 1, seq: '2' }]), false);
-  assert.equal(gateTrace.hasBlockedRelayStamps(source, 0, [{ kind: 4, epoch: 2, seq: '2' }]), false);
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, 1, blocked), false);
+  report.delivery_gate = 1;
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, 1, blocked), true);
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, 2, blocked), false);
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, 1, [{ kind: 2, epoch: 1, seq: '2' }]), false);
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, 1, [{ kind: 4, epoch: 2, seq: '2' }]), false);
   const digestFixture = createRelayWireTrace();
   digestFixture.bind(room, local, [source, local, other]);
   const original = envelope(source, local, 4);
@@ -451,6 +454,7 @@ function fixture() {
         reporter.streams.native[family].events.push({ ...packet, code: 0 });
       } else {
         raw.delivery_blocked = true;
+        raw.delivery_gate = 1;
         ordinals.push(packet.socket_ordinal);
       }
     }
@@ -458,13 +462,14 @@ function fixture() {
   return { server, source, reporter, before, ordinals };
 }
 function qualify({ server, source, reporter, before, ordinals }) {
-  return checkSameLinkRetention(server, [source, reporter], before, { resumed_ms: 35 }, ordinals);
+  return checkSameLinkRetention(server, [source, reporter], before, { resumed_ms: 35, delivery_gate: 1 }, ordinals);
 }
 assert.equal(qualify(fixture()).pressure.quality.count, 129);
 for (const [change, diagnostic] of [
   [f => f.server.streams.ingress.input.events.shift(), /lost the original input packet stage/],
   [f => f.ordinals.pop(), /needs over 128 new quality arrivals/],
   [f => f.reporter.streams.raw.quality.events[4].delivery_blocked = false, /did not stop at raw arrival/],
+  [f => f.reporter.streams.raw.quality.events[4].delivery_gate = 2, /did not stop at raw arrival/],
   [f => f.reporter.streams.raw.quality.events[4].at_ms = 36, /did not stop at raw arrival/],
   [f => f.reporter.streams.sdk.quality.events.push(f.reporter.streams.raw.quality.events[4]), /did not stop at raw arrival/],
 ]) {
@@ -489,7 +494,7 @@ for (const [change, diagnostic] of [
   const reporterPage = page({ blockRelayLink: () => before, relayWireTrace: () => reporter, resumeBlockedRelay(stamps) {
     assert.equal(stamps.length, 258);
     assert.equal(stamps.filter(stamp => stamp.kind === 4).length, 129);
-    return { resumed_ms: 35, deadline_ms: 40 };
+    return { resumed_ms: 35, deadline_ms: 40, delivery_gate: 1 };
   } });
   const result = await exerciseSameLinkRetention([sourcePage, reporterPage], [{ uuid: sender }, { uuid: recipient }], async select => {
     for (const change of [

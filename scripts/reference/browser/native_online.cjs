@@ -414,6 +414,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
   const traceSocketOrdinals = relayWireTrace && new WeakMap();
   let mutedRelay;
   let blockedRelay;
+  let relayGateSequence = 0;
   let relayDelay;
   function delayRelayDelivery() {
     if (!relayWireTrace || relayDelay || resources.sockets.length !== 1 || resources.sockets[0].readyState !== WebSocket.OPEN)
@@ -739,6 +740,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
       if (blockedRelay?.socket === socket && blockedRelay.sender === relayPacket?.sender && relayPacket.kind >= 2
           && performance.now() < blockedRelay.deadline_ms) {
         relayPacket.delivery_blocked = true;
+        relayPacket.delivery_gate = blockedRelay.id;
         if (relayPacket.kind === inputKind) blockedRelay.inputs++;
         if (relayPacket.kind === 4) blockedRelay.reports++;
         event.stopImmediatePropagation();
@@ -882,16 +884,16 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
       const { frontier } = relayWireTrace.retentionSample(sender);
       if (!frontier.every(Boolean)) throw new Error('same-link control requires accepted input and quality before pressure');
       const started_ms = performance.now();
-      blockedRelay = { socket, sender, started_ms, deadline_ms: started_ms + 1250, inputs: 0, reports: 0 };
+      blockedRelay = { socket, sender, id: ++relayGateSequence, deadline_ms: started_ms + 1250, inputs: 0, reports: 0 };
       return { started_ms, frontier };
     },
     resumeBlockedRelay(stamps) {
       if (!blockedRelay) return null;
-      const { sender, started_ms, deadline_ms, inputs, reports } = blockedRelay;
-      if (stamps && performance.now() < deadline_ms && !relayWireTrace.hasBlockedRelayStamps(sender, started_ms, stamps)) return null;
+      const { sender, id, deadline_ms, inputs, reports } = blockedRelay;
+      if (stamps && performance.now() < deadline_ms && !relayWireTrace.hasBlockedRelayStamps(sender, id, stamps)) return null;
       const resumed_ms = performance.now();
       blockedRelay = null;
-      return { resumed_ms, deadline_ms, inputs, reports };
+      return { delivery_gate: id, resumed_ms, deadline_ms, inputs, reports };
     },
     pressureRelayLink(recipient) {
       const socket = resources.sockets[0];
