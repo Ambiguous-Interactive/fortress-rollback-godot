@@ -38,12 +38,14 @@ def _build_locked(cargo, cache, output, offline):
     patch_tool = Path(shutil.which('patch') or 'patch').resolve(strict=True)
     patch = TRACE_SOURCE / 'hooks.patch'
     module = TRACE_SOURCE / 'relay_packet_trace.rs'
+    patch_bytes, module_bytes = patch.read_bytes(), module.read_bytes()
     inputs = {'archive': archive, 'pins': MANIFEST, 'patch': patch, 'module': module, 'builder': Path(__file__),
               'patch_tool': patch_tool, 'cargo': cargo, 'rustc': cargo.with_name('rustc')}
     inputs.update((name, Path(__file__).with_name(name + '.py'))
                   for name in ('fetch', 'receipt_arguments', 'run', 'signalfish_build_server', 'signalfish_live_probe', 'signalfish_probe'))
     input_hashes = inventory(inputs)
-    if input_hashes['pins'] != pins_digest:
+    if input_hashes['pins'] != pins_digest or any(input_hashes[name] != hashlib.sha256(contents).hexdigest()
+                                                 for name, contents in (('patch', patch_bytes), ('module', module_bytes))):
         raise ValueError('trace server build inputs changed')
     target = cache / 'server-target' / (pin['revision'] + '-relay-trace')
     home = cache / 'server-cargo'
@@ -56,15 +58,15 @@ def _build_locked(cargo, cache, output, offline):
     if offline:
         environment['CARGO_NET_OFFLINE'] = 'true'
 
-    commands = [[str(patch_tool), '--batch', '--forward', '--fuzz=0', '-p1', '--input', str(patch)],
+    commands = [[str(patch_tool), '--batch', '--forward', '--fuzz=0', '-p1'],
                 [str(cargo), 'clean', '-p', 'signal-fish-server'],
                 [str(cargo), 'build', '--locked', '--no-default-features', '--bin', 'signal-fish-server']]
     with tempfile.NamedTemporaryFile(prefix='.relay-server-', dir=output) as staged:
         with tempfile.TemporaryDirectory(prefix='relay-trace-build-', dir=workspace_cache) as temporary, log_path.open('wb') as log:
             source = extract(archive, pin, Path(temporary))
             pristine = source_inventory(source)
-            subprocess.run(commands[0], check=True, cwd=source, stdout=log, stderr=subprocess.STDOUT, timeout=30)
-            shutil.copyfile(module, source / 'src/relay_packet_trace.rs')
+            subprocess.run(commands[0], input=patch_bytes, check=True, cwd=source, stdout=log, stderr=subprocess.STDOUT, timeout=30)
+            (source / 'src/relay_packet_trace.rs').write_bytes(module_bytes)
             patched = source_inventory(source)
             with locked(target):
                 built = target / 'debug/signal-fish-server'

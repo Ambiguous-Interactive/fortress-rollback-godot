@@ -50,6 +50,10 @@ async function respond() {
   assert.deepEqual(considered, [1, 2]);
   await served;
   await assert.rejects(read(undefined, 50), /relay server receipt deadline/);
+  assert.equal(await fs.readFile(path + '.request', 'utf8'), '3');
+  const retry = read();
+  await publish(3);
+  assert.equal((await retry).request, 3);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         with tempfile.TemporaryDirectory() as directory:
@@ -78,7 +82,8 @@ class Socket {
 }
 const window = {};
 let alarm;
-const trace = { record: (_stage, data) => data && { sender: 'source', recipient: 'local', epoch: 1, seq: String(data[0]) } };
+const local = '22'.repeat(16);
+const trace = { bind() {}, record: (_stage, data) => data && { sender: 'source', recipient: local, epoch: 1, seq: String(data[0]) } };
 const realm = { window, trace, WebSocket: Socket, RTCPeerConnection: class {}, Uint8Array, ArrayBuffer, DataView, performance,
   setTimeout: run => { alarm = run; }, clearTimeout: () => {} };
 runInNewContext(`(${instrumentNativeWire})(false, '', trace)`, realm);
@@ -86,23 +91,28 @@ const socket = new window.WebSocket();
 const wire = window.fortressNativeWire;
 const seen = [];
 socket.addEventListener('message', event => seen.push(event.data[0]));
-const deliver = seq => socket.dispatchEvent({ data: Uint8Array.of(seq) });
-const stamps = [10, 11].map(seq => ({ sender: 'source', recipient: 'local', epoch: 1, seq: String(seq) }));
+const deliver = (seq, target = socket) => target.dispatchEvent({ data: Uint8Array.of(seq) });
+const stamps = [10, 11].map(seq => ({ sender: 'source', recipient: local, epoch: 1, seq: String(seq) }));
+wire.bind('00'.repeat(16), local);
+wire.holdRelayControl();
+deliver(8);
+alarm();
+assert.equal(wire.releaseRelayControl(stamps).reason, 'deadline');
+assert.deepEqual(seen.splice(0), [8]);
 wire.holdRelayControl();
 deliver(9);
 deliver(10);
 deliver(10);
 assert.equal(wire.releaseRelayControl(stamps), null);
 assert.deepEqual(seen, []);
+assert.equal(wire.releaseRelayControl([stamps[0], stamps[0]]), null);
+assert.equal(wire.releaseRelayControl([]), null);
 assert.equal(wire.releaseRelayControl([{ ...stamps[0], epoch: 2 }, stamps[1]]), null);
+deliver(11, new window.WebSocket());
+assert.equal(wire.releaseRelayControl(stamps), null);
 deliver(11);
 assert.equal(wire.releaseRelayControl(stamps).reason, 'controller');
 assert.deepEqual(seen, [9, 10, 10, 11]);
-wire.holdRelayControl();
-deliver(9);
-alarm();
-assert.equal(wire.releaseRelayControl(stamps).reason, 'deadline');
-assert.deepEqual(seen, [9, 10, 10, 11, 9]);
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
@@ -240,14 +250,28 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
   pressured.bind(room, local, members);
   for (const [kind, family] of [[2, 'input'], [4, 'quality']]) {
     pressured.record('send', envelope(local, source, kind), kind);
-    for (let seq = 1; seq <= 129; seq++) {
-      for (const peer of members.slice(2)) pressured.record('send', envelope(local, peer, kind), seq);
+    function receive(peer, seq) {
+      const packet = envelope(peer, local, kind);
+      pressured.record('raw', delivered(packet, BigInt(seq), peer));
+      pressured.recordEngine('sdk', peer, packet.toString('hex'), 1, String(seq), null);
+      pressured.recordEngine('native', peer, packet.subarray(57).toString('hex'), 1, String(seq), 0);
     }
-    const { count, omitted, events } = (await pressured.freeze()).streams.send[family];
-    assert.equal(count, 1 + 129 * 6);
-    assert.equal(events[0].recipient, source, `${family} tail of inactive link was evicted by healthy links`);
-    assert.equal(events[0].socket_ordinal, kind);
-    assert.equal(omitted, 6);
+    receive(source, kind);
+    for (let seq = 1; seq <= 129; seq++) {
+      for (const peer of members.slice(2)) {
+        pressured.record('send', envelope(local, peer, kind), seq);
+        receive(peer, seq);
+      }
+    }
+    const { streams } = await pressured.freeze();
+    for (const [stage, groups] of Object.entries(streams)) {
+      const { count, omitted, events } = groups[family];
+      assert.equal(count, 1 + 129 * 6);
+      const first = events[0];
+      assert.equal(stage === 'send' ? first.recipient : first.sender, source, `${stage} ${family} tail evicted by healthy links`);
+      assert.equal(first.socket_ordinal ?? first.seq, stage === 'send' ? kind : String(kind));
+      assert.equal(omitted, 6);
+    }
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
@@ -1081,13 +1105,16 @@ run().catch(error => { console.error(error); process.exitCode = 1; });
 const assert = require('node:assert/strict');
 const { runInNewContext } = require('node:vm');
 const { instrumentNativeWire } = require(process.argv[1]);
-const released = [], turns = [];
+const released = [], releasedPackets = [], turns = [];
 class Socket {
   static OPEN = 1;
   readyState = Socket.OPEN;
   bufferedAmount = 0;
   addEventListener() {}
-  send(bytes) { released.push(bytes.at(-1)); }
+  send(bytes) {
+    released.push(bytes.at(-1));
+    releasedPackets.push(Array.from(bytes));
+  }
 }
 const realm = { window: {}, performance, Uint8Array, ArrayBuffer, DataView, WebSocket: Socket,
   RTCPeerConnection: class {}, requestAnimationFrame(callback) { turns.push(callback); } };
@@ -1107,7 +1134,11 @@ const relay = (kind, value) => {
 };
 async function run() {
   wire.arm();
-  for (let i = 0; i < 33; i++) socket.send(relay(2, i));
+  for (let i = 0; i < 33; i++) {
+    const bytes = relay(2, i);
+    socket.send(bytes);
+    bytes.fill(0);
+  }
   const recovery = wire.release();
   assert.equal(released.length, 16);
   socket.send(relay(2, 33));
@@ -1121,6 +1152,7 @@ async function run() {
   const started = await recovery;
   assert.equal(started.held.relay, 33);
   assert.deepEqual(released.filter(value => value !== 99), Array.from({length: 34}, (_, i) => i));
+  assert.deepEqual(releasedPackets.filter(bytes => bytes.at(-1) !== 99), Array.from({length: 34}, (_, i) => Array.from(relay(2, i))));
   assert.equal(wire.status().released, 34);
   assert.equal(wire.status().holding, false);
   assert.equal(wire.status().held.relay, 34);

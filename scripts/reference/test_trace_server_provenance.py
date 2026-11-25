@@ -87,6 +87,27 @@ class TraceServerBuildTest(unittest.TestCase):
                 self.assertFalse(json.loads(self.receipt.read_text())['passed'])
                 self.assertFalse(self.binary.exists())
 
+    def test_build_consumes_the_bytes_whose_hashes_it_records(self):
+        patch_path, module_path = (self.root / name for name in ('hooks.patch', 'relay_packet_trace.rs'))
+        patch_path.write_bytes(b'original patch')
+        module_path.write_bytes(b'original module')
+
+        def transient_edit(command, *, cwd, input=None, **kwargs):
+            if '--batch' in command:
+                patch_path.write_bytes(b'transient patch')
+                module_path.write_bytes(b'transient module')
+                self.assertEqual(input, b'original patch')
+            elif command[1] == 'build':
+                self.assertEqual((cwd / 'src/relay_packet_trace.rs').read_bytes(), b'original module')
+                patch_path.write_bytes(b'original patch')
+                module_path.write_bytes(b'original module')
+            return self.run_command(command, **kwargs)
+
+        with patch.object(builder, 'TRACE_SOURCE', self.root), patch.object(builder.subprocess, 'run', side_effect=transient_edit):
+            report = self.build()
+        self.assertEqual(report['input_inventory']['patch'], digest(patch_path))
+        self.assertEqual(report['input_inventory']['module'], digest(module_path))
+
     # Value: protects=builders serialize shared output; fails_when=a second build removes a live log; why_new=target lock tests use the same cache; seam=none
     def test_serializes_builds_into_the_same_output(self):
         publishing, contender, release = Event(), Event(), Event()
@@ -157,14 +178,15 @@ class TraceServerWitnessTest(unittest.TestCase):
             trace_sources = {key: root / name for key, name in (('patch', 'hooks.patch'), ('module', 'relay_packet_trace.rs'))}
             for path in trace_sources.values():
                 path.write_bytes(b'original')
+            trace_inputs = dict(trace_sources, pins=MANIFEST)
             recorded = {'format': 1, 'passed': True, 'source_revision': server_pin['revision'], 'binary_sha256': digest(binary),
-                        'input_inventory': {key: digest(path) for key, path in trace_sources.items()}}
+                        'input_inventory': {key: digest(path) for key, path in trace_inputs.items()}}
             build.write_text(json.dumps(recorded))
             argv = ['runner', '--addon', str(addon), '--output', str(output), '--cache', str(cache), '--cell', 'relay:2', '--relay-trace-server', str(build)]
             stack.enter_context(patch.object(sys, 'argv', argv))
             stack.enter_context(patch.dict(os.environ, {'FORTRESS_PLAYWRIGHT_PACKAGE': str(root), 'FORTRESS_CHROMIUM_EXECUTABLE': str(browser)}))
             stack.enter_context(patch.object(native, 'TRACE_SOURCE', root, create=True))
-            stack.enter_context(patch.object(native, 'load_manifest', return_value=manifest))
+            stack.enter_context(patch.object(native, 'parse_manifest', return_value=manifest))
             stack.enter_context(patch.object(native, 'prepare_editor', return_value=editor))
             stack.enter_context(patch.object(native, 'run', return_value=version + '.stable.test'))
             stage = stack.enter_context(patch.object(native, 'stage_export', return_value=(export, {})))
@@ -175,7 +197,7 @@ class TraceServerWitnessTest(unittest.TestCase):
             native.main()
             self.assertTrue(json.loads(report.read_text())['passed'])
 
-            for key, path in trace_sources.items():
+            for key in trace_inputs:
                 with self.subTest(source=key, phase='missing receipt digest'):
                     stage.reset_mock()
                     build.write_text(json.dumps(dict(recorded, input_inventory={name: hash_value for name, hash_value
@@ -187,6 +209,7 @@ class TraceServerWitnessTest(unittest.TestCase):
                         self.assertFalse(report.exists())
                     finally:
                         build.write_text(json.dumps(recorded))
+            for key, path in trace_sources.items():
                 with self.subTest(source=key, phase='before launch'):
                     stage.reset_mock()
                     path.write_bytes(b'changed')

@@ -157,6 +157,17 @@ function createRelayWireTrace() {
         event.recipient === stamp.recipient && event.epoch === stamp.epoch && event.seq === stamp.seq && event.code === 0))) return null;
       return this.freeze();
     },
+    retentionSample(sender) {
+      const counts = Object.fromEntries(Object.entries(streams).map(([stage, groups]) =>
+        [stage, { input: groups.input.count, quality: groups.quality.count }]));
+      const frontier = [['input', 2], ['quality', 4]].map(([family, kind]) => {
+        const match = streams.native[family].links.get(sender)?.findLast(event => event.kind === kind && event.code === 0);
+        if (!match) return null;
+        const { recipient, epoch, seq } = match;
+        return { family, sender, recipient, epoch, seq };
+      });
+      return { counts, frontier };
+    },
     async freeze() {
       const entries = Object.entries(streams).flatMap(([stage, groups]) => Object.entries(groups).map(([family, stream]) =>
         ({ stage, family, count: stream.count, events: [...stream.links.values()].flat().sort((a, b) => a.ordinal - b.ordinal) })));

@@ -18,7 +18,7 @@ from browser.owned_server import OwnedServer
 from browser.native_relay_stage import instrument_relay_delivery
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_runner import run_browser
-from fetch import ROOT, digest, load_manifest
+from fetch import MANIFEST, ROOT, digest, parse_manifest
 from godot_smoke import prepare_editor, run
 from online_install import create_project, install_sdk, server_config
 from receipt_arguments import ReceiptParser
@@ -255,6 +255,8 @@ def validate_trace_build(receipt, revision, frozen):
             or build.get('binary_sha256') != frozen['server']):
         raise ValueError('relay trace server build receipt does not match the pinned binary')
     inputs = build.get('input_inventory')
+    if not isinstance(inputs, dict) or inputs.get('pins') != frozen['pins']:
+        raise ValueError('relay trace server build receipt does not match the current pin manifest')
     if not isinstance(inputs, dict) or any(inputs.get(name) != frozen['relay_trace_' + name] for name in ('patch', 'module')):
         raise ValueError('relay trace server build receipt does not match the current trace sources')
 
@@ -279,7 +281,8 @@ def main():
     logs += [f'relay-{players}-server{suffix}' for players in (2, 4, 8) for suffix in trace_files]
     begin_results(output, REPORT, logs)
     receipt = output / REPORT
-    manifest = load_manifest()
+    manifest_bytes = MANIFEST.read_bytes()
+    manifest = parse_manifest(manifest_bytes)
     versions = (manifest['godot']['minimum'], manifest['godot']['current_stable'])
     if args.version is None:
         args.version = versions[-1]
@@ -322,7 +325,7 @@ def main():
     trace_build = args.relay_trace_server.resolve() if args.relay_trace_server else None
     if trace_build is not None:
         server_binary = trace_build.with_name('signal-fish-server')
-    files = {'editor': editor, 'templates': templates, 'addon': addon, 'server': server_binary,
+    files = {'pins': MANIFEST, 'editor': editor, 'templates': templates, 'addon': addon, 'server': server_binary,
              'server_config': server_source / 'config.example.json', **{name: Path(environment[var]) for name, var in tools.items()},
              'runner': Path(__file__), 'editor_setup': BROWSER.parent / 'godot_smoke.py', 'artifact_helper': BROWSER.parent / 'fetch.py',
              'client': BROWSER / 'native_online.cjs', 'host': BROWSER / 'online_host.cjs', 'display': BROWSER / 'webrtc_display.cjs',
@@ -337,6 +340,8 @@ def main():
         files.update(relay_trace_build=trace_build, relay_trace_patch=TRACE_SOURCE / 'hooks.patch',
                      relay_trace_module=TRACE_SOURCE / 'relay_packet_trace.rs')
     frozen = inventory(files)
+    if frozen['pins'] != hashlib.sha256(manifest_bytes).hexdigest():
+        raise ValueError('pin manifest changed during native browser witness setup')
     if trace_build is not None:
         validate_trace_build(trace_build, server_pin['revision'], frozen)
     template_pin = manifest['artifacts'][templates.name]

@@ -21,25 +21,28 @@ async function readServerReceipt(path) {
 
 function createRelayServerReader(path) {
   const requestPath = path + '.request';
-  let generation = 0;
+  let completed = 0;
+  let pending = null;
   return async (select = receipt => receipt, timeout = 3000) => {
     const deadline = performance.now() + timeout;
     while (performance.now() < deadline) {
-      const request = ++generation;
-      await fs.writeFile(requestPath + '.next', String(request), { flag: 'wx', mode: 0o600 });
-      await fs.rename(requestPath + '.next', requestPath);
-      while (performance.now() < deadline) {
-        const receipt = await readServerReceipt(path);
-        if (receipt) {
-          assert.equal(receipt.version, 2, 'unexpected relay server receipt version');
-          if (receipt.request === request && performance.now() < deadline) {
-            const result = select(receipt);
-            if (result) return result;
-            break;
-          }
-        }
-        await pause(10);
+      if (pending === null) {
+        const next = completed + 1;
+        await fs.writeFile(requestPath + '.next', String(next), { flag: 'wx', mode: 0o600 });
+        await fs.rename(requestPath + '.next', requestPath);
+        pending = next;
       }
+      const receipt = await readServerReceipt(path);
+      if (receipt) {
+        assert.equal(receipt.version, 2, 'unexpected relay server receipt version');
+        if (receipt.request === pending && performance.now() < deadline) {
+          completed = pending;
+          pending = null;
+          const result = select(receipt);
+          if (result) return result;
+        }
+      }
+      await pause(10);
     }
     throw new Error('relay server receipt deadline');
   };
@@ -72,17 +75,17 @@ async function exerciseRelayDelivery(pages, ready, readReceipt) {
     return written.every(Boolean) ? { accepted, written, seen_controller_ms: performance.now() } : null;
   }, 650);
   const { accepted, written } = matched;
-  const release = await delayedPage.waitForFunction(stamps => window.fortressNativeWire.releaseRelayControl(stamps), accepted.slice(0, 2), { timeout: 1000 });
-  const delay = await release.jsonValue();
-  await release.dispose();
-  assert.equal(delay?.reason, 'controller', 'relay control delivery was released before the controller saw server writes');
-  assert.ok(delay.events >= 2 && delay.started_ms === started && delay.release_ms >= started && delay.release_ms - started < 750);
   assert.deepEqual(accepted.map(event => event.recipient), [recipient, recipient, other]);
   assert.ok(accepted.every((event, index) => stampKey(event) === stampKey(written[index])
     && sameEnvelope(event, written[index]) && written[index].actual_recipient === event.recipient && event.at_ns <= written[index].at_ns));
   assert.equal(new Set(accepted.map(event => `${event.epoch}/${event.seq}`)).size, 3);
   assert.ok(sameEnvelope(accepted[0], accepted[1]) && accepted[0].envelope_sha256 !== accepted[2].envelope_sha256);
   assert.equal(new Set(accepted.map(event => event.payload_sha256)).size, 1);
+  const release = await delayedPage.waitForFunction(stamps => window.fortressNativeWire.releaseRelayControl(stamps), accepted.slice(0, 2), { timeout: 1000 });
+  const delay = await release.jsonValue();
+  await release.dispose();
+  assert.equal(delay?.reason, 'controller', 'relay control delivery was released before the controller saw server writes');
+  assert.ok(delay.events >= 2 && delay.started_ms === started && delay.release_ms >= started && delay.release_ms - started < 750);
   const browser = await Promise.all([[delayedPage, accepted.slice(0, 2)], [otherPage, accepted.slice(2)]].map(async ([page, stamps]) => {
     const handle = await page.waitForFunction(stamps => window.fortressNativeRelayTrace.freezeEnqueued(stamps), stamps, { timeout: 1000 });
     const receipt = await handle.jsonValue();
@@ -112,8 +115,11 @@ async function exerciseRelayRetention(pages, ready, readReceipt) {
   const families = ['input', 'quality'];
   const targets = (receipt, stage, family) => events(receipt, stage, family).filter(event => event.sender === sender && event.recipient === recipient);
   await source.evaluate(peer => window.fortressNativeWire.muteRelayLink(peer), recipient);
-  let before, after, pressure, pagesAtPressure, pauseReceipt;
+  let before, after, pressure, baseline, pagesAtPressure, pauseReceipt;
   try {
+    baseline = await Promise.all([source, reporter].map(page => page.evaluate(
+      sender => window.fortressNativeRelayTrace.retentionSample(sender), sender)));
+    assert.ok(baseline[1].frontier.every(Boolean), 'retention control requires an accepted input and quality report before pressure');
     before = await readReceipt(undefined, 250);
     after = await readReceipt(receipt => {
       const progress = Object.fromEntries(['ingress', 'write'].map(stage => [stage, Object.fromEntries(families.map(family =>
@@ -133,15 +139,14 @@ async function exerciseRelayRetention(pages, ready, readReceipt) {
   }
   assert.ok(pauseReceipt.inputs > 0 && pauseReceipt.reports > 0 && pauseReceipt.resumed < pauseReceipt.cutoff, 'muted link exceeded its control window');
   const joined = joinRelayReceipts(after, pagesAtPressure);
-  const frontier = families.map((family, index) => {
-    const packet = events(pagesAtPressure[1], 'native', family).findLast(event =>
-      event.sender === sender && event.code === 0 && event.kind === [2, 4][index]);
-    assert.ok(packet, `retention control lost the accepted ${family} sample`);
-    const row = joined.rows.find(row => stampKey(row) === stampKey(packet));
-    assert.ok(row && completeRelayRow(row), `retention control lost a stage of the original ${family} packet`);
+  const frontier = baseline[1].frontier.map(stamp => {
+    const row = joined.rows.find(row => stampKey(row) === stampKey(stamp));
+    assert.ok(row && completeRelayRow(row), `retention control lost a stage of the original ${stamp.family} packet`);
     return row;
   });
-  return { sender, recipient, pause: pauseReceipt, requests: [before.request, after.request], pressure, frontier };
+  const browserTraffic = Object.fromEntries([['send', 0], ['raw', 1], ['sdk', 1], ['native', 1]].map(([stage, page]) =>
+    [stage, Object.fromEntries(families.map(family => [family, pagesAtPressure[page].streams[stage][family].count - baseline[page].counts[stage][family]]))]));
+  return { sender, recipient, pause: pauseReceipt, requests: [before.request, after.request], pressure, browserTraffic, frontier };
 }
 
 function joinRelayReceipts(server, pages) {

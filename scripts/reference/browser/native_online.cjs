@@ -434,8 +434,11 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
     };
     const timer = setTimeout(() => { expiredRelayDelay = release('deadline'); }, 750);
     relayDelay = {
+      socket,
       releaseWhenHeld(stamps) {
         if (performance.now() - started_ms >= 750) return release('deadline');
+        if (stamps.length !== 2 || stamps.some(stamp => stamp.recipient !== localUuid)
+            || (stamps[0].sender === stamps[1].sender && stamps[0].epoch === stamps[1].epoch && stamps[0].seq === stamps[1].seq)) return null;
         if (!stamps.every(stamp => events.some(({ packet }) => packet?.sender === stamp.sender
             && packet.recipient === stamp.recipient && packet.epoch === stamp.epoch && packet.seq === stamp.seq))) return null;
         return release('controller');
@@ -732,7 +735,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
       if (replayedRelayEvents?.has(event)) return;
       const { data } = event;
       const relayPacket = relayWireTrace?.record('raw', nativeBytes(data));
-      relayDelay?.hold(event, relayPacket);
+      if (relayDelay?.socket === socket) relayDelay.hold(event, relayPacket);
       const incoming = readRecovery(data, 'receive');
       if (isFirstRecoveryOfferTraffic(incoming)) recovery.receivedKinds[incoming.kind]++;
       if (incoming?.kind === 'Offer') recovery.delivered.push({ ...incoming, at_ms: performance.now() });
