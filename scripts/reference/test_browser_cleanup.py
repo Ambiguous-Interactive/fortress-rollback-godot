@@ -200,13 +200,14 @@ const checkpoint = (cutoff, extra = {}) => WARMUP_CHECKPOINT + JSON.stringify({
   cutoff, started_ms: 2, through_ms: cutoff?.at_ms ?? 8, recipient: '01'.repeat(16),
   links: [{ sender: '02'.repeat(16) }], ticks: [], tick_count: 0, ...extra,
 });
-const gate = { reason: 'gate', state: 'playing', confirmed: 12, at_ms: 8 };
+const gate = { reason: 'gate', state: 'playing', frame: 16, confirmed: 12, at_ms: 8 };
 
 async function run() {
   let now = 9;
   const barrier = createWarmupBarrier(2, () => now);
   barrier.record(1, checkpoint(gate));
   assert.deepEqual(barrier.received, [null, null], 'a receipt must follow start dispatch');
+  assert.deepEqual(barrier.frontier().peers[1], { outcome: 'gate_unaccepted', observation: gate, received_ms: 9 });
   let acknowledgeStart;
   const wait = barrier.wait(() => new Promise(resolve => { acknowledgeStart = resolve; }), 1000);
   let passed = false;
@@ -220,7 +221,6 @@ async function run() {
   barrier.record(1, checkpoint(null));
   barrier.record(1, WARMUP_CHECKPOINT + 'null');
   barrier.record(1, WARMUP_CHECKPOINT + '{');
-  barrier.record(1, checkpoint({ ...gate, reason: 'failed', state: 'failed' }));
   barrier.record(1, checkpoint({ ...gate, state: 'failed' }));
   barrier.record(1, checkpoint({ ...gate, confirmed: 11 }));
   barrier.record(1, checkpoint({ ...gate, at_ms: 1 }));
@@ -231,7 +231,7 @@ async function run() {
   assert.equal(passed, false);
   assert.equal(barrier.received[1], null);
   assert.ok(barrier.errors[1]);
-  assert.equal(barrier.checkpoints[1].cutoff.reason, 'failed');
+  assert.deepEqual(barrier.checkpoints[1].cutoff, gate);
   now = 13;
   barrier.record(1, checkpoint(gate));
   await wait;
@@ -239,14 +239,39 @@ async function run() {
 
   const late = createWarmupBarrier(2, () => now);
   const pending = late.wait(() => {}, 5);
+  void pending.catch(() => {});
   await Promise.resolve(); // The acknowledged start fixes the deadline at 18.
+  const tick = { state: 'playing', frame: 16, confirmed: 8, at_ms: 7, before: 5, after: 0, budget: 256, elapsed_us: 500 };
+  now = 16;
+  late.record(0, checkpoint(null, { ticks: [tick], tick_count: 1 }));
   now = 17;
-  late.record(0, checkpoint(gate));
+  late.record(0, checkpoint(null, { ticks: [{ ...tick, at_ms: 8, confirmed: 12 }, tick], tick_count: 2 }));
+  late.record(0, checkpoint(null, { ticks: [{ ...tick, confirmed: '8' }], tick_count: 1 }));
+  assert.deepEqual(late.frontier().peers, [
+    { outcome: 'observed_below_gate', observation: tick, received_ms: 16 },
+    { outcome: 'unobserved', observation: null, received_ms: null },
+  ]);
   now = 18;
   late.record(1, checkpoint(gate));
   await assert.rejects(pending, /absolute native warmup deadline/);
-  assert.deepEqual(late.received, [17, null]);
+  assert.deepEqual(late.received, [null, null]);
   assert.deepEqual(late.checkpoints[1].cutoff, gate);
+  assert.deepEqual(late.frontier(), { deadline_ms: 18, peers: [
+    { outcome: 'observed_below_gate', observation: tick, received_ms: 16 },
+    { outcome: 'gate_received_late', observation: gate, received_ms: 18 },
+  ] });
+  now = 22;
+  const failureTick = { ...tick, state: 'failed', at_ms: 8 };
+  late.record(0, checkpoint(null, { ticks: [failureTick], tick_count: 2 }));
+  assert.deepEqual(late.frontier().peers[0], { outcome: 'terminal', observation: failureTick, received_ms: 22 });
+  now = 23;
+  const failure = { ...gate, reason: 'failed', state: 'failed' };
+  late.record(0, checkpoint(failure));
+  now = 24;
+  late.record(0, checkpoint(null, { ticks: [tick], tick_count: 1 }));
+  late.record(1, checkpoint(null, { ticks: [tick], tick_count: 1 }));
+  assert.deepEqual(late.frontier().peers[0], { outcome: 'terminal', observation: failure, received_ms: 23 });
+  assert.deepEqual(late.frontier().peers[1], { outcome: 'gate_received_late', observation: gate, received_ms: 18 });
 }
 const timer = setTimeout(() => { throw new Error('warmup barrier test did not settle'); }, 2000);
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
@@ -269,8 +294,8 @@ for (const [endpoint, sender] of [[3, roster[2]], [0, undefined], [2, undefined]
   });
   const wire = window.fortressNativeWire;
   wire.bind('00'.repeat(16), roster[1], roster);
-  wire.finishWarmup('failed', 5, endpoint);
-  wire.finishWarmup('failed', 6, 1);
+  wire.finishWarmup('failed', 13, 5, endpoint);
+  wire.finishWarmup('failed', 14, 6, 1);
   assert.deepEqual(barrier.errors, [null, null, null]);
   const receipt = barrier.checkpoints[0];
   assert.equal(receipt.cutoff.confirmed, 5, 'only the first cutoff is published');
@@ -406,7 +431,7 @@ sample('sdk', bytes(8));
 sample('native', bytes(8), 0);
 sample('sdk', bytes(29));
 sample('native', bytes(29), 0);
-wire.recordWarmupTick(300, 44, 256, 1000, false);
+wire.recordWarmupTick(300, 44, 256, 1000, 'starting', 0, -1);
 [link] = wire.warmupStatus().links;
 assert.equal(link.packets.length, 24);
 assert.equal(link.evicted, 7);
@@ -441,7 +466,10 @@ reply(bytes(8));
 assert.equal(lastReply().payload, bytes(29).toString('hex'));
 const wireBeforeCutoff = wire.status();
 assert.equal(tasks.length, 1);
-wire.finishWarmup('playing', 12);
+for (let i = 0; i < 24; i++) {
+  wire.recordWarmupTick(300, 44, 256, 1000, 'playing', 16, 11);
+}
+wire.finishWarmup('playing', 16, 12);
 const cutoff = JSON.stringify(wire.warmupStatus());
 assert.equal(JSON.stringify(JSON.parse(checkpoints.at(-1).slice('warmup '.length))), cutoff);
 assert.equal(wire.warmupStatus().recipient, local);
@@ -450,6 +478,11 @@ assert.equal(wire.warmupStatus().cutoff.at_ms, 1051);
 assert.equal(wire.warmupStatus().cutoff.reason, 'gate');
 assert.equal(wire.warmupStatus().cutoff.state, 'playing');
 assert.equal(wire.warmupStatus().cutoff.confirmed, 12);
+assert.equal(wire.warmupStatus().tick_count, 25);
+assert.equal(wire.warmupStatus().ticks.length, 24);
+assert.equal(JSON.stringify(wire.warmupStatus().ticks[0]), JSON.stringify({
+  at_ms: 1051, before: 300, after: 44, budget: 256, elapsed_us: 1000, state: 'playing', frame: 16, confirmed: 11,
+}));
 assert.equal(wire.warmupStatus().ticks[0].budget, 256);
 tasks.shift()();
 assert.equal(checkpoints.length, 2);
@@ -458,8 +491,8 @@ raw(socket, bytes(30));
 sample('sdk', bytes(30));
 sample('native', bytes(30), 0);
 reply(bytes(30));
-wire.recordWarmupTick(1200, 0, 256, 1000, true);
-wire.finishWarmup('failed', 12);
+wire.recordWarmupTick(1200, 0, 256, 1000, 'failed', 16, 12);
+wire.finishWarmup('failed', 16, 12);
 assert.equal(JSON.stringify(wire.warmupStatus()), cutoff);
 const after = wire.status();
 assert.equal(after.armed, false);

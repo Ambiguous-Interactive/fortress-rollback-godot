@@ -51,6 +51,9 @@ The receipt records each peer's Playwright engine and version alongside packet, 
 In the eight-player relay cell, the controller waits for every page's warmup cutoff with playing state and confirmation through frame 12.
 The cutoff records when Godot reached the gate on the page clock. `warmupGateReceived` records when the existing console checkpoint
 arrived on the controller clock. Every page's receipt must arrive before the 45-second warmup deadline to arm the input hold.
+The bounded warmup ticks include the lobby state, current frame and confirmed frame from the same physics turn.
+`warmupFrontier` pairs the retained page observation with its controller receipt time, even when final page diagnostics fail.
+A below-gate observation describes the last received sample. A late receipt establishes when the checkpoint arrived on the controller clock.
 Each warmup link records raw browser receipt, SDK delivery and native inbox acceptance. When the browser
 observes a native reply to a sampled report, `last_replied_report` records that report and the three page times
 for raw receipt, inbox acceptance and reply send. The reply proves processing of that quality report.
