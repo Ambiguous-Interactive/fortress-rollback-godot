@@ -17,7 +17,10 @@ reported `2 passed; 0 failed`.
 On Godot 4.7.2, the ordinary Firefox trace first completed gameplay and
 then exceeded the receipt deadline. A paired Firefox 157 benchmark over
 7,504 observations reported 15,008 versus 7,504 digest calls and median
-freeze times of 183 ms and 120 ms. The optimized real room printed
+freeze times of 189 ms and 128 ms. An exact byte key also replaced a
+linear search among conflicting variants. The capped conflict control
+returned identical receipts and cut its median from 1,083 ms to 82 ms.
+The optimized real room printed
 `relay:8 passed`, collected all eight receipts, and matched 40 frames.
 
 The [browser integration guide](../skills/testing/references/browser-integration.md)

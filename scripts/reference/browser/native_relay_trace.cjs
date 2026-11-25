@@ -179,13 +179,12 @@ function createRelayWireTrace() {
       });
       function packetDigests({ sender, recipient, epoch, seq }, bytes) {
         if (seq === null) return hashPacket(bytes);
-        const key = `${sender}/${recipient}/${epoch}/${seq}`;
-        let variants = stamped.get(key);
-        if (!variants) stamped.set(key, variants = []);
-        const match = variants.find(({ bytes: retained }) => bytes.length === retained.length && bytes.every((byte, index) => byte === retained[index]));
-        if (match) return match.digests;
+        // Each traced envelope is at most 1,257 bytes, so this key can include the exact bytes.
+        const key = `${sender}/${recipient}/${epoch}/${seq}:${String.fromCharCode(...bytes)}`;
+        const cached = stamped.get(key);
+        if (cached) return cached;
         const digests = hashPacket(bytes);
-        variants.push({ bytes, digests });
+        stamped.set(key, digests);
         return digests;
       }
       await Promise.all(entries.map(async ({ stage, family, count, events }) => {
