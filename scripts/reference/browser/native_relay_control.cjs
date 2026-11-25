@@ -68,7 +68,7 @@ async function exerciseRelayDelivery(pages, ready, receiptPath) {
   assert.ok(delay.events >= 2 && delay.started_ms === started && delay.release_ms >= started && delay.release_ms - started < 750);
   assert.deepEqual(accepted.map(event => event.recipient), [recipient, recipient, other]);
   assert.ok(accepted.every((event, index) => stampKey(event) === stampKey(written[index])
-    && sameEnvelope(event, written[index]) && event.at_ns <= written[index].at_ns));
+    && sameEnvelope(event, written[index]) && written[index].actual_recipient === event.recipient && event.at_ns <= written[index].at_ns));
   assert.equal(new Set(accepted.map(event => `${event.epoch}/${event.seq}`)).size, 3);
   assert.ok(sameEnvelope(accepted[0], accepted[1]) && accepted[0].envelope_sha256 !== accepted[2].envelope_sha256);
   assert.equal(new Set(accepted.map(event => event.payload_sha256)).size, 1);
@@ -127,7 +127,10 @@ function joinRelayReceipts(server, pages) {
     }
   }
   for (const family of families) {
-    for (const packet of events(server, 'write', family)) attach(family, 'write', packet);
+    for (const packet of events(server, 'write', family)) {
+      assert.equal(packet.actual_recipient, packet.recipient, 'relay write did not reach the addressed socket');
+      attach(family, 'write', packet);
+    }
     for (const packet of events(server, 'ingress', family)) {
       const row = attach(family, 'ingress', packet);
       const key = sendKey(packet);
@@ -144,4 +147,10 @@ function joinRelayReceipts(server, pages) {
     candidates.map(({ family, packet }) => ({ family, sender: packet.sender, ordinal: packet.ordinal }))) };
 }
 
-module.exports = { bindRelayServer, exerciseRelayDelivery, joinRelayReceipts, readServerReceipt };
+function assertJoinedRelayControl(joined) {
+  const complete = joined.rows.filter(row => row.send !== null && ['ingress', 'write', 'raw', 'sdk', 'native'].every(stage => row[stage].length));
+  assert.ok(complete.length >= 40, 'relay control requires 40 complete packet joins');
+  assert.equal(new Set(complete.map(row => row.family)).size, 3, 'relay control requires complete sync, input, and quality packet joins');
+}
+
+module.exports = { assertJoinedRelayControl, bindRelayServer, exerciseRelayDelivery, joinRelayReceipts, readServerReceipt };

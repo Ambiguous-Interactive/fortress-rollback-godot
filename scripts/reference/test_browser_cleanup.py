@@ -16,12 +16,13 @@ class BrowserCleanupTests(unittest.TestCase):
         # Value: protects=exact stage joins; fails_when=equal bytes fill observation gaps or an ordinal hides mismatched bytes; seam=browser arrival and server receipts
         script = r"""
 const assert = require('node:assert/strict');
-const { joinRelayReceipts } = require(process.argv[1]);
+const { assertJoinedRelayControl, joinRelayReceipts } = require(process.argv[1]);
 const sender = 'a', recipient = 'b', room = 'match';
 const packet = { sender, recipient, epoch: 1, seq: '9', kind: 2, envelope_bytes: 109, envelope_sha256: 'sha', ordinal: 1, socket_ordinal: 5 };
 const stage = (events = []) => ({ sync: { events: [] }, input: { events }, quality: { events: [] } });
 const another = { ...packet, seq: '10', socket_ordinal: 6, ordinal: 2 };
-const server = { room, roster: [sender, recipient], streams: { ingress: stage([packet, another]), write: stage([packet, another]) } };
+const writes = [packet, another].map(event => ({ ...event, actual_recipient: recipient }));
+const server = { room, roster: [sender, recipient], streams: { ingress: stage([packet, another]), write: stage(writes) } };
 const pageA = { room, local: sender, sockets: 1,
   streams: { send: stage([packet, another]), raw: stage(), sdk: stage(), native: stage() } };
 const pageB = { room, local: recipient, sockets: 1,
@@ -34,6 +35,14 @@ assert.deepEqual(byStamp.get('9').native, []);
 assert.deepEqual(byStamp.get('10').raw, [2]);
 assert.deepEqual(byStamp.get('10').native, [2, 3]);
 assert.deepEqual(result.unjoined_sends, []);
+assert.throws(() => assertJoinedRelayControl(result), /40 complete packet joins/);
+const complete = Array.from({ length: 40 }, (_, i) => ({ ...byStamp.get('10'), seq: String(i), family: ['sync', 'input', 'quality'][i % 3] }));
+assertJoinedRelayControl({ rows: complete });
+assert.throws(() => assertJoinedRelayControl({ rows: complete.slice(1) }), /40 complete packet joins/);
+assert.throws(() => assertJoinedRelayControl({ rows: complete.map(row => ({ ...row, family: 'sync' })) }), /complete sync, input, and quality/);
+writes[0].actual_recipient = sender;
+assert.throws(() => joinRelayReceipts(server, [pageA, pageB]), /addressed socket/);
+writes[0].actual_recipient = recipient;
 pageA.sockets = 2;
 const ambiguous = joinRelayReceipts(server, [pageA, pageB]);
 assert.ok(ambiguous.rows.every(row => row.send === null));

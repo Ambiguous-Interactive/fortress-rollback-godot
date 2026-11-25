@@ -1,6 +1,6 @@
 const { assertRecoveredRoom, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace } = require('./native_relay_trace.cjs');
-const { bindRelayServer, exerciseRelayDelivery, joinRelayReceipts, readServerReceipt } = require('./native_relay_control.cjs');
+const { assertJoinedRelayControl, bindRelayServer, exerciseRelayDelivery, joinRelayReceipts, readServerReceipt } = require('./native_relay_control.cjs');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
@@ -1746,6 +1746,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         relayServer = await readServerReceipt(traceReceiptPath);
         assert.ok(relayServer, 'relay server receipt was lost');
         relayJoined = joinRelayReceipts(relayServer, relayWire);
+        if (relayControl) assertJoinedRelayControl(relayJoined);
       }
     }
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,

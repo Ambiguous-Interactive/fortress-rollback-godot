@@ -53,6 +53,7 @@ struct Event {
     at_ns: u64,
     sender: String,
     recipient: String,
+    actual_recipient: Option<String>,
     kind: u32,
     epoch: u32,
     seq: String,
@@ -102,6 +103,7 @@ impl Families {
 struct Streams {
     ingress: Families,
     write: Families,
+    unaddressed_writes: u64,
 }
 
 struct Trace {
@@ -229,16 +231,21 @@ pub(crate) fn record(boundary: Boundary, room_id: RoomId, sender: PlayerId, seq:
         return;
     }
 
-    let (at, socket_ordinal) = match boundary {
-        Boundary::Ingress { socket_ordinal, received_at } => (received_at, Some(socket_ordinal)),
+    let (at, socket_ordinal, actual_recipient) = match boundary {
+        Boundary::Ingress { socket_ordinal, received_at } => (received_at, Some(socket_ordinal), None),
         Boundary::Write {
             recipient: actual,
             written_at,
         } => {
             if envelope[37..53] != *actual.as_bytes() {
+                // SignalFish broadcasts to the room. Keep addressed writes in the packet ring.
+                if let Ok(mut state) = trace.state.lock() {
+                    state.1.unaddressed_writes += 1;
+                    state.0 += 1;
+                }
                 return;
             }
-            (written_at, None)
+            (written_at, None, Some(actual.simple().to_string()))
         }
     };
     let event = Event {
@@ -246,6 +253,7 @@ pub(crate) fn record(boundary: Boundary, room_id: RoomId, sender: PlayerId, seq:
         at_ns: at.saturating_duration_since(trace.origin).as_nanos() as u64,
         sender,
         recipient,
+        actual_recipient,
         kind: tag,
         epoch,
         seq: seq.to_string(),
