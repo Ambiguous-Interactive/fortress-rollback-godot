@@ -188,6 +188,11 @@ Capture the receive backlog and last accepted packet before expiry cleanup.
 Use the frozen roster to join the reporter to the sender. Join the sender's
 sampled release position by controller receipt order, including equal clock
 values. Keep transport acceptance on the reporter's clock.
+Capture the first relay overflow inside admission. A pre-tick queue sample
+can miss a burst from the next SDK poll. Keep occupied packet and byte
+counts, both limits and the refused size. Bracket the SDK call on the same
+page clock as the service tick and count admitted envelopes separately
+from broadcasts. Test exact FIFO retry after native inbox pressure clears.
 Attribute each send at its call site. Unsent packets can remain after a failed
 batch. Check both orders of held and passing traffic when the socket closes.
 Bracket the hold with the first held input, matching control reply and
@@ -229,6 +234,10 @@ Apply each page observation at its completion time before waiting for sibling
 pages. Check that peer's existing deadline first, then rearm the earliest live
 deadline. Exercise asymmetric timely completions and exact expired boundaries;
 an all-pages barrier can otherwise discard valid progress against stale clocks.
+Keep one latest timely snapshot per page for failure diagnostics, with its
+receipt time. Require the complete qualifying round to prove cross-page close
+order. Bound each calibration evaluation by the shared deadline. A timed-out
+read must never append a late sample or start another read.
 Observe each page independently with one evaluation in flight per page; slower
 siblings must not block its next sample. Keep a persistent earliest-deadline timer
 active during inter-sample pauses, and test a fast advancing page behind a valid
