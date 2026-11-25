@@ -79,6 +79,17 @@ The run name identifies the browser profile and room. Keep the default `cell=all
 for full browser qualification. Selecting one room with the default platform
 profile runs that room in Chromium on Web.
 
+Use the traced server for an exact packet comparison on the same cell.
+
+```sh
+gh workflow run gdextension-experiment.yml -f qualification=firefox -f cell=relay:8 -f relay_trace=true
+```
+
+The traced run builds the pinned server with receipt hooks on each Godot pin.
+The job artifact includes the build receipt and log, the browser log, and any
+published server scope and packet snapshot. Pair each traced run with a stock
+run at the same revision, browser profile, and room size to measure overhead.
+
 Eight-player relay receipts include warmup checkpoints from each browser.
 A checkpoint records exact sampled quality-report bytes at browser receipt,
 SDK delivery, and native enqueue on the same page clock. Its recipient,

@@ -246,6 +246,9 @@ Reuse digests within a freeze only for byte-equal copies of the same stamp.
 Keep every occurrence and hash conflicting variants separately.
 Transfer complete large receipts as one JSON string through Playwright.
 Compare the decoded receipt with the original fixture, including exact stamps.
+For an optional hosted trace, validate the selected cell before setup. Keep
+the stock and traced runs on the same checkout and room configuration.
+Publish the trace build receipt and raw failure logs with the browser artifact.
 Export the requested confirmed prefix once per browser. Keep recurring status
 snapshots small. When a page can publish data before its evaluation reply
 arrives, arm a page-scoped listener before dispatch. Match the request ID and

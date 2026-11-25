@@ -81,7 +81,7 @@ class WorkflowTierTests(unittest.TestCase):
         self.assertIsNotNone(choices)
         self.assertCountEqual(re.findall(r"'([^']+)'", declared[1]), choices[1].split(','))
         platform = '\n'.join(job_blocks(workflow)['platform'])
-        self.assertIn("(inputs.cell && inputs.cell != 'all' || inputs.qualification", platform)
+        self.assertIn("inputs.cell && inputs.cell != 'all' || inputs.qualification", platform)
         self.assertIn("NATIVE_BROWSER_CELL: ${{ inputs.cell }}", platform)
         selector = platform.split('          cell_args=()', 1)[1].split('      - uses:', 1)[0]
         selector = selector.replace('${{ matrix.version }}', '4.3')
@@ -98,6 +98,69 @@ class WorkflowTierTests(unittest.TestCase):
                 expected = [] if cell in ('', 'all') else [cell]
                 self.assertEqual([value for flag, value in zip(arguments, arguments[1:]) if flag == '--cell'], expected)
                 self.assertEqual(arguments.count('--cell'), len(expected))
+
+    # Value: protects=hosted trace provenance; fails_when=wrong server or an unsupported room is run; why_new=cell control only checks room args; seam=workflow shell
+    def test_native_browser_dispatch_selects_traced_server(self):
+        workflow = active_lines(read(WORKFLOWS / 'gdextension-experiment.yml'))
+        steps = workflow.split('    steps:\n', 1)[1]
+        self.assertTrue(steps.startswith('      - name: Validate relay trace cell\n'))
+        validation = steps.split('      - uses:', 1)[0]
+        self.assertIn('if: inputs.relay_trace', validation)
+        guard = validation.split('        run: |\n', 1)[1]
+        step = workflow.split('      - name: Qualify the playable native SignalFish rooms\n')[1].split('      - uses:', 1)[0]
+        self.assertIn('fromJSON((inputs.relay_trace ||', workflow)
+        self.assertIn('NATIVE_RELAY_TRACE: ${{ inputs.relay_trace }}', workflow)
+        artifact_root = '.cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}'
+        for artifact in ('native-online-trace/build-receipt.json', 'native-online-trace/build.log', 'native-online/*.json', 'native-online/*.log'):
+            self.assertIn(f'{artifact_root}/{artifact}', workflow)
+        script = step.split('        run: |\n', 1)[1]
+        tools = r"""
+python() {
+    printf '%s\n' "$@"
+    if [[ "$1" == */signalfish_build_trace_server.py && "$FAIL_BUILD" == true ]]; then return 7; fi
+}
+jq() { printf '%s\n' pin; }
+node() { printf '%s\n' browser; }
+rustup() { printf '%s\n' cargo; }
+sudo() { :; }
+xdotool() { :; }
+xvfb-run() { printf '%s\n' "$@"; }
+"""
+        cases = (
+            ('4.3', 'chromium', '', 'all', 0),
+            ('4.3', 'chromium', 'false', 'relay:8', 0),
+            ('4.3', 'chromium', 'true', 'relay:2', 0),
+            ('4.7.2', 'chromium-firefox', 'true', 'relay:4', 0),
+            ('4.7.2', 'firefox', 'true', 'relay:8', 0),
+            ('4.3', 'chromium', 'true', 'all', 1),
+            ('4.3', 'chromium', 'true', 'mesh:8', 1),
+            ('4.7.2', 'firefox', 'true', 'relay:8', 7),
+        )
+        for version, pair, trace, cell, exit_code in cases:
+            with self.subTest(version=version, pair=pair, trace=trace, cell=cell, exit_code=exit_code):
+                qualified_step = script.replace('${{ matrix.version }}', version)
+                result = subprocess.run(
+                    ['bash', '-eu', '-c', tools + (guard if trace == 'true' else '') + qualified_step],
+                    env={'BROWSER_PAIR': pair, 'NATIVE_BROWSER_CELL': cell, 'NATIVE_RELAY_TRACE': trace, 'FAIL_BUILD': str(exit_code == 7).lower()},
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, exit_code, result.stderr)
+                calls = result.stdout.splitlines()
+                if exit_code == 1:
+                    self.assertEqual(calls, [])
+                    self.assertIn('Relay tracing requires an explicit relay cell.', result.stderr)
+                    continue
+                traced = trace == 'true'
+                self.assertEqual('scripts/reference/signalfish_build_server.py' in calls, not traced)
+                self.assertEqual('scripts/reference/signalfish_build_trace_server.py' in calls, traced)
+                self.assertEqual('scripts/reference/native_online_probe.py' in calls, exit_code == 0)
+                if exit_code:
+                    continue
+                self.assertEqual('--relay-trace-server' in calls, traced)
+                if traced:
+                    receipt = calls[calls.index('--relay-trace-server') + 1]
+                    self.assertEqual(receipt, f'.cache/native-experiment/{version}/web/native-online-trace/build-receipt.json')
+                    self.assertEqual(calls[calls.index('--cell') + 1], cell)
 
     def test_reference_tiers_have_no_pull_request_trigger(self):
         # The Gate workflow owns per-push and pull-request runs and the merge
