@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify integer, ownership and production byte sessions on pinned native/Web engines."""
+import fcntl
 import hashlib
 from importlib import machinery, util
 import json
@@ -19,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / '.cache/reference'
+CACHE_CLAIM = 'ownership'
 HELPER_MODULES = ('fetch', 'ownership_schedule', 'web_templates', 'local_ownership', 'replay_download', 'receipt_arguments', 'godot_smoke',
                   'run', 'owned_process', 'host_capacity', 'browser.webrtc_matrix', 'browser.webrtc_import', 'signalfish_probe', 'engine_path')
 HELPER_PATHS = {name: 'scripts/reference/' + name.replace('.', '/') + '.py' for name in HELPER_MODULES}
@@ -1016,10 +1018,28 @@ def validate_phases(records, rounds, versions, phases=None):
         raise ValueError('incomplete ownership phase')
 
 
+def ownership_receipts(results):
+    return results / 'ownership.json', results / 'ownership-rounds.json'
+
+
+def invalidate_after_claim_import_failure():
+    """Clear stale receipts only if the unavailable claim helper has no active owner."""
+    locks = CACHE / 'locks'
+    locks.mkdir(parents=True, exist_ok=True)
+    # Use the claim helper's lock inode without modifying its holder record.
+    with (locks / f'{CACHE_CLAIM}.lock').open('a+') as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        for path in ownership_receipts(CACHE / 'results'):
+            path.unlink(missing_ok=True)
+
+
 def main():
-    with claim('ownership', directory=CACHE / 'locks'):
+    with claim(CACHE_CLAIM, directory=CACHE / 'locks'):
         results = CACHE / 'results'
-        receipt_paths = [results / 'ownership.json', results / 'ownership-rounds.json']
+        receipt_paths = ownership_receipts(results)
         try:
             previous_receipts = {path: path.read_bytes() for path in receipt_paths if path.is_file()}
         finally:
@@ -1463,7 +1483,14 @@ def run_probes(args, results):
 
 if __name__ == '__main__':
     sys.meta_path.insert(0, OwnershipHelperFinder())
-    from local_ownership import claim
+    try:
+        from local_ownership import claim
+    except Exception as error:
+        try:
+            invalidate_after_claim_import_failure()
+        except OSError as cleanup_error:
+            error.add_note(f'ownership could not invalidate stale receipts: {cleanup_error}')
+        raise
 
     main()
 else:

@@ -193,8 +193,11 @@ of the bytes it compiled to the witness receipt. After the cache claim it
 invalidates prior success and round summaries before loading witness helpers.
 A subprocess control verifies that Python's normal import accepts a stale
 timestamp-valid cache and that the ownership launcher bypasses it. A missing
-helper must leave neither stale receipt in place. A helper that changes its
-source after compilation must fail the receipt binding.
+helper must leave neither stale receipt in place. If the claim helper itself
+cannot load, the CLI clears stale receipts only after acquiring the same lock.
+The control also verifies that an active owner's lock record and receipts
+survive. A helper that changes its source after compilation fails receipt
+binding.
 
 Harness-specific escaped-descendant adoption and interpreter provenance
 controls remain open, along with broader browser release and replay parity.

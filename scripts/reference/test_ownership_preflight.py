@@ -1,4 +1,5 @@
 """Value: failed preflight invalidates stale success without damaging an active cache owner."""
+from contextlib import nullcontext
 import os
 import py_compile
 import shutil
@@ -60,7 +61,7 @@ probes.main()
 
     # Value: protects=CLI helper execution and receipt invalidation; fails_when=helpers run cached code or load before ownership; seam=real CLI
     def test_cli_loads_helper_source_after_invalidating_receipts(self):
-        for case in ('clean', 'stale-cache', 'missing-source', 'source-change'):
+        for case in ('clean', 'stale-cache', 'missing-source', 'source-change', 'missing-lock-helper', 'busy-missing-lock-helper'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 reference = root / 'scripts/reference'
@@ -71,13 +72,17 @@ probes.main()
                     target = root / relative
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(ROOT / relative, target)
-                results = root / '.cache/reference/results'
+                cache = root / '.cache/reference'
+                results = cache / 'results'
                 results.mkdir(parents=True)
                 receipts = (results / 'ownership.json', results / 'ownership-rounds.json')
                 original = '{"status":"passed"}\n'
                 for receipt in receipts:
                     receipt.write_text(original)
                 helper = reference / 'fetch.py'
+                busy = case == 'busy-missing-lock-helper'
+                missing_lock_helper = busy or case == 'missing-lock-helper'
+                missing_file = reference / 'local_ownership.py' if missing_lock_helper else helper
                 argument = '--help'
                 if case == 'stale-cache':
                     source = helper.read_bytes()
@@ -91,25 +96,35 @@ probes.main()
                     ordinary = subprocess.run([sys.executable, '-c', 'import fetch'], cwd=reference,
                                               capture_output=True, encoding='utf-8', timeout=10)
                     self.assertIn('RuntimeError: stale helper cache executed', ordinary.stderr)
-                elif case == 'missing-source':
-                    helper.unlink()
+                elif case == 'missing-source' or missing_lock_helper:
+                    missing_file.unlink()
                 elif case == 'source-change':
                     argument = '--offline'
                     with helper.open('a') as output:
                         output.write('\nPath(__file__).write_bytes(Path(__file__).read_bytes() + b"\\n")\n')
                     with (root / 'scripts/host_capacity.py').open('a') as output:
                         output.write('\ndef acquire_when_free(*args):\n    return True\n')
-                child = subprocess.run([sys.executable, str(reference / 'ownership_probes.py'), argument],
-                                       capture_output=True, encoding='utf-8', timeout=10)
+                with claim('ownership', directory=cache / 'locks') if busy else nullcontext() as active:
+                    lock_record = active.path.read_bytes() if active else None
+                    child = subprocess.run([sys.executable, str(reference / 'ownership_probes.py'), argument],
+                                           capture_output=True, encoding='utf-8', timeout=10)
+                    if active:
+                        self.assertEqual(active.path.read_bytes(), lock_record)
+                        for receipt in receipts:
+                            self.assertEqual(receipt.read_text(), original)
+                missing_diagnostic = f"FileNotFoundError: [Errno 2] No such file or directory: '{missing_file}'"
                 failures = {
-                    'missing-source': f"FileNotFoundError: [Errno 2] No such file or directory: '{helper}'",
+                    'missing-source': missing_diagnostic,
                     'source-change': 'ValueError: ownership compiled helper source differs from inventory: scripts/reference/fetch.py',
+                    'missing-lock-helper': missing_diagnostic,
+                    'busy-missing-lock-helper': missing_diagnostic,
                 }
                 if case in failures:
                     self.assertEqual(child.returncode, 1, child.stderr)
-                    for receipt in receipts:
-                        self.assertFalse(receipt.exists(), str(receipt))
                     self.assertEqual(child.stderr.splitlines()[-1], failures[case])
+                    if not busy:
+                        for receipt in receipts:
+                            self.assertFalse(receipt.exists(), str(receipt))
                 else:
                     self.assertEqual(child.returncode, 0, child.stderr)
                     self.assertIn('usage: ownership_probes.py', child.stdout)
