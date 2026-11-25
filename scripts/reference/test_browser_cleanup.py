@@ -12,6 +12,50 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_relay_server_reader_requires_a_current_snapshot(self):
+        # Value: protects=capture freshness; fails_when=an earlier server reply satisfies a new request; seam=trace request and receipt files
+        script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const { setTimeout: pause } = require('node:timers/promises');
+const { createRelayServerReader } = require(process.argv[1]);
+const path = process.argv[2];
+const read = createRelayServerReader(path);
+async function publish(request) {
+  await fs.writeFile(path + '.new', JSON.stringify({ version: 2, request }));
+  await fs.rename(path + '.new', path);
+}
+async function respond() {
+  for (const expected of [1, 2]) {
+    while (true) {
+      const request = await fs.readFile(path + '.request', 'utf8').catch(error => {
+        if (error.code !== 'ENOENT') throw error;
+        return '';
+      });
+      if (request === String(expected)) break;
+      await pause(5);
+    }
+    await publish(expected);
+  }
+}
+(async () => {
+  await publish(99);
+  const served = respond();
+  const considered = [];
+  const receipt = await read(candidate => {
+    considered.push(candidate.request);
+    return candidate.request === 2 ? candidate : null;
+  });
+  assert.equal(receipt.request, 2);
+  assert.deepEqual(considered, [1, 2]);
+  await served;
+  await assert.rejects(read(undefined, 50), /relay server receipt deadline/);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs'),
+                            str(Path(directory) / 'trace.json')], check=True, timeout=10)
+
     def test_relay_control_releases_only_after_both_addressed_stamps_arrive(self):
         # Value: protects=the FIFO barrier; fails_when=unrelated or duplicate arrivals can release it; seam=browser socket observer
         script = r"""
