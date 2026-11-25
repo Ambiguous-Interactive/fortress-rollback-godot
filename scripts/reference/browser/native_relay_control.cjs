@@ -124,28 +124,41 @@ async function exerciseRelayRetention(pages, ready, readReceipt) {
   const [source, reporter] = pages;
   const families = ['input', 'quality'];
   const targets = (receipt, stage, family) => events(receipt, stage, family).filter(event => event.sender === sender && event.recipient === recipient);
-  const lastSocketOrdinal = await source.evaluate(peer => window.fortressNativeWire.muteRelayLink(peer), recipient);
-  let after, pressure, baseline, pauseReceipt;
+  await source.evaluate(peer => window.fortressNativeWire.muteRelayLink(peer), recipient);
+  let baseline, pauseReceipt;
   try {
     baseline = await Promise.all([source, reporter].map(page => page.evaluate(
       sender => window.fortressNativeRelayTrace.retentionSample(sender), sender)));
     assert.ok(baseline[1].frontier.every(Boolean), 'retention control requires an accepted input and quality report before pressure');
-    after = await readReceipt(receipt => {
-      const lastIngress = families.map(family => targets(receipt, 'ingress', family).at(-1));
-      if (!lastIngress.every(event => event && event.socket_ordinal <= lastSocketOrdinal)) return null;
-      const progress = Object.fromEntries(['ingress', 'write'].map(stage => [stage, Object.fromEntries(families.map(family => {
-        const last = targets(receipt, stage, family).at(-1);
-        return [family, last ? receipt.streams[stage][family].count - last.ordinal : 0];
-      }))]));
-      if (!Object.values(progress).every(stage => Object.values(stage).every(count => count > 128))) return null;
-      pressure = progress;
-      return receipt;
-    }, 1000);
+    await pause(950);
   } finally {
     pauseReceipt = await source.evaluate(() => window.fortressNativeWire.resumeRelayLink());
   }
-  assert.ok(pauseReceipt.inputs > 0 && pauseReceipt.reports > 0 && pauseReceipt.resumed < pauseReceipt.cutoff, 'muted link exceeded its control window');
-  const pagesAtPressure = await Promise.all([source, reporter].map(page => page.evaluate(() => window.fortressNativeWire.relayWireTrace())));
+  assert.ok(pauseReceipt.inputs > 0 && pauseReceipt.reports > 0, 'retention control did not mute input and quality');
+  const receiptAtPressure = receipt => {
+    const pressure = {};
+    const { first_quiet_ordinal: first, last_quiet_ordinal: last } = pauseReceipt;
+    for (const family of families) {
+      const ingress = targets(receipt, 'ingress', family);
+      const index = ingress.findLastIndex(event => event.socket_ordinal <= first);
+      const [left, right] = index < 0 ? [] : ingress.slice(index, index + 2);
+      if (!left || !right) return null;
+      assert.ok(right.socket_ordinal > last, `muted link sent ${family} during pressure`);
+      const writes = targets(receipt, 'write', family);
+      const writerIndex = writes.findIndex(event => stampKey(event) === stampKey(left));
+      if (writerIndex < 0 || !writes[writerIndex + 1]) return null;
+      const [writtenLeft, writtenRight] = writes.slice(writerIndex, writerIndex + 2);
+      assert.equal(stampKey(writtenRight), stampKey(right), `muted link wrote ${family} during pressure`);
+      pressure[family] = { ingress: right.ordinal - left.ordinal - 1, write: writtenRight.ordinal - writtenLeft.ordinal - 1,
+        before: stampKey(left), after: stampKey(right) };
+    }
+    return { receipt, pressure };
+  };
+  const [{ receipt: after, pressure }, pagesAtPressure] = await Promise.all([
+    readReceipt(receiptAtPressure, 5000),
+    Promise.all([source, reporter].map(page => page.evaluate(() => window.fortressNativeWire.relayWireTrace()))),
+  ]);
+  assert.ok(Object.values(pressure).every(family => family.ingress > 128 && family.write > 128), `insufficient healthy relay traffic: ${JSON.stringify(pressure)}`);
   const joined = joinRelayReceipts(after, pagesAtPressure);
   const frontier = baseline[1].frontier.map(stamp => {
     const row = joined.rows.find(row => stampKey(row) === stampKey(stamp));

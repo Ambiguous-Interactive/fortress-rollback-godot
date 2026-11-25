@@ -785,10 +785,13 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
       return;
     }
     const packet = relayAddresses(data);
-    if (mutedRelay && packet?.sender === localUuid && packet.recipient === mutedRelay.recipient && performance.now() < mutedRelay.cutoff) {
-      if (packet.kind === inputKind) mutedRelay.inputs++;
-      if (packet.kind === 4) mutedRelay.reports++;
-      return;
+    if (mutedRelay && packet?.sender === localUuid && packet.recipient === mutedRelay.recipient) {
+      if (performance.now() < mutedRelay.cutoff) {
+        if (packet.kind === inputKind) mutedRelay.inputs++;
+        if (packet.kind === 4) mutedRelay.reports++;
+        return;
+      }
+      mutedRelay.last_quiet_ordinal ??= traceSocketOrdinals.get(this);
     }
     return send('relay', socketReports.get(this), packet?.recipient, (bytes, held_send = false) => {
       if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) closedReleaseSocket(this, 'before_send', held_send);
@@ -854,13 +857,14 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
       if (!relayWireTrace || resources.sockets.length !== 1 || mutedRelay || recipient === localUuid || !roomRoster.includes(recipient))
         throw new Error('invalid relay retention link');
       const started = performance.now();
-      mutedRelay = { recipient, started, cutoff: started + 1250, inputs: 0, reports: 0 };
-      return traceSocketOrdinals.get(resources.sockets[0]);
+      const first_quiet_ordinal = traceSocketOrdinals.get(resources.sockets[0]);
+      mutedRelay = { recipient, started, cutoff: started + 1250, first_quiet_ordinal, last_quiet_ordinal: null, inputs: 0, reports: 0 };
     },
     resumeRelayLink() {
       const sample = mutedRelay;
       mutedRelay = null;
-      return { ...sample, resumed: performance.now() };
+      const last_quiet_ordinal = sample.last_quiet_ordinal ?? traceSocketOrdinals.get(resources.sockets[0]);
+      return { ...sample, last_quiet_ordinal, resumed: performance.now() };
     },
     repeatRelayControl(recipient, other) {
       const socket = resources.sockets[0];
