@@ -983,11 +983,12 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
   if (clocks) report.clockSamples ??= pages.map(() => ({ before: [], after: [] }));
   const latestSnapshots = pages.map(() => null);
   report.partialSnapshots = latestSnapshots;
-  const requested = pages.map((_, index) => [...new Set(errors
-    .filter(error => error.index === index && error.attempt !== null).map(error => error.attempt))]);
   let rounds = 0;
   const deadline = clock() + DIAGNOSTIC_MS;
   while (clock() < deadline) {
+    const roundErrors = errors.slice();
+    const requested = pages.map((_, index) => [...new Set(roundErrors
+      .filter(error => error.index === index && error.attempt !== null).map(error => error.attempt))]);
     const sampleClock = Boolean(report.clocks) && rounds++ < CLOSE_CLOCK_POST_SAMPLES;
     const snapshots = await Promise.allSettled(pages.map((page, index) =>
       boundedRoom(async () => {
@@ -1016,12 +1017,12 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
     if (sampleClock) {
       report.clocks = report.clocks.map((bound, index) => intersectClock(bound, snapshots[index].value.bound));
     }
-    report.proofs = errors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks,
+    report.proofs = roundErrors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks,
       snapshots[error.index].value.sends?.[error.attempt]));
     for (const proof of report.proofs) assert.ok(proof.before, `WebKit send failure for peer ${proof.index} lacked a sending channel`);
     const remaining = deadline - clock();
     if (remaining <= 0) break;
-    if (report.proofs.every(proof => proof.proof)) return links;
+    if (roundErrors.length === errors.length && report.proofs.every(proof => proof.proof)) return links;
     await delay(Math.min(25, remaining));
   }
   const pending = [...new Set(report.proofs.filter(proof => !proof.proof).map(proof => `peer ${proof.index} channel ${proof.channel}`))];
@@ -1168,7 +1169,8 @@ function createReleaseSignal(players) {
     },
     release(deadline) {
       assert.ok(!finished && responses.size === players
-        && [...responses.values()].every(({ response }) => !response.destroyed), 'native relay release requests unavailable');
+        && [...responses.values()].every(({ response }) => response.socket && !response.socket.destroyed && !response.destroyed),
+      'native relay release requests unavailable');
       assert.ok(Number.isFinite(deadline) && performance.now() < deadline, 'absolute native relay input release deadline');
       finished = true;
       for (const { response, receivedAt } of responses.values()) {

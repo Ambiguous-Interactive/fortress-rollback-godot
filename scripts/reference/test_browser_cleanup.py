@@ -794,6 +794,7 @@ let now = 300;
 global.performance = { now: () => now };
 function request(signal, index) {
   const response = Object.assign(new EventEmitter(), {
+    socket: { destroyed: false },
     writeHead(status, headers) { this.status = status; this.headers = headers; return this; },
     end() { this.writableEnded = true; },
     destroy() { this.destroyed = true; this.emit('close'); },
@@ -806,6 +807,9 @@ async function run() {
   const first = request(disconnected, 0);
   const live = request(disconnected, 1);
   await disconnected.ready;
+  first.socket.destroyed = true;
+  assert.throws(() => disconnected.release(900), /relay release requests unavailable/, 'socket liveness precedes the response close event');
+  assert.equal(live.status, undefined);
   first.destroy();
   assert.equal(request(disconnected, 0).status, 409, 'a replacement cannot regain a disconnected slot');
   assert.throws(() => disconnected.release(900), /relay release requests unavailable/);
@@ -1275,7 +1279,7 @@ const timeout = global.setTimeout;
 global.setTimeout = (callback, ms, ...args) => timeout(callback, [5000, 30000].includes(ms) ? 20 : ms, ...args);
 let releaseRequest;
 global.fetch = path => new Promise(resolve => {
-  const response = { writeHead(status, headers) { this.status = status; this.headers = new Headers(headers); return this; },
+  const response = { socket: { destroyed: false }, writeHead(status, headers) { this.status = status; this.headers = new Headers(headers); return this; },
     end() { this.writableEnded = true; resolve({ status: this.status, headers: this.headers }); } };
   if (!releaseRequest({ url: path, method: 'GET' }, response)) throw new Error('fixture release request was not handled');
 });
@@ -1640,6 +1644,24 @@ let now = 25;
   assert.deepEqual(await waitForCloseProofs([late, sender], initial, warning, report, { clocks, clock, delay: pause }), [[reciprocal], [before]]);
   assert.equal(rounds, 2);
   assert.equal(report.proofs[0].proof, 'clock-order');
+
+  now = 25;
+  const growing = [...warning];
+  const secondReceipt = { ...receipt, attempt: 4 };
+  const requested = [];
+  const extraWarning = {
+    evaluate: async (_read, { attempts }) => {
+      requested.push(attempts);
+      if (requested.length === 1) growing.push({ index: 1, channel: 17, attempt: 4 });
+      return { links: [before], sampledAt: now * 1000 + 5000,
+        sends: Object.fromEntries(attempts.map(attempt => [attempt, attempt === 3 ? receipt : secondReceipt])) };
+    },
+  };
+  await waitForCloseProofs([sample(() => [reciprocal], 10000), extraWarning], initial, growing, report, {
+    clocks, clock, delay: async ms => { now = requested.length === 2 ? 5025 : now + ms; },
+  });
+  assert.deepEqual(requested, [[3], [3, 4]]);
+  assert.deepEqual(report.proofs.map(proof => [proof.attempt, proof.proof]), [[3, 'clock-order'], [4, 'clock-order']]);
 
   now = 25;
   let attempts = 0;
