@@ -2,7 +2,7 @@ name: Qualify Fortress GDExtension
 run-name: >-
   Qualify Fortress GDExtension
   (${{ inputs.qualification == 'platforms' && inputs.cell && inputs.cell != 'all' && 'chromium' || inputs.qualification || 'platforms'
-  }}${{ inputs.cell && inputs.cell != 'all' && format(' / {0}', inputs.cell) || '' }})
+  }}${{ inputs.cell && inputs.cell != 'all' && format(' / {0}', inputs.cell) || '' }}${{ inputs.relay_trace && ' / trace' || '' }})
 on:
   workflow_dispatch:
     inputs:
@@ -16,6 +16,10 @@ on:
         type: choice
         default: all
         options: [all, 'mesh:2', 'mesh:4', 'mesh:8', 'mesh-startup:4', 'mesh-close:4', 'mesh-recovery:4', 'mesh-recovery-overlap:4', 'relay:2', 'relay:4', 'relay:8']
+      relay_trace:
+        description: Collect exact packet receipts for a selected relay room
+        type: boolean
+        default: false
   push:
     branches: [experiment/upstream-gdextension, experiment/upstream-gdextension-landing]
     paths:
@@ -32,14 +36,24 @@ jobs:
       matrix:
         version: ["4.3", "4.7.2"]
         target: >-
-          ${{ fromJSON((inputs.cell && inputs.cell != 'all' || inputs.qualification && inputs.qualification != 'platforms')
+          ${{ fromJSON((inputs.relay_trace || inputs.cell && inputs.cell != 'all' || inputs.qualification && inputs.qualification != 'platforms')
           && '["web"]' || '["linux","windows","macos","android","ios","web"]') }}
     runs-on: ${{ fromJSON('{"web":"ubuntu-24.04","linux":"ubuntu-24.04","windows":"windows-2025","macos":"macos-15","android":"ubuntu-24.04","ios":"macos-15"}')[matrix.target] }}
     timeout-minutes: 70
     defaults:
       run:
         shell: bash
+    env:
+      NATIVE_BROWSER_CELL: ${{ inputs.cell }}
+      NATIVE_RELAY_TRACE: ${{ inputs.relay_trace }}
     steps:
+      - name: Validate relay trace cell
+        if: inputs.relay_trace
+        run: |
+          case "$NATIVE_BROWSER_CELL" in
+            relay:2|relay:4|relay:8) ;;
+            *) echo 'Relay tracing requires an explicit relay cell.' >&2; exit 1 ;;
+          esac
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
@@ -153,11 +167,19 @@ jobs:
         if: matrix.target == 'web'
         env:
           BROWSER_PAIR: ${{ inputs.qualification == 'platforms' && 'chromium' || inputs.qualification || 'chromium' }}
-          NATIVE_BROWSER_CELL: ${{ inputs.cell }}
         run: |
+          output=".cache/native-experiment/${{ matrix.version }}/web"
           python scripts/reference/fetch.py
-          server_source=".cache/reference/$(jq -r .sources.server.root docs/reference/pins.json)"
-          python scripts/reference/signalfish_build_server.py --cargo "$(rustup which cargo)" --source "$server_source" --output .cache/native-online-server
+          cargo="$(rustup which cargo)"
+          trace_args=()
+          if [[ "$NATIVE_RELAY_TRACE" == true ]]; then
+            trace_output="$output/native-online-trace"
+            python scripts/reference/signalfish_build_trace_server.py --cargo "$cargo" --output "$trace_output"
+            trace_args=(--relay-trace-server "$trace_output/build-receipt.json")
+          else
+            server_source=".cache/reference/$(jq -r .sources.server.root docs/reference/pins.json)"
+            python scripts/reference/signalfish_build_server.py --cargo "$cargo" --source "$server_source" --output .cache/native-online-server
+          fi
           export FORTRESS_CHROMIUM_EXECUTABLE="$(node -p 'require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE).chromium.executablePath()')"
           export FORTRESS_FIREFOX_EXECUTABLE="$(node -p 'require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE).firefox.executablePath()')"
           export FORTRESS_WEBKIT_EXECUTABLE="$(node -p 'require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE).webkit.executablePath()')"
@@ -169,13 +191,12 @@ jobs:
             sudo bash scripts/reference/retry_apt_fetch.sh apt-get install -y xdotool
             export FORTRESS_XDOTOOL_EXECUTABLE="$(command -v xdotool)"
           fi
-          output=".cache/native-experiment/${{ matrix.version }}/web"
           cell_args=()
           if [[ "${NATIVE_BROWSER_CELL:-all}" != all ]]; then
             cell_args=(--cell "$NATIVE_BROWSER_CELL")
           fi
           xvfb-run -a -s '-screen 0 1920x1080x24' python scripts/reference/native_online_probe.py --version "${{ matrix.version }}" \
-            --browser-pair "$BROWSER_PAIR" --addon "$output/addon.zip" --output "$output/native-online" "${cell_args[@]}"
+            --browser-pair "$BROWSER_PAIR" --addon "$output/addon.zip" --output "$output/native-online" "${cell_args[@]}" "${trace_args[@]}"
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -188,3 +209,5 @@ jobs:
             .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/prediction-stall.json
             .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-online/*.json
             .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-online/*.log
+            .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-online-trace/build-receipt.json
+            .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-online-trace/build.log
