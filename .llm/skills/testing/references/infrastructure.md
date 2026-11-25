@@ -27,6 +27,8 @@ strings cannot expose this boundary. Decoding failures must report sanitized
 errors without revealing captured CLI output or credentials.
 
 Fault fixtures must unconditionally assert that their injection ran and created the intended state. A production refactor can bypass an old observation hook while leaving its test green.
+Attach the rejection assertion before publishing a fault that can trigger it.
+Await the publisher and assertion together to cover both completion orders.
 
 Invalidate a prior success report before starting a new attempt, clear only the
 runner-owned logs, and preserve partial stdout/stderr on timeout. Identify the failed

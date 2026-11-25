@@ -6,6 +6,7 @@
 | Deep receipts only need to expand the links under diagnosis. | The new Rust request test failed on the baseline when the publisher refused a valid selected generation. The browser test showed 12 omitted quality records where selected capture expected zero. | Keep 512 records for input and quality and publish the latest 128 during ordinary capture. Preserve original ordinals and report omissions at both depths. |
 | Unrelated histories can consume the diagnostic read window. | The first final Godot 4.7.2 pressure room cleared all eight warmup gates and failed at the selected server receipt deadline. Its later ordinary diagnostic snapshot was 10.2 MB. | Publish only requested links for selected captures. Keep the room-wide counts and ordinary capture. |
 | A fixed pause can release the gate before pressure arrives. | The browser control released after duplicate traffic and a stamp from another sender. | Map physical send ordinals through the server receipt and wait for those same raw stamps before release. Keep the page deadline. |
+| A negative control can reject before its assertion starts waiting. | The grouped reference job exited at Node's unhandled rejection handler after the reader rejected a substituted selection. | Attach the same rejection assertion before publishing the bad receipt. Wait for both operations. |
 | Unaddressed broadcasts cost work before packet identity is checked. | Eight alternating Node samples each read 73,500 named MessagePack envelopes with 10,500 addressed records. Median time fell from 559 ms to 278 ms with the early recipient check. | Reject other recipients before hexadecimal identity decoding. Keep the full envelope and stamp checks for recorded packets. |
 | Checking Python sources after normal imports leaves a stale-cache execution window. | The replay preflight process executed a timestamp-valid cached fixture on the baseline. It also retained a stale success receipt when a helper source was missing. | Invalidate receipts under the claim and compile tracked helper sources directly. Check the digest of the bytes compiled against the run inventory. |
 
@@ -21,5 +22,7 @@ now specifies the same-link control and limited receipt expansion. The
 local command. The
 [ownership guide](../../docs/experiments/buffer-ownership.md) replaces the
 previous cache-inspection procedure with source compilation and digest binding.
+The [infrastructure guide](../skills/testing/references/infrastructure.md)
+records the rejection observer order for fault fixtures.
 
 State `findings-acted`.
