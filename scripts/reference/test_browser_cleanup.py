@@ -787,14 +787,49 @@ async function run() {
   assert.equal(released.at(-1), 34);
   const stopped = { ...realm, window: {}, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
   runInNewContext(`(${instrumentNativeWire})()`, stopped);
+  const closed = [];
+  stopped.window.fortressNativePostRelease = { mark(kind, frames, hold) { closed.push({ kind, ...hold }); } };
   const stoppedWire = stopped.window.fortressNativeWire;
   const stoppedSocket = new stopped.window.WebSocket();
   stoppedWire.bind('00'.repeat(16), '01'.repeat(16));
   stoppedWire.arm();
-  stoppedSocket.send(relay(2, 55));
+  for (let i = 0; i < 33; i++) stoppedSocket.send(relay(2, i));
+  const blocked = assert.rejects(stoppedWire.release(), /closed before release send/);
   stoppedSocket.readyState = 3;
-  await assert.rejects(stoppedWire.release(), /closed before release send/);
-  assert.equal(stoppedWire.status().released, 0);
+  turns.shift()();
+  await blocked;
+  assert.equal(stoppedWire.status().released, 16);
+  const close = closed.find(sample => sample.kind === 'release_socket_closed');
+  assert.deepEqual([close?.released, close?.queued, close?.socket_state, close?.socket_stage, close?.held_send], [16, 17, 3, 'before_send', true]);
+  assert.throws(() => stoppedSocket.send(relay(4, 99)), /closed before release send/);
+  const laterControl = closed.find(sample => sample.kind === 'release_control_socket_closed');
+  assert.deepEqual([laterControl?.released, laterControl?.queued, laterControl?.held_send], [16, 17, false]);
+
+  const closing = { ...realm, window: {}, WebSocket: class extends Socket {
+    send(bytes) {
+      if (bytes.at(-1) === 99) this.readyState = 2;
+      super.send(bytes);
+    }
+  }, RTCPeerConnection: class {} };
+  const closedDuring = [];
+  closing.window.fortressNativePostRelease = { mark(kind, frames, hold) { closedDuring.push({ kind, ...hold }); } };
+  runInNewContext(`(${instrumentNativeWire})()`, closing);
+  const closingWire = closing.window.fortressNativeWire;
+  const closingSocket = new closing.window.WebSocket();
+  closingWire.bind('00'.repeat(16), '01'.repeat(16));
+  closingWire.arm();
+  for (let i = 0; i < 33; i++) closingSocket.send(relay(2, i));
+  const interrupted = assert.rejects(closingWire.release(), /closed before release send/);
+  assert.throws(() => closingSocket.send(relay(4, 99)), /closed during release send/);
+  const closingControl = closedDuring.find(sample => sample.kind === 'release_control_socket_closed');
+  assert.deepEqual([closingControl?.released, closingControl?.queued, closingControl?.socket_state, closingControl?.socket_stage, closingControl?.held_send],
+    [16, 17, 2, 'during_send', false]);
+  turns.shift()();
+  await interrupted;
+  const closingOriginals = closedDuring.filter(sample => sample.kind === 'release_socket_closed');
+  assert.equal(closingOriginals.length, 1);
+  assert.equal(closingOriginals[0].held_send, true);
+  assert.equal(closingOriginals[0].socket_stage, 'before_send');
 
   const full = { ...realm, window: {}, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
   runInNewContext(`(${instrumentNativeWire})()`, full);
@@ -816,10 +851,71 @@ async function run() {
   assert.equal(fullWire.status().released, 16);
   assert.deepEqual(cap.map(function (sample) {
     return [sample.kind, sample.held.relay, sample.bytes, sample.queued, sample.released];
-  }), [['hold_first_input', 1, 86, 1, 0], ['hold_cap', 1024, 88064, 1008, 16]]);
+  }), [['hold_first_input', 1, 86, 1, 0], ['release_progress', 1024, 88064, 1008, 16], ['hold_cap', 1024, 88064, 1008, 16]]);
 }
 const timer = setTimeout(() => { throw new Error('release did not settle'); }, 1000);
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
+    def test_native_relay_expiry_matches_release_and_received_traffic_without_page_reads(self):
+        # Value: protects=release-time expiry attribution from console receipts; fails_when=reporter or sender evidence is lost; seam=page and controller
+        script = r"""
+const assert = require('node:assert/strict');
+const { bindDepartureCheckpoints, instrumentPostRelease, missedCorrectionDeadline, postReleaseCheckpoint, relayReleaseEvidence } = require(process.argv[1]);
+const roster = Array.from({length: 8}, (_, i) => '00000000-0000-0000-0000-00000000000' + (i + 1));
+const uuids = [roster[4], roster[0], roster[5], roster[2], roster[6], roster[1], roster[7], roster[3]];
+const peers = uuids.map(() => ({}));
+const prefix = 'fortress native post-release ';
+let receiptOrder = 0;
+const incoming = controller_ms => ({ controller_ms, controller_order: ++receiptOrder });
+const record = (index, fields, receivedAt, rosterKnown = true) =>
+  postReleaseCheckpoint(peers[index], prefix + JSON.stringify(fields), incoming(receivedAt), rosterKnown ? roster : undefined, uuids[index]);
+let now = 100, controller = 120;
+global.performance = {now: () => now};
+global.window = {};
+console.debug = text => postReleaseCheckpoint(peers[2], text, incoming(controller), roster, uuids[2]);
+instrumentPostRelease(prefix, 40);
+window.fortressNativePostRelease.bindDeparture(uuids[2], roster);
+const evidence = (depth, accepted) => ({observed_us: 6000, sdk_queued: depth, sdk_peak: 710,
+  last_accepted: accepted === null ? null : {accepted_us: accepted, kind: 4, bytes: 46}});
+const hold = (kind, released) => ({kind, page_ms: 500 + released, state: 'playing', turns: 28, frame: 30, confirmed: 12, restores: 0,
+  held: {mesh: 0, relay: 33}, bytes: 2838, queued: 33 - released, released});
+record(6, hold('release_started', 0), 115);
+record(6, hold('release_progress', 16), 115);
+window.fortressNativePostRelease.recordDeparture('native_expiry', 8, JSON.stringify(evidence(702, 3000)));
+record(6, hold('release_completed', 33), 120);
+record(0, {kind: 'native_expiry', endpoint: 8, uuid: uuids[6], page_ms: 5, expiry: evidence(674, null)}, 130, false);
+bindDepartureCheckpoints(peers[0], roster, uuids[0]);
+record(2, {...hold('release_socket_closed', 16), socket_state: 3, socket_stage: 'before_send', held_send: true}, 135);
+record(1, hold('hold_cap', 16), 140);
+record(3, {kind: 'native_expiry', endpoint: 8, uuid: uuids[6], page_ms: 6, expiry: evidence(0, 6001)}, 145);
+const report = relayReleaseEvidence(peers, uuids, false);
+assert.equal(report.correction_deadline_reached, false);
+const timeout = Object.assign(new Error('timed out'), {name: 'TimeoutError'});
+assert.equal(missedCorrectionDeadline('corrected history', timeout, 120, 119), false);
+assert.equal(missedCorrectionDeadline('corrected history', timeout, 120, 120), true);
+assert.equal(missedCorrectionDeadline('post-confirmation engine turn', timeout, 120, 121), false);
+for (const message of ['native relay socket closed before release send', 'native packet hold exceeded bounds']) {
+  assert.equal(missedCorrectionDeadline('input release', new Error(message), 120, 131), false);
+}
+for (const message of ['absolute native peer 2 input release deadline', 'absolute native corrected history deadline',
+  'native input release exhausted the correction deadline', 'native corrected history exceeded the correction deadline']) {
+  assert.equal(missedCorrectionDeadline('input release', new Error(message), 120, 120), true);
+}
+const timedOut = missedCorrectionDeadline('corrected history', timeout, 120, 120);
+assert.equal(relayReleaseEvidence(peers, uuids, timedOut).correction_deadline_reached, true);
+assert.deepEqual(report.socket_closed_pages, [2]);
+assert.deepEqual(report.hold_cap_pages, [1]);
+assert.deepEqual(report.expiries.map(({reporter_page, expired_page, last_release_checkpoint, expiry}) =>
+  [reporter_page, expired_page, last_release_checkpoint.kind, last_release_checkpoint.released, expiry.sdk_queued, expiry.last_accepted?.accepted_us]),
+  [[0, 6, 'release_completed', 33, 674, undefined], [2, 6, 'release_progress', 16, 702, 3000]]);
+assert.match(peers[3].checkpoint_error, /invalid native expiry evidence/);
+assert.equal(peers[2].native_expiry.expiry.last_accepted.kind, 4);
+assert.equal(peers[2].native_expiry.expiry.last_accepted.bytes, 46);
+assert.equal(peers[2].release_socket_closed.socket_state, 3);
+assert.equal(peers[2].release_socket_closed.socket_stage, 'before_send');
+assert.equal(peers[2].release_socket_closed.held_send, true);
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
@@ -840,13 +936,15 @@ global.window = {
     holdProgress: () => ({ at_ms: now, held: { mesh: 0, relay: 10 }, bytes: 880, queued: 10, released: 0 }),
     recordHoldReadiness: () => window.fortressNative.stalls >= 3 ? window.fortressNativeWire.holdProgress() : null,
     status: () => { now += 2; return {}; },
-    release: async () => { now++; },
+    release: async () => { now++; window.fortressNativeWire.holdProgress = () => ({
+      at_ms: now, held: { mesh: 0, relay: 10 }, bytes: 880, queued: 0, released: 10,
+    }); },
   },
 };
 global.performance = { now: () => now };
 global.setInterval = callback => { heartbeat = callback; };
 global.requestAnimationFrame = callback => { now++; window.fortressNative.stalls++; callback(); };
-console.debug = text => postReleaseCheckpoint(checkpoints, text, now + 100, roster, local, comparedTarget);
+console.debug = text => postReleaseCheckpoint(checkpoints, text, { controller_ms: now + 100 }, roster, local, comparedTarget);
 instrumentPostRelease('fortress native post-release ', 40);
 const trace = window.fortressNativePostRelease;
 function observe() {
@@ -878,7 +976,7 @@ async function run() {
   for (const patch of [{ frames: 41 }, { restores: 2 }, { page_ms: 12 }, { turns: 20 }]) {
     postReleaseCheckpoint(rejected, 'fortress native post-release ' + JSON.stringify({
       kind: 'corrected_frontier', frames: 40, page_ms: 14, emitted_ms: 14, state: 'playing', turns: 21, frame: 44, confirmed: 42, restores: 3, ...patch,
-    }), 114);
+    }), { controller_ms: 114 });
     assert.equal(rejected.frontiers, undefined);
     assert.match(rejected.checkpoint_error, /invalid corrected frontier sample/);
   }
@@ -887,7 +985,7 @@ async function run() {
   assert.equal(checkpoints.correction, undefined, 'old restores do not prove correction');
   assert.equal(checkpoints.frontiers, undefined, 'confirmation before the restore baseline does not qualify');
   window.fortressNative.confirmed = 16;
-  postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"correction"}', now);
+  postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"correction"}', { controller_ms: now });
   Object.assign(window.fortressNative, { turns: 21, restores: 3 });
   observe();
   now++;
@@ -900,14 +998,14 @@ async function run() {
     now++;
     heartbeat();
   }
-  postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"heartbeat"}', now);
+  postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"heartbeat"}', { controller_ms: now });
   assert.equal(checkpoints.release_dispatched_ms, 14);
   assert.equal(checkpoints.release_entered.page_ms, 14);
   assert.equal(checkpoints.release_entered.controller_ms, 114);
   assert.deepEqual([checkpoints.release_started.page_ms, checkpoints.release_started.queued, checkpoints.release_started.released], [16, 10, 0]);
   const malformed = {};
   const cap = { ...checkpoints.release_started, kind: 'hold_cap', released: 1 };
-  postReleaseCheckpoint(malformed, 'fortress native post-release ' + JSON.stringify(cap), 116);
+  postReleaseCheckpoint(malformed, 'fortress native post-release ' + JSON.stringify(cap), { controller_ms: 116 });
   assert.match(malformed.checkpoint_error, /invalid hold sample/);
   assert.equal(malformed.hold_cap, undefined);
   assert.equal(checkpoints.release_completed.page_ms, 17);
@@ -943,7 +1041,8 @@ async function run() {
   trace.setTarget(45);
   assert.deepEqual(Object.keys(checkpoints.frontiers), ['40', '44'], 'only the default and compared targets are published');
   trace.bindDeparture(local, roster);
-  trace.recordDeparture('native_expiry', 2);
+  const expiry = {observed_us: 6000, sdk_queued: -1, sdk_peak: 0, last_accepted: null};
+  trace.recordDeparture('native_expiry', 2, JSON.stringify(expiry));
   now++;
   trace.recordDeparture('sdk_departure', departing);
   trace.recordDeparture('sdk_departure', local);
@@ -952,24 +1051,24 @@ async function run() {
   now++;
   trace.recordDeparture('sdk_departure', departing);
   trace.recordDeparture('sdk_departure', expired);
-  assert.deepEqual(checkpoints.native_expiry, { endpoint: 2, uuid: expired, page_ms: 27, controller_ms: 127 });
+  assert.deepEqual(checkpoints.native_expiry, { endpoint: 2, uuid: expired, page_ms: 27, controller_ms: 127, expiry });
   assert.deepEqual(checkpoints.sdk_departures, {
     [departing]: { endpoint: 3, uuid: departing, page_ms: 28, controller_ms: 128 },
     [expired]: { endpoint: 2, uuid: expired, page_ms: 29, controller_ms: 129 },
   });
   postReleaseCheckpoint(checkpoints, 'fortress native post-release ' + JSON.stringify({
     kind: 'sdk_departure', endpoint: 3, uuid: expired, page_ms: 30
-  }), 130, roster, local);
+  }), { controller_ms: 130 }, roster, local);
   assert.equal(checkpoints.sdk_departures[expired].endpoint, 2);
   const early = {};
   for (let repeat = 0; repeat < 10; repeat++) {
     postReleaseCheckpoint(early, 'fortress native post-release ' + JSON.stringify({
       kind: 'sdk_departure', endpoint: 3, uuid: departing, page_ms: 30 + repeat
-    }), 130 + repeat);
+    }), { controller_ms: 130 + repeat });
   }
   postReleaseCheckpoint(early, 'fortress native post-release ' + JSON.stringify({
     kind: 'sdk_departure', endpoint: 2, uuid: expired, page_ms: 40
-  }), 140);
+  }), { controller_ms: 140 });
   assert.equal(early.sdk_departures, undefined);
   bindDepartureCheckpoints(early, roster, local);
   assert.deepEqual(early, { sdk_departures: {
@@ -1045,6 +1144,142 @@ const timer = setTimeout(() => { throw new Error('matching history publication d
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(timer));
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
+    def test_native_engine_turn_reports_the_actual_baseline_and_later_frame(self):
+        # Value: protects=engine turn evidence; fails_when=earlier progress replaces the baseline or final reads own the trace; seam=browser entrypoint
+        script = r"""
+const { AsyncLocalStorage } = require('node:async_hooks');
+const { runMain, _load: load } = require('node:module');
+const entrypoint = process.argv[1];
+const control = process.argv[2];
+const rejecting = control.startsWith('rejection');
+const stuck = control === 'same frame' || control === 'rejection and timeout';
+const realm = new AsyncLocalStorage();
+const windows = [];
+const roster = [1, 2].map(value => '00000000-0000-0000-0000-00000000000' + value);
+const unavailable = () => new Promise(() => {});
+let now = 0;
+global.performance = { now: () => ++now };
+Object.defineProperty(global, 'window', { get: () => realm.getStore() });
+const timeout = global.setTimeout;
+global.setTimeout = (callback, ms, ...args) => timeout(callback, [5000, 30000].includes(ms) ? 20 : ms, ...args);
+global.requestAnimationFrame = callback => {
+  if (window.index === 1 && stuck) return;
+  window.fortressNative.frame++;
+  callback();
+};
+function makePage() {
+  const index = windows.length;
+  const state = { state: 'lobby', room: 'test', command_code: 0, ready_enabled: true, start_enabled: true,
+    frame: 18, confirmed: 0, turns: 20, stalls: 0, prediction: 12, restores: 2, history_limit: 128, uuid: roster[index], frozen_roster: roster };
+  const events = {};
+  let lateBaseline;
+  const hold = () => ({ at_ms: performance.now(), held: { mesh: 0, relay: 1 }, bytes: 1, queued: 1, released: 0 });
+  function mark(kind, fields = {}) {
+    const { state: status, frame, confirmed, turns, restores } = state;
+    const sample = { kind, page_ms: performance.now(), state: status, frame, confirmed, turns, restores, ...fields };
+    events.console({ text: () => 'fortress native post-release ' + JSON.stringify(sample) });
+  }
+  const pageWindow = { index, fortressNative: state, fortressNativeReady: true,
+    fortressNativePostRelease: { mark(kind, frames, progress) { mark(kind, { frames, ...progress }); }, arm() {}, setTarget() {} },
+    fortressNativeWire: {
+      arm() { state.stalls++; return hold(); },
+      holdProgress: hold, recordHoldReadiness: hold, status: () => ({}),
+      async release() {
+        Object.assign(state, { frame: 40, confirmed: 40, turns: 21, restores: 3 });
+        mark('corrected_frontier', { frames: 40, emitted_ms: now + 1 });
+        Object.assign(state, { frame: 41, turns: 22 });
+        mark('corrected_advance', { frames: 40, emitted_ms: now + 1 });
+        Object.assign(state, { frame: 42, turns: 23 });
+      },
+    },
+    set fortressNativeCommand(command) {
+      state.command_id = command.id;
+      if (command.kind === 'start') {
+        for (const peer of windows) Object.assign(peer.fortressNative, { state: 'playing', confirmed: 12 });
+      }
+    },
+  };
+  windows.push(pageWindow);
+  return {
+    on(event, handler) { events[event] = handler; },
+    async addInitScript() {}, async goto() {}, keyboard: { async down() {} },
+    async evaluate(operation, argument) {
+      if (operation.toString().includes('warmupStatus()')) {
+        lateBaseline?.(state.frame);
+        return unavailable();
+      }
+      if (operation.toString().includes('() => window.fortressNative.frame')) {
+        if (index === 1 && control === 'baseline timeout') return new Promise(resolve => { lateBaseline = resolve; });
+        if (index === 0 && rejecting) throw new Error('fixture baseline RPC failed');
+        if (index === 1 && rejecting) await new Promise(setImmediate);
+      }
+      return realm.run(pageWindow, () => operation(argument));
+    },
+    async waitForFunction(condition, argument) {
+      const ready = realm.run(pageWindow, () => condition(argument));
+      if (!ready) return unavailable();
+      return { async dispose() {} };
+    },
+    async waitForEvent() { throw Error('fixture stops after the engine turn'); },
+  };
+}
+require('node:module')._load = function (name, ...args) {
+  if (name === './online_host.cjs') {
+    return { createHost: async () => ({ proxyPairs: [], server: { address: () => ({ port: 1 }), close: callback => callback() } }) };
+  }
+  if (name === 'fixture-playwright') {
+    const browser = { browserType: () => ({ name: () => 'chromium' }), version: () => 'fixture', async close() {},
+      async newContext() { return { newPage: makePage, async close() {} }; } };
+    return { chromium: { async launch() { return browser; } } };
+  }
+  return load.call(this, name, ...args);
+};
+process.env.FORTRESS_PLAYWRIGHT_PACKAGE = 'fixture-playwright';
+process.env.FORTRESS_CHROMIUM_EXECUTABLE = '/fixture';
+process.argv = [process.execPath, entrypoint, '.', 'ws://127.0.0.1/v3/ws', 'relay', '2', 'chromium'];
+runMain();
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        for control in ('baseline timeout', 'same frame', 'higher frame', 'rejection', 'rejection and timeout'):
+            with self.subTest(control=control):
+                run = subprocess.run([*command, control], capture_output=True, encoding='utf-8', timeout=10)
+                self.assertEqual(run.returncode, 1, run.stderr)
+                self.assertEqual(run.stdout, '')
+                report_line, _, failure = run.stderr.partition('\n')
+                report = json.loads(report_line)
+                expected_phase = 'confirmed history capture' if control == 'higher frame' else 'post-confirmation engine turn'
+                self.assertEqual(report['phase'], expected_phase)
+                if control in ('baseline timeout', 'same frame', 'rejection and timeout'):
+                    self.assertIn('absolute native post-confirmation engine turn deadline', failure)
+                if control.startswith('rejection'):
+                    self.assertIn('fixture baseline RPC failed', failure)
+                self.assertEqual(report['compared_frames'], 40)
+                self.assertEqual([state['status'] for state in report['states']], ['rejected', 'rejected'])
+                self.assertIn('native peer 0 diagnostics deadline', run.stderr)
+                self.assertIn('native peer 1 diagnostics deadline', run.stderr)
+                engine_turns = report.get('engineTurns')
+                self.assertIsNotNone(engine_turns, 'engine turn evidence must survive unavailable final reads')
+                self.assertEqual(len(engine_turns), 2)
+                for index, attempt in enumerate(engine_turns):
+                    early = report['postRelease'][index]['frontiers']['40']['corrected_advance']
+                    self.assertEqual(early['frame'], 41)
+                    baseline = attempt['baseline']
+                    self.assertGreater(baseline['dispatched_ms'], early['controller_ms'])
+                    if (index == 1 and control == 'baseline timeout') or (index == 0 and control.startswith('rejection')):
+                        self.assertNotIn('receipt', baseline)
+                        self.assertNotIn('advance', attempt)
+                        continue
+                    self.assertIn('receipt', baseline, 'a timely reply must survive a sibling rejection')
+                    self.assertEqual(baseline['receipt']['frame'], 42)
+                    self.assertGreater(baseline['receipt']['controller_ms'], baseline['dispatched_ms'])
+                    advance = attempt['advance']
+                    self.assertGreater(advance['dispatched_ms'], baseline['receipt']['controller_ms'])
+                    if index == 1 and control in ('same frame', 'rejection and timeout'):
+                        self.assertNotIn('receipt', advance)
+                    else:
+                        self.assertEqual(advance['receipt']['frame'], 43)
+                        self.assertGreater(advance['receipt']['controller_ms'], advance['dispatched_ms'])
 
     def test_native_webkit_abort_must_belong_to_the_reported_closed_link(self):
         # Value: protects=departure attribution; fails_when=another link excuses the warning; seam=browser receipt validator

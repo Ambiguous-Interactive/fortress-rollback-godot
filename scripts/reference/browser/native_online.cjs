@@ -22,10 +22,11 @@ const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
 const DEPARTURE_CHECKPOINT = 'fortress native departure ';
 const HISTORY_CHECKPOINT = 'fortress native history ';
-const POST_RELEASE_MARKS = new Set(['release_entered', 'release_completed', 'correction', 'history_requested', 'history_published']);
+const POST_RELEASE_MARKS = new Set(['release_entered', 'correction', 'history_requested', 'history_published']);
 const FRONTIER_MARKS = new Set(['corrected_frontier', 'corrected_advance']);
 const LIFETIME_MARKS = new Set(['native_expiry', 'sdk_departure']);
-const HOLD_MARKS = new Set(['hold_armed', 'hold_first_input', 'hold_first_control', 'hold_first_prediction', 'hold_ready', 'hold_cap', 'release_started']);
+const HOLD_MARKS = new Set(['hold_armed', 'hold_first_input', 'hold_first_control', 'hold_first_prediction', 'hold_ready', 'hold_cap',
+  'release_started', 'release_progress', 'release_completed', 'release_socket_closed', 'release_control_socket_closed']);
 
 function createWarmupBarrier(players, clock = () => performance.now()) {
   const latest = Array(players).fill(null);
@@ -121,7 +122,8 @@ function instrumentPostRelease(prefix, minimumFrames) {
     if (baseline === undefined && !hold) return;
     const { state, turns, frame, confirmed, restores } = window.fortressNative;
     console.debug(prefix + JSON.stringify({ kind, page_ms: hold?.at_ms ?? performance.now(), state, turns, frame, confirmed, restores, frames,
-      held: hold?.held, bytes: hold?.bytes, queued: hold?.queued, released: hold?.released }));
+      held: hold?.held, bytes: hold?.bytes, queued: hold?.queued, released: hold?.released,
+      socket_state: hold?.socket_state, socket_stage: hold?.socket_stage, held_send: hold?.held_send }));
   }
   function observe(state, turns, frame, confirmed, restores, historyLimit) {
     if (baseline === undefined || restores <= baseline) return;
@@ -177,29 +179,32 @@ function instrumentPostRelease(prefix, minimumFrames) {
       local = uuid;
       roster = frozen;
     },
-    recordDeparture(kind, remote) {
+    recordDeparture(kind, remote, evidence) {
       const sdk = kind === 'sdk_departure';
       const endpoint = sdk ? roster.indexOf(remote) + 1 : remote;
       const uuid = roster[endpoint - 1];
       if (!uuid || uuid === local || (sdk ? departed.has(uuid) : expired)) return;
       if (sdk) departed.add(uuid);
       else expired = true;
-      console.debug(prefix + JSON.stringify({ kind, endpoint, uuid, page_ms: performance.now() }));
+      console.debug(prefix + JSON.stringify({ kind, endpoint, uuid, page_ms: performance.now(),
+        expiry: evidence === undefined ? undefined : JSON.parse(evidence) }));
     },
     mark,
     observe,
   };
 }
 
-function postReleaseCheckpoint(peer, text, receivedAt, roster, local, comparedTarget = HISTORY_FRAMES) {
+function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTarget = HISTORY_FRAMES) {
   if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
   try {
-    const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes, queued, released, emitted_ms, endpoint, uuid } =
-      JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
+    const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes, queued, released, emitted_ms, endpoint, uuid,
+      expiry, socket_state, socket_stage, held_send } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
     if (LIFETIME_MARKS.has(kind)) {
       if (!Number.isFinite(page_ms) || page_ms < 0 || !Number.isSafeInteger(endpoint) || endpoint < 1
         || endpoint > INPUTS.length || typeof uuid !== 'string' || !FROZEN_UUID.test(uuid)) throw new Error('invalid room departure sample');
-      retainDepartureCheckpoint(peer, { kind, endpoint, uuid, page_ms, controller_ms: receivedAt }, roster, local);
+      const receipt = { kind, endpoint, uuid, page_ms, ...controller };
+      if (kind === 'native_expiry') receipt.expiry = validateExpiry(expiry);
+      retainDepartureCheckpoint(peer, receipt, roster, local);
       return;
     }
     const capturesHold = HOLD_MARKS.has(kind);
@@ -209,7 +214,7 @@ function postReleaseCheckpoint(peer, text, receivedAt, roster, local, comparedTa
     if (!Number.isFinite(page_ms) || page_ms < 0 || typeof state !== 'string' || state.length > 32
       || ![turns, frame, confirmed, restores].every(Number.isSafeInteger)
       || (capturesHistory && (!Number.isSafeInteger(frames) || frames < 1))) throw new Error('invalid post-release sample');
-    const receipt = { page_ms, state, turns, frame, confirmed, restores, controller_ms: receivedAt };
+    const receipt = { page_ms, state, turns, frame, confirmed, restores, ...controller };
     if (capturesHistory) receipt.frames = frames;
     if (capturesFrontier) {
       const ready = peer.hold_ready;
@@ -232,12 +237,68 @@ function postReleaseCheckpoint(peer, text, receivedAt, roster, local, comparedTa
       receipt.bytes = bytes;
       receipt.queued = queued;
       receipt.released = released;
+      if (kind === 'release_socket_closed' || kind === 'release_control_socket_closed') {
+        if (![0, 2, 3].includes(socket_state) || !['before_send', 'during_send'].includes(socket_stage) || held_send !== (kind === 'release_socket_closed'))
+          throw new Error('invalid relay release socket sample');
+        Object.assign(receipt, { socket_state, socket_stage, held_send });
+      }
+      if (kind === 'release_progress') {
+        if (!queued || (released !== 16 && (released === 0 || released % 128 !== 0))) throw new Error('invalid relay release progress');
+        const progress = peer.release_progress ??= [];
+        if (released > (progress.at(-1)?.released ?? 0)) progress.push(receipt);
+        return;
+      }
+      if (kind === 'release_completed' && (queued !== 0 || released !== held.mesh + held.relay)) throw new Error('invalid relay release completion');
     }
     if (kind === 'heartbeat') peer.heartbeats = [...(peer.heartbeats ?? []).slice(-1), receipt];
     else peer[kind] ??= receipt;
   } catch (error) {
     peer.checkpoint_error ??= String(error);
   }
+}
+
+function validateExpiry(value) {
+  const { observed_us, sdk_queued, sdk_peak, last_accepted } = value ?? {};
+  const integer = (number, min, max) => Number.isSafeInteger(number) && number >= min && number <= max;
+  const maximum = Number.MAX_SAFE_INTEGER;
+  if (!integer(observed_us, 0, maximum) || !integer(sdk_peak, 0, maximum) || !integer(sdk_queued, -1, sdk_peak))
+    throw new Error('invalid native expiry evidence');
+  if (last_accepted === null) return { observed_us, sdk_queued, sdk_peak, last_accepted };
+  const { accepted_us, kind, bytes } = last_accepted ?? {};
+  if (!integer(accepted_us, 0, observed_us) || !integer(bytes, 17, 1200)
+    || (bytes < 28 ? kind !== null : !integer(kind, 0, 0xffffffff))) throw new Error('invalid native expiry evidence');
+  return { observed_us, sdk_queued, sdk_peak, last_accepted: { accepted_us, kind, bytes } };
+}
+
+function missedCorrectionDeadline(phase, error, deadline, failedAt) {
+  if (!Number.isFinite(deadline) || !['input release', 'corrected history'].includes(phase)) return false;
+  if (error?.name === 'TimeoutError' && failedAt >= deadline) return true;
+  return /^(?:absolute native (?:peer \d+ input release|corrected history) deadline|native (?:input release exhausted|corrected history exceeded) the correction deadline)$/
+    .test(error?.message);
+}
+
+function relayReleaseEvidence(peers, uuids, correctionDeadlineReached) {
+  const socket_closed_pages = [];
+  const hold_cap_pages = [];
+  const expiries = [];
+  peers.forEach((peer, reporter_page) => {
+    if (peer.release_socket_closed || peer.release_control_socket_closed) socket_closed_pages.push(reporter_page);
+    if (peer.hold_cap) hold_cap_pages.push(reporter_page);
+    const expiry = peer.native_expiry;
+    if (!expiry || !uuids) return;
+    const expired_page = uuids.indexOf(expiry.uuid);
+    const sender = peers[expired_page];
+    if (!sender) return;
+    const candidates = [['release_entered', sender.release_entered], ['release_started', sender.release_started],
+      ...(sender.release_progress ?? []).map(sample => ['release_progress', sample]), ['release_completed', sender.release_completed],
+      ['release_control_socket_closed', sender.release_control_socket_closed], ['release_socket_closed', sender.release_socket_closed], ['hold_cap', sender.hold_cap]];
+    const latest = candidates.filter(([, sample]) => sample && sample.controller_order < expiry.controller_order)
+      .sort(([, a], [, b]) => b.controller_order - a.controller_order)[0];
+    const last_release_checkpoint = latest ? { kind: latest[0], ...latest[1] } : null;
+    expiries.push({ reporter_page, expired_page, uuid: expiry.uuid, endpoint: expiry.endpoint,
+      expiry: expiry.expiry, controller_ms: expiry.controller_ms, controller_order: expiry.controller_order, last_release_checkpoint });
+  });
+  return { socket_closed_pages, hold_cap_pages, correction_deadline_reached: correctionDeadlineReached, expiries };
 }
 
 function retainDepartureCheckpoint(peer, { kind, ...receipt }, roster, local) {
@@ -285,6 +346,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   let observingDeparture = false;
   let holding = false;
   let releasingRelay = false;
+  let releaseInFlight = 0;
+  const releaseSocketFailures = new Set();
   let releaseEnded = null;
   let holdFailure;
   let holdAll = false;
@@ -308,7 +371,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   let relayBroadcasts = 0;
   const held = { mesh: 0, relay: 0 };
   const controlRoundTrips = { mesh: 0, relay: 0 };
-  const holdMark = () => ({ at_ms: performance.now(), held: { ...held }, bytes: totalBytes, queued: active.length, released });
+  const holdMark = () => ({ at_ms: performance.now(), held: { ...held }, bytes: totalBytes, queued: active.length + releaseInFlight, released });
   // The pinned protocol sends one report per peer at intervals above 200 ms.
   // Keep enough relay tokens for the 45-second stall witness despite FIFO delay.
   const pendingReportLimit = { mesh: 16, relay: 256 };
@@ -499,7 +562,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       throw holdFailure;
     }
     const owned = nativeBytes(data).slice();
-    active.push(() => emit(owned));
+    active.push(() => emit(owned, true));
     totalBytes += owned.byteLength;
     held[route]++;
     if (!holdAll && held.mesh + held.relay === 1) window.fortressNativePostRelease?.mark('hold_first_input', undefined, holdMark());
@@ -600,6 +663,15 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     return socket;
   } });
   const socketSend = nativeSocket.prototype.send;
+  function closedReleaseSocket(socket, socket_stage, held_send) {
+    if (!releaseSocketFailures.has(held_send)) {
+      releaseSocketFailures.add(held_send);
+      const kind = held_send ? 'release_socket_closed' : 'release_control_socket_closed';
+      window.fortressNativePostRelease?.mark(kind, undefined, { ...holdMark(), socket_state: socket.readyState, socket_stage, held_send });
+    }
+    const when = socket_stage === 'before_send' ? 'before' : 'during';
+    throw new Error(`native relay socket closed ${when} release send`);
+  }
   nativeSocket.prototype.send = function(data) {
     const outgoing = readRecovery(data, 'send');
     if (blockRecovery && outgoing) return;
@@ -621,10 +693,10 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       return;
     }
     const packet = relayAddresses(data);
-    return send('relay', socketReports.get(this), packet?.recipient, bytes => {
-      if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) throw new Error('native relay socket closed before release send');
+    return send('relay', socketReports.get(this), packet?.recipient, (bytes, held_send = false) => {
+      if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) closedReleaseSocket(this, 'before_send', held_send);
       socketSend.call(this, bytes);
-      if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) throw new Error('native relay socket closed during release send');
+      if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) closedReleaseSocket(this, 'during_send', held_send);
       if (packet && packet.sender === localUuid) {
         increment(relayRecipients, packet.recipient);
         if (packet.kind === inputKind) increment(relayInputRecipients, packet.recipient);
@@ -707,11 +779,17 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       // Each relay send fans out to the room. Keep originals ahead of newly sampled inputs.
       const batchSize = releasingRelay ? 16 : active.length;
       while (active.length > 0 && !holdFailure) {
-        for (const emit of active.splice(0, batchSize)) {
+        const batch = active.splice(0, batchSize);
+        releaseInFlight = batch.length;
+        for (const emit of batch) {
           emit();
           released++;
+          releaseInFlight--;
         }
-        if (active.length > 0) await new Promise(resolve => requestAnimationFrame(resolve));
+        if (active.length > 0) {
+          if (released === batchSize || released % 128 === 0) window.fortressNativePostRelease?.mark('release_progress', undefined, holdMark());
+          await new Promise(resolve => requestAnimationFrame(resolve));
+        }
       }
       if (holdFailure) throw holdFailure;
       releasingRelay = false;
@@ -965,7 +1043,7 @@ function captureAndReleaseInput(page, index, checkpoints) {
     if (stalled.state !== 'playing') throw new Error(stalled.message || 'peer stopped before input release');
     window.fortressNativePostRelease?.mark('release_started', undefined, wire.holdProgress());
     stalled.release = await wire.release();
-    window.fortressNativePostRelease?.mark('release_completed');
+    window.fortressNativePostRelease?.mark('release_completed', undefined, wire.holdProgress());
     return stalled;
   }, index);
 }
@@ -977,6 +1055,49 @@ function waitForCorrectedHistory(pages, frame, readiness, wait, timeout) {
       && window.fortressNative.confirmed >= target.frame && window.fortressNative.restores > target.restores;
   },
   { frame, restores: readiness[index].page.restores }, timeout)));
+}
+
+async function waitForEngineTurn(pages, engineTurns) {
+  const label = 'native post-confirmation engine turn';
+  const failures = [];
+  const deadline = performance.now() + PAGE_WAIT_MS;
+  let active = true;
+  async function sample(page, attempt, read, baseline) {
+    const dispatched_ms = performance.now();
+    assert.ok(dispatched_ms < deadline, `absolute ${label} deadline`);
+    attempt.dispatched_ms = dispatched_ms;
+    const frame = await page.evaluate(read, baseline);
+    const controller_ms = performance.now();
+    assert.ok(active && controller_ms < deadline, `absolute ${label} deadline`);
+    assert.ok(Number.isSafeInteger(frame) && frame > (baseline ?? -1), 'invalid native engine frame observation');
+    attempt.receipt = { frame, controller_ms };
+    return frame;
+  }
+  async function observePeer(page, index) {
+    const trace = engineTurns[index] = { baseline: {} };
+    try {
+      const baseline = await sample(page, trace.baseline, () => window.fortressNative.frame);
+      if (!active) return;
+      trace.advance = {};
+      await sample(page, trace.advance, async baseline => {
+        while (true) {
+          const { state, frame } = window.fortressNative;
+          if (state === 'playing' && frame > baseline) return frame;
+          await new Promise(resolve => requestAnimationFrame(resolve));
+        }
+      }, baseline);
+    } catch (error) {
+      if (active) failures.push(error);
+    }
+  }
+  try {
+    await boundedRoom(() => Promise.all(pages.map(observePeer)), PAGE_WAIT_MS, label);
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    active = false;
+  }
+  return failures;
 }
 
 async function leaveWithReceipt(page, trace) {
@@ -1037,10 +1158,12 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   let roomIdentities;
   let phase = 'launch';
   let sequence = 0;
+  let postReleaseOrder = 0;
   let departureClocks, correctionDeadline;
   let armed, stalled;
   let comparedFrames = HISTORY_FRAMES;
   const holdReadyReceived = Array(players).fill(null);
+  const engineTurns = [];
   const physicalCloseReport = {};
   const closeReport = {};
   const wait = async (page, condition, argument = null, timeout = PAGE_WAIT_MS) => {
@@ -1089,8 +1212,10 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       page.on('console', message => {
         const text = message.text();
         warmupBarrier?.record(index, text);
-        if (postRelease)
-          postReleaseCheckpoint(postRelease[index], text, performance.now(), roomIdentities?.roster, roomIdentities?.uuids[index], comparedFrames);
+        if (postRelease && text.startsWith(POST_RELEASE_CHECKPOINT)) {
+          const controller = { controller_ms: performance.now(), controller_order: ++postReleaseOrder };
+          postReleaseCheckpoint(postRelease[index], text, controller, roomIdentities?.roster, roomIdentities?.uuids[index], comparedFrames);
+        }
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push({ index, phase, text });
       });
       page.on('requestfailed', request => {
@@ -1206,11 +1331,13 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     }
     // A waiting step can publish confirmation before dispatching a correction.
     phase = 'post-confirmation engine turn';
-    await boundedRoom(async () => {
-      const confirmedFrames = await Promise.all(pages.map(page => page.evaluate(() => window.fortressNative.frame)));
-      await Promise.all(pages.map((page, index) => wait(page, frame => window.fortressNative.state === 'playing'
-        && window.fortressNative.frame > frame, confirmedFrames[index])));
-    }, PAGE_WAIT_MS, 'native post-confirmation engine turn');
+    const engineTurnFailures = await waitForEngineTurn(pages, engineTurns);
+    if (engineTurnFailures.length) {
+      const lastFailure = engineTurnFailures.pop();
+      failures.push(...engineTurnFailures);
+      throw lastFailure;
+    }
+    if (errors.length) throw new Error(JSON.stringify(errors));
     phase = 'confirmed history capture';
     const history = await Promise.all(pages.map(async (page, index) => {
       const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence, players), PAGE_WAIT_MS,
@@ -1352,13 +1479,15 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         && rtc.every(([, state]) => state === 'closed');
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
-      holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, departureCommands, roomIdentities,
+      holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns,
+      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks ?? departureClocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier() };
   } catch (error) {
     failures.push(error);
+    const correctionDeadlineReached = missedCorrectionDeadline(phase, error, correctionDeadline, performance.now());
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
       ...window.fortressNative, wire: window.fortressNativeWire?.status(), warmup: window.fortressNativeWire?.warmupStatus(),
       stalled: window.fortressNativeStalled,
@@ -1376,7 +1505,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
-      warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline
+      warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
+      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
     }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
@@ -1412,5 +1542,5 @@ if (require.main === module) {
 }
 
 module.exports = { armAndWaitForInput, bindDepartureCheckpoints, captureAndReleaseInput, closeEvidence, compareHistory,
-  createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt,
-  postReleaseCheckpoint, readConfirmedHistory, reportedChannel, waitForCloseProofs, waitForCorrectedHistory, WARMUP_CHECKPOINT };
+  createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt, missedCorrectionDeadline,
+  postReleaseCheckpoint, readConfirmedHistory, relayReleaseEvidence, reportedChannel, waitForCloseProofs, waitForCorrectedHistory, WARMUP_CHECKPOINT };

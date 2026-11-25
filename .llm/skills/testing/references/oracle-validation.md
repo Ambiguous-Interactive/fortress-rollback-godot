@@ -111,6 +111,11 @@ A corruption control may desync before capture; require its typed cause and inde
 
 Keep the observed first failure separate from later cleanup termination. A stopped counterpart cannot replace the required desync or erase canonical history.
 
+Fingerprint the inputs to each schedule generator, including its upstream
+source and locked build. Compare hinted and unhinted scenarios with the same
+live oracle and record subprocess counts and canonical hashes. Revalidate the
+whole hint and use its observations only for an exact matching prefix.
+
 Receipt and snapshot tooling binds the working tree at run start and refuses
 drift at the end (`launch.require_unchanged` over `source_files()`,
 `native_source_snapshot` over `git ls-files --others`, plus commit and dirty

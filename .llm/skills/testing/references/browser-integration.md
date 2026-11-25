@@ -179,6 +179,12 @@ Use the room's readiness samples for the correction baseline. One peer's
 release can correct another peer before its own release snapshot runs.
 Retain release and first-correction checkpoints in the controller while the
 room is live. A failed final page read can hide even a successful drain.
+Capture the receive backlog and last accepted packet before expiry cleanup.
+Use the frozen roster to join the reporter to the sender. Join the sender's
+sampled release position by controller receipt order, including equal clock
+values. Keep transport acceptance on the reporter's clock.
+Attribute each send at its call site. Unsent packets can remain after a failed
+batch. Check both orders of held and passing traffic when the socket closes.
 Bracket the hold with the first held input, matching control reply and
 observed prediction stall. Record controller dispatch, evaluation entry and
 release start, and compare durations within each clock. Report cumulative
@@ -186,6 +192,9 @@ held packets, pending packets and released packets at the cap. A cap can
 occur during a partial drain. Retain these checkpoints if the evaluation
 never returns.
 Emit the history request and publication separately from controller receipt.
+Retain each page's later engine-turn baseline and advancement dispatch and
+receipt under the same deadline. Keep responsive pages' receipts when one
+page read fails. Earlier correction progress cannot prove a later turn.
 Sample a corrected frontier at the end of the physics turn that crosses it.
 A rendered snapshot can skip intervening physics turns. If late controller
 input raises the target, backfill from bounded page-local observations and
