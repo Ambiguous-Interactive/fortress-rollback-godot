@@ -28,15 +28,33 @@ const LIFETIME_MARKS = new Set(['native_expiry', 'sdk_departure']);
 const HOLD_MARKS = new Set(['hold_armed', 'hold_first_input', 'hold_first_control', 'hold_first_prediction', 'hold_ready', 'hold_cap', 'release_started']);
 
 function createWarmupBarrier(players, clock = () => performance.now()) {
-  const checkpoints = Array(players).fill(null);
+  const latest = Array(players).fill(null);
   const errors = Array(players).fill(null);
   const received = Array(players).fill(null);
   let startedAt = Infinity;
   let deadline = Infinity;
+  let waiting = false;
   let complete;
   const ready = new Promise(resolve => { complete = resolve; });
+  const states = new Set(['offline', 'connecting', 'joining', 'lobby', 'starting', 'playing', 'failed']);
+  const isFrontier = value => states.has(value?.state) && Number.isSafeInteger(value.frame) && Number.isSafeInteger(value.confirmed);
   return {
-    checkpoints, errors, received,
+    get checkpoints() { return latest.map(record => record?.sample ?? null); },
+    errors, received,
+    frontier() {
+      const peers = latest.map((record, index) => {
+        const { sample, received_ms } = record ?? { sample: null, received_ms: null };
+        const observation = sample?.cutoff ?? sample?.ticks.at(-1) ?? null;
+        let outcome = 'unobserved';
+        if (observation?.state === 'failed') outcome = 'terminal';
+        else if (received[index] !== null) outcome = 'gate_received';
+        else if (sample?.cutoff?.reason === 'gate') outcome = received_ms >= deadline ? 'gate_received_late' : 'gate_unaccepted';
+        else if (observation?.state === 'playing' && observation.confirmed >= GATE_FRAME) outcome = 'gate_observed';
+        else if (observation) outcome = 'observed_below_gate';
+        return { outcome, observation, received_ms };
+      });
+      return { deadline_ms: Number.isFinite(deadline) ? deadline : null, peers };
+    },
     record(index, text) {
       if (!text.startsWith(WARMUP_CHECKPOINT) || received[index] !== null) return;
       const receivedAt = clock();
@@ -46,12 +64,13 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
         if (!isUuid(sample?.recipient) || !Number.isFinite(sample.started_ms) || sample.started_ms < 0
           || !Number.isFinite(sample.through_ms) || sample.through_ms < sample.started_ms
           || !Array.isArray(sample.links) || sample.links.length !== players - 1 || sample.links.some(link => !isUuid(link?.sender))
-          || !Array.isArray(sample.ticks) || sample.ticks.some(tick => !Number.isFinite(tick?.at_ms))
+          || !Array.isArray(sample.ticks) || sample.ticks.length > 24 || sample.ticks.some((tick, i, ticks) => !isFrontier(tick)
+            || !Number.isFinite(tick.at_ms) || tick.at_ms < (i ? ticks[i - 1].at_ms : sample.started_ms) || tick.at_ms > sample.through_ms)
           || !Number.isSafeInteger(sample.tick_count) || sample.tick_count < sample.ticks.length) throw new Error('invalid warmup checkpoint');
         const roster = [sample.recipient, ...sample.links.map(link => link.sender)];
         if (new Set(roster).size !== players) throw new Error('invalid warmup roster');
         const { cutoff } = sample;
-        if (cutoff !== null && (cutoff?.at_ms !== sample.through_ms || !Number.isSafeInteger(cutoff.confirmed)
+        if (cutoff !== null && (!isFrontier(cutoff) || cutoff.at_ms !== sample.through_ms
           || !(cutoff.reason === 'failed' && cutoff.state === 'failed'
             || cutoff.reason === 'gate' && cutoff.state === 'playing' && cutoff.confirmed >= GATE_FRAME)))
           throw new Error('invalid warmup gate');
@@ -62,8 +81,12 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
               || !isUuid(uuid) || uuid === sample.recipient || uuid !== roster[endpoint - 1])
             throw new Error('invalid warmup expiry endpoint');
         }
-        checkpoints[index] = sample;
-        if (cutoff?.reason !== 'gate' || receivedAt < startedAt || receivedAt >= deadline) return;
+        const previous = latest[index];
+        const beforeStart = receivedAt < startedAt;
+        const replacesPreStartGate = previous?.beforeStart && previous.sample.cutoff?.reason === 'gate' && cutoff?.reason === 'gate' && !beforeStart;
+        if (sample.through_ms < previous?.sample.through_ms || (previous?.sample.cutoff && !replacesPreStartGate)) return;
+        latest[index] = { sample, received_ms: receivedAt, beforeStart };
+        if (!waiting || beforeStart || cutoff?.reason !== 'gate' || receivedAt >= deadline) return;
         received[index] = receivedAt;
         if (received.every(at => at !== null)) complete();
       } catch (error) {
@@ -72,12 +95,13 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
     },
     async wait(start, timeout) {
       startedAt = clock();
+      waiting = true;
       try {
         await start();
         deadline = clock() + timeout;
         await boundedRoom(() => ready, timeout, 'native warmup');
       } finally {
-        deadline = -Infinity;
+        waiting = false;
       }
     },
   };
@@ -627,17 +651,17 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     },
     recordWarmup,
     warmupStatus,
-    recordWarmupTick(before, after, budget, elapsed_us, failed) {
+    recordWarmupTick(before, after, budget, elapsed_us, state, frame, confirmed) {
       if (!warmupLinks.size || warmupCutoff) return;
       const at = performance.now();
       if (warmupTicks.length === 24) warmupTicks.shift();
-      warmupTicks.push({ at_ms: at, before, after, budget, elapsed_us, failed });
+      warmupTicks.push({ at_ms: at, before, after, budget, elapsed_us, state, frame, confirmed });
       warmupTickCount++;
       scheduleWarmupCheckpoint(at);
     },
-    finishWarmup(state, confirmed, terminalEndpoint = 0) {
+    finishWarmup(state, frame, confirmed, terminalEndpoint = 0) {
       if (warmupLinks.size && !warmupCutoff) {
-        warmupCutoff = { at_ms: performance.now(), reason: state === 'failed' ? 'failed' : 'gate', state, confirmed };
+        warmupCutoff = { at_ms: performance.now(), reason: state === 'failed' ? 'failed' : 'gate', state, frame, confirmed };
         const uuid = warmupRoster[terminalEndpoint - 1];
         if (state === 'failed' && warmupLinks.has(uuid)) {
           warmupCutoff.terminal_endpoint = terminalEndpoint;
@@ -1331,7 +1355,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, departureCommands, roomIdentities,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks ?? departureClocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
-      warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupGateReceived: warmupBarrier?.received };
+      warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
+      warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier() };
   } catch (error) {
     failures.push(error);
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
@@ -1351,7 +1376,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
-      warmupGateReceived: warmupBarrier?.received, postRelease, correctionDeadline
+      warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline
     }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));

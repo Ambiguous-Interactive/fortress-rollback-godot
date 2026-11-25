@@ -157,6 +157,10 @@ the original rejection and bound each diagnostic independently of gameplay.
 When a one-time browser gate already emits a console checkpoint, use that
 receipt for the controller barrier. Require the original game-state
 predicate, one timely receipt per page, and the original deadline.
+Pair each bounded warmup tick's queue counts with the state and frame frontier
+from that physics turn. Preserve the first valid cutoff and its controller
+receipt even if later diagnostic reads fail. A last sample below the gate
+describes the observation, and a late receipt describes controller delivery.
 Start readiness sampling in the same page call that arms a hold. Keep page
 clock marks and controller receipt times on their own clocks.
 Publish the arm, first readiness and first cap hit while the page runs. Keep

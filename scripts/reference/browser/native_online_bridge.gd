@@ -208,9 +208,10 @@ class ObservedLobby:
 			relay_trace.observe(state, turns, status.current_frame, status.confirmed_frame, observations.restores, observations.history_limit)
 		if state == "failed" and previous_state == "playing":
 			failure_tick_callbacks = callbacks
-		if warmup_wire != null and available >= 0 and (available >= budget or now_us >= _next_warmup_tick_us or state == "failed"):
+		if warmup_wire != null and ((available >= 0 and available >= budget) or now_us >= _next_warmup_tick_us or state == "failed"):
 			var remaining: int = _sdk_packets() if state == "playing" else -1
-			warmup_wire.recordWarmupTick(available, remaining, budget, Time.get_ticks_usec() - now_us, state == "failed")
+			var status: Types.Status = game_match.status()
+			warmup_wire.recordWarmupTick(available, remaining, budget, Time.get_ticks_usec() - now_us, state, status.current_frame, status.confirmed_frame)
 			_next_warmup_tick_us = now_us + 250000
 
 	func _sdk_packets() -> int:
@@ -255,7 +256,7 @@ func _process(_delta: float) -> void:
 	var match_status: Types.Status = lobby.game_match.status()
 	var warmup_ready: bool = lobby.state == "playing" and match_status.confirmed_frame >= GATE_FRAME
 	if warmup_match != null and (lobby.state == "failed" or warmup_ready):
-		lobby.warmup_wire.finishWarmup(lobby.state, match_status.confirmed_frame, lobby.game_match.driver.native_terminal_endpoint())
+		lobby.warmup_wire.finishWarmup(lobby.state, match_status.current_frame, match_status.confirmed_frame, lobby.game_match.driver.native_terminal_endpoint())
 		if is_instance_valid(lobby.client):
 			lobby.client.disconnect("game_data_binary_received", warmup_match.observe_sdk)
 		warmup_match.warmup_wire = null
