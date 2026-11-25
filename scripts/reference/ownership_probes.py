@@ -1485,11 +1485,13 @@ if __name__ == '__main__':
     sys.meta_path.insert(0, OwnershipHelperFinder())
     try:
         from local_ownership import claim
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         try:
             invalidate_after_claim_import_failure()
         except OSError as cleanup_error:
             error.add_note(f'ownership could not invalidate stale receipts: {cleanup_error}')
+        if isinstance(error, SystemExit):
+            raise RuntimeError('ownership claim helper exited during import') from error
         raise
 
     main()

@@ -77,6 +77,9 @@ async function respond() {
   await assert.rejects(read(undefined, 50), /relay server receipt deadline/);
   assert.equal(await fs.readFile(path + '.request', 'utf8'), '3');
   const link = '11'.repeat(16) + '/' + '22'.repeat(16);
+  for (const malformed of [new Array(1), null, new Set([link])]) {
+    await assert.rejects(read(undefined, 3000, malformed), /invalid relay server link selection/);
+  }
   const retry = read(undefined, 3000, [link]);
   await assert.rejects(read(), /already has a caller/);
   await publish(3);
@@ -313,7 +316,9 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
   assert.deepEqual(expanded.streams.raw.quality.events.map(event => event.seq),
     Array.from({ length: 140 }, (_, index) => String(index + 1)));
   assert.deepEqual((await trace.freeze([`${local}/${source}`])).streams.raw.quality, quality);
-  for (const malformed of [[`${source}/${local}`, `${source}/${local}`], [`${source}/${source}`], [`${source}/ff`], [`${source}/${local}/`], [null]]) {
+  const scopedLink = `${source}/${local}`;
+  for (const malformed of [[scopedLink, scopedLink], [`${source}/${source}`], [`${source}/ff`], [scopedLink + '/'], [null],
+    new Array(1), null, new Set([scopedLink])]) {
     await assert.rejects(trace.freeze(malformed), /invalid relay wire link selection/);
   }
   for (let seq = 141; seq <= 520; seq++) trace.record('raw', delivered(envelope(source, local, 4), BigInt(seq)));

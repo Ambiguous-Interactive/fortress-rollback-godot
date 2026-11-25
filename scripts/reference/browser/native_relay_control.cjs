@@ -58,8 +58,8 @@ function createRelayServerReader(path) {
   }
   return async (select = receipt => receipt, timeout = 3000, links = []) => {
     assert.ok(!reading, 'relay server reader already has a caller');
-    assert.ok(links.length <= 8 && new Set(links).size === links.length && links.every(link => {
-      if (!/^[0-9a-f]{32}\/[0-9a-f]{32}$/.test(link)) return false;
+    assert.ok(Array.isArray(links) && links.length <= 8 && new Set(links).size === links.length && [...links].every(link => {
+      if (typeof link !== 'string' || !/^[0-9a-f]{32}\/[0-9a-f]{32}$/.test(link)) return false;
       return link.slice(0, 32) !== link.slice(33);
     }), 'invalid relay server link selection');
     reading = true;

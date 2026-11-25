@@ -184,8 +184,9 @@ function createRelayWireTrace() {
       return { counts, frontier };
     },
     async freeze(links = []) {
+      if (!Array.isArray(links) || links.length > 8) throw new Error('invalid relay wire link selection');
       const selected = new Set(links);
-      if (selected.size !== links.length || links.length > 8 || links.some(link => {
+      if (selected.size !== links.length || [...selected].some(link => {
         if (typeof link !== 'string') return true;
         const [sender, recipient, extra] = link.split('/');
         return extra !== undefined || sender === recipient || !roster?.has(sender) || !roster.has(recipient);

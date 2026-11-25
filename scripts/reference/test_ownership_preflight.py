@@ -61,7 +61,7 @@ probes.main()
 
     # Value: protects=CLI helper execution and receipt invalidation; fails_when=helpers run cached code or load before ownership; seam=real CLI
     def test_cli_loads_helper_source_after_invalidating_receipts(self):
-        for case in ('clean', 'stale-cache', 'missing-source', 'source-change', 'missing-lock-helper', 'busy-missing-lock-helper'):
+        for case in ('clean', 'stale-cache', 'missing-source', 'source-change', 'missing-lock-helper', 'busy-missing-lock-helper', 'exiting-lock-helper'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 reference = root / 'scripts/reference'
@@ -98,6 +98,8 @@ probes.main()
                     self.assertIn('RuntimeError: stale helper cache executed', ordinary.stderr)
                 elif case == 'missing-source' or missing_lock_helper:
                     missing_file.unlink()
+                elif case == 'exiting-lock-helper':
+                    (reference / 'local_ownership.py').write_text('raise SystemExit(0)\n')
                 elif case == 'source-change':
                     argument = '--offline'
                     with helper.open('a') as output:
@@ -118,6 +120,7 @@ probes.main()
                     'source-change': 'ValueError: ownership compiled helper source differs from inventory: scripts/reference/fetch.py',
                     'missing-lock-helper': missing_diagnostic,
                     'busy-missing-lock-helper': missing_diagnostic,
+                    'exiting-lock-helper': 'RuntimeError: ownership claim helper exited during import',
                 }
                 if case in failures:
                     self.assertEqual(child.returncode, 1, child.stderr)
