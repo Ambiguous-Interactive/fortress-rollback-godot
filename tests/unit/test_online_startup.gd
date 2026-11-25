@@ -220,15 +220,20 @@ func _native_relay_plan(context: RefCounted) -> void:
 class LobbyClient:
 	extends RelayFixture.Client
 	var incoming: Array[PackedByteArray] = []
+	var _draining: bool = false
 
 	func get_room_id() -> String:
 		return Example.ROOM
 
 	func poll() -> void:
+		if _draining:
+			return
+		_draining = true
 		for _index: int in mini(transport.max_packets_per_poll, incoming.size()):
 			if transport.can_receive_packet.is_valid() and not transport.can_receive_packet.call():
 				break
 			game_data_binary_received.emit(Example.V, 1, incoming.pop_front())
+		_draining = false
 
 	func close(_code: int, _reason: String) -> void:
 		pass
@@ -306,6 +311,9 @@ func _native_ingress_pressure(context: RefCounted) -> void:
 		burst.append(sample)
 		client.incoming.append(_native_envelope(game, sample))
 
+	client.game_data_binary_received.connect(
+		func(_sender: String, _encoding: int, _bytes: PackedByteArray) -> void: lobby._poll_client(), Object.CONNECT_ONE_SHOT
+	)
 	lobby._poll_client()
 	context.equal(game.relay.status().code, Match.Relay.Code.OK, "a fully addressed SDK burst is paced before overflow")
 	context.equal(client.incoming.size(), 128, "the excess burst stays in SDK FIFO order")

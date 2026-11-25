@@ -309,9 +309,10 @@ func _poll_client() -> int:
 		return -1
 	var transport: RefCounted = client.get("transport")
 	var budget: int = transport.get("max_packets_per_poll")
+	var previous_guard: Callable = transport.get("can_receive_packet")
 	transport.set("can_receive_packet", game_match.relay.can_receive_packet)
 	client.call("poll")
-	transport.set("can_receive_packet", Callable())
+	transport.set("can_receive_packet", previous_guard)
 	return budget
 
 
