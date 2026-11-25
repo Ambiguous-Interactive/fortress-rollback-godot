@@ -77,9 +77,17 @@ The same log retains `hold_armed`, `hold_ready` and the first `hold_cap` before 
 These records include the page's last published game state and its held packet and byte counts.
 Subtract `release_dispatched_ms` from `release_entered.controller_ms` to measure dispatch through entry receipt.
 Subtract `release_entered.page_ms` from `release_started.page_ms` to measure page-side work before release.
+The `releaseEvidence` summary lists closed-socket and hold-cap pages and records whether the correction deadline expired.
+It joins each expiry reporter to the frozen peer and that peer's last release checkpoint received before the expiry receipt.
+Release checkpoints sample the packets sent and queued. A closed-socket checkpoint includes the remaining packets from the current batch.
+The reporter records SDK backlog and the last native inbox acceptance from that endpoint before cleanup. Subtract `accepted_us`
+from `observed_us` only within that report. `controller_order` also distinguishes receipts with equal controller timestamps.
 The last two browser heartbeats carry the Godot turn and confirmation counters. A moving heartbeat with a fixed turn
 counter locates a pause in Godot service, while advancing turns with fixed confirmation locate a different stall. Missing checkpoints
 show where evidence stopped arriving. They cannot distinguish a stalled renderer from an unavailable browser control channel.
+The `engineTurns` records retain each page's baseline and advancing frame observations, with dispatch and receipt times on the controller clock.
+A dispatch without a receipt locates the pending read even if final diagnostics time out. History capture waits for every page to report a
+playing frame greater than its own baseline from after the confirmation barrier.
 The `departureCommands` records correlate each leave command to its issuing page and phase.
 Compare `controller_dispatch_ms` with `published.controller_ms` for end-to-end acknowledgment, and `entered.page_ms` with
 `published.page_ms` for page execution and publication. A successful acknowledgment carries code zero and offline state.
