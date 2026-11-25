@@ -160,12 +160,16 @@ assert.throws(() => joinRelayReceipts(server, [pageA, pageB]), /receipt disagree
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs')], check=True, timeout=10)
 
     def test_native_relay_wire_preserves_duplicate_stamps_and_addresses(self):
-        # Value: protects=physical relay identity; fails_when=identical bytes collapse or a foreign route is retained; seam=browser wire receipt
+        # Value: protects=relay identity and shared digests; fails_when=bytes collapse, hashes repeat, or foreign routes survive; seam=browser wire receipt
         script = r"""
 const assert = require('node:assert/strict');
 const { createHash, webcrypto } = require('node:crypto');
 const { createRelayWireTrace } = require(process.argv[1]);
-globalThis.crypto = webcrypto;
+let digestCalls = 0;
+Object.defineProperty(globalThis, 'crypto', { value: { subtle: { digest(...args) {
+  digestCalls++;
+  return webcrypto.subtle.digest(...args);
+} } } });
 const bytes = value => Buffer.from(value, 'hex');
 const [room, source, local, other] = ['11', '22', '33', '44'].map(value => value.repeat(16));
 const trace = createRelayWireTrace();
@@ -246,6 +250,40 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
   assert.equal(quality.events.length, 128);
   assert.equal(quality.events[0].seq, '13');
   assert.equal(quality.events.at(-1).seq, '140');
+  const digestFixture = createRelayWireTrace();
+  digestFixture.bind(room, local, [source, local, other]);
+  const original = envelope(source, local, 4);
+  const changed = Buffer.from(original);
+  changed[changed.length - 1] = 1;
+  const outgoing = envelope(local, source, 4);
+  digestFixture.record('raw', delivered(original, 5n));
+  digestFixture.record('raw', delivered(original, 5n));
+  digestFixture.record('raw', delivered(original, 6n));
+  digestFixture.recordEngine('sdk', source, changed.toString('hex'), 1, '5', null);
+  digestFixture.recordEngine('native', source, changed.subarray(57).toString('hex'), 1, '5', 0);
+  digestFixture.recordEngine('native', source, original.subarray(57).toString('hex'), 1, '5', 1);
+  digestFixture.record('send', outgoing, 7);
+  digestFixture.record('send', outgoing, 8);
+  function checkDigests(events, packets) {
+    const digest = packet => createHash('sha256').update(packet).digest('hex');
+    assert.deepEqual(events.map(({ envelope_sha256, payload_sha256 }) => [envelope_sha256, payload_sha256]),
+      packets.map(packet => [digest(packet), digest(packet.subarray(57))]));
+  }
+  const firstFreezeCalls = digestCalls;
+  const digestReceipt = await digestFixture.freeze();
+  const { raw, sdk: sdkStage, native: nativeStage, send } = digestReceipt.streams;
+  assert.deepEqual(raw.quality.events.map(({ ordinal, seq }) => [ordinal, seq]), [[1, '5'], [2, '5'], [3, '6']]);
+  checkDigests(raw.quality.events, [original, original, original]);
+  checkDigests(sdkStage.quality.events, [changed]);
+  checkDigests(nativeStage.quality.events, [changed, original]);
+  assert.deepEqual(nativeStage.quality.events.map(({ seq, code }) => [seq, code]), [['5', 0], ['5', 1]]);
+  checkDigests(send.quality.events, [outgoing, outgoing]);
+  assert.deepEqual(send.quality.events.map(event => event.socket_ordinal), [7, 8]);
+  assert.equal(digestCalls - firstFreezeCalls, 10, 'hash each exact stamped packet once per receipt');
+  const secondFreezeCalls = digestCalls;
+  assert.deepEqual(await digestFixture.freeze(), digestReceipt);
+  assert.equal(digestCalls - secondFreezeCalls, 10, 'digest reuse must stay inside one freeze');
+
   const members = [source, local, other, ...['55', '66', '77', '88', '99'].map(value => value.repeat(16))];
   const pressured = createRelayWireTrace();
   pressured.bind(room, local, members);
@@ -264,7 +302,11 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
         receive(peer, seq);
       }
     }
+    const pressureDigestCalls = digestCalls;
     const { streams } = await pressured.freeze();
+    const retainedPerFamily = 1 + 128 * 6;
+    assert.equal(digestCalls - pressureDigestCalls, 4 * retainedPerFamily * (family === 'input' ? 1 : 2),
+      'reuse raw, SDK and native digests at the per-link cap');
     for (const [stage, groups] of Object.entries(streams)) {
       const { count, omitted, events } = groups[family];
       assert.equal(count, 1 + 129 * 6);

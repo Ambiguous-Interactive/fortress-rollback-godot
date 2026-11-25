@@ -172,9 +172,25 @@ function createRelayWireTrace() {
       const entries = Object.entries(streams).flatMap(([stage, groups]) => Object.entries(groups).map(([family, stream]) =>
         ({ stage, family, count: stream.count, events: [...stream.links.values()].flat().sort((a, b) => a.ordinal - b.ordinal) })));
       const snapshot = { version: 1, clock: 'page.performance.now', room, local, streams: Object.fromEntries(Object.keys(streams).map(stage => [stage, {}])) };
+      // Only retained events can add entries, and the cache lives for one freeze.
+      const stamped = new Map();
+      const hashPacket = async bytes => ({
+        envelope_sha256: await sha256(bytes), payload_sha256: await sha256(bytes.subarray(57)),
+      });
+      function packetDigests({ sender, recipient, epoch, seq }, bytes) {
+        if (seq === null) return hashPacket(bytes);
+        const key = `${sender}/${recipient}/${epoch}/${seq}`;
+        let variants = stamped.get(key);
+        if (!variants) stamped.set(key, variants = []);
+        const match = variants.find(({ bytes: retained }) => bytes.length === retained.length && bytes.every((byte, index) => byte === retained[index]));
+        if (match) return match.digests;
+        const digests = hashPacket(bytes);
+        variants.push({ bytes, digests });
+        return digests;
+      }
       await Promise.all(entries.map(async ({ stage, family, count, events }) => {
         snapshot.streams[stage][family] = { count, omitted: count - events.length, events: await Promise.all(events.map(async ({ bytes, ...event }) =>
-          ({ ...event, envelope_bytes: bytes.length, envelope_sha256: await sha256(bytes), payload_sha256: await sha256(bytes.subarray(57)) }))) };
+          ({ ...event, envelope_bytes: bytes.length, ...await packetDigests(event, bytes) }))) };
       }));
       return snapshot;
     },
