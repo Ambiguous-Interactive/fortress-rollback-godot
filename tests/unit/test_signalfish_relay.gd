@@ -168,14 +168,21 @@ func _ingress(context: RefCounted) -> void:
 	stale[0] ^= 1
 	var bad_version: PackedByteArray = good.duplicate()
 	bad_version[4] = 2
+	var bad_size: PackedByteArray = good.duplicate()
+	bad_size.encode_u32(53, 2)
 	var oversized: PackedByteArray = good.duplicate()
 	oversized.resize(570)
 	var rows: Array[Dictionary] = [
 		{"sender": W, "encoding": 1, "bytes": good, "code": Relay.Code.WRONG_SOURCE},
+		{"sender": U, "encoding": 1, "bytes": good, "code": Relay.Code.WRONG_SOURCE},
+		{"sender": V.left(35) + "A", "encoding": 1, "bytes": good, "code": Relay.Code.WRONG_SOURCE},
 		{"sender": V, "encoding": 0, "bytes": good, "code": Relay.Code.INCOMPATIBLE_MODE},
 		{"sender": V, "encoding": 1, "bytes": Envelope.encode(session, U, U, PackedByteArray([1])), "code": Relay.Code.WRONG_SOURCE},
+		{"sender": V, "encoding": 1, "bytes": Envelope.encode(stale, U, W, PackedByteArray([1])), "code": Relay.Code.WRONG_SOURCE},
 		{"sender": V, "encoding": 1, "bytes": Envelope.encode(stale, V, U, PackedByteArray([1])), "code": Relay.Code.WRONG_SESSION},
+		{"sender": V, "encoding": 1, "bytes": Envelope.encode(stale, V, W, PackedByteArray([1])), "code": Relay.Code.WRONG_SESSION},
 		{"sender": V, "encoding": 1, "bytes": bad_version, "code": Relay.Code.INVALID_ENVELOPE},
+		{"sender": V, "encoding": 1, "bytes": bad_size, "code": Relay.Code.INVALID_ENVELOPE},
 		{"sender": V, "encoding": 1, "bytes": oversized, "code": Relay.Code.TOO_LARGE},
 		{"sender": V, "encoding": 1, "bytes": Envelope.encode(session, V, W, PackedByteArray([1])), "code": Relay.Code.NOT_RECIPIENT}
 	]
@@ -183,6 +190,7 @@ func _ingress(context: RefCounted) -> void:
 		fixture.client.game_data_binary_received.emit(row.sender, row.encoding, row.bytes)
 		context.equal(fixture.relay.status().last_receive_code, row.code, "specific receive refusal")
 		context.equal(fixture.relay.status().received_packets, 0, "refused or unrelated broadcast never queued")
+	context.equal(fixture.relay.status().ignored, 1, "only a valid unrelated broadcast is counted as ignored")
 	_destroy(fixture)
 
 

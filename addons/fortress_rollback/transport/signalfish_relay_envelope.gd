@@ -33,22 +33,41 @@ static func encode(session: PackedByteArray, sender_uuid: String, recipient_uuid
 
 static func decode(bytes: PackedByteArray, maximum_payload: int) -> Decoded:
 	var result: Decoded = Decoded.new()
-	if maximum_payload < 1 or maximum_payload > 65479 or bytes.size() < HEADER_BYTES + 1:
-		return result
-	if bytes.size() > HEADER_BYTES + maximum_payload:
-		result.code = R.Code.TOO_LARGE
-		return result
-	if bytes.slice(0, 4) != PackedByteArray(MAGIC) or bytes[4] != 1:
-		return result
-	var size: int = bytes.decode_u32(53)
-	if size < 1 or size != bytes.size() - HEADER_BYTES:
+	result.code = _shape_code(bytes, maximum_payload)
+	if result.code != R.Code.OK:
 		return result
 	result.session = bytes.slice(5, 21)
 	result.sender = _uuid(bytes.slice(21, 37))
 	result.recipient = _uuid(bytes.slice(37, 53))
 	result.payload = bytes.slice(HEADER_BYTES)
-	result.code = R.Code.OK
 	return result
+
+
+## Validate an envelope against identities already frozen by the room.
+static func address_code(bytes: PackedByteArray, maximum_payload: int, sender: PackedByteArray, session: PackedByteArray, recipient: PackedByteArray) -> int:
+	var code: int = _shape_code(bytes, maximum_payload)
+	if code != R.Code.OK:
+		return code
+	if bytes.slice(21, 37) != sender:
+		return R.Code.WRONG_SOURCE
+	if bytes.slice(5, 21) != session:
+		return R.Code.WRONG_SESSION
+	if bytes.slice(37, 53) != recipient:
+		return R.Code.NOT_RECIPIENT
+	return R.Code.OK
+
+
+static func _shape_code(bytes: PackedByteArray, maximum_payload: int) -> int:
+	if maximum_payload < 1 or maximum_payload > 65479 or bytes.size() < HEADER_BYTES + 1:
+		return R.Code.INVALID_ENVELOPE
+	if bytes.size() > HEADER_BYTES + maximum_payload:
+		return R.Code.TOO_LARGE
+	if bytes.slice(0, 4) != PackedByteArray(MAGIC) or bytes[4] != 1:
+		return R.Code.INVALID_ENVELOPE
+	var size: int = bytes.decode_u32(53)
+	if size < 1 or size != bytes.size() - HEADER_BYTES:
+		return R.Code.INVALID_ENVELOPE
+	return R.Code.OK
 
 
 static func _uuid(bytes: PackedByteArray) -> String:
