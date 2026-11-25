@@ -120,11 +120,15 @@ class ObservedLobby:
 	var sdk_receive_peak: int = 0
 	var relay_receive_peak: int = 0
 	var relay_send_peak: int = 0
+	var relay_batch_peak: int = 0
+	var relay_overflow: Dictionary = {}
 	var warmup_wire: JavaScriptObject
 	var relay_trace: JavaScriptObject
 	var _engine_mesh_open: bool = false
 	var _last_play_tick_us: int = -1
 	var _next_warmup_tick_us: int = 0
+	var _sdk_before_poll: int = -1
+	var _sdk_poll_budget: int = -1
 
 	func _connect_callbacks() -> void:
 		if observe_recovery:
@@ -202,19 +206,12 @@ class ObservedLobby:
 		turns += 1
 		var previous_state: String = state
 		var callbacks: PackedInt32Array = []
-		var available: int = -1
-		var budget: int = -1
+		_sdk_before_poll = -1
+		_sdk_poll_budget = -1
 		if state == "playing":
 			if _last_play_tick_us >= 0:
 				play_tick_gap_peak_us = maxi(play_tick_gap_peak_us, now_us - _last_play_tick_us)
 			_last_play_tick_us = now_us
-			available = _sdk_packets()
-			sdk_receive_peak = maxi(sdk_receive_peak, available)
-			if warmup_wire != null:
-				budget = int(client.get("transport").get("max_packets_per_poll"))
-			var relay_status: Dictionary = game_match.relay.status()
-			relay_receive_peak = maxi(relay_receive_peak, relay_status.received_packets)
-			relay_send_peak = maxi(relay_send_peak, relay_status.pending_packets)
 			callbacks = [observations.saves, observations.restores, observations.advances]
 			var frame: int = game_match.status().current_frame
 			# Variations after the warmup force correction when delivery is held.
@@ -226,10 +223,11 @@ class ObservedLobby:
 			relay_trace.observe(state, turns, status.current_frame, status.confirmed_frame, observations.restores, observations.history_limit)
 		if state == "failed" and previous_state == "playing":
 			failure_tick_callbacks = callbacks
-		if warmup_wire != null and ((available >= 0 and available >= budget) or now_us >= _next_warmup_tick_us or state == "failed"):
+		var sdk_backlog: bool = _sdk_before_poll >= 0 and _sdk_before_poll >= _sdk_poll_budget
+		if warmup_wire != null and (sdk_backlog or now_us >= _next_warmup_tick_us or state == "failed"):
 			var remaining: int = _sdk_packets() if state == "playing" else -1
 			var status: Types.Status = game_match.status()
-			warmup_wire.recordWarmupTick(available, remaining, budget, Time.get_ticks_usec() - now_us, state, status.current_frame, status.confirmed_frame)
+			warmup_wire.recordWarmupTick(_sdk_before_poll, remaining, _sdk_poll_budget, Time.get_ticks_usec() - now_us, state, status.current_frame, status.confirmed_frame)
 			_next_warmup_tick_us = now_us + 250000
 
 	func _sdk_packets() -> int:
@@ -237,6 +235,35 @@ class ObservedLobby:
 		var transport: RefCounted = client.get("transport")
 		var socket: RefCounted = transport.get("_peer")
 		return int(socket.call("get_available_packet_count")) if socket != null else -1
+
+	func _poll_client() -> int:
+		if state != "playing":
+			return super._poll_client()
+		_sdk_before_poll = _sdk_packets()
+		sdk_receive_peak = maxi(sdk_receive_peak, _sdk_before_poll)
+		var before: Dictionary = game_match.relay.status()
+		relay_send_peak = maxi(relay_send_peak, before.pending_packets)
+		var started_us: int = Time.get_ticks_usec()
+		_sdk_poll_budget = super._poll_client()
+		if state != "playing":
+			return _sdk_poll_budget
+		var status: Dictionary = game_match.relay.status()
+		var admitted: int = status.received_packets - int(before.received_packets)
+		relay_batch_peak = maxi(relay_batch_peak, admitted)
+		relay_receive_peak = maxi(relay_receive_peak, status.received_packets)
+		var overflow: Dictionary = status.receive_overflow
+		if not overflow.is_empty() and relay_overflow.is_empty():
+			overflow.merge({
+				"sdk_before": _sdk_before_poll,
+				"sdk_after": _sdk_packets(),
+				"sdk_budget": _sdk_poll_budget,
+				"batch_admitted": admitted,
+				"service_started_us": _last_play_tick_us,
+				"poll_started_us": started_us,
+				"poll_finished_us": Time.get_ticks_usec(),
+			})
+			relay_overflow = overflow
+		return _sdk_poll_budget
 
 
 var scene: Node2D
@@ -303,6 +330,8 @@ func _process(_delta: float) -> void:
 		"sdk_receive_peak": lobby.sdk_receive_peak,
 		"relay_receive_peak": lobby.relay_receive_peak,
 		"relay_send_peak": lobby.relay_send_peak,
+		"relay_batch_peak": lobby.relay_batch_peak,
+		"relay_overflow": lobby.relay_overflow,
 		"transport_start_delay": lobby.transport_start_delay,
 		"previous_transport_delay": lobby.previous_transport_delay,
 		"browser_open_wait_ticks": lobby.browser_open_wait_ticks,

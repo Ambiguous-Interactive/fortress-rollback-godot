@@ -25,6 +25,7 @@ var _pending: Array[PackedByteArray] = []
 var _received: Array[Envelope.Decoded] = []
 var _pending_bytes: int = 0
 var _received_bytes: int = 0
+var _receive_overflow: Dictionary = {}
 # Variant carries the peer's nullable handshake token owned by the current FIFO head.
 var _receive_token: Variant = null
 var _receive_token_ready: bool = false
@@ -231,8 +232,23 @@ func idle() -> bool:
 	return _activity == 0 and _sent == 0 and _pending.is_empty() and _received.is_empty()
 
 func status() -> Dictionary:
-	return {"code": _gate(), "pending_packets": _pending.size(), "pending_bytes": _pending_bytes, "received_packets": _received.size(),
-		"received_bytes": _received_bytes, "last_receive_code": _last_receive, "rejected": _rejected, "ignored": _ignored}
+	return {
+		"code": _gate(),
+		"pending_packets": _pending.size(),
+		"pending_bytes": _pending_bytes,
+		"received_packets": _received.size(),
+		"received_bytes": _received_bytes,
+		"last_receive_code": _last_receive,
+		"rejected": _rejected,
+		"ignored": _ignored,
+		"receive_overflow": _receive_overflow.duplicate(),
+	}
+
+
+## Check whether the queue can accept another maximum-sized envelope.
+func can_receive_packet() -> bool:
+	return (_client != null and _failure == Code.OK and _received.size() < _options.max_received_packets
+		and _options.max_packet_bytes + Envelope.HEADER_BYTES <= _options.max_received_bytes - _received_bytes)
 
 
 func detach() -> void:
@@ -253,6 +269,7 @@ func detach() -> void:
 	_received.clear()
 	_pending_bytes = 0
 	_received_bytes = 0
+	_receive_overflow.clear()
 	_receive_token = null
 	_receive_token_ready = false
 	_traffic = 0
@@ -290,6 +307,13 @@ func _on_binary(from_uuid: String, encoding: int, bytes: PackedByteArray) -> voi
 		_last_receive = Code.NOT_RECIPIENT
 		return
 	if _received.size() >= _options.max_received_packets or bytes.size() > _options.max_received_bytes - _received_bytes:
+		_receive_overflow = {
+			"packets": _received.size(),
+			"bytes": _received_bytes,
+			"packet_limit": _options.max_received_packets,
+			"byte_limit": _options.max_received_bytes,
+			"refused_bytes": bytes.size(),
+		}
 		_failure = Code.RECEIVE_OVERFLOW
 		_reject(_failure)
 		return

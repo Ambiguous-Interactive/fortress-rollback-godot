@@ -16,6 +16,7 @@ const DIAGNOSTIC_MS = 5000;
 const CLOSE_MS = 10000;
 const CANONICAL_SNAPSHOT = /^(?:[0-9a-f]{2})+$/;
 const FROZEN_UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const CLOSE_CLOCK_PRE_SAMPLES = 3;
 const CLOSE_CLOCK_POST_SAMPLES = 4;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
@@ -731,7 +732,23 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       }
     }, data, packet?.sender === localUuid ? packet : null);
   };
+  function sctpStatus() {
+    return resources.rtc.filter(({channel}) => channel.id === 3).map(record => {
+      if ((!record.local || !record.remote) && record.connection.signalingState !== 'closed') {
+        record.local = ufrag(record.connection.localDescription) ?? record.local;
+        record.remote = ufrag(record.connection.remoteDescription) ?? record.remote;
+      }
+      return { index: record.index, local: record.local, remote: record.remote, closeAborts: record.closeAborts, closeEvents: record.closeEvents,
+        open: record.channel.readyState === 'open' && record.connection.connectionState === 'connected',
+        ordered: record.channel.ordered, maxRetransmits: record.channel.maxRetransmits, maxPacketLifeTime: record.channel.maxPacketLifeTime,
+        unreliable: record.channel.ordered === false && (record.channel.maxRetransmits === 0 || record.channel.maxPacketLifeTime !== null),
+        inputsSent: record.inputsSent, inputsReceived: record.inputsReceived,
+        closed: record.channel.readyState === 'closed', connectionClosed: record.connection.signalingState === 'closed',
+        closedAt: ice.get(record.connection).closedAt ?? null };
+    });
+  }
   window.fortressNativeWire = {
+    sctpStatus,
     bind(hash, uuid, roster = []) {
       if (session || !/^[0-9a-f]{32}$/.test(hash)) throw new Error('invalid native room session');
       localUuid = uuid.replaceAll('-', '');
@@ -844,19 +861,6 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     },
     status() {
       const holdMs = hold.armed === null ? null : Math.round((hold.release?.at_ms ?? performance.now()) - hold.armed.at_ms);
-      const sctp = resources.rtc.filter(({channel}) => channel.id === 3).map(record => {
-        if ((!record.local || !record.remote) && record.connection.signalingState !== 'closed') {
-          record.local = ufrag(record.connection.localDescription) ?? record.local;
-          record.remote = ufrag(record.connection.remoteDescription) ?? record.remote;
-        }
-        return { index: record.index, local: record.local, remote: record.remote, closeAborts: record.closeAborts, closeEvents: record.closeEvents,
-          open: record.channel.readyState === 'open' && record.connection.connectionState === 'connected',
-          ordered: record.channel.ordered, maxRetransmits: record.channel.maxRetransmits, maxPacketLifeTime: record.channel.maxPacketLifeTime,
-          unreliable: record.channel.ordered === false && (record.channel.maxRetransmits === 0 || record.channel.maxPacketLifeTime !== null),
-          inputsSent: record.inputsSent, inputsReceived: record.inputsReceived,
-          closed: record.channel.readyState === 'closed', connectionClosed: record.connection.signalingState === 'closed',
-          closedAt: ice.get(record.connection).closedAt ?? null };
-      });
       const events = [...qualityEvents.send, ...qualityEvents.receive].sort((a, b) => a.sequence - b.sequence)
         .map(({ direction, peer, kind, token, at_ms }) => ({ direction, peer, kind, token, at_ms }));
       const releaseMs = hold.release === null ? null : Math.round((releaseEnded ?? performance.now()) - hold.release.at_ms);
@@ -870,7 +874,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
           delivered: [...recovery.delivered], observed: [...recovery.observed] },
         relay_trace: { buffered_bytes_peak: bufferedBytesPeak, broadcasts: relayBroadcasts, events,
           event_count: qualityEventCount, direction_counts: { ...qualityEventCounts } },
-        ice: [...ice.values()], sctp,
+        ice: [...ice.values()], sctp: sctpStatus(),
         rtc: resources.rtc.map(({channel, sent, received}) => [channel.id, channel.readyState, sent, received]),
         sockets: resources.sockets.map(socket => socket.readyState) };
     },
@@ -922,10 +926,39 @@ function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, cl
   return evidence;
 }
 
-async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks, clock = () => performance.now(), delay = pause } = {}) {
+async function calibrateDepartureClocks(pages, report, clock = () => performance.now(), timeout = PAGE_WAIT_MS) {
+  const clockSamples = pages.map(() => ({ before: [], after: [] }));
+  report.clockSamples = clockSamples;
+  const deadline = clock() + timeout;
+  const reads = await Promise.allSettled(pages.map(async (page, index) => {
+    const label = `native peer ${index} departure clock`;
+    const samples = clockSamples[index].before;
+    for (let attempt = 0; attempt < CLOSE_CLOCK_PRE_SAMPLES; attempt++) {
+      const start = clock();
+      if (start >= deadline) throw new Error(`absolute ${label} deadline`);
+      const sampledAt = await boundedRoom(() => page.evaluate(() => window.fortressNativeWire.observeDeparture()), Math.ceil(deadline - start), label);
+      const end = clock();
+      if (end >= deadline) throw new Error(`absolute ${label} deadline`);
+      samples.push(clockWindow(Math.floor(start * 1000), Math.ceil(end * 1000), sampledAt));
+    }
+    return samples.reduce(intersectClock);
+  }));
+  report.clocks = reads.map(read => read.status === 'fulfilled' ? read.value : null);
+  const failed = reads.flatMap((read, index) => read.status === 'rejected' ? [{ index, reason: read.reason }] : []);
+  if (failed.length) {
+    report.calibrationErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
+    throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} departure clock failed`, { cause: reason })),
+      'WebKit departure clock calibration failed');
+  }
+}
+
+async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks = report.clocks, clock = () => performance.now(), delay = pause } = {}) {
   if (!errors.length) return undefined;
   report.proofs = [];
   report.clocks = clocks;
+  if (clocks) report.clockSamples ??= pages.map(() => ({ before: [], after: [] }));
+  const latestSnapshots = pages.map(() => null);
+  report.partialSnapshots = latestSnapshots;
   let rounds = 0;
   const deadline = clock() + DIAGNOSTIC_MS;
   while (clock() < deadline) {
@@ -935,12 +968,18 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
         const start = Math.floor(clock() * 1000);
         const { links, sampledAt } = await page.evaluate(timed => ({
           sampledAt: timed && window.crossOriginIsolated ? Math.round(performance.now() * 1000) : null,
-          links: window.fortressNativeWire.status().sctp,
+          links: window.fortressNativeWire.sctpStatus(),
         }), sampleClock);
-        const end = Math.ceil(clock() * 1000);
-        return { links, bound: sampleClock ? clockWindow(start, end, sampledAt) : null };
+        const receivedAt = clock();
+        return { links, bound: sampleClock ? clockWindow(start, Math.ceil(receivedAt * 1000), sampledAt) : null, receivedAt };
       }, Math.max(0, Math.ceil(deadline - clock())), `native peer ${index} close snapshot`)));
     const failed = snapshots.flatMap((entry, index) => entry.status === 'rejected' ? [{ index, reason: entry.reason }] : []);
+    snapshots.forEach((entry, index) => {
+      if (entry.status !== 'fulfilled' || entry.value.receivedAt >= deadline) return;
+      const { receivedAt, links, bound } = entry.value;
+      latestSnapshots[index] = { received_ms: receivedAt, links };
+      if (sampleClock) report.clockSamples[index].after.push(bound);
+    });
     report.snapshotErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
     if (failed.length) {
       throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} close snapshot failed`, { cause: reason })),
@@ -1208,7 +1247,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   let phase = 'launch';
   let sequence = 0;
   let postReleaseOrder = 0;
-  let departureClocks, correctionDeadline;
+  let correctionDeadline;
   let armed, stalled;
   let comparedFrames = HISTORY_FRAMES;
   const holdReadyReceived = Array(players).fill(null);
@@ -1475,18 +1514,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       }
     } else {
       if (route === 'mesh' && browserPair.includes('webkit')) {
-        departureClocks = await Promise.all(pages.map(async page => {
-          let bound;
-          // Every round trip brackets the same page offset on the controller's clock.
-          for (let attempt = 0; attempt < 3; attempt++) {
-            const start = Math.floor(performance.now() * 1000);
-            const sample = await page.evaluate(() => window.fortressNativeWire.observeDeparture());
-            const end = Math.ceil(performance.now() * 1000);
-            const measured = clockWindow(start, end, sample);
-            bound = attempt === 0 ? measured : intersectClock(bound, measured);
-          }
-          return bound;
-        }));
+        phase = 'departure clock calibration';
+        await calibrateDepartureClocks(pages, closeReport);
       }
       phase = 'departure';
       await leave(pages.at(-1), players - 1);
@@ -1517,7 +1546,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         assert.equal(peer[key], before[key], `terminal ${key} changed for survivor ${index}`);
     }
     phase = 'teardown';
-    if (!liveClose) closeLinks = await waitForCloseProofs(pages, peers, departureErrors, closeReport, { clocks: departureClocks }) ?? closeLinks;
+    if (!liveClose) closeLinks = await waitForCloseProofs(pages, peers, departureErrors, closeReport) ?? closeLinks;
     if (liveClose) await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.releaseTerminal())));
     const teardown = await Promise.allSettled(survivors.map(leave));
     const leaveErrors = teardown.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
@@ -1531,7 +1560,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
-      departureClocks: closeReport.clocks ?? departureClocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
+      departureClocks: closeReport.clocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier() };
   } catch (error) {
@@ -1549,9 +1578,11 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     });
     console.error(JSON.stringify({
       phase, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors: [...physicalCloseErrors, ...departureErrors],
-      departureClocks: closeReport.clocks ?? departureClocks, departureCommands, roomIdentities,
+      departureClocks: closeReport.clocks, departureCommands, roomIdentities,
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
-      physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
+      departureClockSamples: closeReport.clockSamples, departureClockErrors: closeReport.calibrationErrors,
+      physicalClosePartialSnapshots: physicalCloseReport.partialSnapshots,
+      closePartialSnapshots: closeReport.partialSnapshots, physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
@@ -1590,6 +1621,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = { armAndWaitForInput, bindDepartureCheckpoints, captureAndReleaseInput, closeEvidence, compareHistory,
+module.exports = { armAndWaitForInput, bindDepartureCheckpoints, calibrateDepartureClocks, captureAndReleaseInput, closeEvidence, compareHistory,
   createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt, missedCorrectionDeadline,
   postReleaseCheckpoint, readConfirmedHistory, relayReleaseEvidence, reportedChannel, waitForCloseProofs, waitForCorrectedHistory, WARMUP_CHECKPOINT };

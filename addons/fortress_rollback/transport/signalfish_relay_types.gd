@@ -31,7 +31,7 @@ static func reason_text(code: int) -> String:
 		Code.BACKPRESSURE:
 			return "transport queues are full"
 		Code.RECEIVE_OVERFLOW:
-			return "received bytes exceeded the receive bound"
+			return "received packets exceeded the receive queue limits"
 		Code.SDK_FAILURE:
 			return "the transport sdk failed"
 		Code.PEER_FAILURE:

@@ -219,12 +219,21 @@ func _native_relay_plan(context: RefCounted) -> void:
 
 class LobbyClient:
 	extends RelayFixture.Client
+	var incoming: Array[PackedByteArray] = []
+	var _draining: bool = false
 
 	func get_room_id() -> String:
 		return Example.ROOM
 
 	func poll() -> void:
-		pass
+		if _draining:
+			return
+		_draining = true
+		for _index: int in mini(transport.max_packets_per_poll, incoming.size()):
+			if transport.can_receive_packet.is_valid() and not transport.can_receive_packet.call():
+				break
+			game_data_binary_received.emit(Example.V, 1, incoming.pop_front())
+		_draining = false
 
 	func close(_code: int, _reason: String) -> void:
 		pass
@@ -288,6 +297,51 @@ func _native_ingress_pressure(context: RefCounted) -> void:
 	context.equal(ingress.accepted, [payload], "native ingress receives original bytes after capacity frees")
 	context.equal(game.relay.status().received_bytes, 0, "retry releases retained bytes")
 	context.equal(game.relay.poll(2).received, 0, "no duplicate retry after acceptance")
+
+	var lobby: Lobby = Lobby.new()
+	lobby.client = client
+	lobby.game_match = game
+	lobby.backend = "native"
+	lobby.state = "playing"
+	lobby._config = config
+	config.max_inbound_packets_per_poll = 256
+	var burst: Array[PackedByteArray] = []
+	for index: int in 256:
+		var sample: PackedByteArray = PackedByteArray([index, 72])
+		burst.append(sample)
+		client.incoming.append(_native_envelope(game, sample))
+
+	client.game_data_binary_received.connect(
+		func(_sender: String, _encoding: int, _bytes: PackedByteArray) -> void: lobby._poll_client(), Object.CONNECT_ONE_SHOT
+	)
+	lobby._poll_client()
+	context.equal(game.relay.status().code, Match.Relay.Code.OK, "a fully addressed SDK burst is paced before overflow")
+	context.equal(client.incoming.size(), 128, "the excess burst stays in SDK FIFO order")
+	ingress.full = true
+	context.equal(game.relay.poll(3).code, Match.Relay.Code.BACKPRESSURE, "full native inbox retains the burst head")
+	lobby._poll_client()
+	context.equal(client.incoming.size(), 128, "a full relay FIFO leaves the SDK queue untouched")
+	ingress.full = false
+	context.equal(game.relay.poll(4).received, 64, "native service drains one bounded receive batch")
+	lobby._poll_client()
+	context.equal(client.incoming.size(), 64, "next SDK drain respects the partially occupied FIFO")
+	context.equal(game.relay.poll(5).received, 64, "the next bounded batch makes progress")
+	lobby._poll_client()
+	context.equal(client.incoming.size(), 0, "every SDK packet eventually leaves the backlog")
+	context.equal(game.relay.poll(6).received + game.relay.poll(7).received, 128, "two native service turns consume the remaining burst")
+	context.equal(ingress.accepted.slice(1), burst, "all SDK bytes reach native once in arrival order")
+
+	var identity: PackedByteArray = game.membership.handshake_message().session_id
+	var other_recipient: PackedByteArray = Match.Relay.Envelope.encode(identity, Example.V, Example.V, identity + payload)
+	for _index: int in 128:
+		client.incoming.append(other_recipient)
+	for index: int in 128:
+		client.incoming.append(_native_envelope(game, burst[index]))
+	lobby._poll_client()
+	context.equal(client.incoming.size(), 0, "unrelated broadcasts do not halve the SDK poll budget")
+	context.equal(game.relay.status().received_packets, 128, "all addressed frames fit after the unrelated broadcasts")
+	context.equal(client.transport.can_receive_packet.is_null(), true, "the guard ends with the playing SDK poll")
+	lobby.client = null
 	game.detach()
 	mesh.free()
 	client.free()

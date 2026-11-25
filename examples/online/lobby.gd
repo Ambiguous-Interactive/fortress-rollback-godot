@@ -255,7 +255,7 @@ func _tick(now_us: int, buttons: int) -> void:
 		_finish_cleanup()
 		return
 	var revision: int = _connection_revision
-	client.call("poll")
+	_poll_client()
 	if revision != _connection_revision or state == "failed":
 		return
 	mesh.call("poll")
@@ -301,6 +301,19 @@ func _tick(now_us: int, buttons: int) -> void:
 		if not game_match.failure.is_empty():
 			_fail(game_match.failure)
 		_finish_cleanup()
+
+
+func _poll_client() -> int:
+	if backend != "native" or state != "playing":
+		client.call("poll")
+		return -1
+	var transport: RefCounted = client.get("transport")
+	var budget: int = transport.get("max_packets_per_poll")
+	var previous_guard: Callable = transport.get("can_receive_packet")
+	transport.set("can_receive_packet", game_match.relay.can_receive_packet)
+	client.call("poll")
+	transport.set("can_receive_packet", previous_guard)
+	return budget
 
 
 func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:

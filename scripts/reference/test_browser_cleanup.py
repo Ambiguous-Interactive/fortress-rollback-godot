@@ -1475,17 +1475,96 @@ let now = 25;
   assert.equal(report.proofs[0].proof, null);
 
   now = 25;
+  const crashReport = {};
   const crashed = { evaluate: async () => { throw Error('Page crashed'); } };
-  await assert.rejects(waitForCloseProofs([late, crashed], initial, warning, report, { clocks, clock, delay: pause }),
+  await assert.rejects(waitForCloseProofs([late, crashed], initial, warning, crashReport, { clocks, clock, delay: pause }),
     error => error instanceof AggregateError && error.errors[0].message.includes('peer 1') && error.errors[0].cause.message === 'Page crashed');
-  assert.deepEqual(report.snapshotErrors, [{index:1, reason:'Error: Page crashed'}]);
-  assert.deepEqual(report.proofs, []);
+  assert.deepEqual(crashReport.snapshotErrors, [{index:1, reason:'Error: Page crashed'}]);
+  assert.deepEqual(crashReport.partialSnapshots, [{received_ms:26, links:[reciprocal]}, null]);
+  assert.deepEqual(crashReport.clockSamples, [{before:[], after:[{offsetMin:9459, offsetMax:10541}]}, {before:[], after:[]}]);
+  assert.deepEqual(crashReport.proofs, []);
+
+  now = 25;
+  let senderReads = 0;
+  const interrupted = { evaluate: (...args) => ++senderReads === 1 ? sender.evaluate(...args) : crashed.evaluate() };
+  const interruptedReport = {};
+  await assert.rejects(waitForCloseProofs([ambiguous, interrupted], initial, warning, interruptedReport, { clocks, clock, delay: pause }),
+    /WebKit close snapshots failed/);
+  assert.deepEqual(interruptedReport.partialSnapshots, [
+    {received_ms:52, links:[{...reciprocal, closedAt:30001}]}, {received_ms:26, links:[before]},
+  ]);
+  assert.equal(interruptedReport.proofs[0].proof, null);
 
   const lateReply = sample(() => { now = 5025; return [reciprocal]; }, 10000);
   now = 25;
-  await assert.rejects(waitForCloseProofs([lateReply, sender], initial, warning, report, { clocks, clock, delay: pause }),
+  const lateReport = {};
+  await assert.rejects(waitForCloseProofs([sender, lateReply], initial, warning, lateReport, { clocks, clock, delay: pause }),
     /WebKit close evidence deadline/);
-  assert.deepEqual(report.proofs, []);
+  assert.deepEqual(lateReport.partialSnapshots, [null, null]);
+  assert.deepEqual(lateReport.clockSamples.map(page => page.after), [[], []]);
+  assert.deepEqual(lateReport.proofs, []);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
+    def test_native_webkit_departure_retains_the_individual_calibration_brackets(self):
+        # Value: protects=per-page clock provenance; fails_when=contradictory pre-close samples disappear; seam=controller calibration
+        script = r"""
+const assert = require('node:assert/strict');
+const { calibrateDepartureClocks } = require(process.argv[1]);
+const report = {};
+function page(samples) {
+  let reads = 0;
+  return { evaluate: async () => {
+    assert.ok(reads < samples.length);
+    return samples[reads++];
+  }};
+}
+(async () => {
+  await calibrateDepartureClocks([page([10, 20, 30]), page([100, 200, null])], report, () => 1);
+  assert.deepEqual(report.clocks, [{offsetMin:949, offsetMax:1011}, null]);
+  assert.deepEqual(report.clockSamples, [
+    {before:[{offsetMin:949, offsetMax:1031}, {offsetMin:939, offsetMax:1021}, {offsetMin:929, offsetMax:1011}], after:[]},
+    {before:[{offsetMin:859, offsetMax:941}, {offsetMin:759, offsetMax:841}, null], after:[]},
+  ]);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
+    def test_native_webkit_departure_calibration_retains_failures_and_stops_late_reads(self):
+        # Value: protects=partial clock calibration; fails_when=hung renderer prevents cleanup or a late reply writes evidence; seam=controller calibration
+        script = r"""
+const assert = require('node:assert/strict');
+const { calibrateDepartureClocks } = require(process.argv[1]);
+(async () => {
+  const report = {};
+  const pending = Promise.withResolvers();
+  let reads = 0, now = 0;
+  const stalled = { evaluate: async () => ++reads === 1 ? 0 : pending.promise };
+  const crashed = { evaluate: async () => { throw new Error('Page crashed'); } };
+  const working = { evaluate: async () => 0 };
+  await assert.rejects(calibrateDepartureClocks([working, stalled, crashed], report, () => now, 40),
+    error => error instanceof AggregateError && error.errors.length === 2
+      && error.errors[0].cause.message === 'absolute native peer 1 departure clock deadline'
+      && error.errors[1].cause.message === 'Page crashed');
+  assert.deepEqual(report.clockSamples.map(page => page.before.length), [3, 1, 0]);
+  assert.deepEqual(report.calibrationErrors, [
+    {index:1, reason:'Error: absolute native peer 1 departure clock deadline'}, {index:2, reason:'Error: Page crashed'},
+  ]);
+  assert.ok(report.clocks[0]);
+  assert.deepEqual(report.clocks.slice(1), [null, null]);
+  pending.resolve(40000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 2);
+  assert.equal(report.clockSamples[1].before.length, 1);
+
+  now = 10;
+  const late = { evaluate: async () => { now = 50; return 1000; } };
+  const expired = {};
+  await assert.rejects(calibrateDepartureClocks([late], expired, () => now, 40), /WebKit departure clock calibration failed/);
+  assert.deepEqual(expired.clockSamples, [{before:[], after:[]}]);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
@@ -1529,10 +1608,16 @@ async function collect(sentAt, sender, contradictory = false) {
   await assert.rejects(short.proof, /WebKit close evidence deadline .*peer 1 channel 17/);
   assert.equal(short.report.proofs[0].minimumGapUs, 1999);
   assert.deepEqual(short.sampled, [[true,true,true,true,false], [true,true,true,true,false]]);
+  assert.deepEqual(short.report.partialSnapshots, [{received_ms:125, links:[reciprocal]}, {received_ms:125, links:[before]}]);
+  assert.deepEqual(short.report.clockSamples, [
+    {before:[], after:Array(4).fill({offsetMin:9959, offsetMax:10041})},
+    {before:[], after:Array(4).fill({offsetMin:-5041, offsetMax:-4959})},
+  ]);
 
   const conflict = await collect(52000, before, true);
   await assert.rejects(conflict.proof, /WebKit close evidence deadline .*peer 1 channel 17/);
   assert.equal(conflict.report.clocks[1], null);
+  assert.deepEqual(conflict.report.clockSamples[1].after[0], {offsetMin:-41, offsetMax:41});
   assert.equal(conflict.report.proofs[0].minimumGapUs, null);
 
   const exactAbort = await collect(47081, {...before, closeAborts:1}, true);
