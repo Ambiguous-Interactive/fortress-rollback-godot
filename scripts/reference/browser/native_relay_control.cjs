@@ -10,6 +10,12 @@ const stampKey = ({ sender, recipient, epoch, seq }) => `${sender}/${recipient}/
 const sendKey = ({ sender, socket_ordinal }) => `${sender}/${socket_ordinal}`;
 const sameEnvelope = (a, b) => a.envelope_bytes === b.envelope_bytes && a.envelope_sha256 === b.envelope_sha256;
 
+async function readRelayWireReceipt(page) {
+  // Send one string through Playwright instead of encoding each field as a remote value.
+  const text = await page.evaluate(async () => JSON.stringify(await window.fortressNativeWire?.relayWireTrace()));
+  return text === undefined ? undefined : JSON.parse(text);
+}
+
 async function readServerReceipt(path) {
   try {
     return JSON.parse(await fs.readFile(path, 'utf8'));
@@ -156,7 +162,7 @@ async function exerciseRelayRetention(pages, ready, readReceipt) {
   };
   const [{ receipt: after, pressure }, pagesAtPressure] = await Promise.all([
     readReceipt(receiptAtPressure, 5000),
-    Promise.all([source, reporter].map(page => page.evaluate(() => window.fortressNativeWire.relayWireTrace()))),
+    Promise.all([source, reporter].map(readRelayWireReceipt)),
   ]);
   assert.ok(Object.values(pressure).every(family => family.ingress > 128 && family.write > 128), `insufficient healthy relay traffic: ${JSON.stringify(pressure)}`);
   const joined = joinRelayReceipts(after, pagesAtPressure);
@@ -233,4 +239,5 @@ function completeRelayRow(row) {
   return row.send !== null && ['ingress', 'write', 'raw', 'sdk', 'native_accepted'].every(stage => row[stage].length);
 }
 
-module.exports = { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, joinRelayReceipts };
+module.exports = { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, joinRelayReceipts,
+  readRelayWireReceipt };

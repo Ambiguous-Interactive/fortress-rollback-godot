@@ -23,6 +23,12 @@ returned identical receipts and cut its median from 1,083 ms to 82 ms.
 The optimized real room printed
 `relay:8 passed`, collected all eight receipts, and matched 40 frames.
 
+At the historical Firefox affinity of CPUs 0–2, a later traced run again
+matched 40 frames and completed teardown, then exceeded the receipt deadline.
+Seven paired transfers of the same 2.8 MB receipt on Firefox 157 returned
+identical data. Median transfer time fell from 643 ms for nested values
+to 26 ms for a JSON string.
+
 The [browser integration guide](../skills/testing/references/browser-integration.md)
 now specifies the binding, pending request, and retention rules. It replaces
 the generic hold rule with an exact FIFO and stamp check. Historical failure

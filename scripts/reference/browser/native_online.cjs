@@ -1,7 +1,7 @@
 const { assertRecoveredRoom, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace } = require('./native_relay_trace.cjs');
 const { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention,
-  joinRelayReceipts } = require('./native_relay_control.cjs');
+  joinRelayReceipts, readRelayWireReceipt } = require('./native_relay_control.cjs');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
@@ -1459,7 +1459,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     index, ...window.fortressNative, wire: window.fortressNativeWire.status()
   }), index)));
   const collectRelayWire = () => Promise.allSettled(pages.map((page, index) => boundedRoom(
-    () => page.evaluate(() => window.fortressNativeWire?.relayWireTrace()), DIAGNOSTIC_MS, `native peer ${index} relay wire receipt`)));
+    () => readRelayWireReceipt(page), DIAGNOSTIC_MS, `native peer ${index} relay wire receipt`)));
   try {
     for (const name of browserPair) browsers.push(await playwright[name].launch(browserOptions(name)));
     for (let index = 0; index < players; index++) {

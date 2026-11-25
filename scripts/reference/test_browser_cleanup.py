@@ -12,6 +12,27 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_relay_wire_receipt_crosses_page_boundary_as_json_text(self):
+        script = r"""
+const assert = require('node:assert/strict');
+const { readRelayWireReceipt } = require(process.argv[1]);
+const receipt = { sockets: 1, streams: { native: { quality: {
+  count: 130, omitted: 2, events: [{ seq: '18446744073709551615', kind: 4, code: 0 }],
+} } } };
+const page = { async evaluate(read) {
+  const transferred = await read();
+  assert.ok(transferred === undefined || typeof transferred === 'string');
+  return transferred;
+} };
+(async () => {
+  globalThis.window = { fortressNativeWire: { async relayWireTrace() { return receipt; } } };
+  assert.deepEqual(await readRelayWireReceipt(page), receipt);
+  delete window.fortressNativeWire;
+  assert.equal(await readRelayWireReceipt(page), undefined);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs')], check=True, timeout=10)
+
     def test_relay_server_reader_requires_a_current_snapshot(self):
         # Value: protects=capture freshness; fails_when=an earlier server reply satisfies a new request; seam=trace request and receipt files
         script = r"""
