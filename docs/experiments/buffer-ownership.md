@@ -188,9 +188,19 @@ Receipt mutation tests reject wrong types, missing boundaries, changed files,
 missing screenshots and incomplete chooser or control inventories.
 
 This advances [#329](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/329) and [#290](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/290).
-Its escaped-descendant adoption, pre-import Python helper/cache binding and
-interpreter provenance controls remain open. The gate does not establish the
-broader browser release matrix or complete replay parity.
+The CLI compiles its checkout helpers directly from source and binds the SHA-256
+of the bytes it compiled to the witness receipt. After the cache claim it
+invalidates prior success and round summaries before loading witness helpers.
+A subprocess control verifies that Python's normal import accepts a stale
+timestamp-valid cache and that the ownership launcher bypasses it. A missing
+helper must leave neither stale receipt in place. If the claim helper itself
+cannot load, the CLI clears stale receipts only after acquiring the same lock.
+The control also verifies that an active owner's lock record and receipts
+survive. A helper that changes its source after compilation fails receipt
+binding.
+
+Harness-specific escaped-descendant adoption and interpreter provenance
+controls remain open, along with broader browser release and replay parity.
 
 ## Tested representation decision
 

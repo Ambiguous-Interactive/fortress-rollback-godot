@@ -90,6 +90,23 @@ The job artifact includes the build receipt and log, the browser log, and any
 published server scope and packet snapshot. Pair each traced run with a stock
 run at the same revision, browser profile, and room size to measure overhead.
 
+Ordinary receipts include up to 128 records per directed link and stage.
+When a native expiry identifies links to diagnose, the browser and server
+publish only those links. Their input and quality histories expand to at most
+512 records per stage. Count and omitted fields still describe the full stream.
+
+Use the same-link pressure control with a local traced server build receipt.
+The control drops addressed packets after raw arrival for one link while
+the sender sends 129 inputs and 129 quality reports. It joins the earlier
+accepted packets across all stages, verifies the drop boundary and resumes the
+link before the normal correction, confirmed-history and departure checks.
+
+```sh
+python3 scripts/reference/native_online_probe.py --version "$GODOT_PIN" --cell relay:8 \
+  --relay-trace-server "$TRACE_BUILD_RECEIPT" --relay-same-link-control \
+  --addon "$WEB_ADDON" --output "$OUTPUT"
+```
+
 Eight-player relay receipts include warmup checkpoints from each browser.
 A checkpoint records exact sampled quality-report bytes at browser receipt,
 SDK delivery, and native enqueue on the same page clock. Its recipient,

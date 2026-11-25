@@ -96,17 +96,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
         root = directory / 'root'
         cache = directory / 'cache'
-        files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/ownership_schedule.py', 'scripts/reference/web_templates.py',
-                                'scripts/reference/browser/ownership.cjs',
-                                'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
-                                'scripts/reference/browser/replay_chooser.cjs',
-                                'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
-                                'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
-                                       'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
-                                       'scripts/reference/owned_process.py', 'scripts/host_capacity.py',
-                                       'scripts/reference/browser/webrtc_display.cjs', 'scripts/reference/browser/package.json',
-                                       'scripts/reference/browser/package-lock.json',
-                                'docs/reference/pins.json', 'project.godot']
+        files = probes.source_inventory()
         for filename in files:
             target = root / filename
             target.parent.mkdir(parents=True, exist_ok=True)

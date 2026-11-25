@@ -268,7 +268,11 @@ def main():
     parser.add_argument('--omit-second-replacement', action='store_true', help='negative control for the overlapping recovery cell')
     parser.add_argument('--trace-relay-wire', action='store_true', help='capture bounded browser, SDK and native inbox packet receipts in relay cells')
     parser.add_argument('--relay-trace-server', type=Path, help='build receipt for the optional instrumented local relay server')
-    parser.add_argument('--relay-retention-control', action='store_true', help='mute one link while a traced eight-player room continues traffic')
+    retention = parser.add_mutually_exclusive_group()
+    retention.add_argument('--relay-retention-control', action='store_const', dest='relay_control', const='--relay-retention-control',
+                           help='mute one link while a traced eight-player room continues traffic')
+    retention.add_argument('--relay-same-link-control', action='store_const', dest='relay_control', const='--relay-same-link-control',
+                           help='drop addressed delivery while the same link continues sending')
     parser.add_argument('--browser-pair', choices=BROWSER_PAIRS, default='chromium', help='single engine or alternating engines in each room')
     parser.add_argument('--cache', type=Path, default=ROOT / '.cache/reference')
     parser.add_argument('--addon', type=Path, required=True, help='complete Web addon archive for this revision')
@@ -305,11 +309,9 @@ def main():
     trace_wire = args.trace_relay_wire or args.relay_trace_server is not None
     if trace_wire and any(not cell.startswith('relay:') for cell in cells):
         parser.error('relay tracing requires explicit relay cells')
-    if args.relay_retention_control and (not args.relay_trace_server or cells != ('relay:8',)):
-        parser.error('--relay-retention-control requires --relay-trace-server and --cell relay:8')
-    control = '--trace-relay-wire' if trace_wire else '--omit-second-replacement' if args.omit_second_replacement else None
-    if args.relay_retention_control:
-        control = '--relay-retention-control'
+    if args.relay_control and (not args.relay_trace_server or cells != ('relay:8',)):
+        parser.error(f'{args.relay_control} requires --relay-trace-server and --cell relay:8')
+    control = args.relay_control or ('--trace-relay-wire' if trace_wire else '--omit-second-replacement' if args.omit_second_replacement else None)
     stun_tool = None
     if browser_pair != ('chromium',) and any(cell.startswith('mesh') for cell in cells):
         stun = environment.get('FORTRESS_STUN_EXECUTABLE') or shutil.which('turnserver')

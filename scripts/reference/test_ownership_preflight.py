@@ -1,5 +1,8 @@
 """Value: failed preflight invalidates stale success without damaging an active cache owner."""
-import json
+from contextlib import nullcontext
+import os
+import py_compile
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -55,6 +58,81 @@ probes.main()
                     self.assertIn('reference cache is owned by another local run', child.stderr)
                     self.assertEqual(child.stdout, '')
                     self.assertEqual(receipt.read_text(), original)
+
+    # Value: protects=CLI helper execution and receipt invalidation; fails_when=helpers run cached code or load before ownership; seam=real CLI
+    def test_cli_loads_helper_source_after_invalidating_receipts(self):
+        for case in ('clean', 'stale-cache', 'missing-source', 'source-change', 'missing-lock-helper', 'busy-missing-lock-helper', 'exiting-lock-helper'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                reference = root / 'scripts/reference'
+                names = ('scripts/reference/ownership_probes.py', 'docs/reference/pins.json', *probes.HELPER_PATHS.values())
+                if case == 'source-change':
+                    names = probes.source_inventory()
+                for relative in names:
+                    target = root / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(ROOT / relative, target)
+                cache = root / '.cache/reference'
+                results = cache / 'results'
+                results.mkdir(parents=True)
+                receipts = (results / 'ownership.json', results / 'ownership-rounds.json')
+                original = '{"status":"passed"}\n'
+                for receipt in receipts:
+                    receipt.write_text(original)
+                helper = reference / 'fetch.py'
+                busy = case == 'busy-missing-lock-helper'
+                missing_lock_helper = busy or case == 'missing-lock-helper'
+                missing_file = reference / 'local_ownership.py' if missing_lock_helper else helper
+                argument = '--help'
+                if case == 'stale-cache':
+                    source = helper.read_bytes()
+                    metadata = helper.stat()
+                    stale = b'raise RuntimeError("stale helper cache executed")\n'
+                    helper.write_bytes(stale.ljust(len(source), b' '))
+                    os.utime(helper, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+                    py_compile.compile(str(helper), doraise=True, invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+                    helper.write_bytes(source)
+                    os.utime(helper, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+                    ordinary = subprocess.run([sys.executable, '-c', 'import fetch'], cwd=reference,
+                                              capture_output=True, encoding='utf-8', timeout=10)
+                    self.assertIn('RuntimeError: stale helper cache executed', ordinary.stderr)
+                elif case == 'missing-source' or missing_lock_helper:
+                    missing_file.unlink()
+                elif case == 'exiting-lock-helper':
+                    (reference / 'local_ownership.py').write_text('raise SystemExit(0)\n')
+                elif case == 'source-change':
+                    argument = '--offline'
+                    with helper.open('a') as output:
+                        output.write('\nPath(__file__).write_bytes(Path(__file__).read_bytes() + b"\\n")\n')
+                    with (root / 'scripts/host_capacity.py').open('a') as output:
+                        output.write('\ndef acquire_when_free(*args):\n    return True\n')
+                with claim('ownership', directory=cache / 'locks') if busy else nullcontext() as active:
+                    lock_record = active.path.read_bytes() if active else None
+                    child = subprocess.run([sys.executable, str(reference / 'ownership_probes.py'), argument],
+                                           capture_output=True, encoding='utf-8', timeout=10)
+                    if active:
+                        self.assertEqual(active.path.read_bytes(), lock_record)
+                        for receipt in receipts:
+                            self.assertEqual(receipt.read_text(), original)
+                missing_diagnostic = f"FileNotFoundError: [Errno 2] No such file or directory: '{missing_file}'"
+                failures = {
+                    'missing-source': missing_diagnostic,
+                    'source-change': 'ValueError: ownership compiled helper source differs from inventory: scripts/reference/fetch.py',
+                    'missing-lock-helper': missing_diagnostic,
+                    'busy-missing-lock-helper': missing_diagnostic,
+                    'exiting-lock-helper': 'RuntimeError: ownership claim helper exited during import',
+                }
+                if case in failures:
+                    self.assertEqual(child.returncode, 1, child.stderr)
+                    self.assertEqual(child.stderr.splitlines()[-1], failures[case])
+                    if not busy:
+                        for receipt in receipts:
+                            self.assertFalse(receipt.exists(), str(receipt))
+                else:
+                    self.assertEqual(child.returncode, 0, child.stderr)
+                    self.assertIn('usage: ownership_probes.py', child.stdout)
+                    for receipt in receipts:
+                        self.assertEqual(receipt.read_text(), original)
 
     def test_main_manifest_failure_invalidates_before_parsing(self):
         with tempfile.TemporaryDirectory() as directory:
