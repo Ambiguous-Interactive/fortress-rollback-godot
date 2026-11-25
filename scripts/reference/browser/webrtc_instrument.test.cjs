@@ -458,6 +458,7 @@ function simulatedDeparture(mutation, relayOnly = false) {
       assert.equal(events.filter(event => event.startsWith('paused')).length, 3, 'every endpoint must stop service before close');
       events.push('close');
       this.connectionState = 'closed';
+      if (mutation === 'slow-close') ticks = 3000;
       if (!broken || !['channel-open', 'late-close'].includes(mutation)) {
         for (const channel of channels) channel.readyState = 'closed';
       }
@@ -471,7 +472,8 @@ function simulatedDeparture(mutation, relayOnly = false) {
       document.body.dataset.fortressDropPaused = 'true';
       events.push(`paused${index}`);
     } });
-    return vm.createContext({ window, document, performance: { now: () => ticks + 100 * index },
+    const pageClock = () => ticks + 100 * index;
+    return vm.createContext({ window, document, performance: { now: () => mutation === 'quantized-release' ? Math.floor(pageClock() / 2) * 2 : pageClock() },
       requestAnimationFrame: callback => queueMicrotask(() => {
         ticks = 3000;
         if (mutation === 'late-pause') document.body.dataset.fortressDropPaused = 'true';
@@ -491,6 +493,10 @@ function simulatedDeparture(mutation, relayOnly = false) {
           await new Promise(resolve => setImmediate(resolve));
           ticks += 6000;
         }
+        if (mutation === 'quantized-release' && index === 2) {
+          await new Promise(resolve => setImmediate(resolve));
+          ticks = 1;
+        }
         events.push(`ready${index}`);
       } else if (!roundTrips.has(source)) {
         roundTrips.add(source);
@@ -501,6 +507,10 @@ function simulatedDeparture(mutation, relayOnly = false) {
       if ((mutation === 'late-arm' && arm) || (mutation === 'late-release' && release)) {
         await Promise.resolve();
         ticks = 3000;
+      }
+      if (mutation === 'quantized-release' && release) {
+        await Promise.resolve();
+        ticks = 3001;
       }
       if (release) events.push(`release-dispatched${index}`);
       context.argument = argument;
@@ -546,6 +556,25 @@ test('physical departure rejects invalid and late browser observations', async (
     assert.ok(events.every(event => !event.startsWith('released')), mutation);
     if (mutation !== 'late-release') assert.ok(events.every(event => !event.startsWith('release-dispatched')), mutation);
   }
+});
+
+// Value: a slow close cannot cause other connection mutations after the cutoff.
+test('physical departure fences each close at the deadline', async () => {
+  const slowClose = simulatedDeparture('slow-close');
+  await assert.rejects(slowClose.run(), /close deadline/);
+  assert.equal(slowClose.events.filter(event => event === 'close').length, 1);
+});
+
+// Value: a coarse page clock cannot admit release at the controller deadline.
+test('physical departure fences release with a coarse page clock', async () => {
+  const coarseClock = simulatedDeparture('quantized-release');
+  await assert.rejects(coarseClock.run(), /release deadline/);
+  assert.ok(coarseClock.contexts.every(({ window }) => !window.fortressDropGo && window.fortressRtc.departure === undefined));
+});
+
+// Value: an empty room cannot pass through the pause and close barriers.
+test('physical departure requires exactly three endpoints', async () => {
+  await assert.rejects(closeDepartingRtc([]), /requires three pages/);
 });
 
 // Value: relay agreement cannot start until every endpoint loses every direct path.

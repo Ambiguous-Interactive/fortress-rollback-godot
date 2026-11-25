@@ -9,6 +9,7 @@ const { placeFirefox } = require('./webrtc_display.cjs');
 const FIREFOX_PREFS = { 'webgl.force-enabled': true, 'webgl.disabled': false, 'toolkit.shutdown.fastShutdownStage': 0 };
 
 async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly = false) {
+  if (pages.length !== 3) throw new Error('physical departure requires three pages');
   const ready = await boundedRoom(() => Promise.all(pages.map(async page => {
     const pageMs = await page.evaluate(async () => {
       while (document.body.dataset.fortressDropReady !== 'true') await new Promise(resolve => requestAnimationFrame(resolve));
@@ -18,8 +19,8 @@ async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly
     return { pageMs, receivedAt: now() };
   })), 30000, 'physical departure readiness');
   const deadline = now() + 3000;
-  // The page sampled before the controller received its reply, so this cutoff can only be earlier.
-  const pageDeadlines = ready.map(({ pageMs, receivedAt }) => Math.floor(pageMs) + Math.floor(deadline - receivedAt));
+  // Use the reply arrival as an upper bound and allow 2 ms of coarsening at each page clock read.
+  const pageDeadlines = ready.map(({ pageMs, receivedAt }) => Math.floor(pageMs + deadline - receivedAt) - 4);
   let active = true;
   const checkDeadline = () => {
     if (!active || now() >= deadline) throw new Error('physical departure phase deadline');
@@ -48,7 +49,10 @@ async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly
         const { connections, channels } = window.fortressResources;
         const departure = { frame: Number(document.body.dataset.fortressFrame), survivor_frames: frames,
           connections_created: connections.length, channels_created: channels.length };
-        for (const connection of connections) connection.close();
+        for (const connection of connections) {
+          if (performance.now() >= cutoff) throw new Error('physical departure close deadline');
+          connection.close();
+        }
         do {
           if (performance.now() >= cutoff) throw new Error('physical departure close deadline');
           departure.connections_closed = connections.filter(connection => connection.connectionState === 'closed').length;
