@@ -196,8 +196,12 @@ from broadcasts. Test exact FIFO retry after native inbox pressure clears.
 Attribute each send at its call site. Unsent packets can remain after a failed
 batch. Check both orders of held and passing traffic when the socket closes.
 Bracket the hold with the first held input, matching control reply and
-observed prediction stall. Record controller dispatch, evaluation entry and
-release start, and compare durations within each clock. Report cumulative
+observed prediction stall. Record controller dispatch, page entry and release
+start. Compare durations within each clock. When a delayed debugger evaluation
+consumes the hold budget, prepare one same-origin response per page before
+arming. Check every prepared socket before releasing the room. Bound page-side
+entry and each deferred batch using the controller's correction deadline.
+Report cumulative
 held packets, pending packets and released packets at the cap. A cap can
 occur during a partial drain. Retain these checkpoints if the evaluation
 never returns.
@@ -241,6 +245,8 @@ read must never append a late sample or start another read.
 Keep both clock bounds and their samples for passing and failing rooms.
 An interval spanning the minimum gap leaves it ambiguous. An upper bound below
 the threshold proves that the observed send fell short of the required gap.
+Use a bounded exact attempt receipt if constructing the stack tag precedes the
+native send. Collect new diagnostics in the next bounded snapshot round.
 Combine consecutive observations on each page before returning to the controller.
 Keep the cross-page barriers that require every endpoint to pause before the close
 and every required link to close before release.
