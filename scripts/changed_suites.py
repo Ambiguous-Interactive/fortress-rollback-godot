@@ -24,7 +24,7 @@ ACCESS = re.compile(rf"(?:(?<![\w])(?:pre)?load|\.\s*(?:change_scene_to_file|cha
 # A new reader or an edit to one of these files restores the conservative fallback until its inputs are reviewed.
 REVIEWED_READERS = {
     "examples/online/diagnostic_scene.gd": "7659c077fa390489ca7134ac5ec96146ca305362c4c657433976b1d408b0ff8f",
-    "examples/online/native_socket_transport.gd": "90656e152ea87dfd108e95952a58d9acef8e5e418a50a5fb564c8f198b126bb2",
+    "examples/online/native_socket_transport.gd": "7935d2cca3bcfed6f7a29ef6ae1de4699847b0841e85acc5cf5e582a8924621c",
     "examples/online/replay_scene.gd": "c19e23dc7a92e4228538e21a1247c98a4e62ff957acdc6a4b8f7786733298866",
     "tests/oracle/p2p_trace.gd": "40fd08dd8fb4a34f08425e4006458d69120cc02890c1862d748c6da382182226",
     "tests/oracle/replay_session_trace.gd": "8cbabef01cca3cfa627555b73420a26884fe74451b0bb491f29b3c2854ad4955",
