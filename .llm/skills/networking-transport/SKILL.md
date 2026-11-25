@@ -67,8 +67,8 @@ attribution; retain that limit instead of treating reconnect tokens as epochs.
 
 For SDK binary relay, keep a drained peer batch caller-owned until atomic adapter
 acceptance. Retain the exact FIFO head on send refusal and count owned queues,
-socket backlog and receive work separately. Verify retry bytes and corrected
-confirmed game state through the actual SDK, rather than counting simulated ticks.
+socket backlog and receive work separately. Verify retry bytes and corrected state through the actual SDK.
+Check broadcast identities before payload copies. Test conflicting header errors and count unaddressed copies in timing probes.
 Name injected transport, native server and browser evidence separately.
 Prove overlapping delivery with the same packet bytes at physical direct send,
 physical direct receipt and addressed relay receipt. An enqueue counter and
