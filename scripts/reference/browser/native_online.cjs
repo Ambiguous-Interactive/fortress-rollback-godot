@@ -903,7 +903,7 @@ function intersectClock(previous, sample) {
 
 function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, closer = null, clocks) {
   const before = linksBefore.find(peer => peer.index === channel) ?? null;
-  const evidence = { index, channel, sentAt, closer, before, sender: null, counterparts: [], minimumGapUs: null, proof: null };
+  const evidence = { index, channel, sentAt, closer, before, sender: null, counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
   if (!before?.local || !before.remote || before.closed) return evidence;
   evidence.sender = closedByPage[index].find(peer => peer.index === channel && peer.local === before.local && peer.remote === before.remote) ?? null;
   evidence.counterparts = closedByPage.flatMap((links, owner) => owner === index ? [] : links
@@ -916,6 +916,7 @@ function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, cl
   // Compare the earliest possible send with the latest possible close.
   if (senderClock && closerClock && Number.isSafeInteger(sentAt) && Number.isSafeInteger(counterpart.closedAt)) {
     evidence.minimumGapUs = sentAt + senderClock.offsetMin - counterpart.closedAt - closerClock.offsetMax;
+    evidence.maximumGapUs = sentAt + senderClock.offsetMax - counterpart.closedAt - closerClock.offsetMin;
   }
   if (closer !== null) {
     if (counterpart.owner === closer && counterpart.closed && evidence.sender?.closed) evidence.proof = 'stream-close';
@@ -1560,7 +1561,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
-      departureClocks: closeReport.clocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
+      departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples,
+      closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier() };
   } catch (error) {
