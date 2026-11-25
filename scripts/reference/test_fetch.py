@@ -351,6 +351,8 @@ class ReferenceContracts(unittest.TestCase):
             for artifact in (archive, templates):
                 pin = manifest['artifacts'][artifact.name]
                 pin['digest'] = hashlib.new(pin['algorithm'], artifact.read_bytes()).hexdigest()
+            pins = root / 'pins.json'
+            pins.write_text(json.dumps(manifest), encoding='utf-8')
 
             def run_tool(command, environment, log):
                 if command[0] != 'openssl':
@@ -359,8 +361,9 @@ class ReferenceContracts(unittest.TestCase):
             argv = ['runner', '--version', '4.3', '--cache', str(cache), '--addon', str(root / 'addon.zip'), '--output', str(output)]
             with (patch.object(sys, 'argv', argv),
                   patch.dict(os.environ, FORTRESS_PLAYWRIGHT_PACKAGE='unused', FORTRESS_CHROMIUM_EXECUTABLE='unused'),
-                  patch.object(native_online_runner, 'load_manifest', return_value=manifest),
-                  patch.object(native_online_runner, 'inventory', side_effect=lambda files: files['editor'].read_bytes()),
+                  patch.object(native_online_runner, 'MANIFEST', pins),
+                  patch.object(native_online_runner, 'inventory',
+                               side_effect=lambda files: {key: hashlib.sha256(files[key].read_bytes()).hexdigest() for key in ('editor', 'pins')}),
                   patch.object(native_online_runner, 'run', side_effect=run_tool),
                   patch.object(native_online_runner, 'stage_export', side_effect=RuntimeError('editor ready'))):
                 self.assertFalse((cache / 'editors').exists())
@@ -449,7 +452,7 @@ with socket.create_server(address) as server, socket.socket(type=socket.SOCK_DGR
                 log.write_text('old result', encoding='utf-8')
                 other_log.write_text('unrelated', encoding='utf-8')
                 argv = ['runner', '--addon', str(root / 'addon.zip'), '--output', str(root)]
-                with patch.object(sys, 'argv', argv), patch.object(native_online_runner, 'load_manifest', side_effect=lambda: load_manifest(manifest)):
+                with patch.object(sys, 'argv', argv), patch.object(native_online_runner, 'MANIFEST', manifest):
                     with self.assertRaises(error):
                         native_online_runner.main()
                 self.assertFalse(report.exists(), 'stale success survived the manifest failure')
