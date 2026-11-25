@@ -201,11 +201,18 @@ async function exerciseSameLinkRetention(pages, ready, readReceipt) {
         event.sender === sender && event.recipient === recipient && pending.has(event.socket_ordinal)));
       if (received.length !== pending.size || new Set(received.map(event => event.socket_ordinal)).size !== pending.size
           || new Set(received.map(stampKey)).size !== pending.size) return null;
-      const writes = new Set(streams.flatMap(family => events(receipt, 'write', family).map(stampKey)));
-      return received.every(event => writes.has(stampKey(event))) ? { receipt, received } : null;
+      const writes = new Map();
+      for (const write of streams.flatMap(family => events(receipt, 'write', family))) {
+        const key = stampKey(write);
+        writes.set(key, writes.has(key) ? null : write);
+      }
+      return received.every(event => {
+        const write = writes.get(stampKey(event));
+        return write && write.actual_recipient === recipient && write.kind === event.kind && sameEnvelope(write, event);
+      }) ? { receipt, received } : null;
     }, timeLeft(), links);
     server = observed.receipt;
-    const stamps = observed.received.map(({ epoch, seq }) => ({ epoch, seq }));
+    const stamps = observed.received.map(({ kind, epoch, seq }) => ({ kind, epoch, seq }));
     const handle = await reporter.waitForFunction(expected => window.fortressNativeWire.resumeBlockedRelay(expected), stamps, { timeout: timeLeft() });
     resumed = await handle.jsonValue();
     await handle.dispose();

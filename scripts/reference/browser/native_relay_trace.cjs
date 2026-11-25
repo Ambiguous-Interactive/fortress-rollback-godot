@@ -167,10 +167,11 @@ function createRelayWireTrace() {
       }
       return ordinals;
     },
-    hasBlockedRelayStamps(sender, stamps) {
+    hasBlockedRelayStamps(sender, gateStart, stamps) {
+      const key = ({ kind, epoch, seq }) => `${kind}/${epoch}/${seq}`;
       const blocked = new Set(['input', 'quality'].flatMap(family => (streams.raw[family].links.get(sender) ?? [])
-        .filter(event => event.delivery_blocked).map(({ epoch, seq }) => `${epoch}/${seq}`)));
-      return stamps.length > 0 && stamps.every(({ epoch, seq }) => blocked.has(`${epoch}/${seq}`));
+        .filter(event => event.delivery_blocked && event.at_ms >= gateStart).map(key)));
+      return stamps.length > 0 && stamps.every(stamp => blocked.has(key(stamp)));
     },
     freezeEnqueued(stamps) {
       if (!stamps.every(stamp => streams.native.quality.links.get(stamp.sender)?.slice(-cap).some(event =>

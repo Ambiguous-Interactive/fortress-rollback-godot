@@ -133,9 +133,9 @@ const trace = {
     return packet;
   },
   retentionSample: () => ({ frontier: ['input', 'quality'] }),
-  hasBlockedRelayStamps(sender, stamps) {
+  hasBlockedRelayStamps(sender, _gateStart, stamps) {
     return stamps.every(stamp => packets.some(packet => packet.delivery_blocked && packet.sender === sender
-      && packet.epoch === stamp.epoch && packet.seq === stamp.seq));
+      && packet.kind === stamp.kind && packet.epoch === stamp.epoch && packet.seq === stamp.seq));
   },
 };
 let clock = 10;
@@ -161,7 +161,7 @@ deliver(5);
 assert.equal(wire.resumeBlockedRelay().reports, 1);
 assert.deepEqual(seen.splice(0), [5]);
 wire.blockRelayLink(source);
-const pressureStamps = ['12', '13'].map(seq => ({ epoch: 1, seq }));
+const pressureStamps = ['12', '13'].map(seq => ({ kind: 4, epoch: 1, seq }));
 deliver(12);
 deliver(12);
 deliver(13, socket, 1);
@@ -346,11 +346,13 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
   gateTrace.record('raw', delivered(packet, 1n)).delivery_blocked = true;
   gateTrace.record('raw', delivered(envelope(other, local, 4), 2n, other)).delivery_blocked = true;
   const report = gateTrace.record('raw', delivered(envelope(source, local, 4), 2n));
-  const blocked = ['1', '2'].map(seq => ({ epoch: 1, seq }));
-  assert.equal(gateTrace.hasBlockedRelayStamps(source, blocked), false);
+  const blocked = [{ kind: 2, epoch: 1, seq: '1' }, { kind: 4, epoch: 1, seq: '2' }];
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, 0, blocked), false);
   report.delivery_blocked = true;
-  assert.equal(gateTrace.hasBlockedRelayStamps(source, blocked), true);
-  assert.equal(gateTrace.hasBlockedRelayStamps(source, [{ epoch: 2, seq: '2' }]), false);
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, 0, blocked), true);
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, report.at_ms + 1, blocked), false);
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, 0, [{ kind: 2, epoch: 1, seq: '2' }]), false);
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, 0, [{ kind: 4, epoch: 2, seq: '2' }]), false);
   const digestFixture = createRelayWireTrace();
   digestFixture.bind(room, local, [source, local, other]);
   const original = envelope(source, local, 4);
@@ -425,7 +427,7 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
         # Value: protects=pressure confined to the raw boundary; fails_when=missing originals or leaked stamped packets pass; seam=control receipt
         script = r"""
 const assert = require('node:assert/strict');
-const { checkSameLinkRetention } = require(process.argv[1]);
+const { checkSameLinkRetention, exerciseSameLinkRetention } = require(process.argv[1]);
 const [sender, recipient, room] = ['sender', 'recipient', 'match'];
 const stage = () => Object.fromEntries(['sync', 'input', 'quality'].map(family => [family, { events: [] }]));
 function fixture() {
@@ -470,6 +472,40 @@ for (const [change, diagnostic] of [
   change(control);
   assert.throws(() => qualify(control), diagnostic);
 }
+
+(async () => {
+  const { server, source, reporter, before, ordinals } = fixture();
+  const page = wire => ({
+    evaluate(run, arg) {
+      globalThis.window = { fortressNativeWire: wire };
+      return run(arg);
+    },
+    async waitForFunction(run, arg) {
+      const value = this.evaluate(run, arg);
+      return { jsonValue: async () => value, dispose: async () => {} };
+    },
+  });
+  const sourcePage = page({ pressureRelayLink: () => ordinals, relayWireTrace: () => source });
+  const reporterPage = page({ blockRelayLink: () => before, relayWireTrace: () => reporter, resumeBlockedRelay(stamps) {
+    assert.equal(stamps.length, 258);
+    assert.equal(stamps.filter(stamp => stamp.kind === 4).length, 129);
+    return { resumed_ms: 35, deadline_ms: 40 };
+  } });
+  const result = await exerciseSameLinkRetention([sourcePage, reporterPage], [{ uuid: sender }, { uuid: recipient }], async select => {
+    for (const change of [
+      writes => writes.push({ ...writes[1] }),
+      writes => writes[1].actual_recipient = 'unaddressed',
+      writes => writes[1].envelope_sha256 = 'different',
+      writes => writes[1].kind = 5,
+    ]) {
+      const incomplete = structuredClone(server);
+      change(incomplete.streams.write.quality.events);
+      assert.equal(select(incomplete), null, 'unconfirmed addressed write must leave the gate closed');
+    }
+    return select(server);
+  });
+  assert.equal(result.pressure.input.count, 129);
+})().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs')], check=True, timeout=10)
 

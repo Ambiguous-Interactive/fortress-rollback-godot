@@ -882,13 +882,13 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
       const { frontier } = relayWireTrace.retentionSample(sender);
       if (!frontier.every(Boolean)) throw new Error('same-link control requires accepted input and quality before pressure');
       const started_ms = performance.now();
-      blockedRelay = { socket, sender, deadline_ms: started_ms + 1250, inputs: 0, reports: 0 };
+      blockedRelay = { socket, sender, started_ms, deadline_ms: started_ms + 1250, inputs: 0, reports: 0 };
       return { started_ms, frontier };
     },
     resumeBlockedRelay(stamps) {
       if (!blockedRelay) return null;
-      const { deadline_ms, inputs, reports } = blockedRelay;
-      if (stamps && performance.now() < deadline_ms && !relayWireTrace.hasBlockedRelayStamps(blockedRelay.sender, stamps)) return null;
+      const { sender, started_ms, deadline_ms, inputs, reports } = blockedRelay;
+      if (stamps && performance.now() < deadline_ms && !relayWireTrace.hasBlockedRelayStamps(sender, started_ms, stamps)) return null;
       const resumed_ms = performance.now();
       blockedRelay = null;
       return { resumed_ms, deadline_ms, inputs, reports };
