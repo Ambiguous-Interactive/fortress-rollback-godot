@@ -232,9 +232,16 @@ FIFO. Key successful steps by room, sender, recipient, epoch and sequence.
 Use an absolute binary ordinal to match client send and server ingress on a
 single WebSocket, and verify the addressed bytes at each join. Repeated
 bytes can earn distinct stamps. Link an echoed quality token to all retained
-accepted candidates when their bytes match. Leave evicted or ambiguous
-stages visible. Prove ordering between clocks by holding recipient delivery
-until the controller reads the matching successful writes.
+accepted candidates when their bytes match. Partition retention by directed
+link, stage and packet family so unrelated traffic cannot evict the quiet
+link. Report omitted records and preserve ambiguous stages. Capture the
+exact accepted stamps before a pressure control, then require those same
+stamps after it. Count healthy traffic separately at the browser and server.
+Publish large server receipts on request. Keep one request outstanding
+until its matching generation arrives, including after a controller timeout.
+Prove ordering between clocks by holding the original socket's FIFO until
+both exact raw stamps arrive and the controller reads their successful writes.
+Freeze the native acceptance receipt in the same page turn as the check.
 Export the requested confirmed prefix once per browser. Keep recurring status
 snapshots small. When a page can publish data before its evaluation reply
 arrives, arm a page-scoped listener before dispatch. Match the request ID and
