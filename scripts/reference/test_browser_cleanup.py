@@ -864,22 +864,24 @@ const roster = Array.from({length: 8}, (_, i) => '00000000-0000-0000-0000-000000
 const uuids = [roster[4], roster[0], roster[5], roster[2], roster[6], roster[1], roster[7], roster[3]];
 const peers = uuids.map(() => ({}));
 const prefix = 'fortress native post-release ';
+let receiptOrder = 0;
+const incoming = controller_ms => ({ controller_ms, controller_order: ++receiptOrder });
 const record = (index, fields, receivedAt, rosterKnown = true) =>
-  postReleaseCheckpoint(peers[index], prefix + JSON.stringify(fields), receivedAt, rosterKnown ? roster : undefined, uuids[index]);
+  postReleaseCheckpoint(peers[index], prefix + JSON.stringify(fields), incoming(receivedAt), rosterKnown ? roster : undefined, uuids[index]);
 let now = 100, controller = 120;
 global.performance = {now: () => now};
 global.window = {};
-console.debug = text => postReleaseCheckpoint(peers[2], text, controller, roster, uuids[2]);
+console.debug = text => postReleaseCheckpoint(peers[2], text, incoming(controller), roster, uuids[2]);
 instrumentPostRelease(prefix, 40);
 window.fortressNativePostRelease.bindDeparture(uuids[2], roster);
 const evidence = (depth, accepted) => ({observed_us: 6000, sdk_queued: depth, sdk_peak: 710,
   last_accepted: accepted === null ? null : {accepted_us: accepted, kind: 4, bytes: 46}});
 const hold = (kind, released) => ({kind, page_ms: 500 + released, state: 'playing', turns: 28, frame: 30, confirmed: 12, restores: 0,
   held: {mesh: 0, relay: 33}, bytes: 2838, queued: 33 - released, released});
-record(6, hold('release_started', 0), 110);
+record(6, hold('release_started', 0), 115);
 record(6, hold('release_progress', 16), 115);
 window.fortressNativePostRelease.recordDeparture('native_expiry', 8, JSON.stringify(evidence(702, 3000)));
-record(6, hold('release_completed', 33), 125);
+record(6, hold('release_completed', 33), 120);
 record(0, {kind: 'native_expiry', endpoint: 8, uuid: uuids[6], page_ms: 5, expiry: evidence(674, null)}, 130, false);
 bindDepartureCheckpoints(peers[0], roster, uuids[0]);
 record(2, {...hold('release_socket_closed', 16), socket_state: 3, socket_stage: 'before_send', held_send: true}, 135);
@@ -902,8 +904,8 @@ const timedOut = missedCorrectionDeadline('corrected history', timeout, 120, 120
 assert.equal(relayReleaseEvidence(peers, uuids, timedOut).correction_deadline_reached, true);
 assert.deepEqual(report.socket_closed_pages, [2]);
 assert.deepEqual(report.hold_cap_pages, [1]);
-assert.deepEqual(report.expiries.map(({reporter_page, expired_page, release_at_receipt, expiry}) =>
-  [reporter_page, expired_page, release_at_receipt.kind, release_at_receipt.released, expiry.sdk_queued, expiry.last_accepted?.accepted_us]),
+assert.deepEqual(report.expiries.map(({reporter_page, expired_page, last_release_checkpoint, expiry}) =>
+  [reporter_page, expired_page, last_release_checkpoint.kind, last_release_checkpoint.released, expiry.sdk_queued, expiry.last_accepted?.accepted_us]),
   [[0, 6, 'release_completed', 33, 674, undefined], [2, 6, 'release_progress', 16, 702, 3000]]);
 assert.match(peers[3].checkpoint_error, /invalid native expiry evidence/);
 assert.equal(peers[2].native_expiry.expiry.last_accepted.kind, 4);
@@ -939,7 +941,7 @@ global.window = {
 global.performance = { now: () => now };
 global.setInterval = callback => { heartbeat = callback; };
 global.requestAnimationFrame = callback => { now++; window.fortressNative.stalls++; callback(); };
-console.debug = text => postReleaseCheckpoint(checkpoints, text, now + 100, roster, local, comparedTarget);
+console.debug = text => postReleaseCheckpoint(checkpoints, text, { controller_ms: now + 100 }, roster, local, comparedTarget);
 instrumentPostRelease('fortress native post-release ', 40);
 const trace = window.fortressNativePostRelease;
 function observe() {
@@ -971,7 +973,7 @@ async function run() {
   for (const patch of [{ frames: 41 }, { restores: 2 }, { page_ms: 12 }, { turns: 20 }]) {
     postReleaseCheckpoint(rejected, 'fortress native post-release ' + JSON.stringify({
       kind: 'corrected_frontier', frames: 40, page_ms: 14, emitted_ms: 14, state: 'playing', turns: 21, frame: 44, confirmed: 42, restores: 3, ...patch,
-    }), 114);
+    }), { controller_ms: 114 });
     assert.equal(rejected.frontiers, undefined);
     assert.match(rejected.checkpoint_error, /invalid corrected frontier sample/);
   }
@@ -980,7 +982,7 @@ async function run() {
   assert.equal(checkpoints.correction, undefined, 'old restores do not prove correction');
   assert.equal(checkpoints.frontiers, undefined, 'confirmation before the restore baseline does not qualify');
   window.fortressNative.confirmed = 16;
-  postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"correction"}', now);
+  postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"correction"}', { controller_ms: now });
   Object.assign(window.fortressNative, { turns: 21, restores: 3 });
   observe();
   now++;
@@ -993,14 +995,14 @@ async function run() {
     now++;
     heartbeat();
   }
-  postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"heartbeat"}', now);
+  postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"heartbeat"}', { controller_ms: now });
   assert.equal(checkpoints.release_dispatched_ms, 14);
   assert.equal(checkpoints.release_entered.page_ms, 14);
   assert.equal(checkpoints.release_entered.controller_ms, 114);
   assert.deepEqual([checkpoints.release_started.page_ms, checkpoints.release_started.queued, checkpoints.release_started.released], [16, 10, 0]);
   const malformed = {};
   const cap = { ...checkpoints.release_started, kind: 'hold_cap', released: 1 };
-  postReleaseCheckpoint(malformed, 'fortress native post-release ' + JSON.stringify(cap), 116);
+  postReleaseCheckpoint(malformed, 'fortress native post-release ' + JSON.stringify(cap), { controller_ms: 116 });
   assert.match(malformed.checkpoint_error, /invalid hold sample/);
   assert.equal(malformed.hold_cap, undefined);
   assert.equal(checkpoints.release_completed.page_ms, 17);
@@ -1053,17 +1055,17 @@ async function run() {
   });
   postReleaseCheckpoint(checkpoints, 'fortress native post-release ' + JSON.stringify({
     kind: 'sdk_departure', endpoint: 3, uuid: expired, page_ms: 30
-  }), 130, roster, local);
+  }), { controller_ms: 130 }, roster, local);
   assert.equal(checkpoints.sdk_departures[expired].endpoint, 2);
   const early = {};
   for (let repeat = 0; repeat < 10; repeat++) {
     postReleaseCheckpoint(early, 'fortress native post-release ' + JSON.stringify({
       kind: 'sdk_departure', endpoint: 3, uuid: departing, page_ms: 30 + repeat
-    }), 130 + repeat);
+    }), { controller_ms: 130 + repeat });
   }
   postReleaseCheckpoint(early, 'fortress native post-release ' + JSON.stringify({
     kind: 'sdk_departure', endpoint: 2, uuid: expired, page_ms: 40
-  }), 140);
+  }), { controller_ms: 140 });
   assert.equal(early.sdk_departures, undefined);
   bindDepartureCheckpoints(early, roster, local);
   assert.deepEqual(early, { sdk_departures: {

@@ -378,10 +378,12 @@ func _command(value: Dictionary) -> void:
 	command_code = OK
 	match value.get("kind", ""):
 		"connect":
+			if lobby.client != null:
+				command_code = ERR_UNAVAILABLE
+				return
 			lobby.wait_for_full_mesh = bool(value.get("wait_for_full_mesh", false))
 			lobby.observe_recovery = bool(value.get("observe_recovery", false))
-			if value.route == "relay":
-				lobby.relay_trace = JavaScriptBridge.get_interface("fortressNativePostRelease")
+			lobby.relay_trace = JavaScriptBridge.get_interface("fortressNativePostRelease") if value.route == "relay" else null
 			scene.endpoint.text = str(value.endpoint)
 			scene.player_name.text = str(value.name)
 			scene.room_code.text = str(value.room)
@@ -389,15 +391,12 @@ func _command(value: Dictionary) -> void:
 			scene.room_size.value = int(value.players)
 			var button: Button = scene.create_button if scene.room_code.text.is_empty() else scene.join_button
 			button.pressed.emit()
-			if lobby.client == null or lobby.backend != "native":
+			if lobby.client == null or lobby.backend != "native" or lobby.state != "connecting":
 				command_code = ERR_UNAVAILABLE
 				return
 			if lobby.relay_trace != null:
 				lobby.game_match = ObservedMatch.new()
 				if bool(value.get("trace_warmup", false)):
-					if lobby.state != "connecting":
-						command_code = ERR_UNAVAILABLE
-						return
 					warmup_match = lobby.game_match
 					lobby.warmup_wire = JavaScriptBridge.get_interface("fortressNativeWire")
 					warmup_match.warmup_wire = lobby.warmup_wire

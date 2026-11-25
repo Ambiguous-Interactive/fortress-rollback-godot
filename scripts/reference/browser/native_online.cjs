@@ -194,7 +194,7 @@ function instrumentPostRelease(prefix, minimumFrames) {
   };
 }
 
-function postReleaseCheckpoint(peer, text, receivedAt, roster, local, comparedTarget = HISTORY_FRAMES) {
+function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTarget = HISTORY_FRAMES) {
   if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
   try {
     const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes, queued, released, emitted_ms, endpoint, uuid,
@@ -202,7 +202,7 @@ function postReleaseCheckpoint(peer, text, receivedAt, roster, local, comparedTa
     if (LIFETIME_MARKS.has(kind)) {
       if (!Number.isFinite(page_ms) || page_ms < 0 || !Number.isSafeInteger(endpoint) || endpoint < 1
         || endpoint > INPUTS.length || typeof uuid !== 'string' || !FROZEN_UUID.test(uuid)) throw new Error('invalid room departure sample');
-      const receipt = { kind, endpoint, uuid, page_ms, controller_ms: receivedAt };
+      const receipt = { kind, endpoint, uuid, page_ms, ...controller };
       if (kind === 'native_expiry') receipt.expiry = validateExpiry(expiry);
       retainDepartureCheckpoint(peer, receipt, roster, local);
       return;
@@ -214,7 +214,7 @@ function postReleaseCheckpoint(peer, text, receivedAt, roster, local, comparedTa
     if (!Number.isFinite(page_ms) || page_ms < 0 || typeof state !== 'string' || state.length > 32
       || ![turns, frame, confirmed, restores].every(Number.isSafeInteger)
       || (capturesHistory && (!Number.isSafeInteger(frames) || frames < 1))) throw new Error('invalid post-release sample');
-    const receipt = { page_ms, state, turns, frame, confirmed, restores, controller_ms: receivedAt };
+    const receipt = { page_ms, state, turns, frame, confirmed, restores, ...controller };
     if (capturesHistory) receipt.frames = frames;
     if (capturesFrontier) {
       const ready = peer.hold_ready;
@@ -292,11 +292,11 @@ function relayReleaseEvidence(peers, uuids, correctionDeadlineReached) {
     const candidates = [['release_entered', sender.release_entered], ['release_started', sender.release_started],
       ...(sender.release_progress ?? []).map(sample => ['release_progress', sample]), ['release_completed', sender.release_completed],
       ['release_control_socket_closed', sender.release_control_socket_closed], ['release_socket_closed', sender.release_socket_closed], ['hold_cap', sender.hold_cap]];
-    const latest = candidates.filter(([, sample]) => sample && sample.controller_ms <= expiry.controller_ms)
-      .sort(([, a], [, b]) => b.controller_ms - a.controller_ms)[0];
-    const release_at_receipt = latest ? { kind: latest[0], ...latest[1] } : null;
+    const latest = candidates.filter(([, sample]) => sample && sample.controller_order < expiry.controller_order)
+      .sort(([, a], [, b]) => b.controller_order - a.controller_order)[0];
+    const last_release_checkpoint = latest ? { kind: latest[0], ...latest[1] } : null;
     expiries.push({ reporter_page, expired_page, uuid: expiry.uuid, endpoint: expiry.endpoint,
-      expiry: expiry.expiry, controller_ms: expiry.controller_ms, release_at_receipt });
+      expiry: expiry.expiry, controller_ms: expiry.controller_ms, controller_order: expiry.controller_order, last_release_checkpoint });
   });
   return { socket_closed_pages, hold_cap_pages, correction_deadline_reached: correctionDeadlineReached, expiries };
 }
@@ -1151,6 +1151,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   let roomIdentities;
   let phase = 'launch';
   let sequence = 0;
+  let postReleaseOrder = 0;
   let departureClocks, correctionDeadline;
   let armed, stalled;
   let comparedFrames = HISTORY_FRAMES;
@@ -1204,8 +1205,10 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       page.on('console', message => {
         const text = message.text();
         warmupBarrier?.record(index, text);
-        if (postRelease)
-          postReleaseCheckpoint(postRelease[index], text, performance.now(), roomIdentities?.roster, roomIdentities?.uuids[index], comparedFrames);
+        if (postRelease && text.startsWith(POST_RELEASE_CHECKPOINT)) {
+          const controller = { controller_ms: performance.now(), controller_order: ++postReleaseOrder };
+          postReleaseCheckpoint(postRelease[index], text, controller, roomIdentities?.roster, roomIdentities?.uuids[index], comparedFrames);
+        }
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push({ index, phase, text });
       });
       page.on('requestfailed', request => {
