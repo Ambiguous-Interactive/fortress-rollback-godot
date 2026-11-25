@@ -87,8 +87,9 @@ function createRelayWireTrace() {
     const stream = streams[stage][families[identity.kind]];
     const ordinal = ++stream.count;
     if (stream.events.length === cap) stream.events.shift();
-    stream.events.push({ ordinal, ...identity, ...metadata, bytes: Uint8Array.from(envelope) });
-    return ordinal;
+    const packet = { ordinal, ...identity, ...metadata, bytes: Uint8Array.from(envelope) };
+    stream.events.push(packet);
+    return packet;
   }
 
   const sha256 = async bytes => hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
@@ -145,9 +146,11 @@ function createRelayWireTrace() {
       readdressed.set(unhex(other), 37);
       return [send(addressed), send(addressed), send(readdressed)];
     },
-    hasEnqueued(stamps) {
-      return stamps.every(stamp => streams.native.quality.events.some(event =>
-        event.sender === stamp.sender && event.epoch === stamp.epoch && event.seq === stamp.seq && event.code === 0));
+    freezeEnqueued(stamps) {
+      if (!stamps.every(stamp => streams.native.quality.events.some(event =>
+        event.sender === stamp.sender && event.recipient === stamp.recipient
+        && event.epoch === stamp.epoch && event.seq === stamp.seq && event.code === 0))) return null;
+      return this.freeze();
     },
     async freeze() {
       const entries = Object.entries(streams).flatMap(([stage, groups]) => Object.entries(groups).map(([family, stream]) =>

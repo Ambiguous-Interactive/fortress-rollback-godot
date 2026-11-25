@@ -419,11 +419,12 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
     const events = [];
     let bytes = 0;
     const started_ms = performance.now();
+    expiredRelayDelay = null;
     const release = reason => {
       const release_ms = performance.now();
       relayDelay = null;
       clearTimeout(timer);
-      for (const event of events) {
+      for (const { event } of events) {
         replayedRelayEvents.add(event);
         socket.dispatchEvent(event);
       }
@@ -431,10 +432,15 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
     };
     const timer = setTimeout(() => { expiredRelayDelay = release('deadline'); }, 750);
     relayDelay = {
-      release,
-      hold(event) {
+      releaseWhenHeld(stamps) {
+        if (performance.now() - started_ms >= 750) return release('deadline');
+        if (!stamps.every(stamp => events.some(({ packet }) => packet?.sender === stamp.sender
+            && packet.recipient === stamp.recipient && packet.epoch === stamp.epoch && packet.seq === stamp.seq))) return null;
+        return release('controller');
+      },
+      hold(event, packet) {
         bytes += event.data.byteLength ?? event.data.length * 2;
-        events.push(event);
+        events.push({ event, packet });
         event.stopImmediatePropagation();
         if (events.length > 256 || bytes > 256 * 1024) {
           // The current event is still being dispatched. Replay it after that turn.
@@ -723,8 +729,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
     socket.addEventListener('message', event => {
       if (replayedRelayEvents?.has(event)) return;
       const { data } = event;
-      relayWireTrace?.record('raw', nativeBytes(data));
-      relayDelay?.hold(event);
+      const relayPacket = relayWireTrace?.record('raw', nativeBytes(data));
+      relayDelay?.hold(event, relayPacket);
       const incoming = readRecovery(data, 'receive');
       if (isFirstRecoveryOfferTraffic(incoming)) recovery.receivedKinds[incoming.kind]++;
       if (incoming?.kind === 'Offer') recovery.delivered.push({ ...incoming, at_ms: performance.now() });
@@ -833,7 +839,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
       return relayWireTrace && { ...await relayWireTrace.freeze(), sockets };
     },
     holdRelayControl: delayRelayDelivery,
-    releaseRelayControl: () => relayDelay?.release('controller') ?? expiredRelayDelay,
+    releaseRelayControl: stamps => relayDelay?.releaseWhenHeld(stamps) ?? expiredRelayDelay,
     repeatRelayControl(recipient, other) {
       const socket = resources.sockets[0];
       if (resources.sockets.length !== 1 || socket.readyState !== nativeSocket.OPEN) throw new Error('missing relay control socket');

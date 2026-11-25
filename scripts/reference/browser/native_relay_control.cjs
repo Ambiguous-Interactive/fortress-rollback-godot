@@ -49,21 +49,19 @@ async function exerciseRelayDelivery(pages, ready, receiptPath) {
   const [sender, recipient, other] = ready.slice(0, 3).map(peer => peer.uuid.replaceAll('-', ''));
   const [sourcePage, delayedPage, otherPage] = pages;
   const started = await delayedPage.evaluate(() => window.fortressNativeWire.holdRelayControl());
-  let matched, delay;
-  try {
-    const ordinals = await sourcePage.evaluate(([recipient, other]) => window.fortressNativeWire.repeatRelayControl(recipient, other), [recipient, other]);
-    assert.ok(ordinals.every((ordinal, index) => Number.isSafeInteger(ordinal) && (!index || ordinal === ordinals[index - 1] + 1)));
-    matched = await waitForServerReceipt(receiptPath, receipt => {
-      if (!receipt) return null;
-      const accepted = ordinals.map(ordinal => events(receipt, 'ingress', 'quality').find(event => event.sender === sender && event.socket_ordinal === ordinal));
-      if (accepted.some(event => !event)) return null;
-      const written = accepted.map(event => events(receipt, 'write', 'quality').find(write => stampKey(write) === stampKey(event)));
-      return written.every(Boolean) ? { accepted, written, seen_controller_ms: performance.now() } : null;
-    }, 650);
-  } finally {
-    delay = await delayedPage.evaluate(() => window.fortressNativeWire.releaseRelayControl());
-  }
+  const ordinals = await sourcePage.evaluate(([recipient, other]) => window.fortressNativeWire.repeatRelayControl(recipient, other), [recipient, other]);
+  assert.ok(ordinals.every((ordinal, index) => Number.isSafeInteger(ordinal) && (!index || ordinal === ordinals[index - 1] + 1)));
+  const matched = await waitForServerReceipt(receiptPath, receipt => {
+    if (!receipt) return null;
+    const accepted = ordinals.map(ordinal => events(receipt, 'ingress', 'quality').find(event => event.sender === sender && event.socket_ordinal === ordinal));
+    if (accepted.some(event => !event)) return null;
+    const written = accepted.map(event => events(receipt, 'write', 'quality').find(write => stampKey(write) === stampKey(event)));
+    return written.every(Boolean) ? { accepted, written, seen_controller_ms: performance.now() } : null;
+  }, 650);
   const { accepted, written } = matched;
+  const release = await delayedPage.waitForFunction(stamps => window.fortressNativeWire.releaseRelayControl(stamps), accepted.slice(0, 2), { timeout: 1000 });
+  const delay = await release.jsonValue();
+  await release.dispose();
   assert.equal(delay?.reason, 'controller', 'relay control delivery was released before the controller saw server writes');
   assert.ok(delay.events >= 2 && delay.started_ms === started && delay.release_ms >= started && delay.release_ms - started < 750);
   assert.deepEqual(accepted.map(event => event.recipient), [recipient, recipient, other]);
@@ -73,9 +71,9 @@ async function exerciseRelayDelivery(pages, ready, receiptPath) {
   assert.ok(sameEnvelope(accepted[0], accepted[1]) && accepted[0].envelope_sha256 !== accepted[2].envelope_sha256);
   assert.equal(new Set(accepted.map(event => event.payload_sha256)).size, 1);
   const browser = await Promise.all([[delayedPage, accepted.slice(0, 2)], [otherPage, accepted.slice(2)]].map(async ([page, stamps]) => {
-    const handle = await page.waitForFunction(stamps => window.fortressNativeRelayTrace.hasEnqueued(stamps), stamps, { timeout: 1000 });
+    const handle = await page.waitForFunction(stamps => window.fortressNativeRelayTrace.freezeEnqueued(stamps), stamps, { timeout: 1000 });
+    const receipt = await handle.jsonValue();
     await handle.dispose();
-    const receipt = await page.evaluate(() => window.fortressNativeRelayTrace.freeze());
     return stamps.map(expected => {
       const observations = Object.fromEntries(['raw', 'sdk', 'native'].map(stage => [stage,
         events(receipt, stage, 'quality').find(event => stampKey(event) === stampKey(expected) && (stage !== 'native' || event.code === 0))]));

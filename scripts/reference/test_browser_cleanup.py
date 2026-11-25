@@ -12,6 +12,56 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_relay_control_releases_only_after_both_addressed_stamps_arrive(self):
+        # Value: protects=the FIFO barrier; fails_when=unrelated or duplicate arrivals can release it; seam=browser socket observer
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire } = require(process.argv[1]);
+class Socket {
+  static OPEN = 1;
+  readyState = 1;
+  listeners = [];
+  addEventListener(_name, listener) { this.listeners.push(listener); }
+  dispatchEvent(event) {
+    let stopped = false;
+    event.stopImmediatePropagation = () => { stopped = true; };
+    for (const listener of this.listeners) {
+      listener(event);
+      if (stopped) break;
+    }
+  }
+}
+const window = {};
+let alarm;
+const trace = { record: (_stage, data) => data && { sender: 'source', recipient: 'local', epoch: 1, seq: String(data[0]) } };
+const realm = { window, trace, WebSocket: Socket, RTCPeerConnection: class {}, Uint8Array, ArrayBuffer, DataView, performance,
+  setTimeout: run => { alarm = run; }, clearTimeout: () => {} };
+runInNewContext(`(${instrumentNativeWire})(false, '', trace)`, realm);
+const socket = new window.WebSocket();
+const wire = window.fortressNativeWire;
+const seen = [];
+socket.addEventListener('message', event => seen.push(event.data[0]));
+const deliver = seq => socket.dispatchEvent({ data: Uint8Array.of(seq) });
+const stamps = [10, 11].map(seq => ({ sender: 'source', recipient: 'local', epoch: 1, seq: String(seq) }));
+wire.holdRelayControl();
+deliver(9);
+deliver(10);
+deliver(10);
+assert.equal(wire.releaseRelayControl(stamps), null);
+assert.deepEqual(seen, []);
+assert.equal(wire.releaseRelayControl([{ ...stamps[0], epoch: 2 }, stamps[1]]), null);
+deliver(11);
+assert.equal(wire.releaseRelayControl(stamps).reason, 'controller');
+assert.deepEqual(seen, [9, 10, 10, 11]);
+wire.holdRelayControl();
+deliver(9);
+alarm();
+assert.equal(wire.releaseRelayControl(stamps).reason, 'deadline');
+assert.deepEqual(seen, [9, 10, 10, 11, 9]);
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
     def test_native_relay_join_keeps_missing_stages_and_rejects_conflicting_digests(self):
         # Value: protects=exact stage joins; fails_when=equal bytes fill observation gaps or an ordinal hides mismatched bytes; seam=browser arrival and server receipts
         script = r"""
@@ -98,6 +148,10 @@ trace.recordEngine('sdk', source, packet.toString('hex'), 1, signedSeq, null);
 trace.recordEngine('native', source, packet.subarray(57).toString('hex'), 1, signedSeq, 0);
 trace.recordEngine('native', source, envelope(source, local, 4).subarray(57).toString('hex'), 1, '5', 0);
 trace.recordEngine('native', source, envelope(source, local, 4).subarray(57).toString('hex'), 1, '6', 0);
+const expected = { sender: source, recipient: local, epoch: 1, seq: '5' };
+assert.equal(trace.freezeEnqueued([{ ...expected, seq: '7' }]), null);
+assert.equal(trace.freezeEnqueued([{ ...expected, recipient: other }]), null);
+const frozenAtEnqueue = trace.freezeEnqueued([expected]);
 trace.record('send', envelope(local, source, 5));
 trace.record('send', envelope(local, source));
 const owned = envelope(local, other);
@@ -126,6 +180,9 @@ for (let i = 0; i < 40; i++) trace.record('raw', delivered(envelope(source, loca
   assert.equal(native.code, 0);
   assert.deepEqual(receipt.streams.send.quality.events[0].protocol_reply,
     { token: '00'.repeat(16), candidates: [{ epoch: 1, seq: '5' }, { epoch: 1, seq: '6' }] });
+  for (let i = 7; i < 40; i++) trace.recordEngine('native', source, envelope(source, local, 4).subarray(57).toString('hex'), 1, String(i), 0);
+  assert.equal(trace.freezeEnqueued([expected]), null);
+  assert.equal((await frozenAtEnqueue).streams.native.quality.events[0].seq, '5');
   const quality = receipt.streams.raw.quality;
   assert.equal(quality.count, 40);
   assert.equal(quality.omitted, 8);
