@@ -12,6 +12,121 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_native_relay_join_keeps_missing_stages_and_rejects_conflicting_digests(self):
+        # Value: protects=exact stage joins; fails_when=equal bytes fill observation gaps or an ordinal hides mismatched bytes; seam=browser arrival and server receipts
+        script = r"""
+const assert = require('node:assert/strict');
+const { joinRelayReceipts } = require(process.argv[1]);
+const sender = 'a', recipient = 'b', room = 'match';
+const packet = { sender, recipient, epoch: 1, seq: '9', kind: 2, envelope_bytes: 109, envelope_sha256: 'sha', ordinal: 1, socket_ordinal: 5 };
+const stage = (events = []) => ({ sync: { events: [] }, input: { events }, quality: { events: [] } });
+const another = { ...packet, seq: '10', socket_ordinal: 6, ordinal: 2 };
+const server = { room, roster: [sender, recipient], streams: { ingress: stage([packet, another]), write: stage([packet, another]) } };
+const pageA = { room, local: sender, sockets: 1,
+  streams: { send: stage([packet, another]), raw: stage(), sdk: stage(), native: stage() } };
+const pageB = { room, local: recipient, sockets: 1,
+  streams: { send: stage(), raw: stage([another]), sdk: stage([another]), native: stage([another, {...another, ordinal: 3}]) } };
+const result = joinRelayReceipts(server, [pageA, pageB]);
+const byStamp = new Map(result.rows.map(row => [row.seq, row]));
+assert.equal(byStamp.get('9').send, 1);
+assert.deepEqual(byStamp.get('9').raw, []);
+assert.deepEqual(byStamp.get('9').native, []);
+assert.deepEqual(byStamp.get('10').raw, [2]);
+assert.deepEqual(byStamp.get('10').native, [2, 3]);
+assert.deepEqual(result.unjoined_sends, []);
+pageA.sockets = 2;
+const ambiguous = joinRelayReceipts(server, [pageA, pageB]);
+assert.ok(ambiguous.rows.every(row => row.send === null));
+assert.equal(ambiguous.unjoined_sends.length, 2);
+pageB.streams.raw.input.events[0] = { ...another, envelope_sha256: 'conflicting' };
+assert.throws(() => joinRelayReceipts(server, [pageA, pageB]), /receipt disagrees/);
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs')], check=True, timeout=10)
+
+    def test_native_relay_wire_preserves_duplicate_stamps_and_addresses(self):
+        # Value: protects=physical relay identity; fails_when=identical bytes collapse or a foreign route is retained; seam=browser wire receipt
+        script = r"""
+const assert = require('node:assert/strict');
+const { createHash, webcrypto } = require('node:crypto');
+const { createRelayWireTrace } = require(process.argv[1]);
+globalThis.crypto = webcrypto;
+const bytes = value => Buffer.from(value, 'hex');
+const [room, source, local, other] = ['11', '22', '33', '44'].map(value => value.repeat(16));
+const trace = createRelayWireTrace();
+trace.bind(room, local, [source, local, other]);
+function envelope(sender, recipient, kind = 2) {
+  const body = Buffer.alloc({2: 24, 4: 18, 5: 16}[kind]);
+  const payload = Buffer.concat([bytes(room), bytes('f552020001000000'), Buffer.from([kind, 0, 0, 0]), body]);
+  return Buffer.concat([bytes('4653523101'), bytes(room), bytes(sender), bytes(recipient), Buffer.from([payload.length, 0, 0, 0]), payload]);
+}
+const name = text => Buffer.concat([Buffer.from([0xa0 + text.length]), Buffer.from(text)]);
+function delivered(packet, seq, outerSender = source, encodingKey = 'encoding') {
+  const stamp = Buffer.alloc(9);
+  stamp[0] = 0xcf;
+  stamp.writeBigUInt64BE(seq, 1);
+  return Buffer.concat([bytes('85'), name('from_player'), bytes('c410'), bytes(outerSender), name(encodingKey), name('message_pack'),
+    name('payload'), Buffer.from([0xc4, packet.length]), packet, name('seq'), stamp, name('epoch'), bytes('01')]);
+}
+const packet = envelope(source, local);
+const first = 9007199254740992n;
+trace.record('raw', delivered(packet, first));
+trace.record('raw', delivered(packet, first + 1n));
+trace.record('raw', delivered(envelope(source, other), first + 2n));
+trace.record('raw', delivered(packet, 0n));
+trace.record('raw', delivered(packet, first + 3n, other));
+trace.record('raw', Buffer.concat([delivered(packet, first + 4n), bytes('00')]));
+trace.record('raw', delivered(packet, first + 5n).subarray(0, -1));
+trace.record('raw', delivered(Buffer.concat([packet, bytes('00')]), first + 6n));
+const badQuality = envelope(source, local, 4).subarray(0, 85);
+badQuality.writeUInt32LE(28, 53);
+trace.record('raw', delivered(badQuality, first + 7n));
+const bomPacket = delivered(packet, first + 8n);
+const key = bomPacket.indexOf(name('encoding'));
+trace.record('raw', Buffer.concat([bomPacket.subarray(0, key), bytes('abefbbbf'), bomPacket.subarray(key + 1)]));
+assert.throws(() => trace.bind(other, local, [source, local, other]), /already bound/);
+const signedSeq = '-1';
+trace.recordEngine('sdk', source, packet.toString('hex'), 1, signedSeq, null);
+trace.recordEngine('native', source, packet.subarray(57).toString('hex'), 1, signedSeq, 0);
+trace.recordEngine('native', source, envelope(source, local, 4).subarray(57).toString('hex'), 1, '5', 0);
+trace.recordEngine('native', source, envelope(source, local, 4).subarray(57).toString('hex'), 1, '6', 0);
+trace.record('send', envelope(local, source, 5));
+trace.record('send', envelope(local, source));
+const owned = envelope(local, other);
+const ownedDigest = createHash('sha256').update(owned).digest('hex');
+trace.record('send', owned);
+owned.fill(0);
+for (let i = 0; i < 40; i++) trace.record('raw', delivered(envelope(source, local, 4), BigInt(i + 1)));
+(async () => {
+  const receipt = await trace.freeze();
+  assert.equal(receipt.room, room);
+  assert.equal(receipt.local, local);
+  const input = receipt.streams.raw.input;
+  assert.equal(input.count, 2);
+  assert.deepEqual(input.events.map(event => [event.epoch, event.seq, event.sender, event.recipient]),
+    [[1, String(first), source, local], [1, String(first + 1n), source, local]]);
+  assert.ok(input.events.every(event => event.envelope_bytes === packet.length &&
+    event.envelope_sha256 === createHash('sha256').update(packet).digest('hex')));
+  const sent = receipt.streams.send.input.events;
+  assert.equal(sent[1].envelope_sha256, ownedDigest);
+  assert.equal(sent[0].payload_sha256, sent[1].payload_sha256);
+  assert.notEqual(sent[0].envelope_sha256, sent[1].envelope_sha256);
+  const [sdk, native] = ['sdk', 'native'].map(stage => receipt.streams[stage].input.events[0]);
+  assert.equal(sdk.seq, '18446744073709551615');
+  assert.equal(native.seq, sdk.seq);
+  assert.equal(native.envelope_sha256, sdk.envelope_sha256);
+  assert.equal(native.code, 0);
+  assert.deepEqual(receipt.streams.send.quality.events[0].protocol_reply,
+    { token: '00'.repeat(16), candidates: [{ epoch: 1, seq: '5' }, { epoch: 1, seq: '6' }] });
+  const quality = receipt.streams.raw.quality;
+  assert.equal(quality.count, 40);
+  assert.equal(quality.omitted, 8);
+  assert.equal(quality.events.length, 32);
+  assert.equal(quality.events[0].seq, '9');
+  assert.equal(quality.events.at(-1).seq, '40');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs')], check=True, timeout=10)
+
     def test_native_leave_requires_a_correlated_publication(self):
         # Value: protects=departure receipt; fails_when=stale or incomplete evidence passes; seam=Playwright console event
         script = r"""

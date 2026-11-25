@@ -14,6 +14,7 @@ import tempfile
 import zipfile
 
 from browser.owned_server import OwnedServer
+from browser.native_relay_stage import instrument_relay_delivery
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_runner import run_browser
 from fetch import ROOT, digest, load_manifest
@@ -72,12 +73,14 @@ def install_addon(project, archive):
     (project / '.godot/extension_list.cfg').write_text(f'res://{EXTENSION}\n', encoding='utf-8')
 
 
-def stage_export(root, output, editor, templates, sdk, addon, environment):
+def stage_export(root, output, editor, templates, sdk, addon, environment, trace_relay_wire=False):
     project, export = root / 'game', root / 'web'
     export.mkdir()
     create_project(project, include_runtime=False)
     install_sdk(project, sdk)
     install_addon(project, addon)
+    if trace_relay_wire:
+        instrument_relay_delivery(project)
     shutil.copyfile(BROWSER / 'native_online_bridge.gd', project / 'bridge.gd')
     config = project / 'project.godot'
     config.write_text(config.read_text().replace('res://examples/online/online.tscn', 'res://bridge.tscn'), encoding='utf-8')
@@ -208,24 +211,33 @@ def validate_cell(evidence, mode, players, browser_pair):
         raise ValueError(f'wrong browser composition: {mode}:{players}')
 
 
-def play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server, omit_second=False):
+def play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server, control=None, trace_server=False):
     results = []
-    for route in ('mesh', 'relay'):
-        selected = [cell for cell in cells if cell.split(':')[0].split('-')[0] == route]
-        if not selected:
-            continue
+    routes = {route: [cell for cell in cells if cell.split(':')[0].split('-')[0] == route] for route in ('mesh', 'relay')}
+    groups = [('relay', [cell]) for cell in routes['relay']] if trace_server else [(route, selected) for route, selected in routes.items() if selected]
+    for route, selected in groups:
         port = local_port()
         config = create_server_config(server_source, route, port, stun_server)
         server_environment = {'PATH': environment['PATH'], 'SIGNAL_FISH_CONFIG_JSON': json.dumps(config), 'RUST_LOG': 'error'}
-        with (output / f'{route}-server.log').open('wb') as log:
+        label = selected[0].replace(':', '-') if trace_server else route
+        browser_environment = environment.copy()
+        if trace_server:
+            trace_paths = {'FORTRESS_RELAY_TRACE_SCOPE': str(output / f'{label}-server-scope.json'),
+                           'FORTRESS_RELAY_TRACE_OUTPUT': str(output / f'{label}-server-trace.json')}
+            server_environment.update(trace_paths)
+            browser_environment.update(trace_paths)
+        else:
+            for variable in ('FORTRESS_RELAY_TRACE_SCOPE', 'FORTRESS_RELAY_TRACE_OUTPUT'):
+                browser_environment.pop(variable, None)
+        with (output / f'{label}-server.log').open('wb') as log:
             with OwnedServer(server_binary, server_environment, port, log) as server:
                 for cell in selected:
                     mode, players = cell.split(':')
                     command = ['node', str(BROWSER / 'native_online.cjs'), str(export), f'ws://127.0.0.1:{port}/v3/ws', mode, players,
                                '-'.join(browser_pair)]
-                    if omit_second:
-                        command.append('--omit-second-replacement')
-                    evidence = json.loads(run_browser(command, environment, output / f'{mode}-{players}.log', rooms=1))
+                    if control:
+                        command.append(control)
+                    evidence = json.loads(run_browser(command, browser_environment, output / f'{mode}-{players}.log', rooms=1))
                     validate_cell(evidence, mode, int(players), browser_pair)
                     results.append(evidence)
                     print(f'{cell} passed', flush=True)
@@ -238,6 +250,8 @@ def main():
     parser.add_argument('--version', help='pinned Godot version, defaults to current stable')
     parser.add_argument('--cell', action='append', choices=(*CELLS, OVERLAP_CELL))
     parser.add_argument('--omit-second-replacement', action='store_true', help='negative control for the overlapping recovery cell')
+    parser.add_argument('--trace-relay-wire', action='store_true', help='capture bounded browser, SDK and native inbox packet receipts in relay cells')
+    parser.add_argument('--relay-trace-server', type=Path, help='build receipt for the optional instrumented local relay server')
     parser.add_argument('--browser-pair', choices=BROWSER_PAIRS, default='chromium', help='single engine or alternating engines in each room')
     parser.add_argument('--cache', type=Path, default=ROOT / '.cache/reference')
     parser.add_argument('--addon', type=Path, required=True, help='complete Web addon archive for this revision')
@@ -246,6 +260,7 @@ def main():
     output, cache, addon = args.output.resolve(), args.cache.resolve(), args.addon.resolve()
     logs = [cell.replace(':', '-') + '.log' for cell in (*CELLS, OVERLAP_CELL)]
     logs += ['mesh-server.log', 'relay-server.log', 'import.log', 'export.log', 'version.log', 'tls.log', 'stun.log']
+    logs += [f'relay-{players}-server{suffix}' for players in (2, 4, 8) for suffix in ('.log', '-scope.json', '-scope.json.new', '-trace.json')]
     begin_results(output, REPORT, logs)
     receipt = output / REPORT
     manifest = load_manifest()
@@ -268,6 +283,10 @@ def main():
         parser.error(f'{OVERLAP_CELL} requires one of: {", ".join(OVERLAP_PROFILES)}')
     if args.omit_second_replacement and cells != (OVERLAP_CELL,):
         parser.error(f'--omit-second-replacement requires --cell {OVERLAP_CELL}')
+    trace_wire = args.trace_relay_wire or args.relay_trace_server is not None
+    if trace_wire and any(not cell.startswith('relay:') for cell in cells):
+        parser.error('relay tracing requires explicit relay cells')
+    control = '--trace-relay-wire' if trace_wire else '--omit-second-replacement' if args.omit_second_replacement else None
     stun_tool = None
     if browser_pair != ('chromium',) and any(cell.startswith('mesh') for cell in cells):
         stun = environment.get('FORTRESS_STUN_EXECUTABLE') or shutil.which('turnserver')
@@ -280,16 +299,27 @@ def main():
     sdk_pin, server_pin = (manifest['sources'][kind] for kind in ('sdk', 'server'))
     sdk, server_source = (cache / pin['root'] for pin in (sdk_pin, server_pin))
     server_binary = cache / f"server-target/{server_pin['revision']}/debug/signal-fish-server"
+    trace_build = None
+    if args.relay_trace_server:
+        trace_build = args.relay_trace_server.resolve()
+        build = json.loads(trace_build.read_text(encoding='utf-8'))
+        server_binary = trace_build.with_name('signal-fish-server')
+        if build.get('format') != 1 or build.get('passed') is not True or build.get('source_revision') != server_pin['revision'] \
+                or build.get('binary_sha256') != digest(server_binary):
+            raise ValueError('relay trace server build receipt does not match the pinned binary')
     files = {'editor': editor, 'templates': templates, 'addon': addon, 'server': server_binary,
              'server_config': server_source / 'config.example.json', **{name: Path(environment[var]) for name, var in tools.items()},
              'runner': Path(__file__), 'editor_setup': BROWSER.parent / 'godot_smoke.py', 'artifact_helper': BROWSER.parent / 'fetch.py',
              'client': BROWSER / 'native_online.cjs', 'host': BROWSER / 'online_host.cjs', 'display': BROWSER / 'webrtc_display.cjs',
              'watchdog': BROWSER / 'webrtc_watchdog.cjs', 'recovery': BROWSER / 'native_recovery.cjs',
-             'bridge': BROWSER / 'native_online_bridge.gd', 'sdk': sdk / 'addons/signal_fish',
+             'bridge': BROWSER / 'native_online_bridge.gd', 'sdk': sdk / 'addons/signal_fish', 'relay_wire_trace': BROWSER / 'native_relay_trace.cjs',
+             'relay_stage': BROWSER / 'native_relay_stage.py', 'relay_control': BROWSER / 'native_relay_control.cjs',
              'runtime': ROOT / 'addons/fortress_rollback', 'example': ROOT / 'examples'}
     if stun_tool is not None:
         files['stun'] = stun_tool
         files['stun_readiness'] = BROWSER.parent / 'signalfish_live_probe.py'
+    if trace_build is not None:
+        files['relay_trace_build'] = trace_build
     frozen = inventory(files)
     template_pin = manifest['artifacts'][templates.name]
     if digest(templates, template_pin['algorithm']) != template_pin['digest']:
@@ -305,14 +335,14 @@ def main():
         actual = run([str(editor), '--version'], environment, output / 'version.log').strip()
         if not actual.startswith(args.version + '.stable.'):
             raise ValueError(f'unexpected Godot version: {actual}')
-        export, staged = stage_export(root, output, editor, templates, sdk, addon, environment)
+        export, staged = stage_export(root, output, editor, templates, sdk, addon, environment, trace_wire)
         exported = inventory({'export': export})
         if not host_capacity.acquire_when_free('native-online-witness', 600):
             raise ValueError('development host stayed busy')
         try:
             stun = local_stun(stun_tool, root, output / 'stun.log') if stun_tool is not None else nullcontext(None)
             with stun as stun_server:
-                results = play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server, args.omit_second_replacement)
+                results = play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server, control, trace_build is not None)
         finally:
             host_capacity.release()
         if inventory(files) != frozen or inventory({'export': export}) != exported:
