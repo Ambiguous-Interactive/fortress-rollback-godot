@@ -93,9 +93,10 @@ impl Stream {
         events.push_back(Arc::new(event));
     }
 
-    fn snapshot(&self, selected: &[Link]) -> Self {
-        let links = self.links.iter().map(|(&link, events)| {
-            let start = if selected.contains(&link) { 0 } else { events.len().saturating_sub(CAPACITY) };
+    fn snapshot(&self, selected: &[Link], capacity: usize) -> Self {
+        let cap = if selected.is_empty() { CAPACITY } else { capacity };
+        let links = self.links.iter().filter(|(link, _)| selected.is_empty() || selected.contains(link)).map(|(&link, events)| {
+            let start = events.len().saturating_sub(cap);
             (link, events.range(start..).cloned().collect())
         }).collect();
         Self { count: self.count, links }
@@ -133,9 +134,9 @@ impl Families {
 
     fn snapshot(&self, selected: &[Link]) -> Self {
         Self {
-            sync: self.sync.snapshot(&[]),
-            input: self.input.snapshot(selected),
-            quality: self.quality.snapshot(selected),
+            sync: self.sync.snapshot(selected, CAPACITY),
+            input: self.input.snapshot(selected, EXPANDED_CAPACITY),
+            quality: self.quality.snapshot(selected, EXPANDED_CAPACITY),
         }
     }
 }
@@ -528,9 +529,9 @@ mod tests {
                     let stream = &snapshot["streams"][stage][family];
                     let events = stream["events"].as_array().unwrap();
                     assert_eq!(stream["count"], 2 * through, "{stage}/{family}");
-                    assert_eq!(stream["omitted"], 2 * through - retained - 128, "{stage}/{family}");
+                    assert_eq!(stream["omitted"], 2 * through - retained - if selected { 0 } else { 128 }, "{stage}/{family}");
                     let ordinals = (1..=(2 * through)).filter(|ordinal| {
-                        if ordinal % 2 == 1 { *ordinal >= 2 * first_forward - 1 } else { *ordinal >= 2 * first_reverse }
+                        if ordinal % 2 == 1 { *ordinal >= 2 * first_forward - 1 } else { !selected && *ordinal >= 2 * first_reverse }
                     });
                     assert!(events.iter().map(|event| event["ordinal"].as_u64().unwrap()).eq(ordinals), "{stage}/{family}");
                     if first_forward == 1 {

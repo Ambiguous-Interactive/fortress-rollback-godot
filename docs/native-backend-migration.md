@@ -90,10 +90,10 @@ The job artifact includes the build receipt and log, the browser log, and any
 published server scope and packet snapshot. Pair each traced run with a stock
 run at the same revision, browser profile, and room size to measure overhead.
 
-When a receipt identifies a native expiry, the browser and server expand
-input and quality history for that directed link from 128 to at most 512 records
-per stage. Other links and sync traffic report the latest 128 records per
-stage. The count and omitted fields describe the full stream.
+Ordinary receipts include up to 128 records per directed link and stage.
+When a native expiry identifies links to diagnose, the browser and server
+publish only those links. Their input and quality histories expand to at most
+512 records per stage. Count and omitted fields still describe the full stream.
 
 Use the same-link pressure control with a local traced server build receipt.
 The control drops addressed packets after raw arrival for one link while

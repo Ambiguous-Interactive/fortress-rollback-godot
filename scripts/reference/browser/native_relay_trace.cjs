@@ -193,7 +193,8 @@ function createRelayWireTrace() {
       })) throw new Error('invalid relay wire link selection');
       function retained(stage, family, peer, records) {
         const link = stage === 'send' ? `${local}/${peer}` : `${peer}/${local}`;
-        return family !== 'sync' && selected.has(link) ? records : records.slice(-cap);
+        if (selected.size && !selected.has(link)) return [];
+        return selected.size && family !== 'sync' ? records : records.slice(-cap);
       }
       const entries = Object.entries(streams).flatMap(([stage, groups]) => Object.entries(groups).map(([family, stream]) =>
         ({ stage, family, count: stream.count, events: [...stream.links].flatMap(([peer, records]) =>

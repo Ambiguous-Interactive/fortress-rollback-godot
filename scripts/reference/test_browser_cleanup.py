@@ -315,7 +315,8 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
   assert.equal(expanded.streams.raw.quality.omitted, 0);
   assert.deepEqual(expanded.streams.raw.quality.events.map(event => event.seq),
     Array.from({ length: 140 }, (_, index) => String(index + 1)));
-  assert.deepEqual((await trace.freeze([`${local}/${source}`])).streams.raw.quality, quality);
+  assert.deepEqual((await trace.freeze([`${local}/${source}`])).streams.raw.quality, { count: 140, omitted: 140, events: [] });
+  assert.equal(expanded.streams.send.input.events.length, 0, 'unselected directions must not enter the focused receipt');
   const scopedLink = `${source}/${local}`;
   for (const malformed of [[scopedLink, scopedLink], [`${source}/${source}`], [`${source}/ff`], [scopedLink + '/'], [null],
     new Array(1), null, new Set([scopedLink])]) {
