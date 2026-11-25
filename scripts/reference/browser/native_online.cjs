@@ -885,10 +885,13 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
       blockedRelay = { socket, sender, deadline_ms: started_ms + 1250, inputs: 0, reports: 0 };
       return { started_ms, frontier };
     },
-    resumeBlockedRelay() {
+    resumeBlockedRelay(stamps) {
+      if (!blockedRelay) return null;
       const { deadline_ms, inputs, reports } = blockedRelay;
+      if (stamps && performance.now() < deadline_ms && !relayWireTrace.hasBlockedRelayStamps(blockedRelay.sender, stamps)) return null;
+      const resumed_ms = performance.now();
       blockedRelay = null;
-      return { resumed_ms: performance.now(), deadline_ms, inputs, reports };
+      return { resumed_ms, deadline_ms, inputs, reports };
     },
     pressureRelayLink(recipient) {
       const socket = resources.sockets[0];

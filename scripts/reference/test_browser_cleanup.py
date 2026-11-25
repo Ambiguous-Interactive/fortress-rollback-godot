@@ -133,6 +133,10 @@ const trace = {
     return packet;
   },
   retentionSample: () => ({ frontier: ['input', 'quality'] }),
+  hasBlockedRelayStamps(sender, stamps) {
+    return stamps.every(stamp => packets.some(packet => packet.delivery_blocked && packet.sender === sender
+      && packet.epoch === stamp.epoch && packet.seq === stamp.seq));
+  },
 };
 let clock = 10;
 const realm = { window, trace, WebSocket: Socket, RTCPeerConnection: class {}, Uint8Array, ArrayBuffer, DataView, performance: { now: () => clock },
@@ -156,6 +160,17 @@ clock = 1260;
 deliver(5);
 assert.equal(wire.resumeBlockedRelay().reports, 1);
 assert.deepEqual(seen.splice(0), [5]);
+wire.blockRelayLink(source);
+const pressureStamps = ['12', '13'].map(seq => ({ epoch: 1, seq }));
+deliver(12);
+deliver(12);
+deliver(13, socket, 1);
+assert.equal(wire.resumeBlockedRelay(pressureStamps), null, 'duplicates and another sender cannot release the gate');
+assert.deepEqual(seen.splice(0), [13]);
+deliver(13);
+assert.equal(wire.resumeBlockedRelay(pressureStamps).reports, 3);
+deliver(14);
+assert.deepEqual(seen.splice(0), [14]);
 wire.holdRelayControl();
 deliver(8);
 alarm();
@@ -326,6 +341,16 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
   const wrapped = (await trace.freeze([`${source}/${local}`])).streams.raw.quality;
   assert.equal(wrapped.omitted, 8);
   assert.deepEqual(wrapped.events.map(event => Number(event.seq)), Array.from({ length: 512 }, (_, index) => index + 9));
+  const gateTrace = createRelayWireTrace();
+  gateTrace.bind(room, local, [source, local, other]);
+  gateTrace.record('raw', delivered(packet, 1n)).delivery_blocked = true;
+  gateTrace.record('raw', delivered(envelope(other, local, 4), 2n, other)).delivery_blocked = true;
+  const report = gateTrace.record('raw', delivered(envelope(source, local, 4), 2n));
+  const blocked = ['1', '2'].map(seq => ({ epoch: 1, seq }));
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, blocked), false);
+  report.delivery_blocked = true;
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, blocked), true);
+  assert.equal(gateTrace.hasBlockedRelayStamps(source, [{ epoch: 2, seq: '2' }]), false);
   const digestFixture = createRelayWireTrace();
   digestFixture.bind(room, local, [source, local, other]);
   const original = envelope(source, local, 4);

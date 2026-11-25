@@ -238,6 +238,7 @@ link. Report omitted records and preserve ambiguous stages. Capture the
 exact accepted stamps before a pressure control, then require those same
 stamps after it. Count healthy traffic separately at the browser and server.
 For same-link pressure, join new sends through raw and check SDK and native absence. Publish only selected links with original ordinals and full-stream omissions.
+Release a diagnostic delivery gate on its exact blocked stamps within the page deadline.
 Keep one server receipt request outstanding through timeout. Match both the returned generation and link selection.
 Prove ordering between clocks by holding the original socket's FIFO until
 both exact raw stamps arrive and the controller reads their successful writes.

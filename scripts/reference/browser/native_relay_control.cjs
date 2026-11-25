@@ -188,18 +188,37 @@ async function exerciseSameLinkRetention(pages, ready, readReceipt) {
   const [source, reporter] = pages;
   const links = [`${sender}/${recipient}`];
   const before = await reporter.evaluate(sender => window.fortressNativeWire.blockRelayLink(sender), sender);
-  let ordinals, resumed;
+  const deadline = performance.now() + 1250;
+  const timeLeft = () => Math.max(1, Math.ceil(deadline - performance.now()));
+  let ordinals, resumed, server;
   try {
     ordinals = await source.evaluate(recipient => window.fortressNativeWire.pressureRelayLink(recipient), recipient);
-    await pause(650);
-  } finally {
-    resumed = await reporter.evaluate(() => window.fortressNativeWire.resumeBlockedRelay());
+    const pending = new Set(ordinals);
+    assert.ok(pending.size === ordinals.length && ordinals.every(Number.isSafeInteger), 'invalid same-link send ordinals');
+    const observed = await readReceipt(receipt => {
+      const streams = ['input', 'quality'];
+      const received = streams.flatMap(family => events(receipt, 'ingress', family).filter(event =>
+        event.sender === sender && event.recipient === recipient && pending.has(event.socket_ordinal)));
+      if (received.length !== pending.size || new Set(received.map(event => event.socket_ordinal)).size !== pending.size
+          || new Set(received.map(stampKey)).size !== pending.size) return null;
+      const writes = new Set(streams.flatMap(family => events(receipt, 'write', family).map(stampKey)));
+      return received.every(event => writes.has(stampKey(event))) ? { receipt, received } : null;
+    }, timeLeft(), links);
+    server = observed.receipt;
+    const stamps = observed.received.map(({ epoch, seq }) => ({ epoch, seq }));
+    const handle = await reporter.waitForFunction(expected => window.fortressNativeWire.resumeBlockedRelay(expected), stamps, { timeout: timeLeft() });
+    resumed = await handle.jsonValue();
+    await handle.dispose();
+  } catch (error) {
+    try {
+      await reporter.evaluate(() => window.fortressNativeWire.resumeBlockedRelay());
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'same-link pressure and gate cleanup failed');
+    }
+    throw error;
   }
   assert.ok(resumed.resumed_ms < resumed.deadline_ms, 'same-link pressure exhausted its delivery gate');
-  const [server, browsers] = await Promise.all([
-    readReceipt(undefined, 5000, links),
-    Promise.all([source, reporter].map(page => readRelayWireReceipt(page, links))),
-  ]);
+  const browsers = await Promise.all([source, reporter].map(page => readRelayWireReceipt(page, links)));
   return checkSameLinkRetention(server, browsers, before, resumed, ordinals);
 }
 
