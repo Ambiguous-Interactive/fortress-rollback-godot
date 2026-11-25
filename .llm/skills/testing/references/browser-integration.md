@@ -201,8 +201,9 @@ start. Compare durations within each clock. When a delayed debugger evaluation
 consumes the hold budget, prepare one same-origin response per page before
 arming. Check every prepared socket before releasing the room. Bound page-side
 entry and each deferred batch using the controller's correction deadline.
-Report cumulative
-held packets, pending packets and released packets at the cap. A cap can
+Keep a separate browser context per page while responses are pending.
+The pinned Chromium and WebKit controls admitted only six requests in one context.
+Report cumulative held, pending and released packets at the cap. A cap can
 occur during a partial drain. Retain these checkpoints if the evaluation
 never returns.
 Emit the history request and publication separately from controller receipt.

@@ -14,4 +14,15 @@ The browser integration guide now distinguishes controller dispatch, page
 entry and FIFO service. It records the exact-send requirement beside the clock
 interval guidance. Hosted Firefox and WebKit remain the release witnesses.
 
+The HTTP/1.1 control prepared six of eight requests in one Chromium 156 or
+WebKit 27.2 context. With one context per page, Chromium, Firefox 157 and
+WebKit prepared eight requests and returned eight HTTP 204 responses. Both
+Godot pins passed twelve local Firefox, Chromium and alternating relay rooms.
+
+Three eight-player WebKit trials evaluated a four-timestamp HTTPS clock
+exchange alongside the existing measurements. It narrowed five of 24 page
+clock intervals and supplied zero additional close proofs. The two WebKit-only
+trials still left four ambiguous sends each after comparing 40 frames.
+Retain the Playwright calibration and the hard 2 ms threshold.
+
 State `findings-acted`.
