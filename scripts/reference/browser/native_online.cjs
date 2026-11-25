@@ -926,17 +926,32 @@ function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, cl
   return evidence;
 }
 
-async function calibrateDepartureClocks(pages, report, clock = () => performance.now()) {
-  report.clockSamples = pages.map(() => ({ before: [], after: [] }));
-  report.clocks = await Promise.all(pages.map(async (page, index) => {
-    const samples = report.clockSamples[index].before;
-    for (let attempt = 0; attempt < CLOSE_CLOCK_PRE_SAMPLES; attempt++) {
-      const start = Math.floor(clock() * 1000);
-      const sampledAt = await page.evaluate(() => window.fortressNativeWire.observeDeparture());
-      samples.push(clockWindow(start, Math.ceil(clock() * 1000), sampledAt));
-    }
-    return samples.reduce(intersectClock);
+async function calibrateDepartureClocks(pages, report, clock = () => performance.now(), timeout = PAGE_WAIT_MS) {
+  const clockSamples = pages.map(() => ({ before: [], after: [] }));
+  report.clockSamples = clockSamples;
+  const deadline = clock() + timeout;
+  const reads = await Promise.allSettled(pages.map((page, index) => {
+    const label = `native peer ${index} departure clock`;
+    return boundedRoom(async () => {
+      const samples = clockSamples[index].before;
+      for (let attempt = 0; attempt < CLOSE_CLOCK_PRE_SAMPLES; attempt++) {
+        const start = clock();
+        if (start >= deadline) throw new Error(`absolute ${label} deadline`);
+        const sampledAt = await page.evaluate(() => window.fortressNativeWire.observeDeparture());
+        const end = clock();
+        if (end >= deadline) throw new Error(`absolute ${label} deadline`);
+        samples.push(clockWindow(Math.floor(start * 1000), Math.ceil(end * 1000), sampledAt));
+      }
+      return samples.reduce(intersectClock);
+    }, Math.max(0, Math.ceil(deadline - clock())), label);
   }));
+  report.clocks = reads.map(read => read.status === 'fulfilled' ? read.value : null);
+  const failed = reads.flatMap((read, index) => read.status === 'rejected' ? [{ index, reason: read.reason }] : []);
+  if (failed.length) {
+    report.calibrationErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
+    throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} departure clock failed`, { cause: reason })),
+      'WebKit departure clock calibration failed');
+  }
 }
 
 async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks = report.clocks, clock = () => performance.now(), delay = pause } = {}) {
@@ -944,6 +959,8 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
   report.proofs = [];
   report.clocks = clocks;
   if (clocks) report.clockSamples ??= pages.map(() => ({ before: [], after: [] }));
+  const latestSnapshots = pages.map(() => null);
+  report.partialSnapshots = latestSnapshots;
   let rounds = 0;
   const deadline = clock() + DIAGNOSTIC_MS;
   while (clock() < deadline) {
@@ -959,20 +976,18 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
         return { links, bound: sampleClock ? clockWindow(start, Math.ceil(receivedAt * 1000), sampledAt) : null, receivedAt };
       }, Math.max(0, Math.ceil(deadline - clock())), `native peer ${index} close snapshot`)));
     const failed = snapshots.flatMap((entry, index) => entry.status === 'rejected' ? [{ index, reason: entry.reason }] : []);
-    const timely = snapshots.map(entry => entry.status === 'fulfilled' && entry.value.receivedAt < deadline ? entry.value : null);
-    if (sampleClock) {
-      timely.forEach((entry, index) => {
-        if (entry) report.clockSamples[index].after.push(entry.bound);
-      });
-    }
+    snapshots.forEach((entry, index) => {
+      if (entry.status !== 'fulfilled' || entry.value.receivedAt >= deadline) return;
+      const { receivedAt, links, bound } = entry.value;
+      latestSnapshots[index] = { received_ms: receivedAt, links };
+      if (sampleClock) report.clockSamples[index].after.push(bound);
+    });
     report.snapshotErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
-    const expired = clock() >= deadline;
-    if (failed.length || expired) report.partialSnapshots = timely.map(entry => entry?.links ?? null);
     if (failed.length) {
       throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} close snapshot failed`, { cause: reason })),
         'WebKit close snapshots failed');
     }
-    if (expired) break;
+    if (clock() >= deadline) break;
     const links = snapshots.map(entry => entry.value.links);
     if (sampleClock) {
       report.clocks = report.clocks.map((bound, index) => intersectClock(bound, snapshots[index].value.bound));
@@ -1567,7 +1582,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       phase, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks, departureCommands, roomIdentities,
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
-      departureClockSamples: closeReport.clockSamples, physicalClosePartialSnapshots: physicalCloseReport.partialSnapshots,
+      departureClockSamples: closeReport.clockSamples, departureClockErrors: closeReport.calibrationErrors,
+      physicalClosePartialSnapshots: physicalCloseReport.partialSnapshots,
       closePartialSnapshots: closeReport.partialSnapshots, physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
