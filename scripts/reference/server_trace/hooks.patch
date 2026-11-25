@@ -118,3 +118,29 @@
                  }
                  Err(GameDataMaterializationError::InvalidV3Stamp) => {
                      tracing::error!(
+--- a/src/server/room_service_tests.rs
++++ b/src/server/room_service_tests.rs
+@@ -2857,6 +2857,7 @@
+                                 GameDataEncoding::MessagePack,
+                                 bytes::Bytes::from(vec![0u8; 900]),
+                                 lifecycle,
++                                None,
+                             )
+                             .await;
+                     }
+@@ -4396,6 +4397,7 @@
+             GameDataEncoding::MessagePack,
+             bytes::Bytes::from_static(b"old socket"),
+             old_lifecycle,
++            None,
+         )
+         .await;
+     let peer_messages = drain_queued_messages(&mut fixture.survivor_rx);
+@@ -4430,6 +4432,7 @@
+             GameDataEncoding::MessagePack,
+             bytes::Bytes::from_static(b"current socket"),
+             current_lifecycle,
++            None,
+         )
+         .await;
+     let peer_messages = drain_queued_messages(&mut fixture.survivor_rx);

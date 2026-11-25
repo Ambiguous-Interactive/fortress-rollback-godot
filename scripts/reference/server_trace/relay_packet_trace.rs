@@ -1,8 +1,8 @@
 // Compiled only into the instrumented local qualification server.
 use crate::protocol::{PlayerId, RoomId};
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use sha2::{Digest, Sha256};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -13,6 +13,8 @@ const CAPACITY: usize = 128;
 const ENVELOPE_HEADER_BYTES: usize = 57;
 const NATIVE_HEADER_BYTES: usize = 81;
 const MAX_SCOPE_BYTES: u64 = 1024;
+const MAX_REQUEST_DIGITS: u64 = 20;
+const PUBLISH_INTERVAL: Duration = Duration::from_millis(20);
 
 static TRACE: OnceLock<Option<Arc<Trace>>> = OnceLock::new();
 
@@ -47,7 +49,7 @@ fn valid_hex(value: &str) -> bool {
     value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Serialize)]
 struct Event {
     ordinal: u64,
     at_ns: u64,
@@ -63,22 +65,35 @@ struct Event {
     socket_ordinal: Option<u64>,
 }
 
-#[derive(Clone, Default, Serialize)]
+#[derive(Clone, Default)]
 struct Stream {
     count: u64,
     omitted: u64,
-    events: VecDeque<Event>,
+    links: BTreeMap<(usize, usize), VecDeque<Arc<Event>>>,
 }
 
 impl Stream {
-    fn record(&mut self, mut event: Event) {
+    fn record(&mut self, link: (usize, usize), mut event: Event) {
         self.count += 1;
         event.ordinal = self.count;
-        if self.events.len() == CAPACITY {
-            self.events.pop_front();
+        let events = self.links.entry(link).or_default();
+        if events.len() == CAPACITY {
+            events.pop_front();
             self.omitted += 1;
         }
-        self.events.push_back(event);
+        events.push_back(Arc::new(event));
+    }
+}
+
+impl Serialize for Stream {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut events: Vec<&Event> = self.links.values().flatten().map(Arc::as_ref).collect();
+        events.sort_unstable_by_key(|event| event.ordinal);
+        let mut stream = serializer.serialize_struct("Stream", 3)?;
+        stream.serialize_field("count", &self.count)?;
+        stream.serialize_field("omitted", &self.omitted)?;
+        stream.serialize_field("events", &events)?;
+        stream.end()
     }
 }
 
@@ -109,11 +124,11 @@ struct Streams {
 struct Trace {
     origin: Instant,
     scope: OnceLock<Scope>,
-    state: Mutex<(u64, Streams)>,
+    state: Mutex<Streams>,
 }
 
 impl Trace {
-    fn publish(&self, scope_path: &Path, output: &Path, scratch: &Path) -> anyhow::Result<()> {
+    fn publish(&self, scope_path: &Path, paths: &ReceiptPaths) -> anyhow::Result<()> {
         loop {
             match Scope::read(scope_path) {
                 Ok(scope) => {
@@ -121,15 +136,31 @@ impl Trace {
                     break;
                 }
                 Err(error) if error.downcast_ref::<io::Error>().is_some_and(|err| err.kind() == io::ErrorKind::NotFound) => {
-                    std::thread::sleep(Duration::from_millis(20));
+                    std::thread::sleep(PUBLISH_INTERVAL);
                 }
                 Err(error) => return Err(error),
             }
         }
 
+        let mut published = 0;
+        loop {
+            if let Some(request) = self.publish_request(paths, published)? {
+                published = request;
+            }
+            std::thread::sleep(PUBLISH_INTERVAL);
+        }
+    }
+
+    fn publish_request(&self, paths: &ReceiptPaths, published: u64) -> anyhow::Result<Option<u64>> {
+        let Some(request) = paths.read_request() else { return Ok(None) };
+        if request <= published || (published == 0 && request != 1) {
+            return Ok(None);
+        }
+
         #[derive(Serialize)]
         struct Snapshot<'a> {
             version: u8,
+            request: u64,
             clock: &'static str,
             #[serde(flatten)]
             scope: &'a Scope,
@@ -137,30 +168,55 @@ impl Trace {
         }
 
         let scope = self.scope.get().ok_or_else(|| anyhow::anyhow!("missing relay trace scope"))?;
-        let mut published = None;
-        loop {
-            let pending = {
-                let state = self.state.lock().map_err(|_| anyhow::anyhow!("relay trace lock poisoned"))?;
-                (Some(state.0) != published).then(|| state.clone())
-            };
-            if let Some((revision, streams)) = pending {
-                let file = File::create(scratch)?;
-                let mut writer = BufWriter::new(file);
-                serde_json::to_writer(
-                    &mut writer,
-                    &Snapshot {
-                        version: 1,
-                        clock: "server.monotonic",
-                        scope,
-                        streams,
-                    },
-                )?;
-                writer.flush()?;
-                fs::rename(scratch, output)?;
-                published = Some(revision);
-            }
-            std::thread::sleep(Duration::from_millis(20));
+        let streams = self.state.lock().map_err(|_| anyhow::anyhow!("relay trace lock poisoned"))?.clone();
+        let file = File::create(&paths.scratch)?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer(
+            &mut writer,
+            &Snapshot {
+                version: 2,
+                request,
+                clock: "server.monotonic",
+                scope,
+                streams,
+            },
+        )?;
+        writer.flush()?;
+        drop(writer);
+        Ok(paths.commit(request)?.then_some(request))
+    }
+}
+
+struct ReceiptPaths {
+    output: PathBuf,
+    scratch: PathBuf,
+    request: PathBuf,
+}
+
+impl ReceiptPaths {
+    fn new(output: PathBuf) -> Self {
+        let mut request = output.as_os_str().to_os_string();
+        request.push(".request");
+        let scratch = output.with_extension(format!("{}.next", std::process::id()));
+        Self { output, scratch, request: request.into() }
+    }
+
+    fn read_request(&self) -> Option<u64> {
+        let mut bytes = Vec::new();
+        File::open(&self.request).ok()?.take(MAX_REQUEST_DIGITS + 1).read_to_end(&mut bytes).ok()?;
+        if bytes.len() as u64 > MAX_REQUEST_DIGITS || !bytes.iter().all(u8::is_ascii_digit) || bytes.first() == Some(&b'0') {
+            return None;
         }
+        std::str::from_utf8(&bytes).ok()?.parse().ok()
+    }
+
+    fn commit(&self, request: u64) -> io::Result<bool> {
+        if self.read_request() != Some(request) {
+            fs::remove_file(&self.scratch)?;
+            return Ok(false);
+        }
+        fs::rename(&self.scratch, &self.output)?;
+        Ok(true)
     }
 }
 
@@ -172,8 +228,15 @@ fn trace() -> Option<&'static Trace> {
             let Some((output, scope)) = output.zip(scope) else {
                 return None;
             };
-            let scratch = output.with_extension(format!("{}.next", std::process::id()));
-            if !output.is_absolute() || !scope.is_absolute() || output == scope || scratch == scope || scratch == output {
+            let paths = ReceiptPaths::new(output);
+            if !paths.output.is_absolute()
+                || !scope.is_absolute()
+                || scope == paths.output
+                || scope == paths.request
+                || scope == paths.scratch
+                || paths.scratch == paths.output
+                || paths.scratch == paths.request
+            {
                 tracing::error!("invalid relay trace paths");
                 return None;
             }
@@ -184,7 +247,7 @@ fn trace() -> Option<&'static Trace> {
             });
             let publisher = trace.clone();
             if let Err(error) = std::thread::Builder::new().name("relay-packet-trace".into()).spawn(move || {
-                if let Err(error) = publisher.publish(&scope, &output, &scratch) {
+                if let Err(error) = publisher.publish(&scope, &paths) {
                     tracing::error!(%error, "relay packet trace publisher failed");
                 }
             }) {
@@ -207,6 +270,10 @@ pub(crate) enum Boundary {
 
 pub(crate) fn record(boundary: Boundary, room_id: RoomId, sender: PlayerId, seq: u64, epoch: u32, envelope: &[u8]) {
     let Some(trace) = trace() else { return };
+    record_packet(trace, boundary, room_id, sender, seq, epoch, envelope);
+}
+
+fn record_packet(trace: &Trace, boundary: Boundary, room_id: RoomId, sender: PlayerId, seq: u64, epoch: u32, envelope: &[u8]) {
     let Some(scope) = trace.scope.get() else { return };
     if scope.room_id != room_id
         || !(NATIVE_HEADER_BYTES + 4..=65536).contains(&envelope.len())
@@ -227,7 +294,8 @@ pub(crate) fn record(boundary: Boundary, room_id: RoomId, sender: PlayerId, seq:
     }
     let sender = sender.simple().to_string();
     let recipient = hex(&envelope[37..53]);
-    if sender == recipient || scope.roster.binary_search(&sender).is_err() || scope.roster.binary_search(&recipient).is_err() {
+    let (Ok(sender_slot), Ok(recipient_slot)) = (scope.roster.binary_search(&sender), scope.roster.binary_search(&recipient)) else { return };
+    if sender_slot == recipient_slot {
         return;
     }
 
@@ -240,8 +308,7 @@ pub(crate) fn record(boundary: Boundary, room_id: RoomId, sender: PlayerId, seq:
             if envelope[37..53] != *actual.as_bytes() {
                 // SignalFish broadcasts to the room. Keep addressed writes in the packet ring.
                 if let Ok(mut state) = trace.state.lock() {
-                    state.1.unaddressed_writes += 1;
-                    state.0 += 1;
+                    state.unaddressed_writes += 1;
                 }
                 return;
             }
@@ -264,12 +331,11 @@ pub(crate) fn record(boundary: Boundary, room_id: RoomId, sender: PlayerId, seq:
     };
     if let Ok(mut state) = trace.state.lock() {
         let families = if socket_ordinal.is_some() {
-            &mut state.1.ingress
+            &mut state.ingress
         } else {
-            &mut state.1.write
+            &mut state.write
         };
-        families.stream(tag).record(event);
-        state.0 += 1;
+        families.stream(tag).record((sender_slot, recipient_slot), event);
     }
 }
 
@@ -281,4 +347,138 @@ fn hex(bytes: &[u8]) -> String {
         text.push(char::from(DIGITS[usize::from(byte & 15)]));
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn trace_for(room_id: RoomId, roster: &[PlayerId]) -> Trace {
+        Trace {
+            origin: Instant::now(),
+            scope: OnceLock::from(Scope {
+                room_id,
+                room: room_id.simple().to_string(),
+                roster: roster.iter().map(|id| id.simple().to_string()).collect(),
+            }),
+            state: Mutex::default(),
+        }
+    }
+
+    fn record_pair(trace: &Trace, room_id: RoomId, sender: PlayerId, recipient: PlayerId, tag: u32, seq: u64) -> Vec<u8> {
+        let mut envelope = vec![0; NATIVE_HEADER_BYTES + 4];
+        envelope[..5].copy_from_slice(b"FSR1\x01");
+        envelope[5..21].copy_from_slice(room_id.as_bytes());
+        envelope[21..37].copy_from_slice(sender.as_bytes());
+        envelope[37..53].copy_from_slice(recipient.as_bytes());
+        envelope[53..57].copy_from_slice(&28_u32.to_le_bytes());
+        envelope[57..73].copy_from_slice(room_id.as_bytes());
+        envelope[73..77].copy_from_slice(&[0xf5, 0x52, 2, 0]);
+        envelope[77..81].copy_from_slice(&(seq as u32).to_le_bytes());
+        envelope[81..85].copy_from_slice(&tag.to_le_bytes());
+        record_packet(trace, Boundary::Ingress { socket_ordinal: seq, received_at: trace.origin }, room_id, sender, seq, 7, &envelope);
+        record_packet(trace, Boundary::Write { recipient, written_at: trace.origin }, room_id, sender, seq, 7, &envelope);
+        record_packet(trace, Boundary::Write { recipient: sender, written_at: trace.origin }, room_id, sender, seq, 7, &envelope);
+        envelope
+    }
+
+    // Value: protects=quiet directed packet joins; fails_when=busy links evict quiet links; why_new=single-link captures cannot expose cross-link eviction; seam=none
+    #[test]
+    fn quiet_link_survives_healthy_link_churn() {
+        let room_id = RoomId::from_u128(1);
+        let roster = [2, 3, 4, 5].map(PlayerId::from_u128);
+        let trace = trace_for(room_id, &roster);
+        let [sender, quiet, healthy_recipient, healthy_sender] = roster;
+        let mut exact = Vec::new();
+        for (family, tag) in [("input", 2), ("quality", 4)] {
+            let first = record_pair(&trace, room_id, sender, quiet, tag, 31);
+            for burst in 0..CAPACITY as u64 + 3 {
+                record_pair(&trace, room_id, sender, healthy_recipient, tag, 32 + burst);
+                record_pair(&trace, room_id, healthy_sender, quiet, tag, 32 + burst);
+            }
+            // Reverse traffic uses a separate ring.
+            let reverse = record_pair(&trace, room_id, quiet, sender, tag, 8);
+            exact.push((family, tag, first, reverse));
+        }
+
+        let streams = serde_json::to_value(&*trace.state.lock().unwrap()).unwrap();
+        assert_eq!(streams["unaddressed_writes"], 2 * (2 * CAPACITY + 8));
+        for (family, tag, first, reverse) in exact {
+            for (stage, ingress) in [("ingress", true), ("write", false)] {
+                let stream = &streams[stage][family];
+                let events = stream["events"].as_array().unwrap();
+                assert_eq!(events[0]["seq"], "31", "{stage}/{family} lost the quiet link");
+                assert_eq!(stream["count"], 2 * CAPACITY + 8);
+                assert_eq!(stream["omitted"], 6);
+                assert_eq!(events.len(), 2 * CAPACITY + 2);
+                assert!(events.iter().map(|event| event["ordinal"].as_u64().unwrap()).eq([1].into_iter().chain(8..=(2 * CAPACITY as u64 + 8))));
+                for (event, envelope, from, to, seq) in [(&events[0], &first, sender, quiet, 31), (events.last().unwrap(), &reverse, quiet, sender, 8)] {
+                    assert_eq!(event["sender"], from.simple().to_string());
+                    assert_eq!(event["recipient"], to.simple().to_string());
+                    assert_eq!(event["kind"], tag);
+                    assert_eq!(event["epoch"], 7);
+                    assert_eq!(event["seq"], seq.to_string());
+                    assert_eq!(event["envelope_bytes"], envelope.len());
+                    assert_eq!(event["envelope_sha256"], hex(&Sha256::digest(envelope)));
+                    assert_eq!(event["payload_sha256"], hex(&Sha256::digest(&envelope[ENVELOPE_HEADER_BYTES..])));
+                    assert_eq!(event["socket_ordinal"], if ingress { serde_json::json!(seq) } else { serde_json::Value::Null });
+                    assert_eq!(event["actual_recipient"], if ingress { serde_json::Value::Null } else { serde_json::json!(to.simple().to_string()) });
+                }
+            }
+        }
+    }
+
+    // Value: protects=one atomic receipt per generation; fails_when=idle or superseded requests publish; why_new=packet joins do not exercise the publisher; seam=none
+    #[test]
+    fn receipts_require_fresh_requests() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = ReceiptPaths::new(directory.path().join("receipt.json"));
+        assert_eq!(paths.request, directory.path().join("receipt.json.request"));
+        let room_id = RoomId::from_u128(1);
+        let [sender, recipient] = [2, 3].map(PlayerId::from_u128);
+        let trace = trace_for(room_id, &[sender, recipient]);
+        let scope = trace.scope.get().unwrap();
+        let publish = |published| trace.publish_request(&paths, published).unwrap();
+        assert_eq!(publish(0), None);
+        for invalid in ["", "0", "01", "+1", "1\n", "２", "2", "18446744073709551616", "999999999999999999999"] {
+            fs::write(&paths.request, invalid).unwrap();
+            assert_eq!(publish(0), None, "{invalid:?}");
+            assert!(!paths.output.exists());
+            assert!(!paths.scratch.exists());
+        }
+        fs::write(&paths.request, "1").unwrap();
+        assert_eq!(publish(0), Some(1));
+        let first = fs::read(&paths.output).unwrap();
+        let snapshot: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        assert_eq!(snapshot["version"], 2);
+        assert_eq!(snapshot["request"], 1);
+        assert_eq!(snapshot["room"], scope.room);
+        assert_eq!(snapshot["roster"], serde_json::json!(scope.roster));
+        assert_eq!(snapshot["streams"]["ingress"]["input"]["count"], 0);
+        record_pair(&trace, room_id, sender, recipient, 2, 1);
+        assert_eq!(publish(1), None);
+        assert_eq!(fs::read(&paths.output).unwrap(), first);
+        for new_request in [Some("3"), Some("invalid"), None] {
+            fs::write(&paths.request, "2").unwrap();
+            assert_eq!(paths.read_request(), Some(2));
+            fs::write(&paths.scratch, "staged generation 2").unwrap();
+            match new_request {
+                Some(request) => fs::write(&paths.request, request).unwrap(),
+                None => fs::remove_file(&paths.request).unwrap(),
+            }
+            assert!(!paths.commit(2).unwrap());
+            assert_eq!(fs::read(&paths.output).unwrap(), first);
+            assert!(!paths.scratch.exists());
+        }
+        fs::write(&paths.request, "3").unwrap();
+        assert_eq!(publish(1), Some(3));
+        let third = fs::read(&paths.output).unwrap();
+        let snapshot: serde_json::Value = serde_json::from_slice(&third).unwrap();
+        assert_eq!(snapshot["request"], 3);
+        assert_eq!(snapshot["streams"]["ingress"]["input"]["count"], 1);
+        assert!(!paths.scratch.exists());
+        fs::write(&paths.request, "2").unwrap();
+        assert_eq!(publish(3), None);
+        assert_eq!(fs::read(&paths.output).unwrap(), third);
+    }
 }
