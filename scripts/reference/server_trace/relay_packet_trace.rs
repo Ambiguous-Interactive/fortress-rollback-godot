@@ -198,6 +198,7 @@ impl Trace {
         struct Snapshot<'a> {
             version: u8,
             request: u64,
+            links: Vec<String>,
             clock: &'static str,
             #[serde(flatten)]
             scope: &'a Scope,
@@ -212,6 +213,7 @@ impl Trace {
             &Snapshot {
                 version: 2,
                 request: request.generation,
+                links: request.links.iter().map(|&(sender, recipient)| format!("{}/{}", scope.roster[sender], scope.roster[recipient])).collect(),
                 clock: "server.monotonic",
                 scope,
                 streams,
@@ -587,6 +589,7 @@ mod tests {
         let snapshot: serde_json::Value = serde_json::from_slice(&first).unwrap();
         assert_eq!(snapshot["version"], 2);
         assert_eq!(snapshot["request"], 1);
+        assert_eq!(snapshot["links"], serde_json::json!([]));
         assert_eq!(snapshot["room"], scope.room);
         assert_eq!(snapshot["roster"], serde_json::json!(scope.roster));
         assert_eq!(snapshot["streams"]["ingress"]["input"]["count"], 0);
@@ -613,6 +616,7 @@ mod tests {
         let third = fs::read(&paths.output).unwrap();
         let snapshot: serde_json::Value = serde_json::from_slice(&third).unwrap();
         assert_eq!(snapshot["request"], third_generation);
+        assert_eq!(snapshot["links"], serde_json::json!(pairs[..8]));
         assert_eq!(snapshot["streams"]["ingress"]["input"]["count"], 1);
         assert!(!paths.scratch.exists());
         for generation in [2, third_generation] {

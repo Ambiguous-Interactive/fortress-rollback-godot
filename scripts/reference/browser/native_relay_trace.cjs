@@ -185,6 +185,11 @@ function createRelayWireTrace() {
     },
     async freeze(links = []) {
       const selected = new Set(links);
+      if (selected.size !== links.length || links.length > 8 || links.some(link => {
+        if (typeof link !== 'string') return true;
+        const [sender, recipient, extra] = link.split('/');
+        return extra !== undefined || sender === recipient || !roster?.has(sender) || !roster.has(recipient);
+      })) throw new Error('invalid relay wire link selection');
       function retained(stage, family, peer, records) {
         const link = stage === 'send' ? `${local}/${peer}` : `${peer}/${local}`;
         return family !== 'sync' && selected.has(link) ? records : records.slice(-cap);

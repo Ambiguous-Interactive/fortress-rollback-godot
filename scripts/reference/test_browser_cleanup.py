@@ -46,8 +46,8 @@ const { setTimeout: pause } = require('node:timers/promises');
 const { createRelayServerReader } = require(process.argv[1]);
 const path = process.argv[2];
 const read = createRelayServerReader(path);
-async function publish(request) {
-  await fs.writeFile(path + '.new', JSON.stringify({ version: 2, request }));
+async function publish(request, links = []) {
+  await fs.writeFile(path + '.new', JSON.stringify({ version: 2, request, links }));
   await fs.rename(path + '.new', path);
 }
 async function respond() {
@@ -83,8 +83,12 @@ async function respond() {
   while (await fs.readFile(path + '.request', 'utf8') !== '4\n' + link) {
     await pause(5);
   }
-  await publish(4);
+  await publish(4, [link]);
   assert.equal((await retry).request, 4);
+  const wrongSelection = read(undefined, 3000, [link]);
+  while (await fs.readFile(path + '.request', 'utf8') !== '5\n' + link) await pause(5);
+  await publish(5, [link.split('/').reverse().join('/')]);
+  await assert.rejects(wrongSelection, /receipt selected different links/);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         with tempfile.TemporaryDirectory() as directory:
@@ -309,6 +313,9 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
   assert.deepEqual(expanded.streams.raw.quality.events.map(event => event.seq),
     Array.from({ length: 140 }, (_, index) => String(index + 1)));
   assert.deepEqual((await trace.freeze([`${local}/${source}`])).streams.raw.quality, quality);
+  for (const malformed of [[`${source}/${local}`, `${source}/${local}`], [`${source}/${source}`], [`${source}/ff`], [`${source}/${local}/`], [null]]) {
+    await assert.rejects(trace.freeze(malformed), /invalid relay wire link selection/);
+  }
   for (let seq = 141; seq <= 520; seq++) trace.record('raw', delivered(envelope(source, local, 4), BigInt(seq)));
   const wrapped = (await trace.freeze([`${source}/${local}`])).streams.raw.quality;
   assert.equal(wrapped.omitted, 8);

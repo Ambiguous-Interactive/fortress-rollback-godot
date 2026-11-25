@@ -30,22 +30,24 @@ function createRelayServerReader(path) {
   let completed = 0;
   let pending = null;
   let reading = false;
-  async function poll(select, timeout, selection) {
+  async function poll(select, timeout, links) {
     const deadline = performance.now() + timeout;
     while (performance.now() < deadline) {
       if (pending === null) {
         const next = completed + 1;
-        await fs.writeFile(requestPath + '.next', next + selection, { flag: 'wx', mode: 0o600 });
+        await fs.writeFile(requestPath + '.next', [next, ...links].join('\n'), { flag: 'wx', mode: 0o600 });
         await fs.rename(requestPath + '.next', requestPath);
-        pending = { generation: next, selection };
+        pending = { generation: next, links };
       }
       const receipt = await readServerReceipt(path);
       if (receipt) {
         assert.equal(receipt.version, 2, 'unexpected relay server receipt version');
         if (receipt.request === pending.generation && performance.now() < deadline) {
-          const matches = pending.selection === selection;
+          const requested = pending.links;
           completed = pending.generation;
           pending = null;
+          assert.deepEqual(receipt.links, requested, 'relay server receipt selected different links');
+          const matches = requested.length === links.length && requested.every((link, index) => link === links[index]);
           const result = matches && select(receipt);
           if (result) return result;
         }
@@ -60,10 +62,9 @@ function createRelayServerReader(path) {
       if (!/^[0-9a-f]{32}\/[0-9a-f]{32}$/.test(link)) return false;
       return link.slice(0, 32) !== link.slice(33);
     }), 'invalid relay server link selection');
-    const selection = links.length ? '\n' + [...links].sort().join('\n') : '';
     reading = true;
     try {
-      return await poll(select, timeout, selection);
+      return await poll(select, timeout, [...links].sort());
     } finally {
       reading = false;
     }
