@@ -244,13 +244,15 @@ function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTa
         if ((kind === 'hold_terminal') !== (state === 'failed') || !Array.isArray(pending)
           || new Set(pending).size !== pending.length || !pending.every(value => HOLD_CONDITIONS.includes(value))
           || ![control_round_trips, buffered_bytes].every(value => Number.isSafeInteger(value) && value >= 0)
+          || pending.includes('held_input') !== (held.relay === 0) || pending.includes('quality_reply') !== (control_round_trips === 0)
           || !Array.isArray(traffic) || traffic.length > remote.size * 4 || !traffic.every(sample =>
             sample && remote.has(sample.peer) && ['send', 'receive'].includes(sample.direction) && [4, 5].includes(sample.kind)
             && typeof sample.token === 'string' && /^[0-9a-f]{32}$/.test(sample.token)
             && Number.isFinite(sample.at_ms) && sample.at_ms >= 0 && sample.at_ms <= page_ms)
           || new Set(traffic.map(({ direction, peer, kind }) => `${direction}/${peer}/${kind}`)).size !== traffic.length)
           throw new Error('invalid relay hold readiness sample');
-        Object.assign(receipt, { pending, control_round_trips, buffered_bytes, traffic });
+        Object.assign(receipt, { pending, control_round_trips, buffered_bytes,
+          traffic: traffic.map(({ direction, peer, kind, token, at_ms }) => ({ direction, peer, kind, token, at_ms })) });
         if (kind === 'hold_waiting') {
           if (!peer.hold_waiting || page_ms >= peer.hold_waiting.page_ms) peer.hold_waiting = receipt;
           return;
@@ -391,6 +393,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   let relayBroadcasts = 0;
   const held = { mesh: 0, relay: 0 };
   const controlRoundTrips = { mesh: 0, relay: 0 };
+  const holdConditions = route => [held[route] > 0, controlRoundTrips[route] > 0];
   const holdMark = () => ({ at_ms: performance.now(), held: { ...held }, bytes: totalBytes, queued: active.length + releaseInFlight, released });
   // The pinned protocol sends one report per peer at intervals above 200 ms.
   // Keep enough relay tokens for the 45-second stall witness despite FIFO delay.
@@ -829,9 +832,10 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       deferredClose();
     },
     recordHoldReadiness(route) {
-      if (!holding || !(held[route] > 0 && controlRoundTrips[route] > 0)) return null;
+      if (!holding || !holdConditions(route).every(Boolean)) return null;
       return hold.ready ??= holdMark();
     },
+    holdConditions,
     holdProgress: holdMark,
     holdObservation() {
       return { ...holdMark(), control_round_trips: controlRoundTrips.relay,
@@ -1034,13 +1038,14 @@ async function closeAll(items, close, kind) {
 }
 
 function armAndWaitForInput(page, route) {
-  return page.evaluate(async ({ route, gate }) => {
+  return page.evaluate(async ({ route, gate, conditions }) => {
     const wire = window.fortressNativeWire;
     const { frame, stalls, confirmed } = window.fortressNative;
     const armed = { frame, stalls, confirmed, hold: wire.arm() };
     window.fortressNativePostRelease?.mark('hold_armed', undefined, armed.hold);
     let sawPrediction = false;
     let lastObservation = -Infinity;
+    let lastPending;
     while (true) {
       const state = window.fortressNative;
       const terminal = state.state === 'failed';
@@ -1048,17 +1053,16 @@ function armAndWaitForInput(page, route) {
       const predicted = state.prediction >= gate;
       const behind = state.frame > gate && state.confirmed < state.frame - 1;
       const trace = window.fortressNativePostRelease;
-      if (trace && (terminal || performance.now() >= lastObservation + 1000)) {
-        const sample = wire.holdObservation();
-        lastObservation = sample.at_ms;
-        sample.pending = [
-          stalled ? null : 'stall',
-          predicted ? null : 'prediction',
-          behind ? null : 'frontier',
-          sample.held.relay > 0 ? null : 'held_input',
-          sample.control_round_trips > 0 ? null : 'quality_reply',
-        ].filter(Boolean);
-        trace.mark(terminal ? 'hold_terminal' : 'hold_waiting', undefined, sample);
+      if (trace) {
+        const met = [stalled, predicted, behind, ...wire.holdConditions(route)];
+        const pending = conditions.filter((_, index) => !met[index]);
+        const signature = pending.join();
+        if (terminal || signature !== lastPending || performance.now() >= lastObservation + 1000) {
+          const sample = wire.holdObservation();
+          lastObservation = sample.at_ms;
+          lastPending = signature;
+          trace.mark(terminal ? 'hold_terminal' : 'hold_waiting', undefined, { ...sample, pending });
+        }
       }
       if (terminal) throw new Error(state.message);
       if (state.state === 'playing' && stalled && predicted && behind) {
@@ -1075,7 +1079,7 @@ function armAndWaitForInput(page, route) {
       }
       await new Promise(resolve => requestAnimationFrame(resolve));
     }
-  }, { route, gate: GATE_FRAME });
+  }, { route, gate: GATE_FRAME, conditions: HOLD_CONDITIONS });
 }
 
 function captureAndReleaseInput(page, index, checkpoints) {

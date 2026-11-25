@@ -939,6 +939,7 @@ global.window = {
   fortressNativeWire: {
     arm: () => ({ at_ms: now, held: { mesh: 0, relay: 0 }, bytes: 0, queued: 0, released: 0 }),
     holdProgress: () => ({ at_ms: now, held: { mesh: 0, relay: 10 }, bytes: 880, queued: 10, released: 0 }),
+    holdConditions: () => [true, false],
     holdObservation: () => ({ ...window.fortressNativeWire.holdProgress(), control_round_trips: 0, buffered_bytes: 0, traffic: [] }),
     recordHoldReadiness: () => window.fortressNative.stalls >= 3 ? window.fortressNativeWire.holdProgress() : null,
     status: () => { now += 2; return {}; },
@@ -1191,6 +1192,7 @@ function makePage() {
     fortressNativeWire: {
       arm() { state.stalls++; return hold(); },
       holdProgress: hold, recordHoldReadiness: hold, status: () => ({}),
+      holdConditions: () => [true, true],
       holdObservation: () => ({ ...hold(), control_round_trips: 1, buffered_bytes: 0, traffic: [] }),
       async release() {
         Object.assign(state, { frame: 40, confirmed: 40, turns: 21, restores: 3 });
@@ -1339,7 +1341,7 @@ const peer = {};
 const turns = [];
 let now = 0, held = 0;
 const state = { state: 'playing', turns: 4, frame: 24, confirmed: 16, stalls: 0, prediction: 0, restores: 0 };
-const traffic = [{ direction: 'send', peer: roster[1].replaceAll('-', ''), kind: 4, token: '01'.repeat(16), at_ms: 1000 }];
+const traffic = [{ direction: 'send', peer: roster[1].replaceAll('-', ''), kind: 4, token: '01'.repeat(16), at_ms: 999 }];
 function queue() { return { at_ms: now, held: { mesh: 0, relay: held }, bytes: 86 * held, queued: held, released: 0 }; }
 global.performance = { now: () => now };
 global.requestAnimationFrame = callback => turns.push(callback);
@@ -1348,7 +1350,8 @@ global.window = {
   fortressNativeWire: {
     arm: queue,
     holdProgress: queue,
-    holdObservation: () => ({ ...queue(), control_round_trips: 0, buffered_bytes: 420, traffic: now >= 1000 ? traffic : [] }),
+    holdConditions: () => [held > 0, false],
+    holdObservation: () => ({ ...queue(), control_round_trips: 0, buffered_bytes: 420, traffic: now >= 999 ? traffic : [] }),
     recordHoldReadiness: () => null,
   },
 };
@@ -1365,19 +1368,28 @@ async function tick(at) {
   assert.deepEqual(peer.hold_waiting?.pending, ['stall', 'prediction', 'held_input', 'quality_reply']);
   for (let n = 1; n < 1000; n += 101) await tick(n);
   assert.equal(peer.hold_waiting?.page_ms, 0);
-  now = 1000;
   held = 13;
   Object.assign(state, { stalls: 1, prediction: 12 });
-  await tick(1000);
-  assert.equal(peer.hold_waiting?.controller_ms, 1100);
+  await tick(999);
+  assert.equal(peer.hold_waiting?.controller_ms, 1099);
   assert.deepEqual(peer.hold_waiting?.pending, ['quality_reply']);
   assert.deepEqual(peer.hold_waiting?.traffic, traffic);
-  now = 1001;
+  const prefix = 'fortress native post-release ';
+  const waiting = { ...peer.hold_waiting, kind: 'hold_waiting', traffic: [{ ...traffic[0], extra: 'discard this' }] };
+  const normalized = {};
+  postReleaseCheckpoint(normalized, prefix + JSON.stringify(waiting), { controller_ms: 1099 }, roster, roster[0]);
+  assert.deepEqual(normalized.hold_waiting?.traffic, traffic);
+  for (const patch of [{ pending: [] }, { traffic: [traffic[0], traffic[0]] }, { traffic: [{ ...traffic[0], at_ms: 1000 }] }]) {
+    const invalid = {};
+    postReleaseCheckpoint(invalid, prefix + JSON.stringify({ ...waiting, ...patch }), { controller_ms: 1099 }, roster, roster[0]);
+    assert.match(invalid.checkpoint_error, /invalid relay hold readiness sample/);
+    assert.equal(invalid.hold_waiting, undefined);
+  }
   Object.assign(state, { state: 'failed', message: 'native disconnected' });
-  await tick(1001);
+  await tick(1000);
   await result;
-  assert.equal(peer.hold_waiting?.page_ms, 1000);
-  assert.equal(peer.hold_terminal?.page_ms, 1001);
+  assert.equal(peer.hold_waiting?.page_ms, 999);
+  assert.equal(peer.hold_terminal?.page_ms, 1000);
   assert.equal(peer.hold_terminal?.held.relay, 13);
   assert.equal(peer.hold_terminal?.buffered_bytes, 420);
   assert.equal(turns.length, 0);
