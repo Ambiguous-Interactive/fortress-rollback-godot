@@ -1,5 +1,9 @@
 const { assertRecoveredRoom, recoverPairs } = require('./native_recovery.cjs');
+const { createRelayWireTrace } = require('./native_relay_trace.cjs');
+const { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention,
+  joinRelayReceipts, readRelayWireReceipt } = require('./native_relay_control.cjs');
 const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
 const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
 const { createHost } = require('./online_host.cjs');
 const { placeFirefox } = require('./webrtc_display.cjs');
@@ -295,8 +299,10 @@ function validateExpiry(value) {
 function missedCorrectionDeadline(phase, error, deadline, failedAt) {
   if (!Number.isFinite(deadline) || !['input release', 'corrected history'].includes(phase)) return false;
   if (error?.name === 'TimeoutError' && failedAt >= deadline) return true;
-  return /^(?:absolute native (?:peer \d+ input release|corrected history) deadline|native (?:input release exhausted|corrected history exceeded) the correction deadline)$/
-    .test(error?.message);
+  const message = error?.message;
+  return /^absolute native (?:(?:peer \d+|relay) input release|corrected history) deadline$/.test(message)
+    || /^native (?:input release exhausted|corrected history exceeded) the correction deadline$/.test(message)
+    || /^(?:page\.evaluate: )?native relay release deadline(?:\n|$)/.test(message);
 }
 
 function relayReleaseEvidence(peers, uuids, correctionDeadlineReached) {
@@ -360,12 +366,16 @@ function browserOptions(name) {
   throw new Error(`unknown browser ${name}`);
 }
 
-function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
+function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
+  if (relayWireTrace) window.fortressNativeRelayTrace = relayWireTrace;
   const active = [];
   const resources = { rtc: [], sockets: [] };
   const ice = new Map();
   let session, localUuid;
   let observingDeparture = false;
+  const departureSendLimit = 4096;
+  const departureSendHistory = [];
+  let departureSendCount = 0;
   let holding = false;
   let releasingRelay = false;
   let releaseInFlight = 0;
@@ -401,6 +411,52 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   const pendingReportLimit = { mesh: 16, relay: 256 };
   const channelReports = new Map();
   const socketReports = new WeakMap();
+  const traceSocketOrdinals = relayWireTrace && new WeakMap();
+  let mutedRelay;
+  let relayDelay;
+  function delayRelayDelivery() {
+    if (!relayWireTrace || relayDelay || resources.sockets.length !== 1 || resources.sockets[0].readyState !== WebSocket.OPEN)
+      throw new Error('cannot hold relay control delivery');
+    const socket = resources.sockets[0];
+    const events = [];
+    let bytes = 0;
+    const started_ms = performance.now();
+    expiredRelayDelay = null;
+    const release = reason => {
+      const release_ms = performance.now();
+      relayDelay = null;
+      clearTimeout(timer);
+      for (const { event } of events) {
+        replayedRelayEvents.add(event);
+        socket.dispatchEvent(event);
+      }
+      return { started_ms, release_ms, reason, events: events.length, bytes };
+    };
+    const timer = setTimeout(() => { expiredRelayDelay = release('deadline'); }, 750);
+    relayDelay = {
+      socket,
+      releaseWhenHeld(stamps) {
+        if (performance.now() - started_ms >= 750) return release('deadline');
+        if (stamps.length !== 2 || stamps.some(stamp => stamp.recipient !== localUuid)
+            || (stamps[0].sender === stamps[1].sender && stamps[0].epoch === stamps[1].epoch && stamps[0].seq === stamps[1].seq)) return null;
+        if (!stamps.every(stamp => events.some(({ packet }) => packet?.sender === stamp.sender
+            && packet.recipient === stamp.recipient && packet.epoch === stamp.epoch && packet.seq === stamp.seq))) return null;
+        return release('controller');
+      },
+      hold(event, packet) {
+        bytes += event.data.byteLength ?? event.data.length * 2;
+        events.push({ event, packet });
+        event.stopImmediatePropagation();
+        if (events.length > 256 || bytes > 256 * 1024) {
+          // The current event is still being dispatched. Replay it after that turn.
+          queueMicrotask(() => { if (relayDelay) expiredRelayDelay = release('capacity'); });
+        }
+      },
+    };
+    return started_ms;
+  }
+  const replayedRelayEvents = relayWireTrace && new WeakSet();
+  let expiredRelayDelay;
   const warmupLinks = new Map();
   let roomRoster = [];
   const warmupTicks = [];
@@ -636,14 +692,19 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     resources.rtc.push(record);
     const nativeSend = channel.send;
     // WebKit reports a native send rejection on the calling stack without throwing.
-    const tagged = name => new Function('send', 'channel', `return function ${name}(bytes) { send.call(channel, bytes); }`)(nativeSend, channel);
+    const tagged = (name, receipt) => new Function('send', 'channel', 'receipt', 'instant',
+      `return function ${name}(bytes) { ${receipt ? 'receipt.sentAt = instant(); ' : ''}send.call(channel, bytes); }`)(nativeSend, channel, receipt, instant);
     const emit = tagWebKitSends ? tagged(`fortressNativeSend_${index}`) : bytes => nativeSend.call(channel, bytes);
     channel.send = data => {
       const view = nativeBytes(data);
       const packet = channel.id === 3 && view && matches(view, 0) ? nativePacket(view) : null;
       return send('mesh', channelReports, channel, bytes => {
-        if (tagWebKitSends && observingDeparture) tagged(`fortressNativeSend_${index}_${instant()}`)(bytes);
-        else emit(bytes);
+        if (tagWebKitSends && observingDeparture) {
+          const attempt = ++departureSendCount;
+          const receipt = { attempt, channel: index, sentAt: null };
+          departureSendHistory[attempt % departureSendLimit] = receipt;
+          tagged(`fortressNativeSend_${index}_${attempt}`, receipt)(bytes);
+        } else emit(bytes);
         if (packet) record.sent++;
         if (packet?.kind === inputKind) record.inputsSent++;
       }, data, packet);
@@ -668,8 +729,13 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     const socket = Reflect.construct(target, args, newTarget);
     const reports = new Map();
     socketReports.set(socket, reports);
+    traceSocketOrdinals?.set(socket, 0);
     resources.sockets.push(socket);
-    socket.addEventListener('message', ({ data }) => {
+    socket.addEventListener('message', event => {
+      if (replayedRelayEvents?.has(event)) return;
+      const { data } = event;
+      const relayPacket = relayWireTrace?.record('raw', nativeBytes(data));
+      if (relayDelay?.socket === socket) relayDelay.hold(event, relayPacket);
       const incoming = readRecovery(data, 'receive');
       if (isFirstRecoveryOfferTraffic(incoming)) recovery.receivedKinds[incoming.kind]++;
       if (incoming?.kind === 'Offer') recovery.delivered.push({ ...incoming, at_ms: performance.now() });
@@ -719,10 +785,26 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       return;
     }
     const packet = relayAddresses(data);
+    if (mutedRelay && packet?.sender === localUuid && packet.recipient === mutedRelay.recipient) {
+      if (performance.now() < mutedRelay.cutoff) {
+        if (packet.kind === inputKind) mutedRelay.inputs++;
+        if (packet.kind === 4) mutedRelay.reports++;
+        return;
+      }
+      mutedRelay.last_quiet_ordinal ??= traceSocketOrdinals.get(this);
+    }
     return send('relay', socketReports.get(this), packet?.recipient, (bytes, held_send = false) => {
       if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) closedReleaseSocket(this, 'before_send', held_send);
       socketSend.call(this, bytes);
       if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) closedReleaseSocket(this, 'during_send', held_send);
+      if (traceSocketOrdinals && this.readyState === nativeSocket.OPEN) {
+        const binary = nativeBytes(bytes);
+        if (binary) {
+          const ordinal = traceSocketOrdinals.get(this) + 1;
+          traceSocketOrdinals.set(this, ordinal);
+          relayWireTrace.record('send', binary, ordinal);
+        }
+      }
       if (packet && packet.sender === localUuid) {
         increment(relayRecipients, packet.recipient);
         if (packet.kind === inputKind) increment(relayInputRecipients, packet.recipient);
@@ -754,6 +836,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       localUuid = uuid.replaceAll('-', '');
       session = hash.match(/../g).map(value => parseInt(value, 16));
       roomRoster = roster.slice(0, 8).map(member => member.replaceAll('-', ''));
+      relayWireTrace?.bind(hash, localUuid, roomRoster);
       if (warmupPrefix) {
         for (const sender of roomRoster) {
           if (sender !== localUuid) warmupLinks.set(sender, {
@@ -764,6 +847,33 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       if (warmupLinks.size) warmupStarted = performance.now();
     },
     recordWarmup,
+    async relayWireTrace() {
+      const sockets = resources.sockets.length;
+      return relayWireTrace && { ...await relayWireTrace.freeze(), sockets };
+    },
+    holdRelayControl: delayRelayDelivery,
+    releaseRelayControl: stamps => relayDelay?.releaseWhenHeld(stamps) ?? expiredRelayDelay,
+    muteRelayLink(recipient) {
+      if (!relayWireTrace || resources.sockets.length !== 1 || mutedRelay || recipient === localUuid || !roomRoster.includes(recipient))
+        throw new Error('invalid relay retention link');
+      const started = performance.now();
+      const first_quiet_ordinal = traceSocketOrdinals.get(resources.sockets[0]);
+      mutedRelay = { recipient, started, cutoff: started + 1250, first_quiet_ordinal, last_quiet_ordinal: null, inputs: 0, reports: 0 };
+    },
+    resumeRelayLink() {
+      const sample = mutedRelay;
+      mutedRelay = null;
+      const last_quiet_ordinal = sample.last_quiet_ordinal ?? traceSocketOrdinals.get(resources.sockets[0]);
+      return { ...sample, last_quiet_ordinal, resumed: performance.now() };
+    },
+    repeatRelayControl(recipient, other) {
+      const socket = resources.sockets[0];
+      if (resources.sockets.length !== 1 || socket.readyState !== nativeSocket.OPEN) throw new Error('missing relay control socket');
+      return relayWireTrace.repeatQuality(recipient, other, bytes => {
+        socket.send(bytes);
+        return traceSocketOrdinals.get(socket);
+      });
+    },
     warmupStatus,
     recordWarmupTick(before, after, budget, elapsed_us, state, frame, confirmed) {
       if (!warmupLinks.size || warmupCutoff) return;
@@ -804,6 +914,12 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       return resources.rtc.filter(({channel, connection}) => channel.readyState === 'open' && connection.connectionState === 'connected').length === peers * 3;
     },
     observeDeparture() { observingDeparture = true; return window.crossOriginIsolated ? instant() : null; },
+    departureSends(attempts) {
+      return Object.fromEntries(attempts.flatMap(attempt => {
+        const receipt = departureSendHistory[attempt % departureSendLimit];
+        return receipt?.attempt === attempt ? [[attempt, receipt]] : [];
+      }));
+    },
     arm(all = false) {
       if (!armed) {
         armed = true;
@@ -813,7 +929,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       }
       return hold.armed;
     },
-    async release() {
+    async release(cutoffUs = null) {
       if (!holding || !active.length) throw new Error('native packet hold did not take effect');
       holding = false;
       releasingRelay = held.relay > 0;
@@ -821,6 +937,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       // Each relay send fans out to the room. Keep originals ahead of newly sampled inputs.
       const batchSize = releasingRelay ? 16 : active.length;
       while (active.length > 0 && !holdFailure) {
+        if (cutoffUs !== null && Math.ceil(performance.now() * 1000) >= cutoffUs) throw new Error('native relay release deadline');
         const batch = active.splice(0, batchSize);
         releaseInFlight = batch.length;
         for (const emit of batch) {
@@ -882,10 +999,13 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
 }
 
 function reportedChannel(stack) {
-  const frames = [...(stack ?? '').matchAll(/^\s*at (?:Object\.)?fortressNativeSend_(\d+)(?:_(\d+))? \(/gm)];
-  if (frames.length !== 1) return { channel: null, sentAt: null };
-  const [, channel, sentAt] = frames[0];
-  return { channel: Number(channel), sentAt: sentAt === undefined ? null : Number(sentAt) };
+  const frames = [...(stack ?? '').matchAll(/^\s*at (?:Object\.)?fortressNativeSend_(\S+) \(/gm)];
+  const tag = frames.length === 1 ? /^(0|[1-9]\d*)(?:_([1-9]\d*))?$/.exec(frames[0][1]) : null;
+  if (!tag) return { channel: null, attempt: null };
+  const channel = Number(tag[1]);
+  const attempt = tag[2] === undefined ? null : Number(tag[2]);
+  return Number.isSafeInteger(channel) && (attempt === null || Number.isSafeInteger(attempt))
+    ? { channel, attempt } : { channel: null, attempt: null };
 }
 
 function clockWindow(start, end, sampledAt) {
@@ -901,9 +1021,11 @@ function intersectClock(previous, sample) {
   return offsetMin <= offsetMax ? { offsetMin, offsetMax } : null;
 }
 
-function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, closer = null, clocks) {
+function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, closer = null, clocks, receipt) {
+  const sentAt = Number.isSafeInteger(attempt) && attempt > 0 && receipt?.attempt === attempt && receipt.channel === channel
+    && Number.isSafeInteger(receipt.sentAt) && receipt.sentAt >= 0 ? receipt.sentAt : null;
   const before = linksBefore.find(peer => peer.index === channel) ?? null;
-  const evidence = { index, channel, sentAt, closer, before, sender: null, counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
+  const evidence = { index, channel, attempt, sentAt, closer, before, sender: null, counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
   if (!before?.local || !before.remote || before.closed) return evidence;
   evidence.sender = closedByPage[index].find(peer => peer.index === channel && peer.local === before.local && peer.remote === before.remote) ?? null;
   evidence.counterparts = closedByPage.flatMap((links, owner) => owner === index ? [] : links
@@ -963,22 +1085,25 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
   let rounds = 0;
   const deadline = clock() + DIAGNOSTIC_MS;
   while (clock() < deadline) {
+    const roundErrors = errors.slice();
+    const requested = pages.map((_, index) => [...new Set(roundErrors
+      .filter(error => error.index === index && error.attempt !== null).map(error => error.attempt))]);
     const sampleClock = Boolean(report.clocks) && rounds++ < CLOSE_CLOCK_POST_SAMPLES;
     const snapshots = await Promise.allSettled(pages.map((page, index) =>
       boundedRoom(async () => {
         const start = Math.floor(clock() * 1000);
-        const { links, sampledAt } = await page.evaluate(timed => ({
+        const { links, sampledAt, sends } = await page.evaluate(({ timed, attempts }) => ({
           sampledAt: timed && window.crossOriginIsolated ? Math.round(performance.now() * 1000) : null,
-          links: window.fortressNativeWire.sctpStatus(),
-        }), sampleClock);
+          links: window.fortressNativeWire.sctpStatus(), sends: window.fortressNativeWire.departureSends(attempts),
+        }), { timed: sampleClock, attempts: requested[index] });
         const receivedAt = clock();
-        return { links, bound: sampleClock ? clockWindow(start, Math.ceil(receivedAt * 1000), sampledAt) : null, receivedAt };
+        return { links, sends, bound: sampleClock ? clockWindow(start, Math.ceil(receivedAt * 1000), sampledAt) : null, receivedAt };
       }, Math.max(0, Math.ceil(deadline - clock())), `native peer ${index} close snapshot`)));
     const failed = snapshots.flatMap((entry, index) => entry.status === 'rejected' ? [{ index, reason: entry.reason }] : []);
     snapshots.forEach((entry, index) => {
       if (entry.status !== 'fulfilled' || entry.value.receivedAt >= deadline) return;
-      const { receivedAt, links, bound } = entry.value;
-      latestSnapshots[index] = { received_ms: receivedAt, links };
+      const { receivedAt, links, sends, bound } = entry.value;
+      latestSnapshots[index] = { received_ms: receivedAt, links, sends };
       if (sampleClock) report.clockSamples[index].after.push(bound);
     });
     report.snapshotErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
@@ -991,11 +1116,12 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
     if (sampleClock) {
       report.clocks = report.clocks.map((bound, index) => intersectClock(bound, snapshots[index].value.bound));
     }
-    report.proofs = errors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks));
+    report.proofs = roundErrors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks,
+      snapshots[error.index].value.sends?.[error.attempt]));
     for (const proof of report.proofs) assert.ok(proof.before, `WebKit send failure for peer ${proof.index} lacked a sending channel`);
     const remaining = deadline - clock();
     if (remaining <= 0) break;
-    if (report.proofs.every(proof => proof.proof)) return links;
+    if (roundErrors.length === errors.length && report.proofs.every(proof => proof.proof)) return links;
     await delay(Math.min(25, remaining));
   }
   const pending = [...new Set(report.proofs.filter(proof => !proof.proof).map(proof => `peer ${proof.index} channel ${proof.channel}`))];
@@ -1122,19 +1248,65 @@ function armAndWaitForInput(page, route) {
   }, { route, gate: GATE_FRAME, conditions: HOLD_CONDITIONS });
 }
 
-function captureAndReleaseInput(page, index, checkpoints) {
-  if (checkpoints) checkpoints.release_dispatched_ms = performance.now();
-  return page.evaluate(async index => {
+function createReleaseSignal(players) {
+  const paths = Array.from({ length: players }, () => '/native-release/' + randomUUID());
+  const responses = new Map();
+  const { promise: ready, resolve } = Promise.withResolvers();
+  let finished = false;
+  return {
+    paths,
+    ready,
+    handle(request, response) {
+      if (!paths.includes(request.url)) return false;
+      if (request.method !== 'GET') response.writeHead(405).end();
+      else if (finished || responses.has(request.url)) response.writeHead(409).end();
+      else {
+        responses.set(request.url, { response, receivedAt: performance.now() });
+        if (responses.size === players) resolve();
+      }
+      return true;
+    },
+    release(deadline) {
+      assert.ok(!finished && responses.size === players
+        && [...responses.values()].every(({ response }) => response.socket && !response.socket.destroyed && !response.destroyed),
+      'native relay release requests unavailable');
+      assert.ok(Number.isFinite(deadline) && performance.now() < deadline, 'absolute native relay input release deadline');
+      finished = true;
+      for (const { response, receivedAt } of responses.values()) {
+        const budgetUs = Math.floor((deadline - receivedAt) * 1000);
+        response.writeHead(204, { 'Cache-Control': 'no-store', 'X-Fortress-Release-Budget-Us': String(budgetUs) }).end();
+      }
+    },
+    cancel() {
+      finished = true;
+      for (const { response } of responses.values()) if (!response.writableEnded && !response.destroyed) response.destroy();
+    },
+  };
+}
+
+function captureAndReleaseInput(page, index, signalPath = null) {
+  return page.evaluate(async ({ index, signalPath }) => {
+    let cutoffUs = null;
+    if (signalPath !== null) {
+      const requestedUs = Math.floor(performance.now() * 1000);
+      const signal = await fetch(signalPath, { cache: 'no-store' });
+      if (signal.status !== 204) throw new Error(`native relay release signal returned HTTP ${signal.status}`);
+      const budget = signal.headers.get('X-Fortress-Release-Budget-Us');
+      if (!/^\d+$/.test(budget) || !Number.isSafeInteger(Number(budget))) throw new Error('invalid native relay release budget');
+      // The browser started the request before the host timed it. Allow 2 ms coarsening per browser read.
+      cutoffUs = requestedUs + Number(budget) - 4000;
+      if (Math.ceil(performance.now() * 1000) >= cutoffUs) throw new Error('native relay release deadline');
+    }
     window.fortressNativePostRelease?.mark('release_entered');
     const wire = window.fortressNativeWire;
     const stalled = structuredClone({ index, ...window.fortressNative, wire: wire.status() });
     window.fortressNativeStalled = stalled;
     if (stalled.state !== 'playing') throw new Error(stalled.message || 'peer stopped before input release');
     window.fortressNativePostRelease?.mark('release_started', undefined, wire.holdProgress());
-    stalled.release = await wire.release();
+    stalled.release = await wire.release(cutoffUs);
     window.fortressNativePostRelease?.mark('release_completed', undefined, wire.holdProgress());
     return stalled;
-  }, index);
+  }, { index, signalPath });
 }
 
 function waitForCorrectedHistory(pages, frame, readiness, wait, timeout) {
@@ -1219,18 +1391,25 @@ async function leaveWithReceipt(page, trace) {
     `leave failed: command ${trace.id} returned code ${trace.published.code} in state ${trace.published.state}`);
 }
 
-async function run(root, endpoint, mode, players, browserPair, omitSecond) {
+async function run(root, endpoint, mode, players, browserPair, control) {
   const startup = mode === 'mesh-startup';
   const liveClose = mode === 'mesh-close';
   const overlap = mode === 'mesh-recovery-overlap';
   const recovery = mode === 'mesh-recovery' || overlap;
+  const omitSecond = control === '--omit-second-replacement';
+  const traceRetention = control === '--relay-retention-control';
+  const traceRelayWire = control === '--trace-relay-wire' || traceRetention;
+  const traceScopePath = traceRelayWire && process.env.FORTRESS_RELAY_TRACE_SCOPE;
+  const traceReceiptPath = traceScopePath && process.env.FORTRESS_RELAY_TRACE_OUTPUT;
+  const readRelayServer = traceReceiptPath && createRelayServerReader(traceReceiptPath);
   const mixed = startup || liveClose || recovery;
   const route = mixed ? 'mesh' : mode;
   const traceWarmup = route === 'relay' && players === 8;
   const warmupBarrier = traceWarmup ? createWarmupBarrier(players) : undefined;
   const postRelease = route === 'relay' ? Array.from({ length: players }, () => ({})) : undefined;
+  const releaseSignal = route === 'relay' ? createReleaseSignal(players) : undefined;
   const playwright = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
-  const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY);
+  const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY, 0, releaseSignal?.handle);
   const origin = `https://127.0.0.1:${server.address().port}`;
   const socketEndpoint = `wss://127.0.0.1:${server.address().port}/v3/ws`;
   const pages = [];
@@ -1246,6 +1425,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   let result;
   let roomIdentities;
   let phase = 'launch';
+  let relayControl;
+  let relayRetention;
   let sequence = 0;
   let postReleaseOrder = 0;
   let correctionDeadline;
@@ -1277,6 +1458,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   const observe = (group = pages) => Promise.all(group.map((page, index) => page.evaluate(index => ({
     index, ...window.fortressNative, wire: window.fortressNativeWire.status()
   }), index)));
+  const collectRelayWire = () => Promise.allSettled(pages.map((page, index) => boundedRoom(
+    () => readRelayWireReceipt(page), DIAGNOSTIC_MS, `native peer ${index} relay wire receipt`)));
   try {
     for (const name of browserPair) browsers.push(await playwright[name].launch(browserOptions(name)));
     for (let index = 0; index < players; index++) {
@@ -1313,7 +1496,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
           code: request.failure()?.errorText });
       });
       // Register the browser observers in a single init script.
-      const wireScript = `(${instrumentNativeWire})(${name === 'webkit'}, ${JSON.stringify(traceWarmup ? WARMUP_CHECKPOINT : '')});`;
+      const relayTraceScript = traceRelayWire ? `(${createRelayWireTrace})()` : 'undefined';
+      const wireScript = `(${instrumentNativeWire})(${name === 'webkit'}, ${JSON.stringify(traceWarmup ? WARMUP_CHECKPOINT : '')}, ${relayTraceScript});`;
       await page.addInitScript(postRelease ? wireScript + `(${instrumentPostRelease})(${JSON.stringify(POST_RELEASE_CHECKPOINT)}, ${HISTORY_FRAMES});` : wireScript);
       await page.goto(`${origin}/index.html`);
       await wait(page, () => window.fortressNativeReady === true, null, PAGE_BOOT_MS);
@@ -1338,6 +1522,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       roomIdentities = { uuids, roster };
       postRelease.forEach((peer, index) => bindDepartureCheckpoints(peer, roster, uuids[index]));
     }
+    if (readRelayServer) await bindRelayServer(ready, traceScopePath, readRelayServer);
     await wait(pages[0], () => window.fortressNative.start_enabled);
     await Promise.all(pages.map(async (page, index) => {
       for (const key of INPUTS[index][1]) await page.keyboard.down(key);
@@ -1357,6 +1542,15 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       await start();
       await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
         && window.fortressNative.confirmed >= frame, GATE_FRAME, WARMUP_WAIT_MS)));
+    }
+    if (readRelayServer && players === 4 && browserPair.length === 2) {
+      phase = 'relay delivery control';
+      relayControl = await exerciseRelayDelivery(pages, ready, readRelayServer);
+    }
+    if (traceRetention) {
+      phase = 'relay retention control';
+      assert.ok(readRelayServer, 'relay retention control requires a trace server');
+      relayRetention = await exerciseRelayRetention(pages, ready, readRelayServer);
     }
     let direct, atClose, afterClose, restored, recoveryEvidence, closeLinks;
     if (liveClose || recovery) {
@@ -1388,24 +1582,41 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       closeLinks = await waitForCloseProofs(pages, direct, physicalCloseErrors, physicalCloseReport, { closer: 0 });
     }
     if (!mixed) {
+      let relayRelease;
+      stalled = Array(players).fill(null);
+      if (releaseSignal) {
+        phase = 'relay release preparation';
+        // Prepare the browser requests before the hold so release avoids another debugger evaluation.
+        relayRelease = Promise.all(pages.map(async (page, index) => {
+          stalled[index] = await captureAndReleaseInput(page, index, releaseSignal.paths[index]);
+        }));
+        await boundedRoom(() => Promise.race([releaseSignal.ready, relayRelease]), PAGE_WAIT_MS, 'native relay release preparation');
+      }
       phase = 'prediction stall';
       // Arming on each local frame can strand a slower peer before its own
       // gate. Let every endpoint confirm the warmup while routes are open.
       armed = Array(players).fill(null);
-      await Promise.all(pages.map(async (page, index) => {
+      const allReady = Promise.all(pages.map(async (page, index) => {
         const receipt = await boundedRoom(() => armAndWaitForInput(page, route), 45000, `native peer ${index} prediction stall`);
         holdReadyReceived[index] = { controller_ms: performance.now(), page: receipt.ready };
         armed[index] = receipt.armed;
       }));
+      await (relayRelease ? Promise.race([allReady, relayRelease]) : allReady);
+      assert.ok(holdReadyReceived.every(Boolean), 'native relay release completed before hold readiness');
       if (errors.length) throw new Error(JSON.stringify(errors));
       phase = 'input release';
       const correctionBudgetMs = 45000;
-      correctionDeadline = performance.now() + correctionBudgetMs;
-      stalled = Array(players).fill(null);
-      await Promise.all(pages.map(async (page, index) => {
-        stalled[index] = await boundedRoom(() => captureAndReleaseInput(page, index, postRelease?.[index]),
-          correctionBudgetMs, `native peer ${index} input release`);
-      }));
+      const releaseDispatchedAt = performance.now();
+      correctionDeadline = releaseDispatchedAt + correctionBudgetMs;
+      if (releaseSignal) {
+        for (const peer of postRelease) peer.release_dispatched_ms = releaseDispatchedAt;
+        releaseSignal.release(correctionDeadline);
+        await boundedRoom(() => relayRelease, correctionBudgetMs, 'native relay input release');
+      } else {
+        await Promise.all(pages.map(async (page, index) => {
+          stalled[index] = await boundedRoom(() => captureAndReleaseInput(page, index), correctionBudgetMs, `native peer ${index} input release`);
+        }));
+      }
       comparedFrames = historyThrough(stalled);
       phase = 'corrected history';
       const correctionRemainingMs = Math.floor(correctionDeadline - performance.now());
@@ -1557,8 +1768,29 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       return window.fortressNative.state === 'offline' && sockets.every(state => state === WebSocket.CLOSED)
         && rtc.every(([, state]) => state === 'closed');
     })));
+    let relayWire;
+    let relayServer;
+    let relayJoined;
+    if (traceRelayWire) {
+      phase = 'relay wire receipt';
+      relayWire = (await collectRelayWire()).map(({ status, value, reason }, index) => {
+        if (status === 'rejected') throw reason;
+        assert.equal(value.local, roomIdentities.uuids[index].replaceAll('-', ''), 'relay wire receipt has the wrong local UUID');
+        for (const [stage, streams] of Object.entries(value.streams)) {
+          for (const [family, { count }] of Object.entries(streams)) assert.ok(count > 0, `missing relay ${stage} ${family}`);
+        }
+        return value;
+      });
+      assert.equal(new Set(relayWire.map(trace => trace.room)).size, 1, 'relay wire receipts disagree on the frozen room');
+      if (readRelayServer) {
+        relayServer = await readRelayServer();
+        relayJoined = joinRelayReceipts(relayServer, relayWire);
+        if (relayControl) assertJoinedRelayControl(relayJoined);
+      }
+    }
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
-      holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns,
+      holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns, relayWire, relayControl,
+      relayServer, relayJoined, relayRetention,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples,
@@ -1568,6 +1800,8 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   } catch (error) {
     failures.push(error);
     const correctionDeadlineReached = missedCorrectionDeadline(phase, error, correctionDeadline, performance.now());
+    const relayWireFailure = traceRelayWire ? collectRelayWire() : null;
+    const relayServerFailure = readRelayServer && roomIdentities ? Promise.allSettled([readRelayServer()]) : null;
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
       ...window.fortressNative, wire: window.fortressNativeWire?.status(), warmup: window.fortressNativeWire?.warmupStatus(),
       stalled: window.fortressNativeStalled,
@@ -1578,6 +1812,19 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       if (stalled && !stalled[index] && saved) stalled[index] = saved;
       return { status: state.status, value: current };
     });
+    const relayWire = relayWireFailure && (await relayWireFailure).map(({ status, value, reason }) =>
+      status === 'fulfilled' ? value ?? null : { error: String(reason) });
+    let relayJoined;
+    let relayJoinError;
+    if (relayServerFailure) {
+      try {
+        const [serverReceipt] = await relayServerFailure;
+        if (serverReceipt.status === 'rejected') throw serverReceipt.reason;
+        relayJoined = joinRelayReceipts(serverReceipt.value, relayWire);
+      } catch (joinError) {
+        relayJoinError = String(joinError);
+      }
+    }
     console.error(JSON.stringify({
       phase, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks, departureCommands, roomIdentities,
@@ -1588,9 +1835,11 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
+      relayControl, relayRetention, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
     }));
   } finally {
+    releaseSignal?.cancel();
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
     failures.push(...await closeAll(browsers, owner => owner.close(), 'browser'));
     for (const { socket, upstream } of proxyPairs) {
@@ -1614,15 +1863,17 @@ if (require.main === module) {
   const overlap = route === 'mesh-recovery-overlap';
   const validOverlap = overlap && ['chromium', 'chromium-firefox'].includes(profile) && (!control || control === '--omit-second-replacement');
   const validFault = size === '4' && (validOverlap || (!control && ['mesh-startup', 'mesh-close', 'mesh-recovery'].includes(route)));
-  if (!(validFault || (!control && ['mesh', 'relay'].includes(route) && ['2', '4', '8'].includes(size))) || !validPair) {
-    console.error('usage: native_online.cjs EXPORT ENDPOINT MODE SIZE [BROWSER_PROFILE] [--omit-second-replacement]');
+  const relayControl = !control || control === '--trace-relay-wire' || (size === '8' && control === '--relay-retention-control');
+  const validPlain = ['2', '4', '8'].includes(size) && (route === 'relay' ? relayControl : route === 'mesh' && !control);
+  if (!(validFault || validPlain) || !validPair) {
+    console.error('usage: native_online.cjs EXPORT ENDPOINT MODE SIZE [BROWSER_PROFILE] [--omit-second-replacement | --trace-relay-wire | --relay-retention-control]');
     process.exitCode = 1;
-  } else run(root, endpoint, route, Number(size), browserPair, Boolean(control)).then(result => console.log(JSON.stringify(result))).catch(error => {
+  } else run(root, endpoint, route, Number(size), browserPair, control).then(result => console.log(JSON.stringify(result))).catch(error => {
     console.error(error);
     process.exitCode = 1;
   });
 }
 
-module.exports = { armAndWaitForInput, bindDepartureCheckpoints, calibrateDepartureClocks, captureAndReleaseInput, closeEvidence, compareHistory,
+module.exports = { armAndWaitForInput, bindDepartureCheckpoints, calibrateDepartureClocks, captureAndReleaseInput, closeEvidence, compareHistory, createReleaseSignal,
   createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt, missedCorrectionDeadline,
   postReleaseCheckpoint, readConfirmedHistory, relayReleaseEvidence, reportedChannel, waitForCloseProofs, waitForCorrectedHistory, WARMUP_CHECKPOINT };

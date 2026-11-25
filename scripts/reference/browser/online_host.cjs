@@ -4,13 +4,14 @@ const path = require('node:path');
 const https = require('node:https');
 const net = require('node:net');
 
-async function createHost(root, endpoint, certificate, privateKey, port = 0) {
+async function createHost(root, endpoint, certificate, privateKey, port = 0, handleRequest) {
   root = path.resolve(root);
   const backend = new URL(endpoint);
   if (backend.protocol !== 'ws:' || backend.hostname !== '127.0.0.1' || !backend.port)
     throw new Error('upstream must be ws://127.0.0.1:PORT/v3/ws');
   const server = https.createServer({ cert: fs.readFileSync(certificate),
     key: fs.readFileSync(privateKey) }, (request, response) => {
+    if (handleRequest?.(request, response)) return;
     let filename;
     try { filename = path.resolve(root, '.' + decodeURIComponent(new URL(request.url, 'http://localhost').pathname)); }
     catch { response.writeHead(400); response.end(); return; }

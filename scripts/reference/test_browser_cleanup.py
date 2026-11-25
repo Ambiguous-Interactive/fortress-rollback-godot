@@ -12,6 +12,335 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_relay_wire_receipt_crosses_page_boundary_as_json_text(self):
+        script = r"""
+const assert = require('node:assert/strict');
+const { readRelayWireReceipt } = require(process.argv[1]);
+const receipt = { sockets: 1, streams: { native: { quality: {
+  count: 130, omitted: 2, events: [{ seq: '18446744073709551615', kind: 4, code: 0 }],
+} } } };
+const page = { async evaluate(read) {
+  const transferred = await read();
+  assert.ok(transferred === undefined || typeof transferred === 'string');
+  return transferred;
+} };
+(async () => {
+  globalThis.window = { fortressNativeWire: { async relayWireTrace() { return receipt; } } };
+  assert.deepEqual(await readRelayWireReceipt(page), receipt);
+  delete window.fortressNativeWire;
+  assert.equal(await readRelayWireReceipt(page), undefined);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs')], check=True, timeout=10)
+
+    def test_relay_server_reader_requires_a_current_snapshot(self):
+        # Value: protects=capture freshness; fails_when=an earlier server reply satisfies a new request; seam=trace request and receipt files
+        script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const { setTimeout: pause } = require('node:timers/promises');
+const { createRelayServerReader } = require(process.argv[1]);
+const path = process.argv[2];
+const read = createRelayServerReader(path);
+async function publish(request) {
+  await fs.writeFile(path + '.new', JSON.stringify({ version: 2, request }));
+  await fs.rename(path + '.new', path);
+}
+async function respond() {
+  for (const expected of [1, 2]) {
+    while (true) {
+      const request = await fs.readFile(path + '.request', 'utf8').catch(error => {
+        if (error.code !== 'ENOENT') throw error;
+        return '';
+      });
+      if (request === String(expected)) break;
+      await pause(5);
+    }
+    await publish(expected);
+  }
+}
+(async () => {
+  await publish(99);
+  const served = respond();
+  const considered = [];
+  const receipt = await read(candidate => {
+    considered.push(candidate.request);
+    return candidate.request === 2 ? candidate : null;
+  });
+  assert.equal(receipt.request, 2);
+  assert.deepEqual(considered, [1, 2]);
+  await served;
+  await assert.rejects(read(undefined, 50), /relay server receipt deadline/);
+  assert.equal(await fs.readFile(path + '.request', 'utf8'), '3');
+  const retry = read();
+  await assert.rejects(read(), /already has a caller/);
+  await publish(3);
+  assert.equal((await retry).request, 3);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs'),
+                            str(Path(directory) / 'trace.json')], check=True, timeout=10)
+
+    def test_relay_control_releases_only_after_both_addressed_stamps_arrive(self):
+        # Value: protects=the FIFO barrier; fails_when=unrelated or duplicate arrivals can release it; seam=browser socket observer
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire } = require(process.argv[1]);
+class Socket {
+  static OPEN = 1;
+  readyState = 1;
+  listeners = [];
+  addEventListener(_name, listener) { this.listeners.push(listener); }
+  dispatchEvent(event) {
+    let stopped = false;
+    event.stopImmediatePropagation = () => { stopped = true; };
+    for (const listener of this.listeners) {
+      listener(event);
+      if (stopped) break;
+    }
+  }
+}
+const window = {};
+let alarm;
+const local = '22'.repeat(16);
+const trace = { bind() {}, record: (_stage, data) => data && { sender: 'source', recipient: local, epoch: 1, seq: String(data[0]) } };
+const realm = { window, trace, WebSocket: Socket, RTCPeerConnection: class {}, Uint8Array, ArrayBuffer, DataView, performance,
+  setTimeout: run => { alarm = run; }, clearTimeout: () => {} };
+runInNewContext(`(${instrumentNativeWire})(false, '', trace)`, realm);
+const socket = new window.WebSocket();
+const wire = window.fortressNativeWire;
+const seen = [];
+socket.addEventListener('message', event => seen.push(event.data[0]));
+const deliver = (seq, target = socket) => target.dispatchEvent({ data: Uint8Array.of(seq) });
+const stamps = [10, 11].map(seq => ({ sender: 'source', recipient: local, epoch: 1, seq: String(seq) }));
+wire.bind('00'.repeat(16), local);
+wire.holdRelayControl();
+deliver(8);
+alarm();
+assert.equal(wire.releaseRelayControl(stamps).reason, 'deadline');
+assert.deepEqual(seen.splice(0), [8]);
+wire.holdRelayControl();
+deliver(9);
+deliver(10);
+deliver(10);
+assert.equal(wire.releaseRelayControl(stamps), null);
+assert.deepEqual(seen, []);
+assert.equal(wire.releaseRelayControl([stamps[0], stamps[0]]), null);
+assert.equal(wire.releaseRelayControl([]), null);
+assert.equal(wire.releaseRelayControl([{ ...stamps[0], epoch: 2 }, stamps[1]]), null);
+deliver(11, new window.WebSocket());
+assert.equal(wire.releaseRelayControl(stamps), null);
+deliver(11);
+assert.equal(wire.releaseRelayControl(stamps).reason, 'controller');
+assert.deepEqual(seen, [9, 10, 10, 11]);
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
+    def test_native_relay_join_keeps_missing_stages_and_rejects_conflicting_digests(self):
+        # Value: protects=exact stage joins; fails_when=equal bytes fill observation gaps or an ordinal hides mismatched bytes; seam=browser arrival and server receipts
+        script = r"""
+const assert = require('node:assert/strict');
+const { assertJoinedRelayControl, joinRelayReceipts } = require(process.argv[1]);
+const sender = 'a', recipient = 'b', room = 'match';
+const packet = { sender, recipient, epoch: 1, seq: '9', kind: 2, envelope_bytes: 109, envelope_sha256: 'sha', ordinal: 1, socket_ordinal: 5 };
+const stage = (events = []) => ({ sync: { events: [] }, input: { events }, quality: { events: [] } });
+const another = { ...packet, seq: '10', socket_ordinal: 6, ordinal: 2 };
+const writes = [packet, another].map(event => ({ ...event, actual_recipient: recipient }));
+const server = { room, roster: [sender, recipient], streams: { ingress: stage([packet, another]), write: stage(writes) } };
+const pageA = { room, local: sender, sockets: 1,
+  streams: { send: stage([packet, another]), raw: stage(), sdk: stage(), native: stage() } };
+const pageB = { room, local: recipient, sockets: 1,
+  streams: { send: stage(), raw: stage([another]), sdk: stage([another]), native: stage([{...another, code: 0}, {...another, ordinal: 3, code: 1}]) } };
+const result = joinRelayReceipts(server, [pageA, pageB]);
+const byStamp = new Map(result.rows.map(row => [row.seq, row]));
+assert.equal(byStamp.get('9').send, 1);
+assert.deepEqual(byStamp.get('9').raw, []);
+assert.deepEqual(byStamp.get('9').native, []);
+assert.deepEqual(byStamp.get('10').raw, [2]);
+assert.deepEqual(byStamp.get('10').native, [2, 3]);
+assert.deepEqual(byStamp.get('10').native_accepted, [2]);
+assert.deepEqual(result.unjoined_sends, []);
+assert.throws(() => assertJoinedRelayControl(result), /40 complete packet joins/);
+const complete = Array.from({ length: 40 }, (_, i) => ({ ...byStamp.get('10'), seq: String(i), family: ['sync', 'input', 'quality'][i % 3] }));
+assertJoinedRelayControl({ rows: complete });
+assert.throws(() => assertJoinedRelayControl({ rows: complete.slice(1) }), /40 complete packet joins/);
+assert.throws(() => assertJoinedRelayControl({ rows: complete.map(row => ({ ...row, native_accepted: [] })) }), /40 complete packet joins/);
+assert.throws(() => assertJoinedRelayControl({ rows: complete.map(row => ({ ...row, family: 'sync' })) }), /complete sync, input, and quality/);
+writes[0].actual_recipient = sender;
+assert.throws(() => joinRelayReceipts(server, [pageA, pageB]), /addressed socket/);
+writes[0].actual_recipient = recipient;
+pageA.sockets = 2;
+const ambiguous = joinRelayReceipts(server, [pageA, pageB]);
+assert.ok(ambiguous.rows.every(row => row.send === null));
+assert.equal(ambiguous.unjoined_sends.length, 2);
+pageB.streams.raw.input.events[0] = { ...another, envelope_sha256: 'conflicting' };
+assert.throws(() => joinRelayReceipts(server, [pageA, pageB]), /receipt disagrees/);
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs')], check=True, timeout=10)
+
+    def test_native_relay_wire_preserves_duplicate_stamps_and_addresses(self):
+        # Value: protects=relay identity and shared digests; fails_when=bytes collapse, hashes repeat, or foreign routes survive; seam=browser wire receipt
+        script = r"""
+const assert = require('node:assert/strict');
+const { createHash, webcrypto } = require('node:crypto');
+const { createRelayWireTrace } = require(process.argv[1]);
+let digestCalls = 0;
+Object.defineProperty(globalThis, 'crypto', { value: { subtle: { digest(...args) {
+  digestCalls++;
+  return webcrypto.subtle.digest(...args);
+} } } });
+const bytes = value => Buffer.from(value, 'hex');
+const [room, source, local, other] = ['11', '22', '33', '44'].map(value => value.repeat(16));
+const trace = createRelayWireTrace();
+trace.bind(room, local, [source, local, other]);
+function envelope(sender, recipient, kind = 2) {
+  const body = Buffer.alloc({2: 24, 4: 18, 5: 16}[kind]);
+  const payload = Buffer.concat([bytes(room), bytes('f552020001000000'), Buffer.from([kind, 0, 0, 0]), body]);
+  return Buffer.concat([bytes('4653523101'), bytes(room), bytes(sender), bytes(recipient), Buffer.from([payload.length, 0, 0, 0]), payload]);
+}
+const name = text => Buffer.concat([Buffer.from([0xa0 + text.length]), Buffer.from(text)]);
+function delivered(packet, seq, outerSender = source, encodingKey = 'encoding') {
+  const stamp = Buffer.alloc(9);
+  stamp[0] = 0xcf;
+  stamp.writeBigUInt64BE(seq, 1);
+  return Buffer.concat([bytes('85'), name('from_player'), bytes('c410'), bytes(outerSender), name(encodingKey), name('message_pack'),
+    name('payload'), Buffer.from([0xc4, packet.length]), packet, name('seq'), stamp, name('epoch'), bytes('01')]);
+}
+const packet = envelope(source, local);
+const first = 9007199254740992n;
+trace.record('raw', delivered(packet, first));
+trace.record('raw', delivered(packet, first + 1n));
+trace.record('raw', delivered(envelope(source, other), first + 2n));
+trace.record('raw', delivered(packet, 0n));
+trace.record('raw', delivered(packet, first + 3n, other));
+trace.record('raw', Buffer.concat([delivered(packet, first + 4n), bytes('00')]));
+trace.record('raw', delivered(packet, first + 5n).subarray(0, -1));
+trace.record('raw', delivered(Buffer.concat([packet, bytes('00')]), first + 6n));
+const badQuality = envelope(source, local, 4).subarray(0, 85);
+badQuality.writeUInt32LE(28, 53);
+trace.record('raw', delivered(badQuality, first + 7n));
+const bomPacket = delivered(packet, first + 8n);
+const key = bomPacket.indexOf(name('encoding'));
+trace.record('raw', Buffer.concat([bomPacket.subarray(0, key), bytes('abefbbbf'), bomPacket.subarray(key + 1)]));
+assert.throws(() => trace.bind(other, local, [source, local, other]), /already bound/);
+const signedSeq = '-1';
+trace.recordEngine('sdk', source, packet.toString('hex'), 1, signedSeq, null);
+trace.recordEngine('native', source, packet.subarray(57).toString('hex'), 1, signedSeq, 0);
+trace.recordEngine('native', source, envelope(source, local, 4).subarray(57).toString('hex'), 1, '5', 0);
+trace.recordEngine('native', source, envelope(source, local, 4).subarray(57).toString('hex'), 1, '6', 0);
+const expected = { sender: source, recipient: local, epoch: 1, seq: '5' };
+assert.equal(trace.freezeEnqueued([{ ...expected, seq: '7' }]), null);
+assert.equal(trace.freezeEnqueued([{ ...expected, recipient: other }]), null);
+const frozenAtEnqueue = trace.freezeEnqueued([expected]);
+trace.record('send', envelope(local, source, 5));
+trace.record('send', envelope(local, source));
+const owned = envelope(local, other);
+const ownedDigest = createHash('sha256').update(owned).digest('hex');
+trace.record('send', owned);
+owned.fill(0);
+for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, local, 4), BigInt(i + 1)));
+(async () => {
+  const receipt = await trace.freeze();
+  assert.equal(receipt.room, room);
+  assert.equal(receipt.local, local);
+  const input = receipt.streams.raw.input;
+  assert.equal(input.count, 2);
+  assert.deepEqual(input.events.map(event => [event.epoch, event.seq, event.sender, event.recipient]),
+    [[1, String(first), source, local], [1, String(first + 1n), source, local]]);
+  assert.ok(input.events.every(event => event.envelope_bytes === packet.length &&
+    event.envelope_sha256 === createHash('sha256').update(packet).digest('hex')));
+  const sent = receipt.streams.send.input.events;
+  assert.equal(sent[1].envelope_sha256, ownedDigest);
+  assert.equal(sent[0].payload_sha256, sent[1].payload_sha256);
+  assert.notEqual(sent[0].envelope_sha256, sent[1].envelope_sha256);
+  const [sdk, native] = ['sdk', 'native'].map(stage => receipt.streams[stage].input.events[0]);
+  assert.equal(sdk.seq, '18446744073709551615');
+  assert.equal(native.seq, sdk.seq);
+  assert.equal(native.envelope_sha256, sdk.envelope_sha256);
+  assert.equal(native.code, 0);
+  assert.deepEqual(receipt.streams.send.quality.events[0].protocol_reply,
+    { token: '00'.repeat(16), candidates: [{ epoch: 1, seq: '5' }, { epoch: 1, seq: '6' }] });
+  for (let i = 7; i < 140; i++) trace.recordEngine('native', source, envelope(source, local, 4).subarray(57).toString('hex'), 1, String(i), 0);
+  assert.equal(trace.freezeEnqueued([expected]), null);
+  assert.equal((await frozenAtEnqueue).streams.native.quality.events[0].seq, '5');
+  const quality = receipt.streams.raw.quality;
+  assert.equal(quality.count, 140);
+  assert.equal(quality.omitted, 12);
+  assert.equal(quality.events.length, 128);
+  assert.equal(quality.events[0].seq, '13');
+  assert.equal(quality.events.at(-1).seq, '140');
+  const digestFixture = createRelayWireTrace();
+  digestFixture.bind(room, local, [source, local, other]);
+  const original = envelope(source, local, 4);
+  const changed = Buffer.from(original);
+  changed[changed.length - 1] = 1;
+  const outgoing = envelope(local, source, 4);
+  digestFixture.record('raw', delivered(original, 5n));
+  digestFixture.record('raw', delivered(original, 5n));
+  digestFixture.record('raw', delivered(original, 6n));
+  digestFixture.recordEngine('sdk', source, changed.toString('hex'), 1, '5', null);
+  digestFixture.recordEngine('native', source, changed.subarray(57).toString('hex'), 1, '5', 0);
+  digestFixture.recordEngine('native', source, original.subarray(57).toString('hex'), 1, '5', 1);
+  digestFixture.record('send', outgoing, 7);
+  digestFixture.record('send', outgoing, 8);
+  function checkDigests(events, packets) {
+    const digest = packet => createHash('sha256').update(packet).digest('hex');
+    assert.deepEqual(events.map(({ envelope_sha256, payload_sha256 }) => [envelope_sha256, payload_sha256]),
+      packets.map(packet => [digest(packet), digest(packet.subarray(57))]));
+  }
+  const firstFreezeCalls = digestCalls;
+  const digestReceipt = await digestFixture.freeze();
+  const { raw, sdk: sdkStage, native: nativeStage, send } = digestReceipt.streams;
+  assert.deepEqual(raw.quality.events.map(({ ordinal, seq }) => [ordinal, seq]), [[1, '5'], [2, '5'], [3, '6']]);
+  checkDigests(raw.quality.events, [original, original, original]);
+  checkDigests(sdkStage.quality.events, [changed]);
+  checkDigests(nativeStage.quality.events, [changed, original]);
+  assert.deepEqual(nativeStage.quality.events.map(({ seq, code }) => [seq, code]), [['5', 0], ['5', 1]]);
+  checkDigests(send.quality.events, [outgoing, outgoing]);
+  assert.deepEqual(send.quality.events.map(event => event.socket_ordinal), [7, 8]);
+  assert.equal(digestCalls - firstFreezeCalls, 10, 'hash each exact stamped packet once per receipt');
+  const secondFreezeCalls = digestCalls;
+  assert.deepEqual(await digestFixture.freeze(), digestReceipt);
+  assert.equal(digestCalls - secondFreezeCalls, 10, 'digest reuse must stay inside one freeze');
+
+  const members = [source, local, other, ...['55', '66', '77', '88', '99'].map(value => value.repeat(16))];
+  const pressured = createRelayWireTrace();
+  pressured.bind(room, local, members);
+  for (const [kind, family] of [[2, 'input'], [4, 'quality']]) {
+    pressured.record('send', envelope(local, source, kind), kind);
+    function receive(peer, seq) {
+      const packet = envelope(peer, local, kind);
+      pressured.record('raw', delivered(packet, BigInt(seq), peer));
+      pressured.recordEngine('sdk', peer, packet.toString('hex'), 1, String(seq), null);
+      pressured.recordEngine('native', peer, packet.subarray(57).toString('hex'), 1, String(seq), 0);
+    }
+    receive(source, kind);
+    for (let seq = 1; seq <= 129; seq++) {
+      for (const peer of members.slice(2)) {
+        pressured.record('send', envelope(local, peer, kind), seq);
+        receive(peer, seq);
+      }
+    }
+    const pressureDigestCalls = digestCalls;
+    const { streams } = await pressured.freeze();
+    const retainedPerFamily = 1 + 128 * 6;
+    assert.equal(digestCalls - pressureDigestCalls, 4 * retainedPerFamily * (family === 'input' ? 1 : 2),
+      'reuse raw, SDK and native digests at the per-link cap');
+    for (const [stage, groups] of Object.entries(streams)) {
+      const { count, omitted, events } = groups[family];
+      assert.equal(count, 1 + 129 * 6);
+      const first = events[0];
+      assert.equal(stage === 'send' ? first.recipient : first.sender, source, `${stage} ${family} tail evicted by healthy links`);
+      assert.equal(first.socket_ordinal ?? first.seq, stage === 'send' ? kind : String(kind));
+      assert.equal(omitted, 6);
+    }
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs')], check=True, timeout=10)
+
     def test_native_leave_requires_a_correlated_publication(self):
         # Value: protects=departure receipt; fails_when=stale or incomplete evidence passes; seam=Playwright console event
         script = r"""
@@ -739,19 +1068,117 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
+    def test_native_relay_release_signal_requires_every_prepared_page(self):
+        # Value: protects=room-wide release through prepared browser requests; fails_when=release needs a second evaluation or signals a partial room; seam=HTTP
+        script = r"""
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const { captureAndReleaseInput, createReleaseSignal } = require(process.argv[1]);
+const signal = createReleaseSignal(2);
+const server = http.createServer((req, res) => { if (!signal.handle(req, res)) res.writeHead(404).end(); });
+async function run() {
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = 'http://127.0.0.1:' + server.address().port;
+  const path = index => origin + signal.paths[index];
+  let evaluations = 0, releases = 0;
+  global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: {
+    status: () => ({ holding: true }),
+    holdProgress: () => ({}),
+    release: () => ++releases,
+  } };
+  const page = { evaluate(callback, argument) { evaluations++; return callback(argument); } };
+  const first = captureAndReleaseInput(page, 0, path(0));
+  await new Promise(resolve => server.once('request', resolve));
+  assert.throws(() => signal.release(performance.now() + 500), /relay release requests unavailable/);
+  const last = captureAndReleaseInput(page, 1, path(1));
+  await signal.ready;
+  assert.equal(releases, 0);
+  assert.equal((await fetch(path(0))).status, 409);
+  assert.equal((await fetch(path(0), { method: 'POST' })).status, 405);
+  assert.equal(releases, 0);
+  signal.release(performance.now() + 500);
+  const receipts = await Promise.all([first, last]);
+  assert.deepEqual(receipts.map(receipt => receipt.index), [0, 1]);
+  assert.equal(evaluations, 2);
+  assert.equal(releases, 2);
+  assert.equal((await fetch(path(0))).status, 409);
+  assert.throws(() => signal.release(performance.now() + 500), /relay release requests unavailable/);
+}
+const deadline = setTimeout(() => { throw new Error('relay release signal test did not settle'); }, 3000);
+run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
+  clearTimeout(deadline);
+  signal.cancel();
+  server.close();
+});
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
+    def test_native_relay_release_rejects_disconnected_and_late_pages(self):
+        # Value: protects=release only for the original live requests and before cutoff; fails_when=socket replacement or a late reply releases input; seam=HTTP and page
+        script = r"""
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const { captureAndReleaseInput, createReleaseSignal } = require(process.argv[1]);
+let now = 300;
+global.performance = { now: () => now };
+function request(signal, index) {
+  const response = Object.assign(new EventEmitter(), {
+    socket: { destroyed: false },
+    writeHead(status, headers) { this.status = status; this.headers = headers; return this; },
+    end() { this.writableEnded = true; },
+    destroy() { this.destroyed = true; this.emit('close'); },
+  });
+  assert.equal(signal.handle({ url: signal.paths[index], method: 'GET' }, response), true);
+  return response;
+}
+async function run() {
+  const disconnected = createReleaseSignal(2);
+  const first = request(disconnected, 0);
+  const live = request(disconnected, 1);
+  await disconnected.ready;
+  first.socket.destroyed = true;
+  assert.throws(() => disconnected.release(900), /relay release requests unavailable/, 'socket liveness precedes the response close event');
+  assert.equal(live.status, undefined);
+  first.destroy();
+  assert.equal(request(disconnected, 0).status, 409, 'a replacement cannot regain a disconnected slot');
+  assert.throws(() => disconnected.release(900), /relay release requests unavailable/);
+  assert.equal(live.status, undefined, 'refuse the whole room after a disconnect');
+  disconnected.cancel();
+  assert.equal(live.destroyed, true);
+
+  global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: {
+    status: () => ({}), release() { assert.fail('a late response started the FIFO drain'); },
+  } };
+  const page = { evaluate(callback, argument) { return callback(argument); } };
+  let deliver;
+  global.fetch = () => new Promise(resolve => { deliver = resolve; });
+  const delayed = captureAndReleaseInput(page, 0, '/prepared');
+  const checked = assert.rejects(delayed, /native relay release deadline/);
+  now = 900;
+  deliver({ status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '600000' }) });
+  await checked;
+  assert.equal(window.fortressNativeStalled, undefined, 'a late response cannot publish even its stalled snapshot');
+}
+run().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
     def test_native_relay_release_drains_originals_in_order_while_control_passes(self):
         # Value: protects=bounded FIFO recovery on the real socket hook; fails_when=release bursts or overtakes; seam=browser send
         script = r"""
 const assert = require('node:assert/strict');
 const { runInNewContext } = require('node:vm');
 const { instrumentNativeWire } = require(process.argv[1]);
-const released = [], turns = [];
+const released = [], releasedPackets = [], turns = [];
 class Socket {
   static OPEN = 1;
   readyState = Socket.OPEN;
   bufferedAmount = 0;
   addEventListener() {}
-  send(bytes) { released.push(bytes.at(-1)); }
+  send(bytes) {
+    released.push(bytes.at(-1));
+    releasedPackets.push(Array.from(bytes));
+  }
 }
 const realm = { window: {}, performance, Uint8Array, ArrayBuffer, DataView, WebSocket: Socket,
   RTCPeerConnection: class {}, requestAnimationFrame(callback) { turns.push(callback); } };
@@ -771,7 +1198,11 @@ const relay = (kind, value) => {
 };
 async function run() {
   wire.arm();
-  for (let i = 0; i < 33; i++) socket.send(relay(2, i));
+  for (let i = 0; i < 33; i++) {
+    const bytes = relay(2, i);
+    socket.send(bytes);
+    bytes.fill(0);
+  }
   const recovery = wire.release();
   assert.equal(released.length, 16);
   socket.send(relay(2, 33));
@@ -785,6 +1216,7 @@ async function run() {
   const started = await recovery;
   assert.equal(started.held.relay, 33);
   assert.deepEqual(released.filter(value => value !== 99), Array.from({length: 34}, (_, i) => i));
+  assert.deepEqual(releasedPackets.filter(bytes => bytes.at(-1) !== 99), Array.from({length: 34}, (_, i) => Array.from(relay(2, i))));
   assert.equal(wire.status().released, 34);
   assert.equal(wire.status().holding, false);
   assert.equal(wire.status().held.relay, 34);
@@ -835,6 +1267,21 @@ async function run() {
   assert.equal(closingOriginals.length, 1);
   assert.equal(closingOriginals[0].held_send, true);
   assert.equal(closingOriginals[0].socket_stage, 'before_send');
+
+  let now = 10;
+  const timed = { ...realm, window: {}, performance: { now: () => now }, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
+  runInNewContext(`(${instrumentNativeWire})()`, timed);
+  const timedWire = timed.window.fortressNativeWire;
+  const timedSocket = new timed.window.WebSocket();
+  timedWire.bind('00'.repeat(16), '01'.repeat(16));
+  timedWire.arm();
+  for (let i = 0; i < 33; i++) timedSocket.send(relay(2, i));
+  const deadline = assert.rejects(timedWire.release(11000), /native relay release deadline/);
+  assert.equal(timedWire.status().released, 16, 'the first batch has time to release');
+  now = 11;
+  turns.shift()();
+  await deadline;
+  assert.equal(timedWire.status().released, 16, 'no further batch can start at the cutoff');
 
   const full = { ...realm, window: {}, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
   runInNewContext(`(${instrumentNativeWire})()`, full);
@@ -996,7 +1443,7 @@ async function run() {
   Object.assign(window.fortressNative, { turns: 21, restores: 3 });
   observe();
   now++;
-  await captureAndReleaseInput(page, 0, checkpoints);
+  await captureAndReleaseInput(page, 0);
   now++;
   Object.assign(window.fortressNative, { turns: 22, confirmed: 40 });
   observe();
@@ -1006,7 +1453,6 @@ async function run() {
     heartbeat();
   }
   postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"heartbeat"}', { controller_ms: now });
-  assert.equal(checkpoints.release_dispatched_ms, 14);
   assert.equal(checkpoints.release_entered.page_ms, 14);
   assert.equal(checkpoints.release_entered.controller_ms, 114);
   assert.deepEqual([checkpoints.release_started.page_ms, checkpoints.release_started.queued, checkpoints.release_started.released], [16, 10, 0]);
@@ -1026,10 +1472,8 @@ async function run() {
   assert.equal(checkpoints.history_received, undefined, 'publication does not prove receipt delivery');
   assert.deepEqual(checkpoints.heartbeats.map(sample => [sample.page_ms, sample.turns, sample.confirmed]), [[23, 22, 40], [24, 22, 40]]);
   assert.match(checkpoints.checkpoint_error, /invalid post-release sample/);
-  const failed = {};
   const unavailable = { async evaluate() { throw new Error('release evaluation unavailable'); } };
-  await assert.rejects(captureAndReleaseInput(unavailable, 0, failed), /release evaluation unavailable/);
-  assert.deepEqual(failed, { release_dispatched_ms: 24 });
+  await assert.rejects(captureAndReleaseInput(unavailable, 0), /release evaluation unavailable/);
   Object.assign(window.fortressNative, { state: 'failed', turns: 23, frame: 25, confirmed: 44 });
   observe();
   Object.assign(window.fortressNative, { state: 'playing', turns: 24, frame: 25 });
@@ -1170,6 +1614,12 @@ global.performance = { now: () => ++now };
 Object.defineProperty(global, 'window', { get: () => realm.getStore() });
 const timeout = global.setTimeout;
 global.setTimeout = (callback, ms, ...args) => timeout(callback, [5000, 30000].includes(ms) ? 20 : ms, ...args);
+let releaseRequest;
+global.fetch = path => new Promise(resolve => {
+  const response = { socket: { destroyed: false }, writeHead(status, headers) { this.status = status; this.headers = new Headers(headers); return this; },
+    end() { this.writableEnded = true; resolve({ status: this.status, headers: this.headers }); } };
+  if (!releaseRequest({ url: path, method: 'GET' }, response)) throw new Error('fixture release request was not handled');
+});
 global.requestAnimationFrame = callback => {
   if (window.index === 1 && stuck) return;
   window.fortressNative.frame++;
@@ -1235,7 +1685,10 @@ function makePage() {
 }
 require('node:module')._load = function (name, ...args) {
   if (name === './online_host.cjs') {
-    return { createHost: async () => ({ proxyPairs: [], server: { address: () => ({ port: 1 }), close: callback => callback() } }) };
+    return { createHost: async (_root, _endpoint, _cert, _key, _port, handler) => {
+      releaseRequest = handler;
+      return { proxyPairs: [], server: { address: () => ({ port: 1 }), close: callback => callback() } };
+    } };
   }
   if (name === 'fixture-playwright') {
     const browser = { browserType: () => ({ name: () => 'chromium' }), version: () => 'fixture', async close() {},
@@ -1296,13 +1749,14 @@ runMain();
 const assert = require('node:assert/strict');
 const { closeEvidence, reportedChannel } = require(process.argv[1]);
 const receivedClose = (index, channel, before, closed, closer, {sentAt, clocks} = {}) =>
-  Boolean(closeEvidence({index, channel, sentAt}, before, closed, closer, clocks).proof);
+  Boolean(closeEvidence({index, channel, attempt:1}, before, closed, closer, clocks, {attempt:1, channel, sentAt}).proof);
 const frame = '    at fortressNativeSend_5 (:5:27)';
-assert.deepEqual(reportedChannel('Error sending binary data\n' + frame), {channel:5, sentAt:null});
-assert.deepEqual(reportedChannel(frame + '\n' + frame), {channel:null, sentAt:null});
-assert.deepEqual(reportedChannel('at unrelated (:5:27)'), {channel:null, sentAt:null});
-assert.deepEqual(reportedChannel('    at fortressNativeSend_5_1795419840003000 (:5:27)'),
-  {channel:5, sentAt:1795419840003000});
+assert.deepEqual(reportedChannel('Error sending binary data\n' + frame), {channel:5, attempt:null});
+assert.deepEqual(reportedChannel('    at fortressNativeSend_5_1234 (:5:27)'), {channel:5, attempt:1234});
+for (const stack of [frame + '\n' + frame, frame + '\n at fortressNativeSend_5_bad (:5:27)', 'at unrelated (:5:27)',
+  'at fortressNativeSend_5_9007199254740992 (:5:27)', 'at fortressNativeSend_5_0 (:5:27)', 'at fortressNativeSend_05_1 (:5:27)']) {
+  assert.deepEqual(reportedChannel(stack), {channel:null, attempt:null});
+}
 const counterpart = {local:'closing', remote:'survivor', closed:true, connectionClosed:true};
 const link = {index:5, local:'survivor', remote:'closing', closeAborts:1, closed:false};
 const other = {index:8, local:'same-page', remote:'another-peer', closeAborts:0};
@@ -1397,6 +1851,55 @@ async function tick(at) {
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
+    def test_native_webkit_records_the_exact_send_after_preparing_its_tag(self):
+        # Value: protects=actual native send timing; fails_when=tag preparation is included or a stale attempt is reused; seam=browser wire observer
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire } = require(process.argv[1]);
+let now = 0;
+let sent;
+class Connection {
+  close() {}
+  addEventListener() {}
+  createDataChannel() {
+    return { id: 3, addEventListener() {}, send() { sent = { at: now * 1000, stack: new Error().stack }; } };
+  }
+}
+const window = { crossOriginIsolated: true };
+runInNewContext(`(${instrumentNativeWire})(true, '')`, {
+  window, WebSocket: class {}, RTCPeerConnection: Connection,
+  performance: { now: () => now },
+  Function: function(...args) { now += 5; return Function(...args); },
+});
+const first = new Connection().createDataChannel('first', {});
+const second = new Connection().createDataChannel('second', {});
+const wire = window.fortressNativeWire;
+wire.observeDeparture();
+const send = channel => {
+  channel.send(new ArrayBuffer(1));
+  const [, index, tag] = sent.stack.match(/fortressNativeSend_(\d+)_(\d+)/).map(Number);
+  return { index, tag, at: sent.at };
+};
+const a = send(first);
+// Older witnesses encoded preparation time in the name itself.
+const recorded = wire.departureSends ? wire.departureSends([a.tag])[a.tag]?.sentAt : a.tag;
+assert.equal(recorded, a.at, 'timestamp must be taken at the native send');
+const b = send(second);
+assert.equal(b.tag, a.tag + 1);
+assert.equal(b.index, a.index + 1);
+assert.equal(wire.departureSends([b.tag])[b.tag]?.channel, b.index);
+for (let i = 0; i < 4096; ++i) first.send(new ArrayBuffer(1));
+const latest = send(second);
+const receipts = wire.departureSends([a.tag, b.tag, latest.tag, latest.tag + 1]);
+assert.equal(receipts[a.tag] ?? null, null, 'older attempts must be evicted');
+assert.equal(receipts[b.tag] ?? null, null, 'a reused slot must not return its old attempt');
+assert.equal(receipts[latest.tag]?.sentAt, latest.at);
+assert.equal(receipts[latest.tag + 1] ?? null, null, 'an unobserved attempt has no receipt');
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_native_webkit_close_receipt_names_the_ambiguous_link(self):
         # Value: protects=failed causal attribution; fails_when=actual reciprocal channel or clock gap is lost; seam=browser receipt validator
         script = r"""
@@ -1406,19 +1909,27 @@ const before = {index:17, local:'survivor', remote:'leaver', closeAborts:1, clos
 const sender = {...before, closed:true, connectionClosed:true, closedAt:50000};
 const closer = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
 const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
-const tagged = {index:1, channel:17, sentAt:47199};
-const fail = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks);
+const tagged = {index:1, channel:17, attempt:3};
+const receipt = {channel:17, attempt:3, sentAt:47199};
+const fail = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, receipt);
 assert.deepEqual(JSON.parse(JSON.stringify(fail)), {
-  ...tagged, closer:null, before, sender, counterparts:[{...closer, owner:0}], minimumGapUs:1999, maximumGapUs:2399, proof:null,
+  ...tagged, sentAt:47199, closer:null, before, sender, counterparts:[{...closer, owner:0}], minimumGapUs:1999, maximumGapUs:2399, proof:null,
 });
-const timed = closeEvidence({...tagged, sentAt:47200}, [before], [[closer], [sender]], null, clocks);
+const timed = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, sentAt:47200});
 assert.equal(timed.minimumGapUs, 2000);
 assert.equal(timed.maximumGapUs, 2400);
 assert.equal(timed.proof, 'clock-order');
-const early = closeEvidence({...tagged, sentAt:46799}, [before], [[closer], [sender]], null, clocks);
+for (const invalid of [null, {...receipt, sentAt:'47200'}, {...receipt, sentAt:-1},
+  {...receipt, attempt:4, sentAt:47200}, {...receipt, channel:18, sentAt:47200}]) {
+  const rejected = closeEvidence({...tagged, sentAt:999999}, [before], [[closer], [sender]], null, clocks, invalid);
+  assert.equal(rejected.sentAt, null);
+  assert.equal(rejected.minimumGapUs, null);
+  assert.equal(rejected.proof, null);
+}
+const early = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, sentAt:46799});
 assert.equal(early.maximumGapUs, 1999);
 assert.equal(early.proof, null);
-const aborted = closeEvidence(tagged, [before], [[closer], [{...sender, closeAborts:2}]], null, clocks);
+const aborted = closeEvidence(tagged, [before], [[closer], [{...sender, closeAborts:2}]], null, clocks, receipt);
 assert.equal(aborted.minimumGapUs, 1999);
 assert.equal(aborted.proof, 'sctp-abort');
 const missing = closeEvidence(tagged, [before], [[], [sender]], null, clocks);
@@ -1445,18 +1956,20 @@ const { waitForCloseProofs } = require(process.argv[1]);
 const before = {index:17, local:'survivor', remote:'leaver', closeAborts:0, closed:false};
 const reciprocal = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
 const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
-const sample = (links, offset) => ({
-  evaluate: async () => {
+const receipt = {channel:17, attempt:3, sentAt:47200};
+const sample = (links, offset, sends = {}) => ({
+  evaluate: async (_read, { attempts }) => {
     const start = now;
     const snapshot = links();
     await Promise.resolve();
     now = Math.max(now, start + 1);
-    return {links:snapshot, sampledAt:start * 1000 - offset + 500};
+    assert.deepEqual(attempts, offset === -5000 ? [3] : []);
+    return {links:snapshot, sampledAt:start * 1000 - offset + 500, sends};
   },
 });
 const initial = [{wire:{sctp:[reciprocal]}}, {wire:{sctp:[before]}}];
-const warning = [{index:1, channel:17, sentAt:47200}];
-const sender = sample(() => [before], -5000);
+const warning = [{index:1, channel:17, attempt:3}];
+const sender = sample(() => [before], -5000, {3:receipt});
 let now = 25;
 
 (async () => {
@@ -1470,6 +1983,24 @@ let now = 25;
   assert.equal(report.proofs[0].proof, 'clock-order');
 
   now = 25;
+  const growing = [...warning];
+  const secondReceipt = { ...receipt, attempt: 4 };
+  const requested = [];
+  const extraWarning = {
+    evaluate: async (_read, { attempts }) => {
+      requested.push(attempts);
+      if (requested.length === 1) growing.push({ index: 1, channel: 17, attempt: 4 });
+      return { links: [before], sampledAt: now * 1000 + 5000,
+        sends: Object.fromEntries(attempts.map(attempt => [attempt, attempt === 3 ? receipt : secondReceipt])) };
+    },
+  };
+  await waitForCloseProofs([sample(() => [reciprocal], 10000), extraWarning], initial, growing, report, {
+    clocks, clock, delay: async ms => { now = requested.length === 2 ? 5025 : now + ms; },
+  });
+  assert.deepEqual(requested, [[3], [3, 4]]);
+  assert.deepEqual(report.proofs.map(proof => [proof.attempt, proof.proof]), [[3, 'clock-order'], [4, 'clock-order']]);
+
+  now = 25;
   let attempts = 0;
   const ambiguous = sample(() => { attempts++; return [{...reciprocal, closedAt:30001}]; }, 10000);
   const expire = async () => { now = 5025; };
@@ -1480,12 +2011,17 @@ let now = 25;
   assert.equal(report.proofs[0].proof, null);
 
   now = 25;
+  await assert.rejects(waitForCloseProofs([sample(() => [reciprocal], 10000, {3:receipt}), sample(() => [before], -5000)],
+    initial, warning, report, { clocks, clock, delay: expire }), /WebKit close evidence deadline/);
+  assert.equal(report.proofs[0].sentAt, null, 'a receipt from another page cannot prove the send');
+
+  now = 25;
   const crashReport = {};
   const crashed = { evaluate: async () => { throw Error('Page crashed'); } };
   await assert.rejects(waitForCloseProofs([late, crashed], initial, warning, crashReport, { clocks, clock, delay: pause }),
     error => error instanceof AggregateError && error.errors[0].message.includes('peer 1') && error.errors[0].cause.message === 'Page crashed');
   assert.deepEqual(crashReport.snapshotErrors, [{index:1, reason:'Error: Page crashed'}]);
-  assert.deepEqual(crashReport.partialSnapshots, [{received_ms:26, links:[reciprocal]}, null]);
+  assert.deepEqual(crashReport.partialSnapshots, [{received_ms:26, links:[reciprocal], sends:{}}, null]);
   assert.deepEqual(crashReport.clockSamples, [{before:[], after:[{offsetMin:9459, offsetMax:10541}]}, {before:[], after:[]}]);
   assert.deepEqual(crashReport.proofs, []);
 
@@ -1496,14 +2032,14 @@ let now = 25;
   await assert.rejects(waitForCloseProofs([ambiguous, interrupted], initial, warning, interruptedReport, { clocks, clock, delay: pause }),
     /WebKit close snapshots failed/);
   assert.deepEqual(interruptedReport.partialSnapshots, [
-    {received_ms:52, links:[{...reciprocal, closedAt:30001}]}, {received_ms:26, links:[before]},
+    {received_ms:52, links:[{...reciprocal, closedAt:30001}], sends:{}}, {received_ms:26, links:[before], sends:{3:receipt}},
   ]);
   assert.equal(interruptedReport.proofs[0].proof, null);
 
-  const lateReply = sample(() => { now = 5025; return [reciprocal]; }, 10000);
+  const lateReply = sample(() => { now = 5025; return [before]; }, -5000);
   now = 25;
   const lateReport = {};
-  await assert.rejects(waitForCloseProofs([sender, lateReply], initial, warning, lateReport, { clocks, clock, delay: pause }),
+  await assert.rejects(waitForCloseProofs([late, lateReply], initial, warning, lateReport, { clocks, clock, delay: pause }),
     /WebKit close evidence deadline/);
   assert.deepEqual(lateReport.partialSnapshots, [null, null]);
   assert.deepEqual(lateReport.clockSamples.map(page => page.after), [[], []]);
@@ -1590,13 +2126,13 @@ async function collect(sentAt, sender, contradictory = false) {
   const report = {};
   const sampled = [[], []];
   const pages = [reciprocal, sender].map((link, index) => ({
-    evaluate: async (_read, sampleClock) => {
-      sampled[index].push(sampleClock);
+    evaluate: async (_read, { timed }) => {
+      sampled[index].push(timed);
       const offsets = [10000, contradictory && sampled[index].length === 1 ? 0 : -5000];
-      return {links:[link], sampledAt:now * 1000 - offsets[index]};
+      return {links:[link], sampledAt:now * 1000 - offsets[index], sends:index ? {3:{channel:17, attempt:3, sentAt}} : {}};
     },
   }));
-  const proof = waitForCloseProofs(pages, initial, [{index:1, channel:17, sentAt}], report, {
+  const proof = waitForCloseProofs(pages, initial, [{index:1, channel:17, attempt:3}], report, {
     clocks, clock: () => now, delay: async ms => { now = sampled[0].length === 5 ? 5025 : now + ms; },
   });
   return { report, proof, sampled };
@@ -1613,7 +2149,9 @@ async function collect(sentAt, sender, contradictory = false) {
   await assert.rejects(short.proof, /WebKit close evidence deadline .*peer 1 channel 17/);
   assert.equal(short.report.proofs[0].minimumGapUs, 1999);
   assert.deepEqual(short.sampled, [[true,true,true,true,false], [true,true,true,true,false]]);
-  assert.deepEqual(short.report.partialSnapshots, [{received_ms:125, links:[reciprocal]}, {received_ms:125, links:[before]}]);
+  assert.deepEqual(short.report.partialSnapshots, [
+    {received_ms:125, links:[reciprocal], sends:{}}, {received_ms:125, links:[before], sends:{3:{channel:17, attempt:3, sentAt:47081}}},
+  ]);
   assert.deepEqual(short.report.clockSamples, [
     {before:[], after:Array(4).fill({offsetMin:9959, offsetMax:10041})},
     {before:[], after:Array(4).fill({offsetMin:-5041, offsetMax:-4959})},

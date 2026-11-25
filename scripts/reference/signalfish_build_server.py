@@ -55,15 +55,15 @@ def cargo_home():
     return home
 
 
-def locked(target):
-    """Exclusive lock over a shared build tree.
+def locked(target, *, lock_name=None):
+    """Exclusive lock over a shared build directory.
 
     `cargo clean -p` removes artifacts from the whole target directory, so
     two sessions building at once would delete each other's work. The lock
     serializes them.
     """
     target.mkdir(parents=True, exist_ok=True)
-    lock = target.with_name(target.name + '.lock')
+    lock = target / lock_name if lock_name else target.with_name(target.name + '.lock')
     handle = lock.open('w')
     fcntl.flock(handle, fcntl.LOCK_EX)
     return handle

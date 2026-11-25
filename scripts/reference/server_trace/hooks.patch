@@ -1,0 +1,146 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -57,6 +57,8 @@
+ /// Per-session (per-room) records for the metrics surface.
+ pub mod session_records;
+
++mod relay_packet_trace;
++
+ /// Feature-gated delivery-contract trace capture for formal replay.
+ #[cfg(feature = "trace-validation")]
+ pub mod trace_validation;
+--- a/src/server/game_data.rs
++++ b/src/server/game_data.rs
+@@ -438,7 +438,7 @@
+         encoding: GameDataEncoding,
+         payload: Bytes,
+     ) {
+-        self.handle_game_data_binary_with_lifecycle(player_id, encoding, payload, None)
++        self.handle_game_data_binary_with_lifecycle(player_id, encoding, payload, None, None)
+             .await;
+     }
+
+@@ -448,12 +448,14 @@
+         encoding: GameDataEncoding,
+         payload: Bytes,
+         source_lifecycle: Arc<ClientLifecycle>,
++        receipt: Option<crate::relay_packet_trace::Boundary>,
+     ) {
+         self.handle_game_data_binary_with_lifecycle(
+             player_id,
+             encoding,
+             payload,
+             Some(source_lifecycle),
++            receipt,
+         )
+         .await;
+     }
+@@ -464,6 +466,7 @@
+         encoding: GameDataEncoding,
+         payload: Bytes,
+         source_lifecycle: Option<Arc<ClientLifecycle>>,
++        receipt: Option<crate::relay_packet_trace::Boundary>,
+     ) {
+         let source_lifecycle =
+             source_lifecycle.or_else(|| self.connection_manager.client_lifecycle(player_id));
+@@ -568,6 +571,9 @@
+                     &expected_room,
+                     source_ref.as_ref(),
+                 )?;
++                if let Some(receipt) = receipt {
++                    crate::relay_packet_trace::record(receipt, expected_room, *player_id, stamp.seq, stamp.epoch, &payload);
++                }
+                 Some(ServerMessage::GameDataBinary {
+                     from_player: *player_id,
+                     encoding,
+--- a/src/websocket/connection.rs
++++ b/src/websocket/connection.rs
+@@ -2277,6 +2277,8 @@
+         // Every inbound WebSocket frame — Text, Binary, Ping, Pong, Close —
+         // counts as received activity (it also resets the idle window).
+         let mut received_frames: u64 = 0;
++        let trace_packets = crate::relay_packet_trace::enabled();
++        let mut binary_ordinal = 0;
+
+         // Post-handshake idle timeout (0 = disabled). Wrapping each `receiver.next()`
+         // means ANY inbound frame — Text, Binary, Ping, Pong, Close — counts as
+@@ -3067,6 +3069,10 @@
+                     }
+                 }
+                 Message::Binary(payload) => {
++                    let receipt = trace_packets.then(|| {
++                        binary_ordinal += 1;
++                        crate::relay_packet_trace::Boundary::Ingress { socket_ordinal: binary_ordinal, received_at: received_at.into_std() }
++                    });
+                     let payload = if let Some(binding) = token_binding.as_ref() {
+                         match parse_binary_message(&payload, binding) {
+                             Ok(payload) => bytes::Bytes::from(payload),
+@@ -3140,6 +3146,7 @@
+                             encoding,
+                             payload,
+                             Arc::clone(&lifecycle_for_receive),
++                            receipt.filter(|_| encoding == GameDataEncoding::MessagePack),
+                         )
+                         .await;
+                     if !server_clone.config().app_id_allowlist_enabled && !authenticate_processed {
+--- a/src/websocket/sending.rs
++++ b/src/websocket/sending.rs
+@@ -801,7 +801,7 @@
+             encoding,
+             seq,
+             epoch,
+-            ..
++            payload,
+         } => {
+             match materialize_game_data_frame_limited(
+                 message,
+@@ -821,6 +821,10 @@
+                             "Failed to encode binary game data; attempting JSON fallback"
+                         );
+                     }
++                    let trace_write = recipient_supports_v3
++                        && *encoding == GameDataEncoding::MessagePack
++                        && matches!(&materialized.frame, Message::Binary(_))
++                        && crate::relay_packet_trace::enabled();
+                     send_materialized_frame(
+                         sender,
+                         materialized.frame,
+@@ -829,6 +833,12 @@
+                         &metrics,
+                     )
+                     .await?;
++                    if let (true, Some(metadata), Some(seq), Some(epoch)) = (trace_write, metadata, seq, epoch) {
++                        crate::relay_packet_trace::record(
++                            crate::relay_packet_trace::Boundary::Write { recipient: *player_id, written_at: std::time::Instant::now() },
++                            metadata.room_id, *from_player, *seq, *epoch, payload,
++                        );
++                    }
+                 }
+                 Err(GameDataMaterializationError::InvalidV3Stamp) => {
+                     tracing::error!(
+--- a/src/server/room_service_tests.rs
++++ b/src/server/room_service_tests.rs
+@@ -2857,6 +2857,7 @@
+                                 GameDataEncoding::MessagePack,
+                                 bytes::Bytes::from(vec![0u8; 900]),
+                                 lifecycle,
++                                None,
+                             )
+                             .await;
+                     }
+@@ -4396,6 +4397,7 @@
+             GameDataEncoding::MessagePack,
+             bytes::Bytes::from_static(b"old socket"),
+             old_lifecycle,
++            None,
+         )
+         .await;
+     let peer_messages = drain_queued_messages(&mut fixture.survivor_rx);
+@@ -4430,6 +4432,7 @@
+             GameDataEncoding::MessagePack,
+             bytes::Bytes::from_static(b"current socket"),
+             current_lifecycle,
++            None,
+         )
+         .await;
+     let peer_messages = drain_queued_messages(&mut fixture.survivor_rx);

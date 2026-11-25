@@ -196,9 +196,14 @@ from broadcasts. Test exact FIFO retry after native inbox pressure clears.
 Attribute each send at its call site. Unsent packets can remain after a failed
 batch. Check both orders of held and passing traffic when the socket closes.
 Bracket the hold with the first held input, matching control reply and
-observed prediction stall. Record controller dispatch, evaluation entry and
-release start, and compare durations within each clock. Report cumulative
-held packets, pending packets and released packets at the cap. A cap can
+observed prediction stall. Record controller dispatch, page entry and release
+start. Compare durations within each clock. When a delayed debugger evaluation
+consumes the hold budget, prepare one same-origin response per page before
+arming. Check every prepared socket before releasing the room. Bound page-side
+entry and each deferred batch using the controller's correction deadline.
+Keep a separate browser context per page while responses are pending.
+The pinned Chromium and WebKit controls admitted only six requests in one context.
+Report cumulative held, pending and released packets at the cap. A cap can
 occur during a partial drain. Retain these checkpoints if the evaluation
 never returns.
 Emit the history request and publication separately from controller receipt.
@@ -222,6 +227,25 @@ An inbox acceptance proves delivery to the native queue. A matching outgoing
 reply proves that the native protocol processed that report. Keep both marks on
 the recipient's clock, and leave the last timeout refresh open when other
 traffic could renew it.
+For exact relay joins, carry the v3 stamp through SDK emission and the relay
+FIFO. Key successful steps by room, sender, recipient, epoch and sequence.
+Use an absolute binary ordinal to match client send and server ingress on a
+single WebSocket, and verify the addressed bytes at each join. Repeated
+bytes can earn distinct stamps. Link an echoed quality token to all retained
+accepted candidates when their bytes match. Partition retention by directed
+link, stage and packet family so unrelated traffic cannot evict the quiet
+link. Report omitted records and preserve ambiguous stages. Capture the
+exact accepted stamps before a pressure control, then require those same
+stamps after it. Count healthy traffic separately at the browser and server.
+Publish large server receipts on request. Keep one request outstanding
+until its matching generation arrives, including after a controller timeout.
+Prove ordering between clocks by holding the original socket's FIFO until
+both exact raw stamps arrive and the controller reads their successful writes.
+Freeze the native acceptance receipt in the same page turn as the check.
+Reuse digests within a freeze only for byte-equal copies of the same stamp.
+Keep every occurrence and hash conflicting variants separately.
+Transfer complete large receipts as one JSON string through Playwright.
+Compare the decoded receipt with the original fixture, including exact stamps.
 Export the requested confirmed prefix once per browser. Keep recurring status
 snapshots small. When a page can publish data before its evaluation reply
 arrives, arm a page-scoped listener before dispatch. Match the request ID and
@@ -241,6 +265,8 @@ read must never append a late sample or start another read.
 Keep both clock bounds and their samples for passing and failing rooms.
 An interval spanning the minimum gap leaves it ambiguous. An upper bound below
 the threshold proves that the observed send fell short of the required gap.
+Use a bounded exact attempt receipt if constructing the stack tag precedes the
+native send. Collect new diagnostics in the next bounded snapshot round.
 Combine consecutive observations on each page before returning to the controller.
 Keep the cross-page barriers that require every endpoint to pause before the close
 and every required link to close before release.
