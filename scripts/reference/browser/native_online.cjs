@@ -25,8 +25,9 @@ const HISTORY_CHECKPOINT = 'fortress native history ';
 const POST_RELEASE_MARKS = new Set(['release_entered', 'correction', 'history_requested', 'history_published']);
 const FRONTIER_MARKS = new Set(['corrected_frontier', 'corrected_advance']);
 const LIFETIME_MARKS = new Set(['native_expiry', 'sdk_departure']);
-const HOLD_MARKS = new Set(['hold_armed', 'hold_first_input', 'hold_first_control', 'hold_first_prediction', 'hold_ready', 'hold_cap',
+const HOLD_MARKS = new Set(['hold_armed', 'hold_first_input', 'hold_first_control', 'hold_first_prediction', 'hold_ready', 'hold_cap', 'hold_waiting', 'hold_terminal',
   'release_started', 'release_progress', 'release_completed', 'release_socket_closed', 'release_control_socket_closed']);
+const HOLD_CONDITIONS = ['stall', 'prediction', 'frontier', 'held_input', 'quality_reply'];
 
 function createWarmupBarrier(players, clock = () => performance.now()) {
   const latest = Array(players).fill(null);
@@ -123,7 +124,8 @@ function instrumentPostRelease(prefix, minimumFrames) {
     const { state, turns, frame, confirmed, restores } = window.fortressNative;
     console.debug(prefix + JSON.stringify({ kind, page_ms: hold?.at_ms ?? performance.now(), state, turns, frame, confirmed, restores, frames,
       held: hold?.held, bytes: hold?.bytes, queued: hold?.queued, released: hold?.released,
-      socket_state: hold?.socket_state, socket_stage: hold?.socket_stage, held_send: hold?.held_send }));
+      socket_state: hold?.socket_state, socket_stage: hold?.socket_stage, held_send: hold?.held_send,
+      pending: hold?.pending, control_round_trips: hold?.control_round_trips, buffered_bytes: hold?.buffered_bytes, traffic: hold?.traffic }));
   }
   function observe(state, turns, frame, confirmed, restores, historyLimit) {
     if (baseline === undefined || restores <= baseline) return;
@@ -198,7 +200,7 @@ function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTa
   if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
   try {
     const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes, queued, released, emitted_ms, endpoint, uuid,
-      expiry, socket_state, socket_stage, held_send } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
+      expiry, socket_state, socket_stage, held_send, pending, control_round_trips, buffered_bytes, traffic } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
     if (LIFETIME_MARKS.has(kind)) {
       if (!Number.isFinite(page_ms) || page_ms < 0 || !Number.isSafeInteger(endpoint) || endpoint < 1
         || endpoint > INPUTS.length || typeof uuid !== 'string' || !FROZEN_UUID.test(uuid)) throw new Error('invalid room departure sample');
@@ -237,6 +239,23 @@ function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTa
       receipt.bytes = bytes;
       receipt.queued = queued;
       receipt.released = released;
+      if (kind === 'hold_waiting' || kind === 'hold_terminal') {
+        const remote = new Set(roster?.filter(uuid => uuid !== local).map(uuid => uuid.replaceAll('-', '')));
+        if ((kind === 'hold_terminal') !== (state === 'failed') || !Array.isArray(pending)
+          || new Set(pending).size !== pending.length || !pending.every(value => HOLD_CONDITIONS.includes(value))
+          || ![control_round_trips, buffered_bytes].every(value => Number.isSafeInteger(value) && value >= 0)
+          || !Array.isArray(traffic) || traffic.length > remote.size * 4 || !traffic.every(sample =>
+            sample && remote.has(sample.peer) && ['send', 'receive'].includes(sample.direction) && [4, 5].includes(sample.kind)
+            && typeof sample.token === 'string' && /^[0-9a-f]{32}$/.test(sample.token)
+            && Number.isFinite(sample.at_ms) && sample.at_ms >= 0 && sample.at_ms <= page_ms)
+          || new Set(traffic.map(({ direction, peer, kind }) => `${direction}/${peer}/${kind}`)).size !== traffic.length)
+          throw new Error('invalid relay hold readiness sample');
+        Object.assign(receipt, { pending, control_round_trips, buffered_bytes, traffic });
+        if (kind === 'hold_waiting') {
+          if (!peer.hold_waiting || page_ms >= peer.hold_waiting.page_ms) peer.hold_waiting = receipt;
+          return;
+        }
+      }
       if (kind === 'release_socket_closed' || kind === 'release_control_socket_closed') {
         if (![0, 2, 3].includes(socket_state) || !['before_send', 'during_send'].includes(socket_stage) || held_send !== (kind === 'release_socket_closed'))
           throw new Error('invalid relay release socket sample');
@@ -365,6 +384,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     queuedKinds: { Offer: 0, IceCandidate: 0 }, receivedKinds: { Offer: 0, IceCandidate: 0 } };
   const qualityEvents = { send: [], receive: [] };
   const qualityEventCounts = { send: 0, receive: 0 };
+  const lastRelayQuality = new Map();
   const qualityEventLimit = 256;
   let qualityEventCount = 0;
   let bufferedBytesPeak = 0;
@@ -378,7 +398,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   const channelReports = new Map();
   const socketReports = new WeakMap();
   const warmupLinks = new Map();
-  let warmupRoster = [];
+  let roomRoster = [];
   const warmupTicks = [];
   let warmupTickCount = 0;
   let warmupStarted = null;
@@ -526,7 +546,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     if (token === null) return;
     // A delayed burst of incoming traffic must leave the outgoing reports available for correlation.
     const index = qualityEventCounts[direction]++ % qualityEventLimit;
-    qualityEvents[direction][index] = { sequence: qualityEventCount++, direction, peer, kind, token, at_ms: performance.now() };
+    const event = { sequence: qualityEventCount++, direction, peer, kind, token, at_ms: performance.now() };
+    qualityEvents[direction][index] = event;
+    if (peer !== localUuid && roomRoster.includes(peer)) lastRelayQuality.set(`${direction}/${peer}/${kind}`, event);
   }
   const increment = (counts, uuid) => counts.set(uuid, (counts.get(uuid) ?? 0) + 1);
   const ufrag = description => description?.sdp.match(/^a=ice-ufrag:([\w+/]+)\r?$/m)?.[1];
@@ -711,9 +733,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       if (session || !/^[0-9a-f]{32}$/.test(hash)) throw new Error('invalid native room session');
       localUuid = uuid.replaceAll('-', '');
       session = hash.match(/../g).map(value => parseInt(value, 16));
+      roomRoster = roster.slice(0, 8).map(member => member.replaceAll('-', ''));
       if (warmupPrefix) {
-        warmupRoster = roster.slice(0, 8).map(member => member.replaceAll('-', ''));
-        for (const sender of warmupRoster) {
+        for (const sender of roomRoster) {
           if (sender !== localUuid) warmupLinks.set(sender, {
             packets: new Map(), evicted: 0, unretained: { sdk: 0, native: 0 }, discardedThroughToken: '', last_replied_report: null,
           });
@@ -734,7 +756,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     finishWarmup(state, frame, confirmed, terminalEndpoint = 0) {
       if (warmupLinks.size && !warmupCutoff) {
         warmupCutoff = { at_ms: performance.now(), reason: state === 'failed' ? 'failed' : 'gate', state, frame, confirmed };
-        const uuid = warmupRoster[terminalEndpoint - 1];
+        const uuid = roomRoster[terminalEndpoint - 1];
         if (state === 'failed' && warmupLinks.has(uuid)) {
           warmupCutoff.terminal_endpoint = terminalEndpoint;
           warmupCutoff.terminal_uuid = uuid;
@@ -811,6 +833,11 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       return hold.ready ??= holdMark();
     },
     holdProgress: holdMark,
+    holdObservation() {
+      return { ...holdMark(), control_round_trips: controlRoundTrips.relay,
+        buffered_bytes: resources.sockets.reduce((total, socket) => total + socket.bufferedAmount, 0),
+        traffic: Array.from(lastRelayQuality.values(), ({ sequence, ...event }) => event) };
+    },
     status() {
       const holdMs = hold.armed === null ? null : Math.round((hold.release?.at_ms ?? performance.now()) - hold.armed.at_ms);
       const sctp = resources.rtc.filter(({channel}) => channel.id === 3).map(record => {
@@ -1013,10 +1040,28 @@ function armAndWaitForInput(page, route) {
     const armed = { frame, stalls, confirmed, hold: wire.arm() };
     window.fortressNativePostRelease?.mark('hold_armed', undefined, armed.hold);
     let sawPrediction = false;
+    let lastObservation = -Infinity;
     while (true) {
       const state = window.fortressNative;
-      if (state.state === 'failed') throw new Error(state.message);
-      if (state.state === 'playing' && state.stalls > stalls && state.prediction >= gate && state.frame > gate && state.confirmed < state.frame - 1) {
+      const terminal = state.state === 'failed';
+      const stalled = state.stalls > stalls;
+      const predicted = state.prediction >= gate;
+      const behind = state.frame > gate && state.confirmed < state.frame - 1;
+      const trace = window.fortressNativePostRelease;
+      if (trace && (terminal || performance.now() >= lastObservation + 1000)) {
+        const sample = wire.holdObservation();
+        lastObservation = sample.at_ms;
+        sample.pending = [
+          stalled ? null : 'stall',
+          predicted ? null : 'prediction',
+          behind ? null : 'frontier',
+          sample.held.relay > 0 ? null : 'held_input',
+          sample.control_round_trips > 0 ? null : 'quality_reply',
+        ].filter(Boolean);
+        trace.mark(terminal ? 'hold_terminal' : 'hold_waiting', undefined, sample);
+      }
+      if (terminal) throw new Error(state.message);
+      if (state.state === 'playing' && stalled && predicted && behind) {
         if (!sawPrediction) {
           sawPrediction = true;
           window.fortressNativePostRelease?.mark('hold_first_prediction', undefined, wire.holdProgress());

@@ -559,7 +559,8 @@ for (const expiry of [false, true]) {
   const socket = new window.WebSocket();
   socket.send('authenticate');
   assert.deepEqual(socket.written.splice(0), ['authenticate']);
-  wire.bind('00'.repeat(16), local);
+  const roster = [1, 2, 3, 4].map(value => ('0' + value).repeat(16));
+  wire.bind('00'.repeat(16), local, roster);
   const otherSocket = new window.WebSocket();
   channel.send(packet(4, 1));
   seen.length = 0;
@@ -626,6 +627,10 @@ for (const expiry of [false, true]) {
     assert.equal(wrappedBoth.events.map(event => event.direction).join(','), [
       ...Array(256).fill('receive'), ...Array(256).fill('send'),
     ].join(','));
+    const observed = wire.holdObservation().traffic;
+    const quietLink = observed.find(event => event.peer === roster[2] && event.direction === 'receive' && event.kind === 5);
+    assert.equal(quietLink?.token.slice(-2), '02', 'a busy link must not erase the last quiet-link packet');
+    assert.equal(observed.length, 5);
     assert.equal(wrappedBoth.events.slice(256).map(event => parseInt(event.token.slice(-2), 16)).join(), Array.from({length: 256}, (_, i) => i).join());
 
     // A slow eight-player relay can echo an earlier report after many more are sent.
@@ -934,6 +939,7 @@ global.window = {
   fortressNativeWire: {
     arm: () => ({ at_ms: now, held: { mesh: 0, relay: 0 }, bytes: 0, queued: 0, released: 0 }),
     holdProgress: () => ({ at_ms: now, held: { mesh: 0, relay: 10 }, bytes: 880, queued: 10, released: 0 }),
+    holdObservation: () => ({ ...window.fortressNativeWire.holdProgress(), control_round_trips: 0, buffered_bytes: 0, traffic: [] }),
     recordHoldReadiness: () => window.fortressNative.stalls >= 3 ? window.fortressNativeWire.holdProgress() : null,
     status: () => { now += 2; return {}; },
     release: async () => { now++; window.fortressNativeWire.holdProgress = () => ({
@@ -1185,6 +1191,7 @@ function makePage() {
     fortressNativeWire: {
       arm() { state.stalls++; return hold(); },
       holdProgress: hold, recordHoldReadiness: hold, status: () => ({}),
+      holdObservation: () => ({ ...hold(), control_round_trips: 1, buffered_bytes: 0, traffic: [] }),
       async release() {
         Object.assign(state, { frame: 40, confirmed: 40, turns: 21, restores: 3 });
         mark('corrected_frontier', { frames: 40, emitted_ms: now + 1 });
@@ -1321,6 +1328,62 @@ assert.ok(!receivedClose(1, 5, [same], [[], [{...same, closeAborts:2, closed:tru
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
+
+    # Value: protects=last known readiness conditions; fails_when=the terminal page read replaces pre-expiry evidence; seam=page and controller checkpoints
+    def test_native_relay_hold_retains_pending_conditions_before_terminal_read(self):
+        script = r"""
+const assert = require('node:assert/strict');
+const { armAndWaitForInput, instrumentPostRelease, postReleaseCheckpoint } = require(process.argv[1]);
+const roster = ['00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002'];
+const peer = {};
+const turns = [];
+let now = 0, held = 0;
+const state = { state: 'playing', turns: 4, frame: 24, confirmed: 16, stalls: 0, prediction: 0, restores: 0 };
+const traffic = [{ direction: 'send', peer: roster[1].replaceAll('-', ''), kind: 4, token: '01'.repeat(16), at_ms: 1000 }];
+function queue() { return { at_ms: now, held: { mesh: 0, relay: held }, bytes: 86 * held, queued: held, released: 0 }; }
+global.performance = { now: () => now };
+global.requestAnimationFrame = callback => turns.push(callback);
+global.window = {
+  fortressNative: state,
+  fortressNativeWire: {
+    arm: queue,
+    holdProgress: queue,
+    holdObservation: () => ({ ...queue(), control_round_trips: 0, buffered_bytes: 420, traffic: now >= 1000 ? traffic : [] }),
+    recordHoldReadiness: () => null,
+  },
+};
+console.debug = text => postReleaseCheckpoint(peer, text, { controller_ms: now + 100 }, roster, roster[0]);
+instrumentPostRelease('fortress native post-release ', 40);
+const page = { async evaluate(callback, argument) { return callback(argument); } };
+async function tick(at) {
+  now = at;
+  turns.shift()();
+  await Promise.resolve();
+}
+(async () => {
+  const result = assert.rejects(armAndWaitForInput(page, 'relay'), /native disconnected/);
+  assert.deepEqual(peer.hold_waiting?.pending, ['stall', 'prediction', 'held_input', 'quality_reply']);
+  for (let n = 1; n < 1000; n += 101) await tick(n);
+  assert.equal(peer.hold_waiting?.page_ms, 0);
+  now = 1000;
+  held = 13;
+  Object.assign(state, { stalls: 1, prediction: 12 });
+  await tick(1000);
+  assert.equal(peer.hold_waiting?.controller_ms, 1100);
+  assert.deepEqual(peer.hold_waiting?.pending, ['quality_reply']);
+  assert.deepEqual(peer.hold_waiting?.traffic, traffic);
+  now = 1001;
+  Object.assign(state, { state: 'failed', message: 'native disconnected' });
+  await tick(1001);
+  await result;
+  assert.equal(peer.hold_waiting?.page_ms, 1000);
+  assert.equal(peer.hold_terminal?.page_ms, 1001);
+  assert.equal(peer.hold_terminal?.held.relay, 13);
+  assert.equal(peer.hold_terminal?.buffered_bytes, 420);
+  assert.equal(turns.length, 0);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
     def test_native_webkit_close_receipt_names_the_ambiguous_link(self):
         # Value: protects=failed causal attribution; fails_when=actual reciprocal channel or clock gap is lost; seam=browser receipt validator
