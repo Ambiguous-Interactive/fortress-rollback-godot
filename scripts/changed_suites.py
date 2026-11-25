@@ -49,7 +49,7 @@ def independent_tool(path: str) -> bool:
             or p.suffix == ".rs" and path.startswith("scripts/oracle/rust/")
             or p.suffix == ".cjs" and path.startswith("scripts/reference/browser/")
             or p.parent.as_posix() == "scripts/reference" and (p.name in REFERENCE_TOOLS or p.name.startswith("test_") and p.suffix == ".py")
-            or path == "scripts/package_addon.py")
+            or path in ("scripts/package_addon.py", "scripts/oracle/fixtures/p2p-schedules.json.gz"))
 
 
 def git(root: Path, *args: str) -> str:

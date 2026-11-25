@@ -166,6 +166,11 @@ clock marks and controller receipt times on their own clocks.
 Publish the arm, first readiness and first cap hit while the page runs. Keep
 packet and byte counts with each checkpoint so a failed final read keeps its
 earlier evidence.
+Publish readiness changes immediately. Retain the last waiting sample and
+the terminal sample separately. Keep one recent report and reply per link
+and direction so a busy link cannot evict a quiet link's observation.
+Periodic samples describe traffic at the sampled time. Use native inbox
+receipts to establish acceptance before expiry.
 Name the native expiry endpoint in the warmup cutoff while the frozen roster
 is available. Match its UUID to retained quality traffic and service samples.
 Check roster uniqueness before accepting an endpoint-to-UUID receipt.

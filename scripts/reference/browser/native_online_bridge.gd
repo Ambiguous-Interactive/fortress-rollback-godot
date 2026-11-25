@@ -412,14 +412,13 @@ func _command(value: Dictionary) -> void:
 			uuid = lobby.game_match.membership.local_uuid()
 			session_id = lobby.game_match.membership.handshake_message().session_id.hex_encode()
 			room_id = lobby.client.call("get_room_id")
-			var roster: PackedStringArray = []
+			var roster: PackedStringArray = lobby.game_match.membership.roster()
 			if warmup_match != null:
-				roster = lobby.game_match.membership.roster()
 				warmup_match.warmup_session = session_id.hex_decode()
 				warmup_match.warmup_recipient = uuid.replace("-", "").hex_decode()
 			JavaScriptBridge.eval("window.fortressNativeWire.bind(...%s)" % JSON.stringify([session_id, uuid, roster]))
 			if lobby.relay_trace != null:
-				JavaScriptBridge.eval("window.fortressNativePostRelease.bindDeparture(...%s)" % JSON.stringify([uuid, lobby.game_match.membership.roster()]))
+				JavaScriptBridge.eval("window.fortressNativePostRelease.bindDeparture(...%s)" % JSON.stringify([uuid, roster]))
 		"block_startup":
 			blocked_uuid = str(value.uuid)
 			lobby.client.connect("session_plan", _close_link, CONNECT_ONE_SHOT)

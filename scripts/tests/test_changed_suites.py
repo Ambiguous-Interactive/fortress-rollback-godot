@@ -77,6 +77,22 @@ class SelectTests(unittest.TestCase):
                 self.assertIn("res://tests/unit/test_online_example.gd", affected["suites"])
                 self.assertNotIn("res://tests/unit/test_input_queue.gd", affected["suites"])
 
+    # Value: protects=host-only hint refreshes; fails_when=an archive forces all suites or masks gameplay; why_new=binary fixtures lack coverage; seam=none
+    def test_p2p_hint_archive_does_not_expand_unit_selection(self):
+        suites = discover("unit", ROOT)
+        gameplay = "addons/fortress_rollback/transport/signalfish_webrtc_connection.gd"
+        affected = selection(suites, [gameplay], ROOT)
+        hints = "scripts/oracle/fixtures/p2p-schedules.json.gz"
+        unknown = "scripts/oracle/fixtures/another-schedule.json.gz"
+        for changes, expected in (
+            ([hints], ("verified_independent_tooling", [])),
+            ([gameplay, hints], (affected["reason"], affected["suites"])),
+            ([hints, unknown], ("unknown_input", suites)),
+        ):
+            with self.subTest(changes=changes):
+                receipt = selection(suites, changes, ROOT)
+                self.assertEqual((receipt["reason"], receipt["suites"]), expected, receipt.get("path"))
+
     # Value: protects=Markdown data consumers; fails_when=changes are skipped or run all; why_new=no file-lifecycle cases for docs; seam=none
     def test_document_selection_keeps_consumers_on_add_delete_and_rename(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.dict("os.environ", fixture_environment(), clear=True):
