@@ -14,6 +14,12 @@ ran 4 tests. Both reported `OK`. The pinned server's
 `cargo test --offline --locked --no-default-features --lib relay_packet_trace::tests`
 reported `2 passed; 0 failed`.
 
+On Godot 4.7.2, the ordinary Firefox trace first completed gameplay and
+then exceeded the receipt deadline. A paired Firefox 157 benchmark over
+7,504 observations reported 15,008 versus 7,504 digest calls and median
+freeze times of 183 ms and 120 ms. The optimized real room printed
+`relay:8 passed`, collected all eight receipts, and matched 40 frames.
+
 The [browser integration guide](../skills/testing/references/browser-integration.md)
 now specifies the binding, pending request, and retention rules. It replaces
 the generic hold rule with an exact FIFO and stamp check. Historical failure

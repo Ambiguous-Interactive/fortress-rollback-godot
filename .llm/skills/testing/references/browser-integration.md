@@ -242,6 +242,8 @@ until its matching generation arrives, including after a controller timeout.
 Prove ordering between clocks by holding the original socket's FIFO until
 both exact raw stamps arrive and the controller reads their successful writes.
 Freeze the native acceptance receipt in the same page turn as the check.
+Reuse digests within a freeze only for byte-equal copies of the same stamp.
+Keep every occurrence and hash conflicting variants separately.
 Export the requested confirmed prefix once per browser. Keep recurring status
 snapshots small. When a page can publish data before its evaluation reply
 arrives, arm a page-scoped listener before dispatch. Match the request ID and
