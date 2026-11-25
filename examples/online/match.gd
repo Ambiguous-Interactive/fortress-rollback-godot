@@ -204,6 +204,8 @@ func _start_native_transport(client: Object, mesh: Object, sdk_config: Object, i
 		return ERR_UNAVAILABLE
 	var relay_options: Relay.Options = Relay.Options.new()
 	relay_options.max_packet_bytes = NATIVE_PACKET_BYTES
+	# The native tick services relay both before and after consuming the inbox.
+	relay_options.max_receives_per_poll = 64
 	if relay.configure_packet_receiver(client, sdk_config, info, membership, adapter, _receive_native, relay_options) != Relay.Code.OK:
 		return ERR_UNAVAILABLE
 	_native_relay_only = route != "mesh"

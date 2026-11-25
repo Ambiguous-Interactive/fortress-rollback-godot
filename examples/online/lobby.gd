@@ -255,7 +255,7 @@ func _tick(now_us: int, buttons: int) -> void:
 		_finish_cleanup()
 		return
 	var revision: int = _connection_revision
-	client.call("poll")
+	_poll_client()
 	if revision != _connection_revision or state == "failed":
 		return
 	mesh.call("poll")
@@ -301,6 +301,23 @@ func _tick(now_us: int, buttons: int) -> void:
 		if not game_match.failure.is_empty():
 			_fail(game_match.failure)
 		_finish_cleanup()
+
+
+func _poll_client() -> int:
+	if backend != "native" or state != "playing":
+		client.call("poll")
+		return -1
+	var capacity: int = game_match.relay.receive_capacity()
+	if capacity == 0:
+		return 0
+	# Every frame in the SDK batch could be addressed to this client.
+	var transport: RefCounted = client.get("transport")
+	var budget: int = transport.get("max_packets_per_poll")
+	var applied: int = mini(budget, capacity)
+	transport.set("max_packets_per_poll", applied)
+	client.call("poll")
+	transport.set("max_packets_per_poll", budget)
+	return applied
 
 
 func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:

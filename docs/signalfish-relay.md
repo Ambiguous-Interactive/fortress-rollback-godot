@@ -79,6 +79,9 @@ func service_network(now_us: int) -> void:
 multi-round handshakes. A single-round handshake may omit that callback.
 Applications continue to poll/step the peer through its documented API.
 Run relay service between SDK polls so receive queues can drain.
+`receive_capacity()` reports how many maximum-sized envelopes the queue can
+admit. The native online example uses that capacity to cap each SDK poll and
+leaves excess frames in the SDK's FIFO until relay service frees space.
 
 `enqueue_batch` accepts every packet or none. It validates packet count before
 scanning identities, checks bytes and destinations before queueing, and copies
@@ -117,7 +120,9 @@ validated before the payload enters a queue. The existing peer decoder then
 checks protocol sender, session, connection and handshake agreement.
 
 `status()` exposes pending/received packet and byte counts, `last_receive_code`,
-rejected packets and ignored broadcasts. `poll()` returns `code`, `sent`,
+rejected packets and ignored broadcasts. After the first overflow and before
+detach, `receive_overflow` records the occupancy, limits and refused size.
+`poll()` returns `code`, `sent`,
 `received` and the underlying `peer_code` for a peer refusal.
 
 Invalid envelopes and unrelated broadcasts do not enter receive queues.

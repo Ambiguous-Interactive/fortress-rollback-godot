@@ -40,7 +40,7 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.finish()
 
 
-func _build(context: RefCounted) -> Dictionary:
+func _build(context: RefCounted, max_received_bytes: int = 1048576) -> Dictionary:
 	var fixture: RefCounted = Fixtures.new()
 	var membership: Membership = fixture._membership(context, U, PackedStringArray([U, V]))
 	var peer: Peer = fixture._peer(context, membership)
@@ -59,6 +59,7 @@ func _build(context: RefCounted) -> Dictionary:
 	options.max_packet_bytes = 512
 	options.max_pending_packets = 2
 	options.max_received_packets = 2
+	options.max_received_bytes = max_received_bytes
 	options.max_sends_per_poll = 1
 	options.max_receives_per_poll = 1
 	options.max_socket_buffered_bytes = 1024
@@ -220,8 +221,30 @@ func _overflow(context: RefCounted) -> void:
 		fixture.client.game_data_binary_received.emit(V, 1, envelope)
 	context.equal(fixture.relay.status().code, Relay.Code.RECEIVE_OVERFLOW, "receive overflow fails closed")
 	context.equal(fixture.relay.status().received_packets, 2, "bounded receive occupancy")
+	context.equal(
+		fixture.relay.status().get("receive_overflow"),
+		{"packets": 2, "bytes": envelope.size() * 2, "packet_limit": 2, "byte_limit": 1048576, "refused_bytes": envelope.size()},
+		"the first refusal identifies the exact packet and byte pressure"
+	)
 	context.equal(fixture.relay.poll(0).code, Relay.Code.RECEIVE_OVERFLOW, "cannot silently repair overflow")
 	context.equal(fixture.client.sent.size(), 0, "overflow cannot publish new sends")
+	fixture.relay.detach()
+	context.equal(fixture.relay.status().get("receive_overflow"), {}, "detach releases the old receipt")
+	_destroy(fixture)
+
+	fixture = _build(context, 569)
+	session = fixture.membership.handshake_message().session_id
+	var payload: PackedByteArray = PackedByteArray()
+	payload.resize(512)
+	envelope = Envelope.encode(session, V, U, payload)
+	context.equal(fixture.relay.receive_capacity(), 1, "byte room can be smaller than packet room")
+	fixture.client.game_data_binary_received.emit(V, 1, envelope)
+	context.equal(fixture.relay.receive_capacity(), 0, "the full byte budget admits no more SDK frames")
+	fixture.client.game_data_binary_received.emit(V, 1, envelope)
+	var receipt: Dictionary = fixture.relay.status().receive_overflow
+	context.equal(receipt, {"packets": 1, "bytes": 569, "packet_limit": 2, "byte_limit": 569, "refused_bytes": 569}, "byte pressure is distinguishable")
+	receipt.clear()
+	context.equal(fixture.relay.status().receive_overflow.packets, 1, "status owns the returned overflow receipt")
 	_destroy(fixture)
 
 
@@ -272,6 +295,7 @@ class Client:
 class Transport:
 	extends RefCounted
 	var buffered: int = 0
+	var max_packets_per_poll: int = 256
 	var on_buffered: Callable = Callable()
 
 	func get_buffered_amount() -> int:
