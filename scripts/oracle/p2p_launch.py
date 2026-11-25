@@ -129,18 +129,20 @@ def case_names():
     return list(case_builders(None))
 
 
+# Lane 2 also runs the lifecycle corpus. The measured wrap cases leave room
+# beside replay in lane 3 and the shorter launchers in lane 4.
+WRAP_PARTITIONS = (
+    ('mesh_8_wrap_flood', 'mesh_3_wrap_flood_delays_2_1_0', 'mesh_4_wrap_flood_couch_3x1'),
+    ('mesh_7_wrap_flood', 'mesh_2_wrap_flood'),
+    ('mesh_6_wrap_flood', 'mesh_4_wrap_flood_width_32', 'mesh_4_wrap_flood', 'mesh_4_wrap_flood_delays_2_0',
+     'mesh_3_wrap_flood', 'mesh_4_wrap_flood_capacity_9'),
+    ('mesh_5_wrap_flood', 'mesh_8_wrap_flood_32', 'mesh_4_wrap_flood_window_8', 'mesh_4_wrap_flood_width_1',
+     'mesh_4_wrap_flood_split_2x1x1', 'mesh_4_wrap_flood_couch_2x2'),
+)
+
+
 def wrap_partition(part):
-    if part is None:
-        return p2p_wrap.NAMES
-    # The hosted 2..8-peer floods took 6..102 seconds. Fixture bytes track their operation counts.
-    lanes = [[] for _ in range(4)]
-    loads = [0] * len(lanes)
-    sizes = {name: (FIXTURES / (name + '.json')).stat().st_size for name in p2p_wrap.NAMES}
-    for name in sorted(sizes, key=lambda name: (-sizes[name], name)):
-        lane = min(range(len(lanes)), key=loads.__getitem__)
-        lanes[lane].append(name)
-        loads[lane] += sizes[name]
-    return lanes[part - 1]
+    return p2p_wrap.NAMES if part is None else WRAP_PARTITIONS[part - 1]
 
 
 def corpus(binary, selected=None, wrap_only=False, wrap_part=None, *, group=None, hints=None):
