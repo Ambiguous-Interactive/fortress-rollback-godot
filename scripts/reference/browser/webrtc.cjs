@@ -9,46 +9,65 @@ const { placeFirefox } = require('./webrtc_display.cjs');
 const FIREFOX_PREFS = { 'webgl.force-enabled': true, 'webgl.disabled': false, 'toolkit.shutdown.fastShutdownStage': 0 };
 
 async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly = false) {
-  await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
+  const ready = await boundedRoom(() => Promise.all(pages.map(async page => {
+    const pageMs = await page.evaluate(async () => {
+      while (document.body.dataset.fortressDropReady !== 'true') await new Promise(resolve => requestAnimationFrame(resolve));
+      return performance.now();
+    });
+    if (!Number.isFinite(pageMs) || pageMs < 0) throw new Error('invalid physical departure readiness clock');
+    return { pageMs, receivedAt: now() };
+  })), 30000, 'physical departure readiness');
   const deadline = now() + 3000;
+  // The page sampled before the controller received its reply, so this cutoff can only be earlier.
+  const pageDeadlines = ready.map(({ pageMs, receivedAt }) => Math.floor(pageMs) + Math.floor(deadline - receivedAt));
   let active = true;
-  const remaining = () => {
+  const checkDeadline = () => {
     if (!active || now() >= deadline) throw new Error('physical departure phase deadline');
-    return Math.ceil(deadline - now());
+  };
+  const evaluateBeforeDeadline = async (index, operation, argument) => {
+    checkDeadline();
+    return pages[index].evaluate(operation, { cutoff: pageDeadlines[index], ...argument });
   };
   try {
     await boundedRoom(async () => {
-      await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropArm = true; })));
-      remaining();
-      await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropPaused === 'true', null, { timeout: remaining() })));
-      remaining();
-      const held = await Promise.all(pages.map(page => page.evaluate(() => ({
-        frame: Number(document.body.dataset.fortressFrame), released: window.fortressDropGo === true,
-        paused: document.body.dataset.fortressDropPaused === 'true',
-      }))));
-      remaining();
-      if (held.some(value => value.frame !== 6 || value.released || !value.paused))
-        throw new Error('peer-drop endpoint advanced before physical departure');
-      const closing = relayOnly ? pages : [pages[2]];
-      await Promise.all(closing.map(page => page.evaluate(frames => {
-        const resources = window.fortressResources;
-        window.fortressRtc.departure = { frame: Number(document.body.dataset.fortressFrame), survivor_frames: frames,
-          connections_created: resources.connections.length, channels_created: resources.channels.length };
-        for (const connection of resources.connections) connection.close();
-      }, held.slice(0, 2).map(value => value.frame))));
-      remaining();
-      await Promise.all(closing.map(page => page.waitForFunction(() => window.fortressResources.channels.every(channel => channel.readyState === 'closed')
-        && window.fortressResources.connections.every(connection => connection.connectionState === 'closed'), null, { timeout: remaining() })));
-      remaining();
-      await Promise.all(closing.map(page => page.evaluate(() => {
-        const resources = window.fortressResources;
-        window.fortressRtc.departure.connections_closed = resources.connections.filter(connection => connection.connectionState === 'closed').length;
-        window.fortressRtc.departure.channels_closed = resources.channels.filter(channel => channel.readyState === 'closed').length;
+      const held = await Promise.all(pages.map((_, index) => evaluateBeforeDeadline(index, async ({ cutoff }) => {
+        if (performance.now() >= cutoff) throw new Error('physical departure arm deadline');
+        window.fortressDropArm = true;
+        while (document.body.dataset.fortressDropPaused !== 'true' && performance.now() < cutoff)
+          await new Promise(resolve => requestAnimationFrame(resolve));
+        if (performance.now() >= cutoff) throw new Error('physical departure pause deadline');
+        return { frame: Number(document.body.dataset.fortressFrame), released: window.fortressDropGo === true };
       })));
-      remaining();
-      await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
-      remaining();
-    }, 3000, 'physical departure');
+      checkDeadline();
+      if (held.some(value => value?.frame !== 6 || value.released !== false))
+        throw new Error('peer-drop endpoint advanced before physical departure');
+      const frames = held.slice(0, 2).map(value => value.frame);
+      const closes = index => relayOnly || index === 2;
+      const closed = await Promise.all(pages.map((_, index) => closes(index) ? evaluateBeforeDeadline(index, async ({ cutoff, frames }) => {
+        if (performance.now() >= cutoff) throw new Error('physical departure close deadline');
+        const { connections, channels } = window.fortressResources;
+        const departure = { frame: Number(document.body.dataset.fortressFrame), survivor_frames: frames,
+          connections_created: connections.length, channels_created: channels.length };
+        for (const connection of connections) connection.close();
+        do {
+          if (performance.now() >= cutoff) throw new Error('physical departure close deadline');
+          departure.connections_closed = connections.filter(connection => connection.connectionState === 'closed').length;
+          departure.channels_closed = channels.filter(channel => channel.readyState === 'closed').length;
+          if (departure.connections_closed === connections.length && departure.channels_closed === channels.length) return departure;
+          await new Promise(resolve => requestAnimationFrame(resolve));
+        } while (true);
+      }, { frames }) : null));
+      checkDeadline();
+      if (closed.some((value, index) => closes(index) && (value?.frame !== 6 || value.channels_created !== 6 || value.channels_closed !== 6
+          || !Number.isInteger(value.connections_created) || value.connections_created < 2 || value.connections_closed !== value.connections_created)))
+        throw new Error('peer-drop physical departure incomplete');
+      await Promise.all(pages.map((_, index) => evaluateBeforeDeadline(index, ({ cutoff, departure }) => {
+        if (performance.now() >= cutoff) throw new Error('physical departure release deadline');
+        if (departure) window.fortressRtc.departure = departure;
+        window.fortressDropGo = true;
+      }, { departure: closed[index] })));
+      checkDeadline();
+    }, Math.ceil(deadline - now()), 'physical departure');
   } finally { active = false; }
 }
 
