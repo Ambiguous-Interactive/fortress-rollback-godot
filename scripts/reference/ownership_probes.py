@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Verify integer, ownership and production byte sessions on pinned native/Web engines."""
+import hashlib
+from importlib import machinery, util
 import json
 import marshal
 import math
@@ -15,21 +17,55 @@ import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
-from fetch import CACHE, ROOT, digest, fetch, load_manifest, prepare_zip
-from local_ownership import claim
-from ownership_schedule import chromium_page_wave, minimum_chromium_cost, minimum_chromium_parts
-from web_templates import web_template_archive
-from replay_download import CONTROL_DIAGNOSTICS, validate_controls, validate_downloads
+ROOT = Path(__file__).resolve().parents[2]
+CACHE = ROOT / '.cache/reference'
+HELPER_MODULES = ('fetch', 'ownership_schedule', 'web_templates', 'local_ownership', 'replay_download', 'receipt_arguments', 'godot_smoke',
+                  'run', 'owned_process', 'host_capacity', 'browser.webrtc_matrix', 'browser.webrtc_import', 'signalfish_probe', 'engine_path')
+HELPER_PATHS = {name: 'scripts/reference/' + name.replace('.', '/') + '.py' for name in HELPER_MODULES}
+HELPER_PATHS['host_capacity'] = 'scripts/host_capacity.py'
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import host_capacity  # noqa: E402
 
-from receipt_arguments import ReceiptParser
-from godot_smoke import run
-from run import begin_results, capture, captured_text
-from browser.webrtc_matrix import prepare_firefox
-from browser.webrtc_import import freeze_after_import
-from signalfish_probe import inventory, walk_entries
+class OwnershipHelperLoader(machinery.SourceFileLoader):
+    def get_code(self, fullname):
+        source = self.get_data(self.path)
+        self.source_sha256 = hashlib.sha256(source).hexdigest()
+        return self.source_to_code(source, self.path)
+
+
+class OwnershipHelperFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'browser':
+            # Restrict the namespace package to this checkout.
+            spec = machinery.ModuleSpec(fullname, None, is_package=True)
+            spec.submodule_search_locations = [str(ROOT / 'scripts/reference/browser')]
+            return spec
+        relative = HELPER_PATHS.get(fullname)
+        if relative is not None:
+            source = str(ROOT / relative)
+            return util.spec_from_file_location(fullname, source, loader=OwnershipHelperLoader(fullname, source))
+        return None
+
+
+def load_helpers():
+    global digest, fetch, load_manifest, prepare_zip, chromium_page_wave, minimum_chromium_cost, minimum_chromium_parts, web_template_archive
+    global CONTROL_DIAGNOSTICS, validate_controls, validate_downloads, host_capacity, ReceiptParser, run, begin_results
+    global capture, captured_text, prepare_firefox, freeze_after_import, inventory, walk_entries
+
+    from fetch import digest, fetch, load_manifest, prepare_zip
+    from ownership_schedule import chromium_page_wave, minimum_chromium_cost, minimum_chromium_parts
+    from web_templates import web_template_archive
+    from replay_download import CONTROL_DIAGNOSTICS, validate_controls, validate_downloads
+
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    import host_capacity
+
+    from receipt_arguments import ReceiptParser
+    from godot_smoke import run
+    from run import begin_results, capture, captured_text
+    from browser.webrtc_matrix import prepare_firefox
+    from browser.webrtc_import import freeze_after_import
+    from signalfish_probe import inventory, walk_entries
+
 
 PREFIX = 'FORTRESS_TEST_RESULT '
 PROGRESS_PREFIX = 'FORTRESS_TEST_PROGRESS '
@@ -813,14 +849,8 @@ def rejected_state(progress):
 
 
 def source_inventory():
-    helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/ownership_schedule.py', 'scripts/reference/web_templates.py',
-               'scripts/reference/browser/ownership.cjs',
-               'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
-               'scripts/reference/browser/replay_chooser.cjs',
-               'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
-               'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
-               'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
-               'scripts/reference/owned_process.py', 'scripts/host_capacity.py',
+    helpers = ['scripts/reference/ownership_probes.py', *HELPER_PATHS.values(), 'scripts/reference/browser/ownership.cjs',
+               'scripts/reference/browser/replay_download.cjs', 'scripts/reference/browser/replay_chooser.cjs',
                'scripts/reference/browser/webrtc_display.cjs', 'scripts/reference/browser/package.json',
                'scripts/reference/browser/package-lock.json', 'docs/reference/pins.json', 'project.godot']
     return {filename: digest(ROOT / filename) for filename in FILES + helpers}
@@ -833,26 +863,8 @@ def verify_sources(expected):
             raise ValueError(f'ownership source changed during execution: {filename}')
 
 
-HELPER_MODULES = ('fetch', 'ownership_schedule', 'web_templates', 'local_ownership', 'replay_download', 'receipt_arguments', 'godot_smoke',
-                  'run', 'owned_process', 'host_capacity', 'browser.webrtc_matrix', 'browser.webrtc_import',
-                  'signalfish_probe')
-
-
 def verify_executed_helpers(frozen_sources, root=None, names=None):
-    """Reject an executed helper whose bytecode is not verified source compilation.
-
-    The process imports its helpers from the working tree, where a
-    timestamp-valid poisoned ``__pycache__`` would execute instead of the source
-    bytes the receipt binds. Comparing each imported module's cache code object
-    against a fresh compilation of the bound source rejects that foreign
-    bytecode without trusting cache timestamps, and a helper whose source no
-    longer matches the inventory fails for drift before any witness runs.
-    Stated scope: this binds the cache the loader consults and the source on
-    disk at verification time. Code that already executed before this check
-    ran cannot be re-verified from outside the interpreter; closing that
-    window entirely needs the #298 staged-image import for this witness and
-    stays open work in issue #290.
-    """
+    """Match the actual CLI helper compilation inputs with the receipt."""
     root = (ROOT if root is None else root).resolve()
     for name in names or HELPER_MODULES:
         module = sys.modules.get(name)
@@ -865,6 +877,13 @@ def verify_executed_helpers(frozen_sources, root=None, names=None):
             raise ValueError(f'ownership helper module is outside the source tree: {name}') from None
         if frozen_sources.get(relative) != digest(path):
             raise ValueError(f'ownership executed helper source differs from inventory: {relative}')
+        loader = getattr(module, '__loader__', None)
+        if isinstance(loader, OwnershipHelperLoader):
+            if loader.source_sha256 != frozen_sources[relative]:
+                raise ValueError(f'ownership compiled helper source differs from inventory: {relative}')
+            continue
+        if __name__ == '__main__':
+            raise ValueError(f'ownership helper was loaded before source verification: {relative}')
         cached = getattr(module, '__cached__', None)
         if not cached or not Path(cached).is_file():
             continue  # The module was compiled from verified source without consulting a cache.
@@ -999,9 +1018,15 @@ def validate_phases(records, rounds, versions, phases=None):
 
 def main():
     with claim('ownership', directory=CACHE / 'locks'):
-        receipt = CACHE / 'results/ownership.json'
-        previous_receipt = receipt.read_bytes() if receipt.is_file() else None
-        begin_results(receipt.parent, receipt.name, [])
+        results = CACHE / 'results'
+        receipt_paths = [results / 'ownership.json', results / 'ownership-rounds.json']
+        try:
+            previous_receipts = {path: path.read_bytes() for path in receipt_paths if path.is_file()}
+        finally:
+            for path in receipt_paths:
+                path.unlink(missing_ok=True)
+        if __name__ == '__main__':
+            load_helpers()
         parser = ReceiptParser(description=__doc__, receipt='ownership.json', output=CACHE / 'results')
         parser.add_argument('--offline', action='store_true')
         parser.add_argument('--web', action='store_true')
@@ -1014,8 +1039,9 @@ def main():
         try:
             args = parser.parse_args()
         except SystemExit as error:
-            if error.code == 0 and previous_receipt is not None:
-                receipt.write_bytes(previous_receipt)
+            if error.code == 0:
+                for path, contents in previous_receipts.items():
+                    path.write_bytes(contents)
             raise
         if args.browser != 'chromium' and not args.web:
             parser.error('--browser firefox requires --web')
@@ -1023,7 +1049,6 @@ def main():
             parser.error('--balance-chromium requires a Chromium Web suite part')
         if args.suite_part.endswith('of5') and (not args.balance_chromium or args.version != pins['minimum'] or args.phase == 'both'):
             parser.error('five ownership partitions require one balanced minimum-pin Chromium phase')
-        results = CACHE / 'results'
         # One local run at a time owns these paths, and the browser part needs a
         # responsive host: a local test wave would otherwise starve it and turn a
         # slow run into a timeout.
@@ -1437,4 +1462,11 @@ def run_probes(args, results):
 
 
 if __name__ == '__main__':
+    sys.meta_path.insert(0, OwnershipHelperFinder())
+    from local_ownership import claim
+
     main()
+else:
+    from local_ownership import claim
+
+    load_helpers()
