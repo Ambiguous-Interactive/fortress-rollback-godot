@@ -13,10 +13,20 @@ HINTS = Path(__file__).with_name('fixtures') / 'p2p-schedules.json.gz'
 def generation_inputs():
     root = HINTS.parents[3]
     oracle = root / 'scripts/oracle'
-    paths = [*oracle.glob('p2p*.py'), oracle / 'contract.py', oracle / 'session_compare.py',
-             *sorted((oracle / 'rust/src').rglob('*.rs')), oracle / 'rust/Cargo.lock', oracle / 'rust/Cargo.toml',
-             root / 'docs/reference/pins.json']
-    return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(paths)}
+    # The corpus builders and source trace validators share this adapter and locked build.
+    paths = ('contract.py', 'p2p_capacity.py', 'p2p_contract.py', 'p2p_launch.py', 'p2p_lifecycle.py',
+             'p2p_lifecycle_corpus.py', 'p2p_recovery.py', 'p2p_schedule.py', 'rust/src/bin/p2p.rs',
+             'rust/Cargo.lock', 'rust/Cargo.toml', 'rust/rust-toolchain.toml')
+    inputs = {str((oracle / path).relative_to(root)): hashlib.sha256((oracle / path).read_bytes()).hexdigest() for path in paths}
+    pin_path = 'docs/reference/pins.json'
+    pins = json.loads((root / pin_path).read_text(encoding='utf-8'))
+    fortress = pins['sources']['fortress']
+    p2p_pins = {
+        'fortress': {field: fortress[field] for field in ('revision', 'root', 'archive')},
+        'rust': {field: pins['rust'][field] for field in ('version', 'lockfile_sha256')},
+    }
+    inputs[pin_path] = hashlib.sha256(json.dumps(p2p_pins, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return inputs
 
 
 def schedule_hints():
