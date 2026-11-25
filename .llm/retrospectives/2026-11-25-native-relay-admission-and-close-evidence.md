@@ -13,8 +13,12 @@ collection, and the slowest grouped oracle lane.
 The [browser integration guidance](../skills/testing/references/browser-integration.md)
 now ties overflow evidence to admission and defines the lifetime of partial
 close evidence. The [plan](../../PLAN.md) drops the completed departure witness
-and points to receive pressure during eight-player correction. The original
+and points to the expiry that followed eight-player history publication. The original
 departure failure lacked an expiry timestamp. The new receipts establish the
 healthy SDK departure path and preserve future expiry observations separately.
+
+The exported mixed rooms on CPUs 0–2 printed `relay:4 passed` and
+`relay:8 passed` on both Godot pins. Each eight-player receipt contained 40
+matching rows and snapshots, zero overflows and eight clean leaves.
 
 State `findings-acted`.
