@@ -562,7 +562,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       throw holdFailure;
     }
     const owned = nativeBytes(data).slice();
-    active.push(() => emit(owned));
+    active.push(() => emit(owned, true));
     totalBytes += owned.byteLength;
     held[route]++;
     if (!holdAll && held.mesh + held.relay === 1) window.fortressNativePostRelease?.mark('hold_first_input', undefined, holdMark());
@@ -663,8 +663,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     return socket;
   } });
   const socketSend = nativeSocket.prototype.send;
-  function closedReleaseSocket(socket, socket_stage) {
-    const held_send = releaseInFlight > 0;
+  function closedReleaseSocket(socket, socket_stage, held_send) {
     if (!releaseSocketFailures.has(held_send)) {
       releaseSocketFailures.add(held_send);
       const kind = held_send ? 'release_socket_closed' : 'release_control_socket_closed';
@@ -694,10 +693,10 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       return;
     }
     const packet = relayAddresses(data);
-    return send('relay', socketReports.get(this), packet?.recipient, bytes => {
-      if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) closedReleaseSocket(this, 'before_send');
+    return send('relay', socketReports.get(this), packet?.recipient, (bytes, held_send = false) => {
+      if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) closedReleaseSocket(this, 'before_send', held_send);
       socketSend.call(this, bytes);
-      if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) closedReleaseSocket(this, 'during_send');
+      if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) closedReleaseSocket(this, 'during_send', held_send);
       if (packet && packet.sender === localUuid) {
         increment(relayRecipients, packet.recipient);
         if (packet.kind === inputKind) increment(relayInputRecipients, packet.recipient);

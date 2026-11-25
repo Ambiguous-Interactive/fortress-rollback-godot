@@ -183,6 +183,8 @@ Capture the receive backlog and last accepted packet before expiry cleanup.
 Use the frozen roster to join the reporter to the sender. Join the sender's
 sampled release position by controller receipt order, including equal clock
 values. Keep transport acceptance on the reporter's clock.
+Attribute each send at its call site. Unsent packets can remain after a failed
+batch. Check both orders of held and passing traffic when the socket closes.
 Bracket the hold with the first held input, matching control reply and
 observed prediction stall. Record controller dispatch, evaluation entry and
 release start, and compare durations within each clock. Report cumulative

@@ -801,6 +801,9 @@ async function run() {
   assert.equal(stoppedWire.status().released, 16);
   const close = closed.find(sample => sample.kind === 'release_socket_closed');
   assert.deepEqual([close?.released, close?.queued, close?.socket_state, close?.socket_stage, close?.held_send], [16, 17, 3, 'before_send', true]);
+  assert.throws(() => stoppedSocket.send(relay(4, 99)), /closed before release send/);
+  const laterControl = closed.find(sample => sample.kind === 'release_control_socket_closed');
+  assert.deepEqual([laterControl?.released, laterControl?.queued, laterControl?.held_send], [16, 17, false]);
 
   const closing = { ...realm, window: {}, WebSocket: class extends Socket {
     send(bytes) {
