@@ -851,9 +851,11 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
     holdRelayControl: delayRelayDelivery,
     releaseRelayControl: stamps => relayDelay?.releaseWhenHeld(stamps) ?? expiredRelayDelay,
     muteRelayLink(recipient) {
-      if (!relayWireTrace || mutedRelay || recipient === localUuid || !roomRoster.includes(recipient)) throw new Error('invalid relay retention link');
+      if (!relayWireTrace || resources.sockets.length !== 1 || mutedRelay || recipient === localUuid || !roomRoster.includes(recipient))
+        throw new Error('invalid relay retention link');
       const started = performance.now();
       mutedRelay = { recipient, started, cutoff: started + 1250, inputs: 0, reports: 0 };
+      return traceSocketOrdinals.get(resources.sockets[0]);
     },
     resumeRelayLink() {
       const sample = mutedRelay;

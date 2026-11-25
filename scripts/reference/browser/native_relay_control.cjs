@@ -23,7 +23,8 @@ function createRelayServerReader(path) {
   const requestPath = path + '.request';
   let completed = 0;
   let pending = null;
-  return async (select = receipt => receipt, timeout = 3000) => {
+  let reading = false;
+  async function poll(select, timeout) {
     const deadline = performance.now() + timeout;
     while (performance.now() < deadline) {
       if (pending === null) {
@@ -45,6 +46,15 @@ function createRelayServerReader(path) {
       await pause(10);
     }
     throw new Error('relay server receipt deadline');
+  }
+  return async (select = receipt => receipt, timeout = 3000) => {
+    assert.ok(!reading, 'relay server reader already has a caller');
+    reading = true;
+    try {
+      return await poll(select, timeout);
+    } finally {
+      reading = false;
+    }
   };
 }
 
@@ -114,30 +124,28 @@ async function exerciseRelayRetention(pages, ready, readReceipt) {
   const [source, reporter] = pages;
   const families = ['input', 'quality'];
   const targets = (receipt, stage, family) => events(receipt, stage, family).filter(event => event.sender === sender && event.recipient === recipient);
-  await source.evaluate(peer => window.fortressNativeWire.muteRelayLink(peer), recipient);
-  let before, after, pressure, baseline, pagesAtPressure, pauseReceipt;
+  const lastSocketOrdinal = await source.evaluate(peer => window.fortressNativeWire.muteRelayLink(peer), recipient);
+  let after, pressure, baseline, pauseReceipt;
   try {
     baseline = await Promise.all([source, reporter].map(page => page.evaluate(
       sender => window.fortressNativeRelayTrace.retentionSample(sender), sender)));
     assert.ok(baseline[1].frontier.every(Boolean), 'retention control requires an accepted input and quality report before pressure');
-    before = await readReceipt(undefined, 250);
     after = await readReceipt(receipt => {
-      const progress = Object.fromEntries(['ingress', 'write'].map(stage => [stage, Object.fromEntries(families.map(family =>
-        [family, receipt.streams[stage][family].count - before.streams[stage][family].count]))]));
+      const lastIngress = families.map(family => targets(receipt, 'ingress', family).at(-1));
+      if (!lastIngress.every(event => event && event.socket_ordinal <= lastSocketOrdinal)) return null;
+      const progress = Object.fromEntries(['ingress', 'write'].map(stage => [stage, Object.fromEntries(families.map(family => {
+        const last = targets(receipt, stage, family).at(-1);
+        return [family, last ? receipt.streams[stage][family].count - last.ordinal : 0];
+      }))]));
       if (!Object.values(progress).every(stage => Object.values(stage).every(count => count > 128))) return null;
       pressure = progress;
       return receipt;
-    }, 800);
-    for (const stage of ['ingress', 'write']) {
-      for (const family of families) {
-        assert.deepEqual(targets(after, stage, family), targets(before, stage, family), 'muted link changed during retention pressure');
-      }
-    }
-    pagesAtPressure = await Promise.all([source, reporter].map(page => page.evaluate(() => window.fortressNativeWire.relayWireTrace())));
+    }, 1000);
   } finally {
     pauseReceipt = await source.evaluate(() => window.fortressNativeWire.resumeRelayLink());
   }
   assert.ok(pauseReceipt.inputs > 0 && pauseReceipt.reports > 0 && pauseReceipt.resumed < pauseReceipt.cutoff, 'muted link exceeded its control window');
+  const pagesAtPressure = await Promise.all([source, reporter].map(page => page.evaluate(() => window.fortressNativeWire.relayWireTrace())));
   const joined = joinRelayReceipts(after, pagesAtPressure);
   const frontier = baseline[1].frontier.map(stamp => {
     const row = joined.rows.find(row => stampKey(row) === stampKey(stamp));
@@ -146,7 +154,7 @@ async function exerciseRelayRetention(pages, ready, readReceipt) {
   });
   const browserTraffic = Object.fromEntries([['send', 0], ['raw', 1], ['sdk', 1], ['native', 1]].map(([stage, page]) =>
     [stage, Object.fromEntries(families.map(family => [family, pagesAtPressure[page].streams[stage][family].count - baseline[page].counts[stage][family]]))]));
-  return { sender, recipient, pause: pauseReceipt, requests: [before.request, after.request], pressure, browserTraffic, frontier };
+  return { sender, recipient, pause: pauseReceipt, request: after.request, pressure, browserTraffic, frontier };
 }
 
 function joinRelayReceipts(server, pages) {

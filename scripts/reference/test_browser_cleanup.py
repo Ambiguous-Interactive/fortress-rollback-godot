@@ -52,6 +52,7 @@ async function respond() {
   await assert.rejects(read(undefined, 50), /relay server receipt deadline/);
   assert.equal(await fs.readFile(path + '.request', 'utf8'), '3');
   const retry = read();
+  await assert.rejects(read(), /already has a caller/);
   await publish(3);
   assert.equal((await retry).request, 3);
 })().catch(error => { console.error(error); process.exitCode = 1; });
