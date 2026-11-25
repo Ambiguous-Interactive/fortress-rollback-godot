@@ -739,6 +739,97 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
+    def test_native_relay_release_signal_requires_every_prepared_page(self):
+        # Value: protects=room-wide release through prepared browser requests; fails_when=release needs a second evaluation or signals a partial room; seam=HTTP
+        script = r"""
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const { captureAndReleaseInput, createReleaseSignal } = require(process.argv[1]);
+const signal = createReleaseSignal(2);
+const server = http.createServer((req, res) => { if (!signal.handle(req, res)) res.writeHead(404).end(); });
+async function run() {
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = 'http://127.0.0.1:' + server.address().port;
+  const path = index => origin + signal.paths[index];
+  let evaluations = 0, releases = 0;
+  global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: {
+    status: () => ({ holding: true }),
+    holdProgress: () => ({}),
+    release: () => ++releases,
+  } };
+  const page = { evaluate(callback, argument) { evaluations++; return callback(argument); } };
+  const first = captureAndReleaseInput(page, 0, path(0));
+  await new Promise(resolve => server.once('request', resolve));
+  assert.throws(() => signal.release(performance.now() + 500), /relay release requests unavailable/);
+  const last = captureAndReleaseInput(page, 1, path(1));
+  await signal.ready;
+  assert.equal(releases, 0);
+  assert.equal((await fetch(path(0))).status, 409);
+  assert.equal((await fetch(path(0), { method: 'POST' })).status, 405);
+  assert.equal(releases, 0);
+  signal.release(performance.now() + 500);
+  const receipts = await Promise.all([first, last]);
+  assert.deepEqual(receipts.map(receipt => receipt.index), [0, 1]);
+  assert.equal(evaluations, 2);
+  assert.equal(releases, 2);
+  assert.equal((await fetch(path(0))).status, 409);
+  assert.throws(() => signal.release(performance.now() + 500), /relay release requests unavailable/);
+}
+const deadline = setTimeout(() => { throw new Error('relay release signal test did not settle'); }, 3000);
+run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
+  clearTimeout(deadline);
+  signal.cancel();
+  server.close();
+});
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
+    def test_native_relay_release_rejects_disconnected_and_late_pages(self):
+        # Value: protects=release only for the original live requests and before cutoff; fails_when=socket replacement or a late reply releases input; seam=HTTP and page
+        script = r"""
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const { captureAndReleaseInput, createReleaseSignal } = require(process.argv[1]);
+let now = 300;
+global.performance = { now: () => now };
+function request(signal, index) {
+  const response = Object.assign(new EventEmitter(), {
+    writeHead(status, headers) { this.status = status; this.headers = headers; return this; },
+    end() { this.writableEnded = true; },
+    destroy() { this.destroyed = true; this.emit('close'); },
+  });
+  assert.equal(signal.handle({ url: signal.paths[index], method: 'GET' }, response), true);
+  return response;
+}
+async function run() {
+  const disconnected = createReleaseSignal(2);
+  const first = request(disconnected, 0);
+  const live = request(disconnected, 1);
+  await disconnected.ready;
+  first.destroy();
+  assert.equal(request(disconnected, 0).status, 409, 'a replacement cannot regain a disconnected slot');
+  assert.throws(() => disconnected.release(900), /relay release requests unavailable/);
+  assert.equal(live.status, undefined, 'refuse the whole room after a disconnect');
+  disconnected.cancel();
+  assert.equal(live.destroyed, true);
+
+  global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: {
+    status: () => ({}), release() { assert.fail('a late response started the FIFO drain'); },
+  } };
+  const page = { evaluate(callback, argument) { return callback(argument); } };
+  let deliver;
+  global.fetch = () => new Promise(resolve => { deliver = resolve; });
+  const delayed = captureAndReleaseInput(page, 0, '/prepared');
+  const checked = assert.rejects(delayed, /native relay release deadline/);
+  now = 900;
+  deliver({ status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '600000' }) });
+  await checked;
+  assert.equal(window.fortressNativeStalled, undefined, 'a late response cannot publish even its stalled snapshot');
+}
+run().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
     def test_native_relay_release_drains_originals_in_order_while_control_passes(self):
         # Value: protects=bounded FIFO recovery on the real socket hook; fails_when=release bursts or overtakes; seam=browser send
         script = r"""
@@ -835,6 +926,21 @@ async function run() {
   assert.equal(closingOriginals.length, 1);
   assert.equal(closingOriginals[0].held_send, true);
   assert.equal(closingOriginals[0].socket_stage, 'before_send');
+
+  let now = 10;
+  const timed = { ...realm, window: {}, performance: { now: () => now }, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
+  runInNewContext(`(${instrumentNativeWire})()`, timed);
+  const timedWire = timed.window.fortressNativeWire;
+  const timedSocket = new timed.window.WebSocket();
+  timedWire.bind('00'.repeat(16), '01'.repeat(16));
+  timedWire.arm();
+  for (let i = 0; i < 33; i++) timedSocket.send(relay(2, i));
+  const deadline = assert.rejects(timedWire.release(11000), /native relay release deadline/);
+  assert.equal(timedWire.status().released, 16, 'the first batch has time to release');
+  now = 11;
+  turns.shift()();
+  await deadline;
+  assert.equal(timedWire.status().released, 16, 'no further batch can start at the cutoff');
 
   const full = { ...realm, window: {}, WebSocket: class extends Socket {}, RTCPeerConnection: class {} };
   runInNewContext(`(${instrumentNativeWire})()`, full);
@@ -996,7 +1102,7 @@ async function run() {
   Object.assign(window.fortressNative, { turns: 21, restores: 3 });
   observe();
   now++;
-  await captureAndReleaseInput(page, 0, checkpoints);
+  await captureAndReleaseInput(page, 0);
   now++;
   Object.assign(window.fortressNative, { turns: 22, confirmed: 40 });
   observe();
@@ -1006,7 +1112,6 @@ async function run() {
     heartbeat();
   }
   postReleaseCheckpoint(checkpoints, 'fortress native post-release {"kind":"heartbeat"}', { controller_ms: now });
-  assert.equal(checkpoints.release_dispatched_ms, 14);
   assert.equal(checkpoints.release_entered.page_ms, 14);
   assert.equal(checkpoints.release_entered.controller_ms, 114);
   assert.deepEqual([checkpoints.release_started.page_ms, checkpoints.release_started.queued, checkpoints.release_started.released], [16, 10, 0]);
@@ -1026,10 +1131,8 @@ async function run() {
   assert.equal(checkpoints.history_received, undefined, 'publication does not prove receipt delivery');
   assert.deepEqual(checkpoints.heartbeats.map(sample => [sample.page_ms, sample.turns, sample.confirmed]), [[23, 22, 40], [24, 22, 40]]);
   assert.match(checkpoints.checkpoint_error, /invalid post-release sample/);
-  const failed = {};
   const unavailable = { async evaluate() { throw new Error('release evaluation unavailable'); } };
-  await assert.rejects(captureAndReleaseInput(unavailable, 0, failed), /release evaluation unavailable/);
-  assert.deepEqual(failed, { release_dispatched_ms: 24 });
+  await assert.rejects(captureAndReleaseInput(unavailable, 0), /release evaluation unavailable/);
   Object.assign(window.fortressNative, { state: 'failed', turns: 23, frame: 25, confirmed: 44 });
   observe();
   Object.assign(window.fortressNative, { state: 'playing', turns: 24, frame: 25 });
@@ -1170,6 +1273,12 @@ global.performance = { now: () => ++now };
 Object.defineProperty(global, 'window', { get: () => realm.getStore() });
 const timeout = global.setTimeout;
 global.setTimeout = (callback, ms, ...args) => timeout(callback, [5000, 30000].includes(ms) ? 20 : ms, ...args);
+let releaseRequest;
+global.fetch = path => new Promise(resolve => {
+  const response = { writeHead(status, headers) { this.status = status; this.headers = new Headers(headers); return this; },
+    end() { this.writableEnded = true; resolve({ status: this.status, headers: this.headers }); } };
+  if (!releaseRequest({ url: path, method: 'GET' }, response)) throw new Error('fixture release request was not handled');
+});
 global.requestAnimationFrame = callback => {
   if (window.index === 1 && stuck) return;
   window.fortressNative.frame++;
@@ -1235,7 +1344,10 @@ function makePage() {
 }
 require('node:module')._load = function (name, ...args) {
   if (name === './online_host.cjs') {
-    return { createHost: async () => ({ proxyPairs: [], server: { address: () => ({ port: 1 }), close: callback => callback() } }) };
+    return { createHost: async (_root, _endpoint, _cert, _key, _port, handler) => {
+      releaseRequest = handler;
+      return { proxyPairs: [], server: { address: () => ({ port: 1 }), close: callback => callback() } };
+    } };
   }
   if (name === 'fixture-playwright') {
     const browser = { browserType: () => ({ name: () => 'chromium' }), version: () => 'fixture', async close() {},

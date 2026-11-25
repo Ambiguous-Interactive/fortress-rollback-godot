@@ -1,5 +1,6 @@
 const { assertRecoveredRoom, recoverPairs } = require('./native_recovery.cjs');
 const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
 const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
 const { createHost } = require('./online_host.cjs');
 const { placeFirefox } = require('./webrtc_display.cjs');
@@ -295,8 +296,10 @@ function validateExpiry(value) {
 function missedCorrectionDeadline(phase, error, deadline, failedAt) {
   if (!Number.isFinite(deadline) || !['input release', 'corrected history'].includes(phase)) return false;
   if (error?.name === 'TimeoutError' && failedAt >= deadline) return true;
-  return /^(?:absolute native (?:peer \d+ input release|corrected history) deadline|native (?:input release exhausted|corrected history exceeded) the correction deadline)$/
-    .test(error?.message);
+  const message = error?.message;
+  return /^absolute native (?:(?:peer \d+|relay) input release|corrected history) deadline$/.test(message)
+    || /^native (?:input release exhausted|corrected history exceeded) the correction deadline$/.test(message)
+    || /^(?:page\.evaluate: )?native relay release deadline(?:\n|$)/.test(message);
 }
 
 function relayReleaseEvidence(peers, uuids, correctionDeadlineReached) {
@@ -813,7 +816,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       }
       return hold.armed;
     },
-    async release() {
+    async release(cutoffUs = null) {
       if (!holding || !active.length) throw new Error('native packet hold did not take effect');
       holding = false;
       releasingRelay = held.relay > 0;
@@ -821,6 +824,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       // Each relay send fans out to the room. Keep originals ahead of newly sampled inputs.
       const batchSize = releasingRelay ? 16 : active.length;
       while (active.length > 0 && !holdFailure) {
+        if (cutoffUs !== null && Math.ceil(performance.now() * 1000) >= cutoffUs) throw new Error('native relay release deadline');
         const batch = active.splice(0, batchSize);
         releaseInFlight = batch.length;
         for (const emit of batch) {
@@ -1122,19 +1126,64 @@ function armAndWaitForInput(page, route) {
   }, { route, gate: GATE_FRAME, conditions: HOLD_CONDITIONS });
 }
 
-function captureAndReleaseInput(page, index, checkpoints) {
-  if (checkpoints) checkpoints.release_dispatched_ms = performance.now();
-  return page.evaluate(async index => {
+function createReleaseSignal(players) {
+  const paths = Array.from({ length: players }, () => '/native-release/' + randomUUID());
+  const responses = new Map();
+  const { promise: ready, resolve } = Promise.withResolvers();
+  let finished = false;
+  return {
+    paths,
+    ready,
+    handle(request, response) {
+      if (!paths.includes(request.url)) return false;
+      if (request.method !== 'GET') response.writeHead(405).end();
+      else if (finished || responses.has(request.url)) response.writeHead(409).end();
+      else {
+        responses.set(request.url, { response, receivedAt: performance.now() });
+        if (responses.size === players) resolve();
+      }
+      return true;
+    },
+    release(deadline) {
+      assert.ok(!finished && responses.size === players
+        && [...responses.values()].every(({ response }) => !response.destroyed), 'native relay release requests unavailable');
+      assert.ok(Number.isFinite(deadline) && performance.now() < deadline, 'absolute native relay input release deadline');
+      finished = true;
+      for (const { response, receivedAt } of responses.values()) {
+        const budgetUs = Math.floor((deadline - receivedAt) * 1000);
+        response.writeHead(204, { 'Cache-Control': 'no-store', 'X-Fortress-Release-Budget-Us': String(budgetUs) }).end();
+      }
+    },
+    cancel() {
+      finished = true;
+      for (const { response } of responses.values()) if (!response.writableEnded && !response.destroyed) response.destroy();
+    },
+  };
+}
+
+function captureAndReleaseInput(page, index, signalPath = null) {
+  return page.evaluate(async ({ index, signalPath }) => {
+    let cutoffUs = null;
+    if (signalPath !== null) {
+      const requestedUs = Math.floor(performance.now() * 1000);
+      const signal = await fetch(signalPath, { cache: 'no-store' });
+      if (signal.status !== 204) throw new Error(`native relay release signal returned HTTP ${signal.status}`);
+      const budget = signal.headers.get('X-Fortress-Release-Budget-Us');
+      if (!/^\d+$/.test(budget) || !Number.isSafeInteger(Number(budget))) throw new Error('invalid native relay release budget');
+      // The browser started the request before the host timed it. Allow 2 ms coarsening per browser read.
+      cutoffUs = requestedUs + Number(budget) - 4000;
+      if (Math.ceil(performance.now() * 1000) >= cutoffUs) throw new Error('native relay release deadline');
+    }
     window.fortressNativePostRelease?.mark('release_entered');
     const wire = window.fortressNativeWire;
     const stalled = structuredClone({ index, ...window.fortressNative, wire: wire.status() });
     window.fortressNativeStalled = stalled;
     if (stalled.state !== 'playing') throw new Error(stalled.message || 'peer stopped before input release');
     window.fortressNativePostRelease?.mark('release_started', undefined, wire.holdProgress());
-    stalled.release = await wire.release();
+    stalled.release = await wire.release(cutoffUs);
     window.fortressNativePostRelease?.mark('release_completed', undefined, wire.holdProgress());
     return stalled;
-  }, index);
+  }, { index, signalPath });
 }
 
 function waitForCorrectedHistory(pages, frame, readiness, wait, timeout) {
@@ -1229,8 +1278,9 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   const traceWarmup = route === 'relay' && players === 8;
   const warmupBarrier = traceWarmup ? createWarmupBarrier(players) : undefined;
   const postRelease = route === 'relay' ? Array.from({ length: players }, () => ({})) : undefined;
+  const releaseSignal = route === 'relay' ? createReleaseSignal(players) : undefined;
   const playwright = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
-  const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY);
+  const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY, 0, releaseSignal?.handle);
   const origin = `https://127.0.0.1:${server.address().port}`;
   const socketEndpoint = `wss://127.0.0.1:${server.address().port}/v3/ws`;
   const pages = [];
@@ -1388,24 +1438,41 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       closeLinks = await waitForCloseProofs(pages, direct, physicalCloseErrors, physicalCloseReport, { closer: 0 });
     }
     if (!mixed) {
+      let relayRelease;
+      stalled = Array(players).fill(null);
+      if (releaseSignal) {
+        phase = 'relay release preparation';
+        // Prepare the browser requests before the hold so release avoids another debugger evaluation.
+        relayRelease = Promise.all(pages.map(async (page, index) => {
+          stalled[index] = await captureAndReleaseInput(page, index, releaseSignal.paths[index]);
+        }));
+        await boundedRoom(() => Promise.race([releaseSignal.ready, relayRelease]), PAGE_WAIT_MS, 'native relay release preparation');
+      }
       phase = 'prediction stall';
       // Arming on each local frame can strand a slower peer before its own
       // gate. Let every endpoint confirm the warmup while routes are open.
       armed = Array(players).fill(null);
-      await Promise.all(pages.map(async (page, index) => {
+      const allReady = Promise.all(pages.map(async (page, index) => {
         const receipt = await boundedRoom(() => armAndWaitForInput(page, route), 45000, `native peer ${index} prediction stall`);
         holdReadyReceived[index] = { controller_ms: performance.now(), page: receipt.ready };
         armed[index] = receipt.armed;
       }));
+      await (relayRelease ? Promise.race([allReady, relayRelease]) : allReady);
+      assert.ok(holdReadyReceived.every(Boolean), 'native relay release completed before hold readiness');
       if (errors.length) throw new Error(JSON.stringify(errors));
       phase = 'input release';
       const correctionBudgetMs = 45000;
-      correctionDeadline = performance.now() + correctionBudgetMs;
-      stalled = Array(players).fill(null);
-      await Promise.all(pages.map(async (page, index) => {
-        stalled[index] = await boundedRoom(() => captureAndReleaseInput(page, index, postRelease?.[index]),
-          correctionBudgetMs, `native peer ${index} input release`);
-      }));
+      const releaseDispatchedAt = performance.now();
+      correctionDeadline = releaseDispatchedAt + correctionBudgetMs;
+      if (releaseSignal) {
+        for (const peer of postRelease) peer.release_dispatched_ms = releaseDispatchedAt;
+        releaseSignal.release(correctionDeadline);
+        await boundedRoom(() => relayRelease, correctionBudgetMs, 'native relay input release');
+      } else {
+        await Promise.all(pages.map(async (page, index) => {
+          stalled[index] = await boundedRoom(() => captureAndReleaseInput(page, index), correctionBudgetMs, `native peer ${index} input release`);
+        }));
+      }
       comparedFrames = historyThrough(stalled);
       phase = 'corrected history';
       const correctionRemainingMs = Math.floor(correctionDeadline - performance.now());
@@ -1591,6 +1658,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
     }));
   } finally {
+    releaseSignal?.cancel();
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
     failures.push(...await closeAll(browsers, owner => owner.close(), 'browser'));
     for (const { socket, upstream } of proxyPairs) {
@@ -1623,6 +1691,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = { armAndWaitForInput, bindDepartureCheckpoints, calibrateDepartureClocks, captureAndReleaseInput, closeEvidence, compareHistory,
+module.exports = { armAndWaitForInput, bindDepartureCheckpoints, calibrateDepartureClocks, captureAndReleaseInput, closeEvidence, compareHistory, createReleaseSignal,
   createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt, missedCorrectionDeadline,
   postReleaseCheckpoint, readConfirmedHistory, relayReleaseEvidence, reportedChannel, waitForCloseProofs, waitForCorrectedHistory, WARMUP_CHECKPOINT };
