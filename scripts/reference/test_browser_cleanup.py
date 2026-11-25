@@ -1046,6 +1046,135 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
+    def test_native_engine_turn_reports_the_actual_baseline_and_later_frame(self):
+        # Value: protects=engine turn evidence; fails_when=earlier progress replaces the baseline or final reads own the trace; seam=browser entrypoint
+        script = r"""
+const { AsyncLocalStorage } = require('node:async_hooks');
+const { runMain, _load: load } = require('node:module');
+const entrypoint = process.argv[1];
+const control = process.argv[2];
+const realm = new AsyncLocalStorage();
+const windows = [];
+const roster = [1, 2].map(value => '00000000-0000-0000-0000-00000000000' + value);
+const unavailable = () => new Promise(() => {});
+let now = 0;
+global.performance = { now: () => ++now };
+Object.defineProperty(global, 'window', { get: () => realm.getStore() });
+const timeout = global.setTimeout;
+global.setTimeout = (callback, ms, ...args) => timeout(callback, [5000, 30000].includes(ms) ? 20 : ms, ...args);
+global.requestAnimationFrame = callback => {
+  if (window.index === 1 && control === 'same frame') return;
+  window.fortressNative.frame++;
+  callback();
+};
+function makePage() {
+  const index = windows.length;
+  const state = { state: 'lobby', room: 'test', command_code: 0, ready_enabled: true, start_enabled: true,
+    frame: 18, confirmed: 0, turns: 20, stalls: 0, prediction: 12, restores: 2, history_limit: 128, uuid: roster[index], frozen_roster: roster };
+  const events = {};
+  let lateBaseline;
+  const hold = () => ({ at_ms: performance.now(), held: { mesh: 0, relay: 1 }, bytes: 1, queued: 1, released: 0 });
+  function mark(kind, fields = {}) {
+    const { state: status, frame, confirmed, turns, restores } = state;
+    const sample = { kind, page_ms: performance.now(), state: status, frame, confirmed, turns, restores, ...fields };
+    events.console({ text: () => 'fortress native post-release ' + JSON.stringify(sample) });
+  }
+  const pageWindow = { index, fortressNative: state, fortressNativeReady: true,
+    fortressNativePostRelease: { mark(kind, frames, progress) { mark(kind, { frames, ...progress }); }, arm() {}, setTarget() {} },
+    fortressNativeWire: {
+      arm() { state.stalls++; return hold(); },
+      holdProgress: hold, recordHoldReadiness: hold, status: () => ({}),
+      async release() {
+        Object.assign(state, { frame: 40, confirmed: 40, turns: 21, restores: 3 });
+        mark('corrected_frontier', { frames: 40, emitted_ms: now + 1 });
+        Object.assign(state, { frame: 41, turns: 22 });
+        mark('corrected_advance', { frames: 40, emitted_ms: now + 1 });
+        Object.assign(state, { frame: 42, turns: 23 });
+      },
+    },
+    set fortressNativeCommand(command) {
+      state.command_id = command.id;
+      if (command.kind === 'start') {
+        for (const peer of windows) Object.assign(peer.fortressNative, { state: 'playing', confirmed: 12 });
+      }
+    },
+  };
+  windows.push(pageWindow);
+  return {
+    on(event, handler) { events[event] = handler; },
+    async addInitScript() {}, async goto() {}, keyboard: { async down() {} },
+    async evaluate(operation, argument) {
+      if (operation.toString().includes('warmupStatus()')) {
+        lateBaseline?.(state.frame);
+        return unavailable();
+      }
+      if (index === 1 && control === 'baseline timeout' && operation.toString().includes('() => window.fortressNative.frame')) {
+        return new Promise(resolve => { lateBaseline = resolve; });
+      }
+      return realm.run(pageWindow, () => operation(argument));
+    },
+    async waitForFunction(condition, argument) {
+      const ready = realm.run(pageWindow, () => condition(argument));
+      if (!ready) return unavailable();
+      return { async dispose() {} };
+    },
+    async waitForEvent() { throw Error('fixture stops after the engine turn'); },
+  };
+}
+require('node:module')._load = function (name, ...args) {
+  if (name === './online_host.cjs') {
+    return { createHost: async () => ({ proxyPairs: [], server: { address: () => ({ port: 1 }), close: callback => callback() } }) };
+  }
+  if (name === 'fixture-playwright') {
+    const browser = { browserType: () => ({ name: () => 'chromium' }), version: () => 'fixture', async close() {},
+      async newContext() { return { newPage: makePage, async close() {} }; } };
+    return { chromium: { async launch() { return browser; } } };
+  }
+  return load.call(this, name, ...args);
+};
+process.env.FORTRESS_PLAYWRIGHT_PACKAGE = 'fixture-playwright';
+process.env.FORTRESS_CHROMIUM_EXECUTABLE = '/fixture';
+process.argv = [process.execPath, entrypoint, '.', 'ws://127.0.0.1/v3/ws', 'relay', '2', 'chromium'];
+runMain();
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        for control in ('baseline timeout', 'same frame', 'higher frame'):
+            with self.subTest(control=control):
+                run = subprocess.run([*command, control], capture_output=True, encoding='utf-8', timeout=10)
+                self.assertEqual(run.returncode, 1, run.stderr)
+                self.assertEqual(run.stdout, '')
+                report = json.loads(run.stderr.splitlines()[0])
+                expected_phase = 'confirmed history capture' if control == 'higher frame' else 'post-confirmation engine turn'
+                if control != 'higher frame':
+                    self.assertEqual(report['phase'], expected_phase)
+                    self.assertIn('absolute native post-confirmation engine turn deadline', run.stderr)
+                self.assertEqual(report['compared_frames'], 40)
+                self.assertEqual([state['status'] for state in report['states']], ['rejected', 'rejected'])
+                self.assertIn('native peer 0 diagnostics deadline', run.stderr)
+                self.assertIn('native peer 1 diagnostics deadline', run.stderr)
+                engine_turns = report.get('engineTurns')
+                self.assertIsNotNone(engine_turns, 'engine turn evidence must survive unavailable final reads')
+                self.assertEqual(len(engine_turns), 2)
+                for index, attempt in enumerate(engine_turns):
+                    early = report['postRelease'][index]['frontiers']['40']['corrected_advance']
+                    self.assertEqual(early['frame'], 41)
+                    baseline = attempt['baseline']
+                    self.assertGreater(baseline['dispatched_ms'], early['controller_ms'])
+                    if index == 1 and control == 'baseline timeout':
+                        self.assertNotIn('receipt', baseline)
+                        self.assertNotIn('advance', attempt)
+                        continue
+                    self.assertEqual(baseline['receipt']['frame'], 42)
+                    self.assertGreater(baseline['receipt']['controller_ms'], baseline['dispatched_ms'])
+                    advance = attempt['advance']
+                    self.assertGreater(advance['dispatched_ms'], baseline['receipt']['controller_ms'])
+                    if index == 1 and control == 'same frame':
+                        self.assertNotIn('receipt', advance)
+                    else:
+                        self.assertEqual(advance['receipt']['frame'], 43)
+                        self.assertGreater(advance['receipt']['controller_ms'], advance['dispatched_ms'])
+                self.assertEqual(report['phase'], expected_phase)
+
     def test_native_webkit_abort_must_belong_to_the_reported_closed_link(self):
         # Value: protects=departure attribution; fails_when=another link excuses the warning; seam=browser receipt validator
         script = r"""

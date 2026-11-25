@@ -979,6 +979,41 @@ function waitForCorrectedHistory(pages, frame, readiness, wait, timeout) {
   { frame, restores: readiness[index].page.restores }, timeout)));
 }
 
+async function waitForEngineTurn(pages, engineTurns, errors) {
+  const label = 'native post-confirmation engine turn';
+  const deadline = performance.now() + PAGE_WAIT_MS;
+  let active = true;
+  async function sample(page, attempt, read, baseline) {
+    const dispatched_ms = performance.now();
+    assert.ok(dispatched_ms < deadline, `absolute ${label} deadline`);
+    attempt.dispatched_ms = dispatched_ms;
+    const frame = await page.evaluate(read, baseline);
+    const controller_ms = performance.now();
+    assert.ok(active && controller_ms < deadline, `absolute ${label} deadline`);
+    assert.ok(Number.isSafeInteger(frame) && frame > (baseline ?? -1), 'invalid native engine frame observation');
+    attempt.receipt = { frame, controller_ms };
+    return frame;
+  }
+  try {
+    await boundedRoom(() => Promise.all(pages.map(async (page, index) => {
+      const trace = engineTurns[index] = { baseline: {} };
+      const baseline = await sample(page, trace.baseline, () => window.fortressNative.frame);
+      if (!active) return;
+      trace.advance = {};
+      await sample(page, trace.advance, async baseline => {
+        while (true) {
+          const { state, frame } = window.fortressNative;
+          if (state === 'playing' && frame > baseline) return frame;
+          await new Promise(resolve => requestAnimationFrame(resolve));
+        }
+      }, baseline);
+      if (errors.length) throw new Error(JSON.stringify(errors));
+    })), PAGE_WAIT_MS, label);
+  } finally {
+    active = false;
+  }
+}
+
 async function leaveWithReceipt(page, trace) {
   const publication = page.waitForEvent('console', {
     timeout: PAGE_WAIT_MS,
@@ -1041,6 +1076,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
   let armed, stalled;
   let comparedFrames = HISTORY_FRAMES;
   const holdReadyReceived = Array(players).fill(null);
+  const engineTurns = [];
   const physicalCloseReport = {};
   const closeReport = {};
   const wait = async (page, condition, argument = null, timeout = PAGE_WAIT_MS) => {
@@ -1206,11 +1242,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     }
     // A waiting step can publish confirmation before dispatching a correction.
     phase = 'post-confirmation engine turn';
-    await boundedRoom(async () => {
-      const confirmedFrames = await Promise.all(pages.map(page => page.evaluate(() => window.fortressNative.frame)));
-      await Promise.all(pages.map((page, index) => wait(page, frame => window.fortressNative.state === 'playing'
-        && window.fortressNative.frame > frame, confirmedFrames[index])));
-    }, PAGE_WAIT_MS, 'native post-confirmation engine turn');
+    await waitForEngineTurn(pages, engineTurns, errors);
     phase = 'confirmed history capture';
     const history = await Promise.all(pages.map(async (page, index) => {
       const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence, players), PAGE_WAIT_MS,
@@ -1352,7 +1384,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
         && rtc.every(([, state]) => state === 'closed');
     })));
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
-      holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, departureCommands, roomIdentities,
+      holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns, departureCommands, roomIdentities,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks ?? departureClocks, closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
@@ -1376,7 +1408,7 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
       physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
-      warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline
+      warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns
     }));
   } finally {
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
