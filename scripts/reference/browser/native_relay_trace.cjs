@@ -1,9 +1,9 @@
 // Serialized into the browser init script. Keep its dependencies local.
 function createRelayWireTrace() {
-  const cap = 32;
+  const cap = 128;
   const families = ['sync', 'sync', 'input', 'input', 'quality', 'quality'];
   const streams = Object.fromEntries(['send', 'raw', 'sdk', 'native'].map(stage => [stage, Object.fromEntries(
-    [...new Set(families)].map(family => [family, { count: 0, events: [] }]))]));
+    [...new Set(families)].map(family => [family, { count: 0, links: new Map() }]))]));
   let room, local, roster;
   const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 
@@ -86,9 +86,12 @@ function createRelayWireTrace() {
   function retain(stage, envelope, identity, metadata) {
     const stream = streams[stage][families[identity.kind]];
     const ordinal = ++stream.count;
-    if (stream.events.length === cap) stream.events.shift();
+    const peer = stage === 'send' ? identity.recipient : identity.sender;
+    if (!stream.links.has(peer)) stream.links.set(peer, []);
+    const events = stream.links.get(peer);
+    if (events.length === cap) events.shift();
     const packet = { ordinal, ...identity, ...metadata, bytes: Uint8Array.from(envelope) };
-    stream.events.push(packet);
+    events.push(packet);
     return packet;
   }
 
@@ -97,9 +100,12 @@ function createRelayWireTrace() {
   return {
     bind(session, uuid, members) {
       if (roster) throw new Error('relay wire trace already bound');
+      const identities = new Set(members);
+      if (members.length !== identities.size || identities.size < 2 || identities.size > 8 || !identities.has(uuid))
+        throw new Error('invalid relay wire trace roster');
       room = session;
       local = uuid;
-      roster = new Set(members);
+      roster = identities;
     },
     record(stage, bytes, socket_ordinal = null) {
       if (!roster || !bytes) return;
@@ -113,7 +119,7 @@ function createRelayWireTrace() {
       if (stage === 'send' && identity.kind === 5) {
         const token = hex(envelope.subarray(-16));
         // An echo proves processing of this token on the link. Identical reports can share it.
-        const candidates = streams.native.quality.events.filter(event => event.kind === 4 && event.sender === identity.recipient
+        const candidates = (streams.native.quality.links.get(identity.recipient) ?? []).filter(event => event.kind === 4
           && event.code === 0 && event.report_token === token).map(({ epoch, seq }) => ({ epoch, seq }));
         if (candidates.length) protocol_reply = { token, candidates };
       }
@@ -139,7 +145,7 @@ function createRelayWireTrace() {
       if (seq !== 0n) retain(stage, envelope, identity, { at_ms, epoch, seq: seq.toString(), code, report_token });
     },
     repeatQuality(recipient, other, send) {
-      const original = streams.send.quality.events.findLast(event => event.kind === 4 && event.recipient === recipient);
+      const original = streams.send.quality.links.get(recipient)?.findLast(event => event.kind === 4);
       if (!original || !roster.has(other) || other === local || other === recipient) throw new Error('missing relay control packet or recipient');
       const addressed = original.bytes.slice();
       const readdressed = addressed.slice();
@@ -147,14 +153,13 @@ function createRelayWireTrace() {
       return [send(addressed), send(addressed), send(readdressed)];
     },
     freezeEnqueued(stamps) {
-      if (!stamps.every(stamp => streams.native.quality.events.some(event =>
-        event.sender === stamp.sender && event.recipient === stamp.recipient
-        && event.epoch === stamp.epoch && event.seq === stamp.seq && event.code === 0))) return null;
+      if (!stamps.every(stamp => streams.native.quality.links.get(stamp.sender)?.some(event =>
+        event.recipient === stamp.recipient && event.epoch === stamp.epoch && event.seq === stamp.seq && event.code === 0))) return null;
       return this.freeze();
     },
     async freeze() {
       const entries = Object.entries(streams).flatMap(([stage, groups]) => Object.entries(groups).map(([family, stream]) =>
-        ({ stage, family, count: stream.count, events: stream.events.slice() })));
+        ({ stage, family, count: stream.count, events: [...stream.links.values()].flat().sort((a, b) => a.ordinal - b.ordinal) })));
       const snapshot = { version: 1, clock: 'page.performance.now', room, local, streams: Object.fromEntries(Object.keys(streams).map(stage => [stage, {}])) };
       await Promise.all(entries.map(async ({ stage, family, count, events }) => {
         snapshot.streams[stage][family] = { count, omitted: count - events.length, events: await Promise.all(events.map(async ({ bytes, ...event }) =>

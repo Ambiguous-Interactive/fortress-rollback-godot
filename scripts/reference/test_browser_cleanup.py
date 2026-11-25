@@ -76,7 +76,7 @@ const server = { room, roster: [sender, recipient], streams: { ingress: stage([p
 const pageA = { room, local: sender, sockets: 1,
   streams: { send: stage([packet, another]), raw: stage(), sdk: stage(), native: stage() } };
 const pageB = { room, local: recipient, sockets: 1,
-  streams: { send: stage(), raw: stage([another]), sdk: stage([another]), native: stage([another, {...another, ordinal: 3}]) } };
+  streams: { send: stage(), raw: stage([another]), sdk: stage([another]), native: stage([{...another, code: 0}, {...another, ordinal: 3, code: 1}]) } };
 const result = joinRelayReceipts(server, [pageA, pageB]);
 const byStamp = new Map(result.rows.map(row => [row.seq, row]));
 assert.equal(byStamp.get('9').send, 1);
@@ -84,11 +84,13 @@ assert.deepEqual(byStamp.get('9').raw, []);
 assert.deepEqual(byStamp.get('9').native, []);
 assert.deepEqual(byStamp.get('10').raw, [2]);
 assert.deepEqual(byStamp.get('10').native, [2, 3]);
+assert.deepEqual(byStamp.get('10').native_accepted, [2]);
 assert.deepEqual(result.unjoined_sends, []);
 assert.throws(() => assertJoinedRelayControl(result), /40 complete packet joins/);
 const complete = Array.from({ length: 40 }, (_, i) => ({ ...byStamp.get('10'), seq: String(i), family: ['sync', 'input', 'quality'][i % 3] }));
 assertJoinedRelayControl({ rows: complete });
 assert.throws(() => assertJoinedRelayControl({ rows: complete.slice(1) }), /40 complete packet joins/);
+assert.throws(() => assertJoinedRelayControl({ rows: complete.map(row => ({ ...row, native_accepted: [] })) }), /40 complete packet joins/);
 assert.throws(() => assertJoinedRelayControl({ rows: complete.map(row => ({ ...row, family: 'sync' })) }), /complete sync, input, and quality/);
 writes[0].actual_recipient = sender;
 assert.throws(() => joinRelayReceipts(server, [pageA, pageB]), /addressed socket/);
@@ -158,7 +160,7 @@ const owned = envelope(local, other);
 const ownedDigest = createHash('sha256').update(owned).digest('hex');
 trace.record('send', owned);
 owned.fill(0);
-for (let i = 0; i < 40; i++) trace.record('raw', delivered(envelope(source, local, 4), BigInt(i + 1)));
+for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, local, 4), BigInt(i + 1)));
 (async () => {
   const receipt = await trace.freeze();
   assert.equal(receipt.room, room);
@@ -180,15 +182,29 @@ for (let i = 0; i < 40; i++) trace.record('raw', delivered(envelope(source, loca
   assert.equal(native.code, 0);
   assert.deepEqual(receipt.streams.send.quality.events[0].protocol_reply,
     { token: '00'.repeat(16), candidates: [{ epoch: 1, seq: '5' }, { epoch: 1, seq: '6' }] });
-  for (let i = 7; i < 40; i++) trace.recordEngine('native', source, envelope(source, local, 4).subarray(57).toString('hex'), 1, String(i), 0);
+  for (let i = 7; i < 140; i++) trace.recordEngine('native', source, envelope(source, local, 4).subarray(57).toString('hex'), 1, String(i), 0);
   assert.equal(trace.freezeEnqueued([expected]), null);
   assert.equal((await frozenAtEnqueue).streams.native.quality.events[0].seq, '5');
   const quality = receipt.streams.raw.quality;
-  assert.equal(quality.count, 40);
-  assert.equal(quality.omitted, 8);
-  assert.equal(quality.events.length, 32);
-  assert.equal(quality.events[0].seq, '9');
-  assert.equal(quality.events.at(-1).seq, '40');
+  assert.equal(quality.count, 140);
+  assert.equal(quality.omitted, 12);
+  assert.equal(quality.events.length, 128);
+  assert.equal(quality.events[0].seq, '13');
+  assert.equal(quality.events.at(-1).seq, '140');
+  const members = [source, local, other, ...['55', '66', '77', '88', '99'].map(value => value.repeat(16))];
+  const pressured = createRelayWireTrace();
+  pressured.bind(room, local, members);
+  for (const [kind, family] of [[2, 'input'], [4, 'quality']]) {
+    pressured.record('send', envelope(local, source, kind), kind);
+    for (let seq = 1; seq <= 129; seq++) {
+      for (const peer of members.slice(2)) pressured.record('send', envelope(local, peer, kind), seq);
+    }
+    const { count, omitted, events } = (await pressured.freeze()).streams.send[family];
+    assert.equal(count, 1 + 129 * 6);
+    assert.equal(events[0].recipient, source, `${family} tail of inactive link was evicted by healthy links`);
+    assert.equal(events[0].socket_ordinal, kind);
+    assert.equal(omitted, 6);
+  }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs')], check=True, timeout=10)

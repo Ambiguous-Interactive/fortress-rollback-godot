@@ -252,6 +252,7 @@ def main():
     parser.add_argument('--omit-second-replacement', action='store_true', help='negative control for the overlapping recovery cell')
     parser.add_argument('--trace-relay-wire', action='store_true', help='capture bounded browser, SDK and native inbox packet receipts in relay cells')
     parser.add_argument('--relay-trace-server', type=Path, help='build receipt for the optional instrumented local relay server')
+    parser.add_argument('--relay-retention-control', action='store_true', help='mute one link while a traced eight-player room continues traffic')
     parser.add_argument('--browser-pair', choices=BROWSER_PAIRS, default='chromium', help='single engine or alternating engines in each room')
     parser.add_argument('--cache', type=Path, default=ROOT / '.cache/reference')
     parser.add_argument('--addon', type=Path, required=True, help='complete Web addon archive for this revision')
@@ -260,7 +261,8 @@ def main():
     output, cache, addon = args.output.resolve(), args.cache.resolve(), args.addon.resolve()
     logs = [cell.replace(':', '-') + '.log' for cell in (*CELLS, OVERLAP_CELL)]
     logs += ['mesh-server.log', 'relay-server.log', 'import.log', 'export.log', 'version.log', 'tls.log', 'stun.log']
-    logs += [f'relay-{players}-server{suffix}' for players in (2, 4, 8) for suffix in ('.log', '-scope.json', '-scope.json.new', '-trace.json')]
+    trace_files = ('.log', '-scope.json', '-scope.json.new', '-trace.json', '-trace.json.request', '-trace.json.request.next')
+    logs += [f'relay-{players}-server{suffix}' for players in (2, 4, 8) for suffix in trace_files]
     begin_results(output, REPORT, logs)
     receipt = output / REPORT
     manifest = load_manifest()
@@ -286,7 +288,11 @@ def main():
     trace_wire = args.trace_relay_wire or args.relay_trace_server is not None
     if trace_wire and any(not cell.startswith('relay:') for cell in cells):
         parser.error('relay tracing requires explicit relay cells')
+    if args.relay_retention_control and (not args.relay_trace_server or cells != ('relay:8',)):
+        parser.error('--relay-retention-control requires --relay-trace-server and --cell relay:8')
     control = '--trace-relay-wire' if trace_wire else '--omit-second-replacement' if args.omit_second_replacement else None
+    if args.relay_retention_control:
+        control = '--relay-retention-control'
     stun_tool = None
     if browser_pair != ('chromium',) and any(cell.startswith('mesh') for cell in cells):
         stun = environment.get('FORTRESS_STUN_EXECUTABLE') or shutil.which('turnserver')

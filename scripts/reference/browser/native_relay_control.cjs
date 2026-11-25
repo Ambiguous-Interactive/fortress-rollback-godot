@@ -19,40 +19,53 @@ async function readServerReceipt(path) {
   }
 }
 
-async function waitForServerReceipt(path, select, timeout) {
-  const deadline = performance.now() + timeout;
-  while (performance.now() < deadline) {
-    const result = select(await readServerReceipt(path));
-    if (result && performance.now() < deadline) return result;
-    await pause(10);
-  }
-  throw new Error('relay server receipt deadline');
+function createRelayServerReader(path) {
+  const requestPath = path + '.request';
+  let generation = 0;
+  return async (select = receipt => receipt, timeout = 3000) => {
+    const deadline = performance.now() + timeout;
+    while (performance.now() < deadline) {
+      const request = ++generation;
+      await fs.writeFile(requestPath + '.next', String(request), { flag: 'wx', mode: 0o600 });
+      await fs.rename(requestPath + '.next', requestPath);
+      while (performance.now() < deadline) {
+        const receipt = await readServerReceipt(path);
+        if (receipt) {
+          assert.equal(receipt.version, 2, 'unexpected relay server receipt version');
+          if (receipt.request === request && performance.now() < deadline) {
+            const result = select(receipt);
+            if (result) return result;
+            break;
+          }
+        }
+        await pause(10);
+      }
+    }
+    throw new Error('relay server receipt deadline');
+  };
 }
 
-async function bindRelayServer(ready, scopePath, receiptPath) {
+async function bindRelayServer(ready, scopePath, readReceipt) {
   const { room_id, session_id: room } = ready[0];
   const roster = ready.map(peer => peer.uuid.replaceAll('-', '')).sort();
   assert.ok(ready.every(peer => peer.room_id === room_id && peer.session_id === room), 'relay scope must bind the same room in every browser');
   const scope = { room_id, room, roster };
   await fs.writeFile(scopePath + '.new', JSON.stringify(scope), { flag: 'wx', mode: 0o600 });
   await fs.rename(scopePath + '.new', scopePath);
-  await waitForServerReceipt(receiptPath, receipt => {
-    if (!receipt) return null;
-    assert.equal(receipt.version, 1);
+  await readReceipt(receipt => {
     assert.equal(receipt.clock, 'server.monotonic');
     assert.deepEqual({ room_id: receipt.room_id, room: receipt.room, roster: receipt.roster }, scope);
     return receipt;
-  }, 3000);
+  });
 }
 
-async function exerciseRelayDelivery(pages, ready, receiptPath) {
+async function exerciseRelayDelivery(pages, ready, readReceipt) {
   const [sender, recipient, other] = ready.slice(0, 3).map(peer => peer.uuid.replaceAll('-', ''));
   const [sourcePage, delayedPage, otherPage] = pages;
   const started = await delayedPage.evaluate(() => window.fortressNativeWire.holdRelayControl());
   const ordinals = await sourcePage.evaluate(([recipient, other]) => window.fortressNativeWire.repeatRelayControl(recipient, other), [recipient, other]);
   assert.ok(ordinals.every((ordinal, index) => Number.isSafeInteger(ordinal) && (!index || ordinal === ordinals[index - 1] + 1)));
-  const matched = await waitForServerReceipt(receiptPath, receipt => {
-    if (!receipt) return null;
+  const matched = await readReceipt(receipt => {
     const accepted = ordinals.map(ordinal => events(receipt, 'ingress', 'quality').find(event => event.sender === sender && event.socket_ordinal === ordinal));
     if (accepted.some(event => !event)) return null;
     const written = accepted.map(event => events(receipt, 'write', 'quality').find(write => stampKey(write) === stampKey(event)));
@@ -93,6 +106,44 @@ async function exerciseRelayDelivery(pages, ready, receiptPath) {
   return { ...matched, delay, sends, browser: browser.flat() };
 }
 
+async function exerciseRelayRetention(pages, ready, readReceipt) {
+  const [sender, recipient] = ready.slice(0, 2).map(peer => peer.uuid.replaceAll('-', ''));
+  const [source, reporter] = pages;
+  const families = ['input', 'quality'];
+  const targets = (receipt, stage, family) => events(receipt, stage, family).filter(event => event.sender === sender && event.recipient === recipient);
+  await source.evaluate(peer => window.fortressNativeWire.muteRelayLink(peer), recipient);
+  let before, after, pressure, pagesAtPressure, pauseReceipt;
+  try {
+    before = await readReceipt(undefined, 250);
+    after = await readReceipt(receipt => {
+      const progress = Object.fromEntries(['ingress', 'write'].map(stage => [stage, Object.fromEntries(families.map(family =>
+        [family, receipt.streams[stage][family].count - before.streams[stage][family].count]))]));
+      if (!Object.values(progress).every(stage => Object.values(stage).every(count => count > 128))) return null;
+      pressure = progress;
+      return receipt;
+    }, 800);
+    for (const stage of ['ingress', 'write']) {
+      for (const family of families) {
+        assert.deepEqual(targets(after, stage, family), targets(before, stage, family), 'muted link changed during retention pressure');
+      }
+    }
+    pagesAtPressure = await Promise.all([source, reporter].map(page => page.evaluate(() => window.fortressNativeWire.relayWireTrace())));
+  } finally {
+    pauseReceipt = await source.evaluate(() => window.fortressNativeWire.resumeRelayLink());
+  }
+  assert.ok(pauseReceipt.inputs > 0 && pauseReceipt.reports > 0 && pauseReceipt.resumed < pauseReceipt.cutoff, 'muted link exceeded its control window');
+  const joined = joinRelayReceipts(after, pagesAtPressure);
+  const frontier = families.map((family, index) => {
+    const packet = events(pagesAtPressure[1], 'native', family).findLast(event =>
+      event.sender === sender && event.code === 0 && event.kind === [2, 4][index]);
+    assert.ok(packet, `retention control lost the accepted ${family} sample`);
+    const row = joined.rows.find(row => stampKey(row) === stampKey(packet));
+    assert.ok(row && completeRelayRow(row), `retention control lost a stage of the original ${family} packet`);
+    return row;
+  });
+  return { sender, recipient, pause: pauseReceipt, requests: [before.request, after.request], pressure, frontier };
+}
+
 function joinRelayReceipts(server, pages) {
   if (!server?.streams) return null;
   const rows = new Map();
@@ -103,10 +154,11 @@ function joinRelayReceipts(server, pages) {
     const key = stampKey(packet);
     if (!rows.has(key)) rows.set(key, { family, kind: packet.kind, sender: packet.sender, recipient: packet.recipient,
       epoch: packet.epoch, seq: packet.seq, envelope_bytes: packet.envelope_bytes, envelope_sha256: packet.envelope_sha256,
-      send: null, ingress: [], write: [], raw: [], sdk: [], native: [] });
+      send: null, ingress: [], write: [], raw: [], sdk: [], native: [], native_accepted: [] });
     const row = rows.get(key);
     assert.ok(sameEnvelope(row, packet) && row.kind === packet.kind && row.family === family, `relay receipt disagrees for ${key}`);
     row[stage].push(packet.ordinal);
+    if (stage === 'native' && packet.code === 0) row.native_accepted.push(packet.ordinal);
     return row;
   }
   for (const page of pages) {
@@ -146,9 +198,13 @@ function joinRelayReceipts(server, pages) {
 }
 
 function assertJoinedRelayControl(joined) {
-  const complete = joined.rows.filter(row => row.send !== null && ['ingress', 'write', 'raw', 'sdk', 'native'].every(stage => row[stage].length));
+  const complete = joined.rows.filter(completeRelayRow);
   assert.ok(complete.length >= 40, 'relay control requires 40 complete packet joins');
   assert.equal(new Set(complete.map(row => row.family)).size, 3, 'relay control requires complete sync, input, and quality packet joins');
 }
 
-module.exports = { assertJoinedRelayControl, bindRelayServer, exerciseRelayDelivery, joinRelayReceipts, readServerReceipt };
+function completeRelayRow(row) {
+  return row.send !== null && ['ingress', 'write', 'raw', 'sdk', 'native_accepted'].every(stage => row[stage].length);
+}
+
+module.exports = { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, joinRelayReceipts };

@@ -1,6 +1,7 @@
 const { assertRecoveredRoom, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace } = require('./native_relay_trace.cjs');
-const { assertJoinedRelayControl, bindRelayServer, exerciseRelayDelivery, joinRelayReceipts, readServerReceipt } = require('./native_relay_control.cjs');
+const { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention,
+  joinRelayReceipts } = require('./native_relay_control.cjs');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
@@ -411,6 +412,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
   const channelReports = new Map();
   const socketReports = new WeakMap();
   const traceSocketOrdinals = relayWireTrace && new WeakMap();
+  let mutedRelay;
   let relayDelay;
   function delayRelayDelivery() {
     if (!relayWireTrace || relayDelay || resources.sockets.length !== 1 || resources.sockets[0].readyState !== WebSocket.OPEN)
@@ -780,6 +782,11 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
       return;
     }
     const packet = relayAddresses(data);
+    if (mutedRelay && packet?.sender === localUuid && packet.recipient === mutedRelay.recipient && performance.now() < mutedRelay.cutoff) {
+      if (packet.kind === inputKind) mutedRelay.inputs++;
+      if (packet.kind === 4) mutedRelay.reports++;
+      return;
+    }
     return send('relay', socketReports.get(this), packet?.recipient, (bytes, held_send = false) => {
       if (releasingRelay && packet && this.readyState !== nativeSocket.OPEN) closedReleaseSocket(this, 'before_send', held_send);
       socketSend.call(this, bytes);
@@ -840,6 +847,16 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
     },
     holdRelayControl: delayRelayDelivery,
     releaseRelayControl: stamps => relayDelay?.releaseWhenHeld(stamps) ?? expiredRelayDelay,
+    muteRelayLink(recipient) {
+      if (!relayWireTrace || mutedRelay || recipient === localUuid || !roomRoster.includes(recipient)) throw new Error('invalid relay retention link');
+      const started = performance.now();
+      mutedRelay = { recipient, started, cutoff: started + 1250, inputs: 0, reports: 0 };
+    },
+    resumeRelayLink() {
+      const sample = mutedRelay;
+      mutedRelay = null;
+      return { ...sample, resumed: performance.now() };
+    },
     repeatRelayControl(recipient, other) {
       const socket = resources.sockets[0];
       if (resources.sockets.length !== 1 || socket.readyState !== nativeSocket.OPEN) throw new Error('missing relay control socket');
@@ -1371,9 +1388,11 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const overlap = mode === 'mesh-recovery-overlap';
   const recovery = mode === 'mesh-recovery' || overlap;
   const omitSecond = control === '--omit-second-replacement';
-  const traceRelayWire = control === '--trace-relay-wire';
+  const traceRetention = control === '--relay-retention-control';
+  const traceRelayWire = control === '--trace-relay-wire' || traceRetention;
   const traceScopePath = traceRelayWire && process.env.FORTRESS_RELAY_TRACE_SCOPE;
   const traceReceiptPath = traceScopePath && process.env.FORTRESS_RELAY_TRACE_OUTPUT;
+  const readRelayServer = traceReceiptPath && createRelayServerReader(traceReceiptPath);
   const mixed = startup || liveClose || recovery;
   const route = mixed ? 'mesh' : mode;
   const traceWarmup = route === 'relay' && players === 8;
@@ -1398,6 +1417,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   let roomIdentities;
   let phase = 'launch';
   let relayControl;
+  let relayRetention;
   let sequence = 0;
   let postReleaseOrder = 0;
   let correctionDeadline;
@@ -1493,7 +1513,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       roomIdentities = { uuids, roster };
       postRelease.forEach((peer, index) => bindDepartureCheckpoints(peer, roster, uuids[index]));
     }
-    if (traceScopePath) await bindRelayServer(ready, traceScopePath, traceReceiptPath);
+    if (readRelayServer) await bindRelayServer(ready, traceScopePath, readRelayServer);
     await wait(pages[0], () => window.fortressNative.start_enabled);
     await Promise.all(pages.map(async (page, index) => {
       for (const key of INPUTS[index][1]) await page.keyboard.down(key);
@@ -1514,9 +1534,14 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       await Promise.all(pages.map(page => wait(page, frame => window.fortressNative.state === 'playing'
         && window.fortressNative.confirmed >= frame, GATE_FRAME, WARMUP_WAIT_MS)));
     }
-    if (traceScopePath && players === 4 && browserPair.length === 2) {
+    if (readRelayServer && players === 4 && browserPair.length === 2) {
       phase = 'relay delivery control';
-      relayControl = await exerciseRelayDelivery(pages, ready, traceReceiptPath);
+      relayControl = await exerciseRelayDelivery(pages, ready, readRelayServer);
+    }
+    if (traceRetention) {
+      phase = 'relay retention control';
+      assert.ok(readRelayServer, 'relay retention control requires a trace server');
+      relayRetention = await exerciseRelayRetention(pages, ready, readRelayServer);
     }
     let direct, atClose, afterClose, restored, recoveryEvidence, closeLinks;
     if (liveClose || recovery) {
@@ -1748,16 +1773,15 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         return value;
       });
       assert.equal(new Set(relayWire.map(trace => trace.room)).size, 1, 'relay wire receipts disagree on the frozen room');
-      if (traceReceiptPath) {
-        relayServer = await readServerReceipt(traceReceiptPath);
-        assert.ok(relayServer, 'relay server receipt was lost');
+      if (readRelayServer) {
+        relayServer = await readRelayServer();
         relayJoined = joinRelayReceipts(relayServer, relayWire);
         if (relayControl) assertJoinedRelayControl(relayJoined);
       }
     }
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
       holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns, relayWire, relayControl,
-      relayServer, relayJoined,
+      relayServer, relayJoined, relayRetention,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples,
@@ -1768,6 +1792,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     failures.push(error);
     const correctionDeadlineReached = missedCorrectionDeadline(phase, error, correctionDeadline, performance.now());
     const relayWireFailure = traceRelayWire ? collectRelayWire() : null;
+    const relayServerFailure = readRelayServer && roomIdentities ? Promise.allSettled([readRelayServer()]) : null;
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
       ...window.fortressNative, wire: window.fortressNativeWire?.status(), warmup: window.fortressNativeWire?.warmupStatus(),
       stalled: window.fortressNativeStalled,
@@ -1782,9 +1807,11 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       status === 'fulfilled' ? value ?? null : { error: String(reason) });
     let relayJoined;
     let relayJoinError;
-    if (traceReceiptPath) {
+    if (relayServerFailure) {
       try {
-        relayJoined = joinRelayReceipts(await readServerReceipt(traceReceiptPath), relayWire);
+        const [serverReceipt] = await relayServerFailure;
+        if (serverReceipt.status === 'rejected') throw serverReceipt.reason;
+        relayJoined = joinRelayReceipts(serverReceipt.value, relayWire);
       } catch (joinError) {
         relayJoinError = String(joinError);
       }
@@ -1799,7 +1826,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
-      relayControl, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
+      relayControl, relayRetention, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
     }));
   } finally {
@@ -1827,9 +1854,10 @@ if (require.main === module) {
   const overlap = route === 'mesh-recovery-overlap';
   const validOverlap = overlap && ['chromium', 'chromium-firefox'].includes(profile) && (!control || control === '--omit-second-replacement');
   const validFault = size === '4' && (validOverlap || (!control && ['mesh-startup', 'mesh-close', 'mesh-recovery'].includes(route)));
-  const validPlain = ['2', '4', '8'].includes(size) && (route === 'relay' ? !control || control === '--trace-relay-wire' : route === 'mesh' && !control);
+  const relayControl = !control || control === '--trace-relay-wire' || (size === '8' && control === '--relay-retention-control');
+  const validPlain = ['2', '4', '8'].includes(size) && (route === 'relay' ? relayControl : route === 'mesh' && !control);
   if (!(validFault || validPlain) || !validPair) {
-    console.error('usage: native_online.cjs EXPORT ENDPOINT MODE SIZE [BROWSER_PROFILE] [--omit-second-replacement | --trace-relay-wire]');
+    console.error('usage: native_online.cjs EXPORT ENDPOINT MODE SIZE [BROWSER_PROFILE] [--omit-second-replacement | --trace-relay-wire | --relay-retention-control]');
     process.exitCode = 1;
   } else run(root, endpoint, route, Number(size), browserPair, control).then(result => console.log(JSON.stringify(result))).catch(error => {
     console.error(error);
