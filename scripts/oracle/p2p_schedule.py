@@ -20,9 +20,8 @@ def generation_inputs():
     inputs = {str((oracle / path).relative_to(root)): hashlib.sha256((oracle / path).read_bytes()).hexdigest() for path in paths}
     pin_path = 'docs/reference/pins.json'
     pins = json.loads((root / pin_path).read_text(encoding='utf-8'))
-    fortress = pins['sources']['fortress']
     p2p_pins = {
-        'fortress': {field: fortress[field] for field in ('revision', 'root', 'archive')},
+        'fortress': pins['sources']['fortress'],
         'rust': {field: pins['rust'][field] for field in ('version', 'lockfile_sha256')},
     }
     inputs[pin_path] = hashlib.sha256(json.dumps(p2p_pins, sort_keys=True, separators=(',', ':')).encode()).hexdigest()

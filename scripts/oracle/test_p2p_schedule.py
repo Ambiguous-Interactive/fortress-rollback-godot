@@ -17,7 +17,7 @@ class ScheduleHintTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             checkout = Path(temporary)
             oracle = checkout / 'scripts/oracle'
-            shutil.copytree(root / 'scripts/oracle', oracle, ignore=shutil.ignore_patterns('__pycache__', 'fixtures', 'tools'))
+            shutil.copytree(root / 'scripts/oracle', oracle, ignore=shutil.ignore_patterns('__pycache__', 'fixtures', 'tools', 'target'))
             (oracle / 'fixtures').mkdir()
             pins = checkout / 'docs/reference/pins.json'
             pins.parent.mkdir(parents=True)
@@ -39,10 +39,15 @@ class ScheduleHintTests(unittest.TestCase):
                             source['archive']['digest'] = '2' * 64
                         pins.write_text(json.dumps(changed), encoding='utf-8')
                         self.assertEqual(p2p_schedule.schedule_hints(), {} if name == 'fortress' else cases)
-                changed = deepcopy(manifest)
-                changed['sources']['fortress']['archive']['digest'] = '3' * 64
-                pins.write_text(json.dumps(changed), encoding='utf-8')
-                self.assertEqual(p2p_schedule.schedule_hints(), {})
+                for path, replacement in ((('archive', 'digest'), '3' * 64), (('repository',), 'https://github.com/example/fortress-rollback')):
+                    with self.subTest(fortress_pin=path):
+                        changed = deepcopy(manifest)
+                        source = changed['sources']['fortress']
+                        for key in path[:-1]:
+                            source = source[key]
+                        source[path[-1]] = replacement
+                        pins.write_text(json.dumps(changed), encoding='utf-8')
+                        self.assertEqual(p2p_schedule.schedule_hints(), {})
                 changed = deepcopy(manifest)
                 changed['rust']['version'] += '-changed'
                 pins.write_text(json.dumps(changed), encoding='utf-8')
