@@ -5,6 +5,14 @@ const SDK_SOCKET_PATH: String = "res://addons/signal_fish/transport/sf_websocket
 const NATIVE_TRANSPORT_SOURCE: String = """
 extends "%s"
 
+var can_receive_packet: Callable
+
+func _drain_cap() -> int:
+	# The pinned SDK checks this before reading each socket frame.
+	if can_receive_packet.is_valid() and not can_receive_packet.call():
+		return 0
+	return super._drain_cap()
+
 func _make_peer() -> SFWebSocketPeerAdapterScript:
 	var socket: WebSocketPeer = WebSocketPeer.new()
 	socket.inbound_buffer_size = 1048576

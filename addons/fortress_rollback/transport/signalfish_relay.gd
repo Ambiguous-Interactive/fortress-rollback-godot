@@ -245,13 +245,10 @@ func status() -> Dictionary:
 	}
 
 
-## Return how many maximum-sized envelopes still fit in the receive queue.
-func receive_capacity() -> int:
-	if _client == null or _failure != Code.OK:
-		return 0
-	@warning_ignore("integer_division")
-	var byte_slots: int = (_options.max_received_bytes - _received_bytes) / (_options.max_packet_bytes + Envelope.HEADER_BYTES)
-	return mini(_options.max_received_packets - _received.size(), byte_slots)
+## Check whether the queue can accept another maximum-sized envelope.
+func can_receive_packet() -> bool:
+	return (_client != null and _failure == Code.OK and _received.size() < _options.max_received_packets
+		and _options.max_packet_bytes + Envelope.HEADER_BYTES <= _options.max_received_bytes - _received_bytes)
 
 
 func detach() -> void:

@@ -79,9 +79,10 @@ func service_network(now_us: int) -> void:
 multi-round handshakes. A single-round handshake may omit that callback.
 Applications continue to poll/step the peer through its documented API.
 Run relay service between SDK polls so receive queues can drain.
-`receive_capacity()` reports how many maximum-sized envelopes the queue can
-admit. The native online example uses that capacity to cap each SDK poll and
-leaves excess frames in the SDK's FIFO until relay service frees space.
+`can_receive_packet()` checks whether a maximum-sized envelope can fit.
+The native online example checks that capacity before the SDK reads each
+socket frame. It keeps the SDK's poll budget and leaves excess frames in
+the socket FIFO until relay service frees space.
 
 `enqueue_batch` accepts every packet or none. It validates packet count before
 scanning identities, checks bytes and destinations before queueing, and copies

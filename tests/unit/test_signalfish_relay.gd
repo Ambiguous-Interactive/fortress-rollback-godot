@@ -237,9 +237,9 @@ func _overflow(context: RefCounted) -> void:
 	var payload: PackedByteArray = PackedByteArray()
 	payload.resize(512)
 	envelope = Envelope.encode(session, V, U, payload)
-	context.equal(fixture.relay.receive_capacity(), 1, "byte room can be smaller than packet room")
+	context.equal(fixture.relay.can_receive_packet(), true, "one maximum-sized frame fits the byte budget")
 	fixture.client.game_data_binary_received.emit(V, 1, envelope)
-	context.equal(fixture.relay.receive_capacity(), 0, "the full byte budget admits no more SDK frames")
+	context.equal(fixture.relay.can_receive_packet(), false, "the full byte budget admits no more SDK frames")
 	fixture.client.game_data_binary_received.emit(V, 1, envelope)
 	var receipt: Dictionary = fixture.relay.status().receive_overflow
 	context.equal(receipt, {"packets": 1, "bytes": 569, "packet_limit": 2, "byte_limit": 569, "refused_bytes": 569}, "byte pressure is distinguishable")
@@ -296,6 +296,7 @@ class Transport:
 	extends RefCounted
 	var buffered: int = 0
 	var max_packets_per_poll: int = 256
+	var can_receive_packet: Callable
 	var on_buffered: Callable = Callable()
 
 	func get_buffered_amount() -> int:

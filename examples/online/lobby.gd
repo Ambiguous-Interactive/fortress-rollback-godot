@@ -307,17 +307,12 @@ func _poll_client() -> int:
 	if backend != "native" or state != "playing":
 		client.call("poll")
 		return -1
-	var capacity: int = game_match.relay.receive_capacity()
-	if capacity == 0:
-		return 0
-	# Every frame in the SDK batch could be addressed to this client.
 	var transport: RefCounted = client.get("transport")
 	var budget: int = transport.get("max_packets_per_poll")
-	var applied: int = mini(budget, capacity)
-	transport.set("max_packets_per_poll", applied)
+	transport.set("can_receive_packet", game_match.relay.can_receive_packet)
 	client.call("poll")
-	transport.set("max_packets_per_poll", budget)
-	return applied
+	transport.set("can_receive_packet", Callable())
+	return budget
 
 
 func _maybe_start_transport(route: String, now_us: int, revision: int) -> void:

@@ -226,6 +226,8 @@ class LobbyClient:
 
 	func poll() -> void:
 		for _index: int in mini(transport.max_packets_per_poll, incoming.size()):
+			if transport.can_receive_packet.is_valid() and not transport.can_receive_packet.call():
+				break
 			game_data_binary_received.emit(Example.V, 1, incoming.pop_front())
 
 	func close(_code: int, _reason: String) -> void:
@@ -320,6 +322,17 @@ func _native_ingress_pressure(context: RefCounted) -> void:
 	context.equal(client.incoming.size(), 0, "every SDK packet eventually leaves the backlog")
 	context.equal(game.relay.poll(6).received + game.relay.poll(7).received, 128, "two native service turns consume the remaining burst")
 	context.equal(ingress.accepted.slice(1), burst, "all SDK bytes reach native once in arrival order")
+
+	var identity: PackedByteArray = game.membership.handshake_message().session_id
+	var other_recipient: PackedByteArray = Match.Relay.Envelope.encode(identity, Example.V, Example.V, identity + payload)
+	for _index: int in 128:
+		client.incoming.append(other_recipient)
+	for index: int in 128:
+		client.incoming.append(_native_envelope(game, burst[index]))
+	lobby._poll_client()
+	context.equal(client.incoming.size(), 0, "unrelated broadcasts do not halve the SDK poll budget")
+	context.equal(game.relay.status().received_packets, 128, "all addressed frames fit after the unrelated broadcasts")
+	context.equal(client.transport.can_receive_packet.is_null(), true, "the guard ends with the playing SDK poll")
 	lobby.client = null
 	game.detach()
 	mesh.free()
