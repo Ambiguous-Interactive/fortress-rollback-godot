@@ -1149,6 +1149,8 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const { runMain, _load: load } = require('node:module');
 const entrypoint = process.argv[1];
 const control = process.argv[2];
+const rejecting = control.startsWith('rejection');
+const stuck = control === 'same frame' || control === 'rejection and timeout';
 const realm = new AsyncLocalStorage();
 const windows = [];
 const roster = [1, 2].map(value => '00000000-0000-0000-0000-00000000000' + value);
@@ -1159,7 +1161,7 @@ Object.defineProperty(global, 'window', { get: () => realm.getStore() });
 const timeout = global.setTimeout;
 global.setTimeout = (callback, ms, ...args) => timeout(callback, [5000, 30000].includes(ms) ? 20 : ms, ...args);
 global.requestAnimationFrame = callback => {
-  if (window.index === 1 && control === 'same frame') return;
+  if (window.index === 1 && stuck) return;
   window.fortressNative.frame++;
   callback();
 };
@@ -1204,8 +1206,10 @@ function makePage() {
         lateBaseline?.(state.frame);
         return unavailable();
       }
-      if (index === 1 && control === 'baseline timeout' && operation.toString().includes('() => window.fortressNative.frame')) {
-        return new Promise(resolve => { lateBaseline = resolve; });
+      if (operation.toString().includes('() => window.fortressNative.frame')) {
+        if (index === 1 && control === 'baseline timeout') return new Promise(resolve => { lateBaseline = resolve; });
+        if (index === 0 && rejecting) throw new Error('fixture baseline RPC failed');
+        if (index === 1 && rejecting) await new Promise(setImmediate);
       }
       return realm.run(pageWindow, () => operation(argument));
     },
@@ -1234,16 +1238,19 @@ process.argv = [process.execPath, entrypoint, '.', 'ws://127.0.0.1/v3/ws', 'rela
 runMain();
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
-        for control in ('baseline timeout', 'same frame', 'higher frame'):
+        for control in ('baseline timeout', 'same frame', 'higher frame', 'rejection', 'rejection and timeout'):
             with self.subTest(control=control):
                 run = subprocess.run([*command, control], capture_output=True, encoding='utf-8', timeout=10)
                 self.assertEqual(run.returncode, 1, run.stderr)
                 self.assertEqual(run.stdout, '')
-                report = json.loads(run.stderr.splitlines()[0])
+                report_line, _, failure = run.stderr.partition('\n')
+                report = json.loads(report_line)
                 expected_phase = 'confirmed history capture' if control == 'higher frame' else 'post-confirmation engine turn'
-                if control != 'higher frame':
-                    self.assertEqual(report['phase'], expected_phase)
-                    self.assertIn('absolute native post-confirmation engine turn deadline', run.stderr)
+                self.assertEqual(report['phase'], expected_phase)
+                if control in ('baseline timeout', 'same frame', 'rejection and timeout'):
+                    self.assertIn('absolute native post-confirmation engine turn deadline', failure)
+                if control.startswith('rejection'):
+                    self.assertIn('fixture baseline RPC failed', failure)
                 self.assertEqual(report['compared_frames'], 40)
                 self.assertEqual([state['status'] for state in report['states']], ['rejected', 'rejected'])
                 self.assertIn('native peer 0 diagnostics deadline', run.stderr)
@@ -1256,20 +1263,20 @@ runMain();
                     self.assertEqual(early['frame'], 41)
                     baseline = attempt['baseline']
                     self.assertGreater(baseline['dispatched_ms'], early['controller_ms'])
-                    if index == 1 and control == 'baseline timeout':
+                    if (index == 1 and control == 'baseline timeout') or (index == 0 and control.startswith('rejection')):
                         self.assertNotIn('receipt', baseline)
                         self.assertNotIn('advance', attempt)
                         continue
+                    self.assertIn('receipt', baseline, 'a timely reply must survive a sibling rejection')
                     self.assertEqual(baseline['receipt']['frame'], 42)
                     self.assertGreater(baseline['receipt']['controller_ms'], baseline['dispatched_ms'])
                     advance = attempt['advance']
                     self.assertGreater(advance['dispatched_ms'], baseline['receipt']['controller_ms'])
-                    if index == 1 and control == 'same frame':
+                    if index == 1 and control in ('same frame', 'rejection and timeout'):
                         self.assertNotIn('receipt', advance)
                     else:
                         self.assertEqual(advance['receipt']['frame'], 43)
                         self.assertGreater(advance['receipt']['controller_ms'], advance['dispatched_ms'])
-                self.assertEqual(report['phase'], expected_phase)
 
     def test_native_webkit_abort_must_belong_to_the_reported_closed_link(self):
         # Value: protects=departure attribution; fails_when=another link excuses the warning; seam=browser receipt validator

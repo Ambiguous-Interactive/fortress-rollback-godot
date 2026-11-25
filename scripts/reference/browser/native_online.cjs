@@ -1058,8 +1058,9 @@ function waitForCorrectedHistory(pages, frame, readiness, wait, timeout) {
   { frame, restores: readiness[index].page.restores }, timeout)));
 }
 
-async function waitForEngineTurn(pages, engineTurns, errors) {
+async function waitForEngineTurn(pages, engineTurns) {
   const label = 'native post-confirmation engine turn';
+  const failures = [];
   const deadline = performance.now() + PAGE_WAIT_MS;
   let active = true;
   async function sample(page, attempt, read, baseline) {
@@ -1073,9 +1074,9 @@ async function waitForEngineTurn(pages, engineTurns, errors) {
     attempt.receipt = { frame, controller_ms };
     return frame;
   }
-  try {
-    await boundedRoom(() => Promise.all(pages.map(async (page, index) => {
-      const trace = engineTurns[index] = { baseline: {} };
+  async function observePeer(page, index) {
+    const trace = engineTurns[index] = { baseline: {} };
+    try {
       const baseline = await sample(page, trace.baseline, () => window.fortressNative.frame);
       if (!active) return;
       trace.advance = {};
@@ -1086,11 +1087,18 @@ async function waitForEngineTurn(pages, engineTurns, errors) {
           await new Promise(resolve => requestAnimationFrame(resolve));
         }
       }, baseline);
-      if (errors.length) throw new Error(JSON.stringify(errors));
-    })), PAGE_WAIT_MS, label);
+    } catch (error) {
+      if (active) failures.push(error);
+    }
+  }
+  try {
+    await boundedRoom(() => Promise.all(pages.map(observePeer)), PAGE_WAIT_MS, label);
+  } catch (error) {
+    failures.push(error);
   } finally {
     active = false;
   }
+  return failures;
 }
 
 async function leaveWithReceipt(page, trace) {
@@ -1324,7 +1332,13 @@ async function run(root, endpoint, mode, players, browserPair, omitSecond) {
     }
     // A waiting step can publish confirmation before dispatching a correction.
     phase = 'post-confirmation engine turn';
-    await waitForEngineTurn(pages, engineTurns, errors);
+    const engineTurnFailures = await waitForEngineTurn(pages, engineTurns);
+    if (engineTurnFailures.length) {
+      const lastFailure = engineTurnFailures.pop();
+      failures.push(...engineTurnFailures);
+      throw lastFailure;
+    }
+    if (errors.length) throw new Error(JSON.stringify(errors));
     phase = 'confirmed history capture';
     const history = await Promise.all(pages.map(async (page, index) => {
       const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence, players), PAGE_WAIT_MS,
