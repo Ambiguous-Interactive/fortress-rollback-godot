@@ -227,6 +227,14 @@ An inbox acceptance proves delivery to the native queue. A matching outgoing
 reply proves that the native protocol processed that report. Keep both marks on
 the recipient's clock, and leave the last timeout refresh open when other
 traffic could renew it.
+For exact relay joins, carry the v3 stamp through SDK emission and the relay
+FIFO. Key successful steps by room, sender, recipient, epoch and sequence.
+Use an absolute binary ordinal to match client send and server ingress on a
+single WebSocket, and verify the addressed bytes at each join. Repeated
+bytes can earn distinct stamps. Link an echoed quality token to all retained
+accepted candidates when their bytes match. Leave evicted or ambiguous
+stages visible. Prove ordering between clocks by holding recipient delivery
+until the controller reads the matching successful writes.
 Export the requested confirmed prefix once per browser. Keep recurring status
 snapshots small. When a page can publish data before its evaluation reply
 arrives, arm a page-scoped listener before dispatch. Match the request ID and
