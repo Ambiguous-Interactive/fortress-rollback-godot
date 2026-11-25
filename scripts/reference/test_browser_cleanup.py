@@ -1408,13 +1408,14 @@ runMain();
 const assert = require('node:assert/strict');
 const { closeEvidence, reportedChannel } = require(process.argv[1]);
 const receivedClose = (index, channel, before, closed, closer, {sentAt, clocks} = {}) =>
-  Boolean(closeEvidence({index, channel, sentAt}, before, closed, closer, clocks).proof);
+  Boolean(closeEvidence({index, channel, attempt:1}, before, closed, closer, clocks, {attempt:1, channel, sentAt}).proof);
 const frame = '    at fortressNativeSend_5 (:5:27)';
-assert.deepEqual(reportedChannel('Error sending binary data\n' + frame), {channel:5, sentAt:null});
-assert.deepEqual(reportedChannel(frame + '\n' + frame), {channel:null, sentAt:null});
-assert.deepEqual(reportedChannel('at unrelated (:5:27)'), {channel:null, sentAt:null});
-assert.deepEqual(reportedChannel('    at fortressNativeSend_5_1795419840003000 (:5:27)'),
-  {channel:5, sentAt:1795419840003000});
+assert.deepEqual(reportedChannel('Error sending binary data\n' + frame), {channel:5, attempt:null});
+assert.deepEqual(reportedChannel('    at fortressNativeSend_5_1234 (:5:27)'), {channel:5, attempt:1234});
+for (const stack of [frame + '\n' + frame, frame + '\n at fortressNativeSend_5_bad (:5:27)', 'at unrelated (:5:27)',
+  'at fortressNativeSend_5_9007199254740992 (:5:27)', 'at fortressNativeSend_5_0 (:5:27)', 'at fortressNativeSend_05_1 (:5:27)']) {
+  assert.deepEqual(reportedChannel(stack), {channel:null, attempt:null});
+}
 const counterpart = {local:'closing', remote:'survivor', closed:true, connectionClosed:true};
 const link = {index:5, local:'survivor', remote:'closing', closeAborts:1, closed:false};
 const other = {index:8, local:'same-page', remote:'another-peer', closeAborts:0};
@@ -1509,6 +1510,55 @@ async function tick(at) {
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
+    def test_native_webkit_records_the_exact_send_after_preparing_its_tag(self):
+        # Value: protects=actual native send timing; fails_when=tag preparation is included or a stale attempt is reused; seam=browser wire observer
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire } = require(process.argv[1]);
+let now = 0;
+let sent;
+class Connection {
+  close() {}
+  addEventListener() {}
+  createDataChannel() {
+    return { id: 3, addEventListener() {}, send() { sent = { at: now * 1000, stack: new Error().stack }; } };
+  }
+}
+const window = { crossOriginIsolated: true };
+runInNewContext(`(${instrumentNativeWire})(true, '')`, {
+  window, WebSocket: class {}, RTCPeerConnection: Connection,
+  performance: { now: () => now },
+  Function: function(...args) { now += 5; return Function(...args); },
+});
+const first = new Connection().createDataChannel('first', {});
+const second = new Connection().createDataChannel('second', {});
+const wire = window.fortressNativeWire;
+wire.observeDeparture();
+const send = channel => {
+  channel.send(new ArrayBuffer(1));
+  const [, index, tag] = sent.stack.match(/fortressNativeSend_(\d+)_(\d+)/).map(Number);
+  return { index, tag, at: sent.at };
+};
+const a = send(first);
+// Older witnesses encoded preparation time in the name itself.
+const recorded = wire.departureSends ? wire.departureSends([a.tag])[a.tag]?.sentAt : a.tag;
+assert.equal(recorded, a.at, 'timestamp must be taken at the native send');
+const b = send(second);
+assert.equal(b.tag, a.tag + 1);
+assert.equal(b.index, a.index + 1);
+assert.equal(wire.departureSends([b.tag])[b.tag]?.channel, b.index);
+for (let i = 0; i < 4096; ++i) first.send(new ArrayBuffer(1));
+const latest = send(second);
+const receipts = wire.departureSends([a.tag, b.tag, latest.tag, latest.tag + 1]);
+assert.equal(receipts[a.tag] ?? null, null, 'older attempts must be evicted');
+assert.equal(receipts[b.tag] ?? null, null, 'a reused slot must not return its old attempt');
+assert.equal(receipts[latest.tag]?.sentAt, latest.at);
+assert.equal(receipts[latest.tag + 1] ?? null, null, 'an unobserved attempt has no receipt');
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_native_webkit_close_receipt_names_the_ambiguous_link(self):
         # Value: protects=failed causal attribution; fails_when=actual reciprocal channel or clock gap is lost; seam=browser receipt validator
         script = r"""
@@ -1518,19 +1568,27 @@ const before = {index:17, local:'survivor', remote:'leaver', closeAborts:1, clos
 const sender = {...before, closed:true, connectionClosed:true, closedAt:50000};
 const closer = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
 const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
-const tagged = {index:1, channel:17, sentAt:47199};
-const fail = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks);
+const tagged = {index:1, channel:17, attempt:3};
+const receipt = {channel:17, attempt:3, sentAt:47199};
+const fail = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, receipt);
 assert.deepEqual(JSON.parse(JSON.stringify(fail)), {
-  ...tagged, closer:null, before, sender, counterparts:[{...closer, owner:0}], minimumGapUs:1999, maximumGapUs:2399, proof:null,
+  ...tagged, sentAt:47199, closer:null, before, sender, counterparts:[{...closer, owner:0}], minimumGapUs:1999, maximumGapUs:2399, proof:null,
 });
-const timed = closeEvidence({...tagged, sentAt:47200}, [before], [[closer], [sender]], null, clocks);
+const timed = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, sentAt:47200});
 assert.equal(timed.minimumGapUs, 2000);
 assert.equal(timed.maximumGapUs, 2400);
 assert.equal(timed.proof, 'clock-order');
-const early = closeEvidence({...tagged, sentAt:46799}, [before], [[closer], [sender]], null, clocks);
+for (const invalid of [null, {...receipt, sentAt:'47200'}, {...receipt, sentAt:-1},
+  {...receipt, attempt:4, sentAt:47200}, {...receipt, channel:18, sentAt:47200}]) {
+  const rejected = closeEvidence({...tagged, sentAt:999999}, [before], [[closer], [sender]], null, clocks, invalid);
+  assert.equal(rejected.sentAt, null);
+  assert.equal(rejected.minimumGapUs, null);
+  assert.equal(rejected.proof, null);
+}
+const early = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, sentAt:46799});
 assert.equal(early.maximumGapUs, 1999);
 assert.equal(early.proof, null);
-const aborted = closeEvidence(tagged, [before], [[closer], [{...sender, closeAborts:2}]], null, clocks);
+const aborted = closeEvidence(tagged, [before], [[closer], [{...sender, closeAborts:2}]], null, clocks, receipt);
 assert.equal(aborted.minimumGapUs, 1999);
 assert.equal(aborted.proof, 'sctp-abort');
 const missing = closeEvidence(tagged, [before], [[], [sender]], null, clocks);
@@ -1557,18 +1615,20 @@ const { waitForCloseProofs } = require(process.argv[1]);
 const before = {index:17, local:'survivor', remote:'leaver', closeAborts:0, closed:false};
 const reciprocal = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
 const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
-const sample = (links, offset) => ({
-  evaluate: async () => {
+const receipt = {channel:17, attempt:3, sentAt:47200};
+const sample = (links, offset, sends = {}) => ({
+  evaluate: async (_read, { attempts }) => {
     const start = now;
     const snapshot = links();
     await Promise.resolve();
     now = Math.max(now, start + 1);
-    return {links:snapshot, sampledAt:start * 1000 - offset + 500};
+    assert.deepEqual(attempts, offset === -5000 ? [3] : []);
+    return {links:snapshot, sampledAt:start * 1000 - offset + 500, sends};
   },
 });
 const initial = [{wire:{sctp:[reciprocal]}}, {wire:{sctp:[before]}}];
-const warning = [{index:1, channel:17, sentAt:47200}];
-const sender = sample(() => [before], -5000);
+const warning = [{index:1, channel:17, attempt:3}];
+const sender = sample(() => [before], -5000, {3:receipt});
 let now = 25;
 
 (async () => {
@@ -1592,12 +1652,17 @@ let now = 25;
   assert.equal(report.proofs[0].proof, null);
 
   now = 25;
+  await assert.rejects(waitForCloseProofs([sample(() => [reciprocal], 10000, {3:receipt}), sample(() => [before], -5000)],
+    initial, warning, report, { clocks, clock, delay: expire }), /WebKit close evidence deadline/);
+  assert.equal(report.proofs[0].sentAt, null, 'a receipt from another page cannot prove the send');
+
+  now = 25;
   const crashReport = {};
   const crashed = { evaluate: async () => { throw Error('Page crashed'); } };
   await assert.rejects(waitForCloseProofs([late, crashed], initial, warning, crashReport, { clocks, clock, delay: pause }),
     error => error instanceof AggregateError && error.errors[0].message.includes('peer 1') && error.errors[0].cause.message === 'Page crashed');
   assert.deepEqual(crashReport.snapshotErrors, [{index:1, reason:'Error: Page crashed'}]);
-  assert.deepEqual(crashReport.partialSnapshots, [{received_ms:26, links:[reciprocal]}, null]);
+  assert.deepEqual(crashReport.partialSnapshots, [{received_ms:26, links:[reciprocal], sends:{}}, null]);
   assert.deepEqual(crashReport.clockSamples, [{before:[], after:[{offsetMin:9459, offsetMax:10541}]}, {before:[], after:[]}]);
   assert.deepEqual(crashReport.proofs, []);
 
@@ -1608,14 +1673,14 @@ let now = 25;
   await assert.rejects(waitForCloseProofs([ambiguous, interrupted], initial, warning, interruptedReport, { clocks, clock, delay: pause }),
     /WebKit close snapshots failed/);
   assert.deepEqual(interruptedReport.partialSnapshots, [
-    {received_ms:52, links:[{...reciprocal, closedAt:30001}]}, {received_ms:26, links:[before]},
+    {received_ms:52, links:[{...reciprocal, closedAt:30001}], sends:{}}, {received_ms:26, links:[before], sends:{3:receipt}},
   ]);
   assert.equal(interruptedReport.proofs[0].proof, null);
 
-  const lateReply = sample(() => { now = 5025; return [reciprocal]; }, 10000);
+  const lateReply = sample(() => { now = 5025; return [before]; }, -5000);
   now = 25;
   const lateReport = {};
-  await assert.rejects(waitForCloseProofs([sender, lateReply], initial, warning, lateReport, { clocks, clock, delay: pause }),
+  await assert.rejects(waitForCloseProofs([late, lateReply], initial, warning, lateReport, { clocks, clock, delay: pause }),
     /WebKit close evidence deadline/);
   assert.deepEqual(lateReport.partialSnapshots, [null, null]);
   assert.deepEqual(lateReport.clockSamples.map(page => page.after), [[], []]);
@@ -1702,13 +1767,13 @@ async function collect(sentAt, sender, contradictory = false) {
   const report = {};
   const sampled = [[], []];
   const pages = [reciprocal, sender].map((link, index) => ({
-    evaluate: async (_read, sampleClock) => {
-      sampled[index].push(sampleClock);
+    evaluate: async (_read, { timed }) => {
+      sampled[index].push(timed);
       const offsets = [10000, contradictory && sampled[index].length === 1 ? 0 : -5000];
-      return {links:[link], sampledAt:now * 1000 - offsets[index]};
+      return {links:[link], sampledAt:now * 1000 - offsets[index], sends:index ? {3:{channel:17, attempt:3, sentAt}} : {}};
     },
   }));
-  const proof = waitForCloseProofs(pages, initial, [{index:1, channel:17, sentAt}], report, {
+  const proof = waitForCloseProofs(pages, initial, [{index:1, channel:17, attempt:3}], report, {
     clocks, clock: () => now, delay: async ms => { now = sampled[0].length === 5 ? 5025 : now + ms; },
   });
   return { report, proof, sampled };
@@ -1725,7 +1790,9 @@ async function collect(sentAt, sender, contradictory = false) {
   await assert.rejects(short.proof, /WebKit close evidence deadline .*peer 1 channel 17/);
   assert.equal(short.report.proofs[0].minimumGapUs, 1999);
   assert.deepEqual(short.sampled, [[true,true,true,true,false], [true,true,true,true,false]]);
-  assert.deepEqual(short.report.partialSnapshots, [{received_ms:125, links:[reciprocal]}, {received_ms:125, links:[before]}]);
+  assert.deepEqual(short.report.partialSnapshots, [
+    {received_ms:125, links:[reciprocal], sends:{}}, {received_ms:125, links:[before], sends:{3:{channel:17, attempt:3, sentAt:47081}}},
+  ]);
   assert.deepEqual(short.report.clockSamples, [
     {before:[], after:Array(4).fill({offsetMin:9959, offsetMax:10041})},
     {before:[], after:Array(4).fill({offsetMin:-5041, offsetMax:-4959})},

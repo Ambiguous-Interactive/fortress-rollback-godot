@@ -369,6 +369,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
   const ice = new Map();
   let session, localUuid;
   let observingDeparture = false;
+  const departureSendLimit = 4096;
+  const departureSendHistory = [];
+  let departureSendCount = 0;
   let holding = false;
   let releasingRelay = false;
   let releaseInFlight = 0;
@@ -639,14 +642,19 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
     resources.rtc.push(record);
     const nativeSend = channel.send;
     // WebKit reports a native send rejection on the calling stack without throwing.
-    const tagged = name => new Function('send', 'channel', `return function ${name}(bytes) { send.call(channel, bytes); }`)(nativeSend, channel);
+    const tagged = (name, receipt) => new Function('send', 'channel', 'receipt', 'instant',
+      `return function ${name}(bytes) { ${receipt ? 'receipt.sentAt = instant(); ' : ''}send.call(channel, bytes); }`)(nativeSend, channel, receipt, instant);
     const emit = tagWebKitSends ? tagged(`fortressNativeSend_${index}`) : bytes => nativeSend.call(channel, bytes);
     channel.send = data => {
       const view = nativeBytes(data);
       const packet = channel.id === 3 && view && matches(view, 0) ? nativePacket(view) : null;
       return send('mesh', channelReports, channel, bytes => {
-        if (tagWebKitSends && observingDeparture) tagged(`fortressNativeSend_${index}_${instant()}`)(bytes);
-        else emit(bytes);
+        if (tagWebKitSends && observingDeparture) {
+          const attempt = ++departureSendCount;
+          const receipt = { attempt, channel: index, sentAt: null };
+          departureSendHistory[attempt % departureSendLimit] = receipt;
+          tagged(`fortressNativeSend_${index}_${attempt}`, receipt)(bytes);
+        } else emit(bytes);
         if (packet) record.sent++;
         if (packet?.kind === inputKind) record.inputsSent++;
       }, data, packet);
@@ -807,6 +815,12 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
       return resources.rtc.filter(({channel, connection}) => channel.readyState === 'open' && connection.connectionState === 'connected').length === peers * 3;
     },
     observeDeparture() { observingDeparture = true; return window.crossOriginIsolated ? instant() : null; },
+    departureSends(attempts) {
+      return Object.fromEntries(attempts.flatMap(attempt => {
+        const receipt = departureSendHistory[attempt % departureSendLimit];
+        return receipt?.attempt === attempt ? [[attempt, receipt]] : [];
+      }));
+    },
     arm(all = false) {
       if (!armed) {
         armed = true;
@@ -886,10 +900,13 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix) {
 }
 
 function reportedChannel(stack) {
-  const frames = [...(stack ?? '').matchAll(/^\s*at (?:Object\.)?fortressNativeSend_(\d+)(?:_(\d+))? \(/gm)];
-  if (frames.length !== 1) return { channel: null, sentAt: null };
-  const [, channel, sentAt] = frames[0];
-  return { channel: Number(channel), sentAt: sentAt === undefined ? null : Number(sentAt) };
+  const frames = [...(stack ?? '').matchAll(/^\s*at (?:Object\.)?fortressNativeSend_(\S+) \(/gm)];
+  const tag = frames.length === 1 ? /^(0|[1-9]\d*)(?:_([1-9]\d*))?$/.exec(frames[0][1]) : null;
+  if (!tag) return { channel: null, attempt: null };
+  const channel = Number(tag[1]);
+  const attempt = tag[2] === undefined ? null : Number(tag[2]);
+  return Number.isSafeInteger(channel) && (attempt === null || Number.isSafeInteger(attempt))
+    ? { channel, attempt } : { channel: null, attempt: null };
 }
 
 function clockWindow(start, end, sampledAt) {
@@ -905,9 +922,11 @@ function intersectClock(previous, sample) {
   return offsetMin <= offsetMax ? { offsetMin, offsetMax } : null;
 }
 
-function closeEvidence({ index, channel, sentAt }, linksBefore, closedByPage, closer = null, clocks) {
+function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, closer = null, clocks, receipt) {
+  const sentAt = Number.isSafeInteger(attempt) && attempt > 0 && receipt?.attempt === attempt && receipt.channel === channel
+    && Number.isSafeInteger(receipt.sentAt) && receipt.sentAt >= 0 ? receipt.sentAt : null;
   const before = linksBefore.find(peer => peer.index === channel) ?? null;
-  const evidence = { index, channel, sentAt, closer, before, sender: null, counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
+  const evidence = { index, channel, attempt, sentAt, closer, before, sender: null, counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
   if (!before?.local || !before.remote || before.closed) return evidence;
   evidence.sender = closedByPage[index].find(peer => peer.index === channel && peer.local === before.local && peer.remote === before.remote) ?? null;
   evidence.counterparts = closedByPage.flatMap((links, owner) => owner === index ? [] : links
@@ -964,6 +983,8 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
   if (clocks) report.clockSamples ??= pages.map(() => ({ before: [], after: [] }));
   const latestSnapshots = pages.map(() => null);
   report.partialSnapshots = latestSnapshots;
+  const requested = pages.map((_, index) => [...new Set(errors
+    .filter(error => error.index === index && error.attempt !== null).map(error => error.attempt))]);
   let rounds = 0;
   const deadline = clock() + DIAGNOSTIC_MS;
   while (clock() < deadline) {
@@ -971,18 +992,18 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
     const snapshots = await Promise.allSettled(pages.map((page, index) =>
       boundedRoom(async () => {
         const start = Math.floor(clock() * 1000);
-        const { links, sampledAt } = await page.evaluate(timed => ({
+        const { links, sampledAt, sends } = await page.evaluate(({ timed, attempts }) => ({
           sampledAt: timed && window.crossOriginIsolated ? Math.round(performance.now() * 1000) : null,
-          links: window.fortressNativeWire.sctpStatus(),
-        }), sampleClock);
+          links: window.fortressNativeWire.sctpStatus(), sends: window.fortressNativeWire.departureSends(attempts),
+        }), { timed: sampleClock, attempts: requested[index] });
         const receivedAt = clock();
-        return { links, bound: sampleClock ? clockWindow(start, Math.ceil(receivedAt * 1000), sampledAt) : null, receivedAt };
+        return { links, sends, bound: sampleClock ? clockWindow(start, Math.ceil(receivedAt * 1000), sampledAt) : null, receivedAt };
       }, Math.max(0, Math.ceil(deadline - clock())), `native peer ${index} close snapshot`)));
     const failed = snapshots.flatMap((entry, index) => entry.status === 'rejected' ? [{ index, reason: entry.reason }] : []);
     snapshots.forEach((entry, index) => {
       if (entry.status !== 'fulfilled' || entry.value.receivedAt >= deadline) return;
-      const { receivedAt, links, bound } = entry.value;
-      latestSnapshots[index] = { received_ms: receivedAt, links };
+      const { receivedAt, links, sends, bound } = entry.value;
+      latestSnapshots[index] = { received_ms: receivedAt, links, sends };
       if (sampleClock) report.clockSamples[index].after.push(bound);
     });
     report.snapshotErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
@@ -995,7 +1016,8 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
     if (sampleClock) {
       report.clocks = report.clocks.map((bound, index) => intersectClock(bound, snapshots[index].value.bound));
     }
-    report.proofs = errors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks));
+    report.proofs = errors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks,
+      snapshots[error.index].value.sends?.[error.attempt]));
     for (const proof of report.proofs) assert.ok(proof.before, `WebKit send failure for peer ${proof.index} lacked a sending channel`);
     const remaining = deadline - clock();
     if (remaining <= 0) break;
