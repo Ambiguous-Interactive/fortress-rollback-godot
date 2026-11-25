@@ -20,7 +20,11 @@ MANIFEST = ROOT / 'docs/reference/pins.json'
 
 
 def load_manifest(path=MANIFEST):
-    data = json.loads(path.read_text())
+    return parse_manifest(path.read_bytes())
+
+
+def parse_manifest(contents):
+    data = json.loads(contents.decode('utf-8'))
     if data.get('schema_version') != 1:
         raise ValueError('unsupported pin manifest schema')
     for name, source in data['sources'].items():

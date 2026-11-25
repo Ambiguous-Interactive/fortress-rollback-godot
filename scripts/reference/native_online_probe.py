@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Export the installed native online example and qualify live SignalFish rooms."""
 from contextlib import contextmanager, nullcontext
+import hashlib
 from ipaddress import IPv4Address
 import json
 import os
@@ -35,6 +36,7 @@ RECOVERY_MODES = ('mesh-recovery', 'mesh-recovery-overlap')
 OVERLAP_PROFILES = ('chromium', 'chromium-firefox')
 BROWSER_PAIRS = ('chromium', 'firefox', 'webkit', 'chromium-firefox', 'chromium-webkit', 'firefox-webkit')
 BROWSER = ROOT / 'scripts/reference/browser'
+TRACE_SOURCE = Path(__file__).with_name('server_trace')
 EXTENSION = 'addons/fortress_native/fortress.gdextension'
 TEMPLATE = 'web_dlink_nothreads_release.zip'
 REPORT = 'native-online.json'
@@ -245,6 +247,18 @@ def play_cells(cells, export, environment, server_source, server_binary, output,
     return results
 
 
+def validate_trace_build(receipt, revision, frozen):
+    contents = receipt.read_bytes()
+    build = json.loads(contents.decode('utf-8'))
+    if (hashlib.sha256(contents).hexdigest() != frozen['relay_trace_build'] or not isinstance(build, dict)
+            or build.get('format') != 1 or build.get('passed') is not True or build.get('source_revision') != revision
+            or build.get('binary_sha256') != frozen['server']):
+        raise ValueError('relay trace server build receipt does not match the pinned binary')
+    inputs = build.get('input_inventory')
+    if not isinstance(inputs, dict) or any(inputs.get(name) != frozen['relay_trace_' + name] for name in ('patch', 'module')):
+        raise ValueError('relay trace server build receipt does not match the current trace sources')
+
+
 def main():
     parser = ReceiptParser(description=__doc__, receipt=REPORT)
     parser.add_argument('--version', help='pinned Godot version, defaults to current stable')
@@ -305,14 +319,9 @@ def main():
     sdk_pin, server_pin = (manifest['sources'][kind] for kind in ('sdk', 'server'))
     sdk, server_source = (cache / pin['root'] for pin in (sdk_pin, server_pin))
     server_binary = cache / f"server-target/{server_pin['revision']}/debug/signal-fish-server"
-    trace_build = None
-    if args.relay_trace_server:
-        trace_build = args.relay_trace_server.resolve()
-        build = json.loads(trace_build.read_text(encoding='utf-8'))
+    trace_build = args.relay_trace_server.resolve() if args.relay_trace_server else None
+    if trace_build is not None:
         server_binary = trace_build.with_name('signal-fish-server')
-        if build.get('format') != 1 or build.get('passed') is not True or build.get('source_revision') != server_pin['revision'] \
-                or build.get('binary_sha256') != digest(server_binary):
-            raise ValueError('relay trace server build receipt does not match the pinned binary')
     files = {'editor': editor, 'templates': templates, 'addon': addon, 'server': server_binary,
              'server_config': server_source / 'config.example.json', **{name: Path(environment[var]) for name, var in tools.items()},
              'runner': Path(__file__), 'editor_setup': BROWSER.parent / 'godot_smoke.py', 'artifact_helper': BROWSER.parent / 'fetch.py',
@@ -325,8 +334,11 @@ def main():
         files['stun'] = stun_tool
         files['stun_readiness'] = BROWSER.parent / 'signalfish_live_probe.py'
     if trace_build is not None:
-        files['relay_trace_build'] = trace_build
+        files.update(relay_trace_build=trace_build, relay_trace_patch=TRACE_SOURCE / 'hooks.patch',
+                     relay_trace_module=TRACE_SOURCE / 'relay_packet_trace.rs')
     frozen = inventory(files)
+    if trace_build is not None:
+        validate_trace_build(trace_build, server_pin['revision'], frozen)
     template_pin = manifest['artifacts'][templates.name]
     if digest(templates, template_pin['algorithm']) != template_pin['digest']:
         raise ValueError('export template archive differs from the pinned digest')
