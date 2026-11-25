@@ -10,9 +10,9 @@ const stampKey = ({ sender, recipient, epoch, seq }) => `${sender}/${recipient}/
 const sendKey = ({ sender, socket_ordinal }) => `${sender}/${socket_ordinal}`;
 const sameEnvelope = (a, b) => a.envelope_bytes === b.envelope_bytes && a.envelope_sha256 === b.envelope_sha256;
 
-async function readRelayWireReceipt(page) {
+async function readRelayWireReceipt(page, links = []) {
   // Send one string through Playwright instead of encoding each field as a remote value.
-  const text = await page.evaluate(async () => JSON.stringify(await window.fortressNativeWire?.relayWireTrace()));
+  const text = await page.evaluate(async selected => JSON.stringify(await window.fortressNativeWire?.relayWireTrace(selected)), links);
   return text === undefined ? undefined : JSON.parse(text);
 }
 
@@ -30,22 +30,23 @@ function createRelayServerReader(path) {
   let completed = 0;
   let pending = null;
   let reading = false;
-  async function poll(select, timeout) {
+  async function poll(select, timeout, selection) {
     const deadline = performance.now() + timeout;
     while (performance.now() < deadline) {
       if (pending === null) {
         const next = completed + 1;
-        await fs.writeFile(requestPath + '.next', String(next), { flag: 'wx', mode: 0o600 });
+        await fs.writeFile(requestPath + '.next', next + selection, { flag: 'wx', mode: 0o600 });
         await fs.rename(requestPath + '.next', requestPath);
-        pending = next;
+        pending = { generation: next, selection };
       }
       const receipt = await readServerReceipt(path);
       if (receipt) {
         assert.equal(receipt.version, 2, 'unexpected relay server receipt version');
-        if (receipt.request === pending && performance.now() < deadline) {
-          completed = pending;
+        if (receipt.request === pending.generation && performance.now() < deadline) {
+          const matches = pending.selection === selection;
+          completed = pending.generation;
           pending = null;
-          const result = select(receipt);
+          const result = matches && select(receipt);
           if (result) return result;
         }
       }
@@ -53,11 +54,16 @@ function createRelayServerReader(path) {
     }
     throw new Error('relay server receipt deadline');
   }
-  return async (select = receipt => receipt, timeout = 3000) => {
+  return async (select = receipt => receipt, timeout = 3000, links = []) => {
     assert.ok(!reading, 'relay server reader already has a caller');
+    assert.ok(links.length <= 8 && new Set(links).size === links.length && links.every(link => {
+      if (!/^[0-9a-f]{32}\/[0-9a-f]{32}$/.test(link)) return false;
+      return link.slice(0, 32) !== link.slice(33);
+    }), 'invalid relay server link selection');
+    const selection = links.length ? '\n' + [...links].sort().join('\n') : '';
     reading = true;
     try {
-      return await poll(select, timeout);
+      return await poll(select, timeout, selection);
     } finally {
       reading = false;
     }
@@ -162,7 +168,7 @@ async function exerciseRelayRetention(pages, ready, readReceipt) {
   };
   const [{ receipt: after, pressure }, pagesAtPressure] = await Promise.all([
     readReceipt(receiptAtPressure, 5000),
-    Promise.all([source, reporter].map(readRelayWireReceipt)),
+    Promise.all([source, reporter].map(page => readRelayWireReceipt(page))),
   ]);
   assert.ok(Object.values(pressure).every(family => family.ingress > 128 && family.write > 128), `insufficient healthy relay traffic: ${JSON.stringify(pressure)}`);
   const joined = joinRelayReceipts(after, pagesAtPressure);
@@ -174,6 +180,68 @@ async function exerciseRelayRetention(pages, ready, readReceipt) {
   const browserTraffic = Object.fromEntries([['send', 0], ['raw', 1], ['sdk', 1], ['native', 1]].map(([stage, page]) =>
     [stage, Object.fromEntries(families.map(family => [family, pagesAtPressure[page].streams[stage][family].count - baseline[page].counts[stage][family]]))]));
   return { sender, recipient, pause: pauseReceipt, request: after.request, pressure, browserTraffic, frontier };
+}
+
+async function exerciseSameLinkRetention(pages, ready, readReceipt) {
+  const [sender, recipient] = ready.slice(0, 2).map(peer => peer.uuid.replaceAll('-', ''));
+  const [source, reporter] = pages;
+  const links = [`${sender}/${recipient}`];
+  const before = await reporter.evaluate(sender => window.fortressNativeWire.blockRelayLink(sender), sender);
+  let ordinals, resumed;
+  try {
+    ordinals = await source.evaluate(recipient => window.fortressNativeWire.pressureRelayLink(recipient), recipient);
+    await pause(650);
+  } finally {
+    resumed = await reporter.evaluate(() => window.fortressNativeWire.resumeBlockedRelay());
+  }
+  assert.ok(resumed.resumed_ms < resumed.deadline_ms, 'same-link pressure exhausted its delivery gate');
+  const [server, browsers] = await Promise.all([
+    readReceipt(undefined, 5000, links),
+    Promise.all([source, reporter].map(page => readRelayWireReceipt(page, links))),
+  ]);
+  return checkSameLinkRetention(server, browsers, before, resumed, ordinals);
+}
+
+function checkSameLinkRetention(server, browsers, before, resumed, ordinals) {
+  const [source, reporter] = browsers;
+  const [sender, recipient] = [source.local, reporter.local];
+  const expected = new Set(ordinals);
+  assert.ok(expected.size === ordinals.length && ordinals.every(Number.isSafeInteger), 'invalid same-link send ordinals');
+  const joined = joinRelayReceipts(server, browsers);
+  const rows = new Map(joined.rows.map(row => [stampKey(row), row]));
+  const frontier = [];
+  const pressure = {};
+  for (const [index, family, kind] of [[0, 'input', 2], [1, 'quality', 4]]) {
+    const raw = new Map(events(reporter, 'raw', family).map(event => [stampKey(event), event]));
+    const stamp = before.frontier[index];
+    const originalKey = stampKey(stamp);
+    const row = rows.get(originalKey);
+    assert.ok(row && row.sender === sender && row.recipient === recipient && row.kind === kind && completeRelayRow(row),
+      `same-link control lost the original ${family} packet stage`);
+    const matches = event => stampKey(event) === originalKey;
+    const ingress = events(server, 'ingress', family);
+    const original = ingress.find(matches);
+    frontier.push({ ...row, observations: {
+      send: events(source, 'send', family).find(event => event.ordinal === row.send),
+      ingress: original, write: events(server, 'write', family).find(matches), raw: raw.get(originalKey),
+      sdk: events(reporter, 'sdk', family).find(matches),
+      native: events(reporter, 'native', family).find(event => matches(event) && event.code === 0),
+    } });
+    const injected = ingress.filter(event => event.sender === sender && event.recipient === recipient && expected.has(event.socket_ordinal));
+    assert.ok(injected.length > 128, `same-link control needs over 128 new ${family} arrivals`);
+    for (const event of injected) {
+      const key = stampKey(event);
+      const row = rows.get(key);
+      const arrival = raw.get(key);
+      assert.ok(event.kind === kind && event.socket_ordinal > original.socket_ordinal && expected.delete(event.socket_ordinal)
+        && row.send !== null && row.write.length && arrival?.delivery_blocked === true
+        && arrival.at_ms >= before.started_ms && arrival.at_ms <= resumed.resumed_ms
+        && !row.sdk.length && !row.native.length, `same-link pressure did not stop at raw arrival for ${key}`);
+    }
+    pressure[family] = { count: injected.length, first: raw.get(stampKey(injected[0])), last: raw.get(stampKey(injected.at(-1))) };
+  }
+  assert.equal(expected.size, 0, 'same-link control lost an injected send');
+  return { request: server.request, before, resumed, pressure, frontier };
 }
 
 function joinRelayReceipts(server, pages) {
@@ -239,5 +307,5 @@ function completeRelayRow(row) {
   return row.send !== null && ['ingress', 'write', 'raw', 'sdk', 'native_accepted'].every(stage => row[stage].length);
 }
 
-module.exports = { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, joinRelayReceipts,
-  readRelayWireReceipt };
+module.exports = { assertJoinedRelayControl, bindRelayServer, checkSameLinkRetention, createRelayServerReader, exerciseRelayDelivery,
+  exerciseRelayRetention, exerciseSameLinkRetention, joinRelayReceipts, readRelayWireReceipt };

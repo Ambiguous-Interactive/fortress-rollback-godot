@@ -1,10 +1,11 @@
 // Serialized into the browser init script. Keep its dependencies local.
 function createRelayWireTrace() {
   const cap = 128;
+  const archiveCap = 512;
   const families = ['sync', 'sync', 'input', 'input', 'quality', 'quality'];
   const streams = Object.fromEntries(['send', 'raw', 'sdk', 'native'].map(stage => [stage, Object.fromEntries(
     [...new Set(families)].map(family => [family, { count: 0, links: new Map() }]))]));
-  let room, local, roster;
+  let room, local, localBytes, roster;
   const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 
   function decodeDelivery(bytes) {
@@ -58,7 +59,10 @@ function createRelayWireTrace() {
     const epoch = fields.get('epoch');
     const seq = fields.get('seq');
     if (offset !== bytes.length || from.length !== 16 || fields.get('encoding') !== 'message_pack' || !seq || !epoch || epoch > 0xffffffffn) return null;
-    return { envelope: fields.get('payload'), from: hex(from), epoch: Number(epoch), seq: seq.toString() };
+    const envelope = fields.get('payload');
+    // SignalFish also broadcasts every envelope addressed to another peer.
+    if (!localBytes.every((byte, index) => envelope[37 + index] === byte)) return null;
+    return { envelope, from: hex(from), epoch: Number(epoch), seq: seq.toString() };
   }
 
   function identify(envelope) {
@@ -89,7 +93,7 @@ function createRelayWireTrace() {
     const peer = stage === 'send' ? identity.recipient : identity.sender;
     if (!stream.links.has(peer)) stream.links.set(peer, []);
     const events = stream.links.get(peer);
-    if (events.length === cap) events.shift();
+    if (events.length === (identity.kind < 2 ? cap : archiveCap)) events.shift();
     const packet = { ordinal, ...identity, ...metadata, bytes: Uint8Array.from(envelope) };
     events.push(packet);
     return packet;
@@ -105,6 +109,7 @@ function createRelayWireTrace() {
         throw new Error('invalid relay wire trace roster');
       room = session;
       local = uuid;
+      localBytes = unhex(uuid);
       roster = identities;
     },
     record(stage, bytes, socket_ordinal = null) {
@@ -119,9 +124,9 @@ function createRelayWireTrace() {
       if (stage === 'send' && identity.kind === 5) {
         const token = hex(envelope.subarray(-16));
         // An echo proves processing of this token on the link. Identical reports can share it.
-        const candidates = (streams.native.quality.links.get(identity.recipient) ?? []).filter(event => event.kind === 4
+        const candidates = streams.native.quality.links.get(identity.recipient)?.slice(-cap).filter(event => event.kind === 4
           && event.code === 0 && event.report_token === token).map(({ epoch, seq }) => ({ epoch, seq }));
-        if (candidates.length) protocol_reply = { token, candidates };
+        if (candidates?.length) protocol_reply = { token, candidates };
       }
       return retain(stage, envelope, identity, { at_ms, socket_ordinal, epoch: delivery?.epoch ?? null, seq: delivery?.seq ?? null, protocol_reply });
     },
@@ -145,15 +150,25 @@ function createRelayWireTrace() {
       if (seq !== 0n) retain(stage, envelope, identity, { at_ms, epoch, seq: seq.toString(), code, report_token });
     },
     repeatQuality(recipient, other, send) {
-      const original = streams.send.quality.links.get(recipient)?.findLast(event => event.kind === 4);
+      const original = streams.send.quality.links.get(recipient)?.slice(-cap).findLast(event => event.kind === 4);
       if (!original || !roster.has(other) || other === local || other === recipient) throw new Error('missing relay control packet or recipient');
       const addressed = original.bytes.slice();
       const readdressed = addressed.slice();
       readdressed.set(unhex(other), 37);
       return [send(addressed), send(addressed), send(readdressed)];
     },
+    pressureLink(recipient, send) {
+      const originals = [['input', 2], ['quality', 4]].map(([family, kind]) =>
+        streams.send[family].links.get(recipient)?.findLast(event => event.kind === kind));
+      if (originals.some(packet => !packet)) throw new Error('missing same-link pressure packets');
+      const ordinals = [];
+      for (let index = 0; index <= cap; index++) {
+        for (const { bytes } of originals) ordinals.push(send(bytes));
+      }
+      return ordinals;
+    },
     freezeEnqueued(stamps) {
-      if (!stamps.every(stamp => streams.native.quality.links.get(stamp.sender)?.some(event =>
+      if (!stamps.every(stamp => streams.native.quality.links.get(stamp.sender)?.slice(-cap).some(event =>
         event.recipient === stamp.recipient && event.epoch === stamp.epoch && event.seq === stamp.seq && event.code === 0))) return null;
       return this.freeze();
     },
@@ -168,9 +183,15 @@ function createRelayWireTrace() {
       });
       return { counts, frontier };
     },
-    async freeze() {
+    async freeze(links = []) {
+      const selected = new Set(links);
+      function retained(stage, family, peer, records) {
+        const link = stage === 'send' ? `${local}/${peer}` : `${peer}/${local}`;
+        return family !== 'sync' && selected.has(link) ? records : records.slice(-cap);
+      }
       const entries = Object.entries(streams).flatMap(([stage, groups]) => Object.entries(groups).map(([family, stream]) =>
-        ({ stage, family, count: stream.count, events: [...stream.links.values()].flat().sort((a, b) => a.ordinal - b.ordinal) })));
+        ({ stage, family, count: stream.count, events: [...stream.links].flatMap(([peer, records]) =>
+          retained(stage, family, peer, records)).sort((a, b) => a.ordinal - b.ordinal) })));
       const snapshot = { version: 1, clock: 'page.performance.now', room, local, streams: Object.fromEntries(Object.keys(streams).map(stage => [stage, {}])) };
       // Only retained events can add entries, and the cache lives for one freeze.
       const stamped = new Map();

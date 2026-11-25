@@ -19,14 +19,18 @@ const { readRelayWireReceipt } = require(process.argv[1]);
 const receipt = { sockets: 1, streams: { native: { quality: {
   count: 130, omitted: 2, events: [{ seq: '18446744073709551615', kind: 4, code: 0 }],
 } } } };
-const page = { async evaluate(read) {
-  const transferred = await read();
+const links = ['11'.repeat(16) + '/' + '22'.repeat(16)];
+const page = { async evaluate(read, selected) {
+  const transferred = await read(selected);
   assert.ok(transferred === undefined || typeof transferred === 'string');
   return transferred;
 } };
 (async () => {
-  globalThis.window = { fortressNativeWire: { async relayWireTrace() { return receipt; } } };
-  assert.deepEqual(await readRelayWireReceipt(page), receipt);
+  globalThis.window = { fortressNativeWire: { async relayWireTrace(selected) {
+    assert.deepEqual(selected, links);
+    return receipt;
+  } } };
+  assert.deepEqual(await readRelayWireReceipt(page, links), receipt);
   delete window.fortressNativeWire;
   assert.equal(await readRelayWireReceipt(page), undefined);
 })().catch(error => { console.error(error); process.exitCode = 1; });
@@ -72,10 +76,15 @@ async function respond() {
   await served;
   await assert.rejects(read(undefined, 50), /relay server receipt deadline/);
   assert.equal(await fs.readFile(path + '.request', 'utf8'), '3');
-  const retry = read();
+  const link = '11'.repeat(16) + '/' + '22'.repeat(16);
+  const retry = read(undefined, 3000, [link]);
   await assert.rejects(read(), /already has a caller/);
   await publish(3);
-  assert.equal((await retry).request, 3);
+  while (await fs.readFile(path + '.request', 'utf8') !== '4\n' + link) {
+    await pause(5);
+  }
+  await publish(4);
+  assert.equal((await retry).request, 4);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         with tempfile.TemporaryDirectory() as directory:
@@ -105,17 +114,41 @@ class Socket {
 const window = {};
 let alarm;
 const local = '22'.repeat(16);
-const trace = { bind() {}, record: (_stage, data) => data && { sender: 'source', recipient: local, epoch: 1, seq: String(data[0]) } };
-const realm = { window, trace, WebSocket: Socket, RTCPeerConnection: class {}, Uint8Array, ArrayBuffer, DataView, performance,
+const source = '33'.repeat(16);
+const other = '44'.repeat(16);
+const packets = [];
+const trace = {
+  bind() {},
+  record(_stage, data) {
+    if (!data) return;
+    const packet = { sender: data[1] === 1 ? other : source, recipient: local, epoch: 1, seq: String(data[0]), kind: data[2] ?? 4 };
+    packets.push(packet);
+    return packet;
+  },
+  retentionSample: () => ({ frontier: ['input', 'quality'] }),
+};
+let clock = 10;
+const realm = { window, trace, WebSocket: Socket, RTCPeerConnection: class {}, Uint8Array, ArrayBuffer, DataView, performance: { now: () => clock },
   setTimeout: run => { alarm = run; }, clearTimeout: () => {} };
 runInNewContext(`(${instrumentNativeWire})(false, '', trace)`, realm);
 const socket = new window.WebSocket();
 const wire = window.fortressNativeWire;
 const seen = [];
 socket.addEventListener('message', event => seen.push(event.data[0]));
-const deliver = (seq, target = socket) => target.dispatchEvent({ data: Uint8Array.of(seq) });
-const stamps = [10, 11].map(seq => ({ sender: 'source', recipient: local, epoch: 1, seq: String(seq) }));
-wire.bind('00'.repeat(16), local);
+const deliver = (seq, target = socket, peer = 0, kind = 4) => target.dispatchEvent({ data: Uint8Array.of(seq, peer, kind) });
+const stamps = [10, 11].map(seq => ({ sender: source, recipient: local, epoch: 1, seq: String(seq) }));
+wire.bind('00'.repeat(16), local, [local, source, other]);
+assert.equal(wire.blockRelayLink(source).started_ms, 10);
+deliver(1, socket, 0, 2);
+deliver(2);
+deliver(3, socket, 1);
+deliver(4, socket, 0, 1);
+assert.deepEqual(seen.splice(0), [3, 4]);
+assert.deepEqual(packets.map(packet => packet.delivery_blocked), [true, true, undefined, undefined]);
+clock = 1260;
+deliver(5);
+assert.equal(wire.resumeBlockedRelay().reports, 1);
+assert.deepEqual(seen.splice(0), [5]);
 wire.holdRelayControl();
 deliver(8);
 alarm();
@@ -271,6 +304,15 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
   assert.equal(quality.events.length, 128);
   assert.equal(quality.events[0].seq, '13');
   assert.equal(quality.events.at(-1).seq, '140');
+  const expanded = await trace.freeze([`${source}/${local}`]);
+  assert.equal(expanded.streams.raw.quality.omitted, 0);
+  assert.deepEqual(expanded.streams.raw.quality.events.map(event => event.seq),
+    Array.from({ length: 140 }, (_, index) => String(index + 1)));
+  assert.deepEqual((await trace.freeze([`${local}/${source}`])).streams.raw.quality, quality);
+  for (let seq = 141; seq <= 520; seq++) trace.record('raw', delivered(envelope(source, local, 4), BigInt(seq)));
+  const wrapped = (await trace.freeze([`${source}/${local}`])).streams.raw.quality;
+  assert.equal(wrapped.omitted, 8);
+  assert.deepEqual(wrapped.events.map(event => Number(event.seq)), Array.from({ length: 512 }, (_, index) => index + 9));
   const digestFixture = createRelayWireTrace();
   digestFixture.bind(room, local, [source, local, other]);
   const original = envelope(source, local, 4);
@@ -340,6 +382,58 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs')], check=True, timeout=10)
+
+    def test_same_link_pressure_requires_original_and_exact_blocked_packets(self):
+        # Value: protects=pressure confined to the raw boundary; fails_when=missing originals or leaked stamped packets pass; seam=control receipt
+        script = r"""
+const assert = require('node:assert/strict');
+const { checkSameLinkRetention } = require(process.argv[1]);
+const [sender, recipient, room] = ['sender', 'recipient', 'match'];
+const stage = () => Object.fromEntries(['sync', 'input', 'quality'].map(family => [family, { events: [] }]));
+function fixture() {
+  const server = { room, roster: [sender, recipient], streams: { ingress: stage(), write: stage() } };
+  const source = { room, local: sender, sockets: 1, streams: { send: stage(), raw: stage(), sdk: stage(), native: stage() } };
+  const reporter = { room, local: recipient, sockets: 1, streams: { send: stage(), raw: stage(), sdk: stage(), native: stage() } };
+  const before = { started_ms: 25, frontier: [] };
+  const ordinals = [];
+  for (const [family, kind] of [['input', 2], ['quality', 4]]) {
+    for (let ordinal = 1; ordinal <= 130; ordinal++) {
+      const seq = String(ordinal * 2 + (kind === 2 ? 0 : 1));
+      const packet = { sender, recipient, epoch: 1, seq, kind, envelope_bytes: 109, envelope_sha256: 'digest', ordinal, socket_ordinal: Number(seq) };
+      source.streams.send[family].events.push(packet);
+      server.streams.ingress[family].events.push(packet);
+      server.streams.write[family].events.push({ ...packet, actual_recipient: recipient });
+      const raw = { ...packet, at_ms: ordinal === 1 ? 20 : 30 };
+      reporter.streams.raw[family].events.push(raw);
+      if (ordinal === 1) {
+        before.frontier.push({ ...packet, family });
+        reporter.streams.sdk[family].events.push(packet);
+        reporter.streams.native[family].events.push({ ...packet, code: 0 });
+      } else {
+        raw.delivery_blocked = true;
+        ordinals.push(packet.socket_ordinal);
+      }
+    }
+  }
+  return { server, source, reporter, before, ordinals };
+}
+function qualify({ server, source, reporter, before, ordinals }) {
+  return checkSameLinkRetention(server, [source, reporter], before, { resumed_ms: 35 }, ordinals);
+}
+assert.equal(qualify(fixture()).pressure.quality.count, 129);
+for (const [change, diagnostic] of [
+  [f => f.server.streams.ingress.input.events.shift(), /lost the original input packet stage/],
+  [f => f.ordinals.pop(), /needs over 128 new quality arrivals/],
+  [f => f.reporter.streams.raw.quality.events[4].delivery_blocked = false, /did not stop at raw arrival/],
+  [f => f.reporter.streams.raw.quality.events[4].at_ms = 36, /did not stop at raw arrival/],
+  [f => f.reporter.streams.sdk.quality.events.push(f.reporter.streams.raw.quality.events[4]), /did not stop at raw arrival/],
+]) {
+  const control = fixture();
+  change(control);
+  assert.throws(() => qualify(control), diagnostic);
+}
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs')], check=True, timeout=10)
 
     def test_native_leave_requires_a_correlated_publication(self):
         # Value: protects=departure receipt; fails_when=stale or incomplete evidence passes; seam=Playwright console event
