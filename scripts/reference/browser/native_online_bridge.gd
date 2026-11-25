@@ -70,6 +70,7 @@ class ObservedMatch:
 	var warmup_wire: JavaScriptObject
 	var warmup_session: PackedByteArray
 	var warmup_recipient: PackedByteArray
+	var last_native_acceptances: Dictionary = {}
 
 	func observe_sdk(sender: String, encoding: int, bytes: PackedByteArray) -> void:
 		if warmup_wire == null or encoding != 1 or bytes.size() != RelayEnvelope.HEADER_BYTES + 46:
@@ -82,6 +83,12 @@ class ObservedMatch:
 
 	func _receive_native(sender: String, bytes: PackedByteArray) -> int:
 		var code: int = super._receive_native(sender, bytes)
+		if code == Inputs.Code.OK:
+			last_native_acceptances[sender] = {
+				"accepted_us": Time.get_ticks_usec(),
+				"kind": bytes.decode_u32(NATIVE_TAG_BYTES + 8) if bytes.size() >= NATIVE_TAG_BYTES + 12 else null,
+				"bytes": bytes.size(),
+			}
 		_record("native", sender, bytes, code)
 		return code
 
@@ -131,7 +138,18 @@ class ObservedLobby:
 
 	func _fail(reason: String) -> void:
 		if state == "playing" and relay_trace != null and game_match.driver.native_terminal_detail() == "disconnected":
-			relay_trace.recordDeparture("native_expiry", game_match.driver.native_terminal_endpoint())
+			var endpoint: int = game_match.driver.native_terminal_endpoint()
+			var roster: PackedStringArray = game_match.membership.roster()
+			if endpoint > 0 and endpoint <= roster.size():
+				var queued: int = _sdk_packets()
+				var observed_match: ObservedMatch = game_match
+				var evidence: Dictionary = {
+					"observed_us": Time.get_ticks_usec(),
+					"sdk_queued": queued,
+					"sdk_peak": maxi(sdk_receive_peak, queued),
+					"last_accepted": observed_match.last_native_acceptances.get(roster[endpoint - 1]),
+				}
+				relay_trace.recordDeparture("native_expiry", endpoint, JSON.stringify(evidence))
 		super._fail(reason)
 
 	func _record_plan(value: RefCounted) -> void:
@@ -374,15 +392,16 @@ func _command(value: Dictionary) -> void:
 			if lobby.client == null or lobby.backend != "native":
 				command_code = ERR_UNAVAILABLE
 				return
-			if bool(value.get("trace_warmup", false)):
-				if lobby.state != "connecting":
-					command_code = ERR_UNAVAILABLE
-					return
-				warmup_match = ObservedMatch.new()
-				lobby.warmup_wire = JavaScriptBridge.get_interface("fortressNativeWire")
-				warmup_match.warmup_wire = lobby.warmup_wire
-				lobby.game_match = warmup_match
-				lobby.client.connect("game_data_binary_received", warmup_match.observe_sdk)
+			if lobby.relay_trace != null:
+				lobby.game_match = ObservedMatch.new()
+				if bool(value.get("trace_warmup", false)):
+					if lobby.state != "connecting":
+						command_code = ERR_UNAVAILABLE
+						return
+					warmup_match = lobby.game_match
+					lobby.warmup_wire = JavaScriptBridge.get_interface("fortressNativeWire")
+					warmup_match.warmup_wire = lobby.warmup_wire
+					lobby.client.connect("game_data_binary_received", warmup_match.observe_sdk)
 			var history_limit: int = RECOVERY_HISTORY_LIMIT if lobby.observe_recovery else HISTORY_LIMIT
 			lobby.observations = ObservedGame.new(int(value.players), history_limit)
 			lobby.game_match.game = lobby.observations
