@@ -13,6 +13,17 @@ const Code = Types.Code
 const Options = Types.Options
 const Result = Types.Result
 
+
+class Incoming:
+	extends RefCounted
+	var sender: String
+	var payload: PackedByteArray
+
+	func _init(from_uuid: String, bytes: PackedByteArray) -> void:
+		sender = from_uuid
+		payload = bytes
+
+
 var _client: WeakRef = null
 var _sdk_config: WeakRef = null
 var _membership: Membership
@@ -21,8 +32,10 @@ var _peer: Peer
 var _receive_packet: Callable
 var _options: Types.Options
 var _session: PackedByteArray = PackedByteArray()
+var _local_wire_uuid: PackedByteArray
+var _remote_wire_uuids: Dictionary = {}
 var _pending: Array[PackedByteArray] = []
-var _received: Array[Envelope.Decoded] = []
+var _received: Array[Incoming] = []
 var _pending_bytes: int = 0
 var _received_bytes: int = 0
 var _receive_overflow: Dictionary = {}
@@ -93,6 +106,11 @@ func _configure(client: Object, sdk_config: Object, protocol_info: Object, membe
 	_receive_packet = receive_packet
 	_options = Types.copy_options(controls)
 	_session = membership.handshake_message().session_id
+	var local_uuid: String = membership.local_uuid()
+	_local_wire_uuid = local_uuid.replace("-", "").hex_decode()
+	for uuid: String in membership.roster():
+		if uuid != local_uuid:
+			_remote_wire_uuids[uuid] = uuid.replace("-", "").hex_decode()
 	client.connect("game_data_binary_received", _on_binary)
 	return Code.OK
 
@@ -141,7 +159,7 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 	_busy = true
 	var result: Types.Result = Types.Result.new()
 	for _index: int in mini(_options.max_receives_per_poll, _received.size()):
-		var incoming: Envelope.Decoded = _received[0]
+		var incoming: Incoming = _received[0]
 		if _peer != null and not _receive_token_ready:
 			var candidate: Variant = next_token_factory.call(incoming.sender) if next_token_factory.is_valid() else null
 			result.code = _gate()
@@ -265,6 +283,8 @@ func detach() -> void:
 	_adapter = null
 	_peer = null
 	_receive_packet = Callable()
+	_local_wire_uuid.clear()
+	_remote_wire_uuids.clear()
 	_pending.clear()
 	_received.clear()
 	_pending_bytes = 0
@@ -289,22 +309,17 @@ func _on_binary(from_uuid: String, encoding: int, bytes: PackedByteArray) -> voi
 	if encoding != 1:
 		_reject(Code.INCOMPATIBLE_MODE)
 		return
-	if not Membership.valid_uuid(from_uuid) or from_uuid == _membership.local_uuid() or _membership.slot(from_uuid) < 0:
+	if not _remote_wire_uuids.has(from_uuid):
 		_reject(Code.WRONG_SOURCE)
 		return
-	var decoded: Envelope.Decoded = Envelope.decode(bytes, _options.max_packet_bytes)
-	if decoded.code != Code.OK:
-		_reject(decoded.code)
-		return
-	if decoded.sender != from_uuid:
-		_reject(Code.WRONG_SOURCE)
-		return
-	if decoded.session != _session:
-		_reject(Code.WRONG_SESSION)
-		return
-	if decoded.recipient != _membership.local_uuid():
+	var sender: PackedByteArray = _remote_wire_uuids[from_uuid]
+	var code: int = Envelope.address_code(bytes, _options.max_packet_bytes, sender, _session, _local_wire_uuid)
+	if code == Code.NOT_RECIPIENT:
 		_ignored += 1
 		_last_receive = Code.NOT_RECIPIENT
+		return
+	if code != Code.OK:
+		_reject(code)
 		return
 	if _received.size() >= _options.max_received_packets or bytes.size() > _options.max_received_bytes - _received_bytes:
 		_receive_overflow = {
@@ -317,7 +332,7 @@ func _on_binary(from_uuid: String, encoding: int, bytes: PackedByteArray) -> voi
 		_failure = Code.RECEIVE_OVERFLOW
 		_reject(_failure)
 		return
-	_received.append(decoded)
+	_received.append(Incoming.new(from_uuid, bytes.slice(Envelope.HEADER_BYTES)))
 	_received_bytes += bytes.size()
 	_last_receive = Code.OK
 

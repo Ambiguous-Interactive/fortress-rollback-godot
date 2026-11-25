@@ -238,6 +238,12 @@ Keep one latest timely snapshot per page for failure diagnostics, with its
 receipt time. Require the complete qualifying round to prove cross-page close
 order. Bound each calibration evaluation by the shared deadline. A timed-out
 read must never append a late sample or start another read.
+Keep both clock bounds and their samples for passing and failing rooms.
+An interval spanning the minimum gap leaves it ambiguous. An upper bound below
+the threshold proves that the observed send fell short of the required gap.
+Combine consecutive observations on each page before returning to the controller.
+Keep the cross-page barriers that require every endpoint to pause before the close
+and every required link to close before release.
 Observe each page independently with one evaluation in flight per page; slower
 siblings must not block its next sample. Keep a persistent earliest-deadline timer
 active during inter-sample pauses, and test a fast advancing page behind a valid

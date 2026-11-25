@@ -446,107 +446,146 @@ test('drop teardown includes every tracked signaling socket', () => {
   assert.equal(closed(true), false);
 });
 
-// Value: readiness remains live; all endpoints acknowledge a short pause before RTC closure and release.
-test('physical departure separates slow readiness from the bounded quiet close phase', async () => {
-  for (const mutation of ['none', 'slow-readiness', 'slow-boundaries', 'advanced', 'released', 'not-paused', 'channel-open', 'late-pause', 'late-close']) {
-    let ticks = 0;
-    const events = [];
-    const contexts = Array.from({ length: 3 }, (_, index) => vm.createContext({
-      window: { fortressDropGo: mutation === 'released' && index === 0, fortressRtc: {},
-        fortressResources: { connections: [], channels: [] } },
-      document: { body: { dataset: { fortressFrame: mutation === 'advanced' && index === 0 ? '7' : '6', fortressDropReady: 'true' } } },
-    }));
-    const departing = contexts[2].window;
-    const channels = Array.from({ length: 6 }, () => ({ readyState: 'open' }));
-    departing.fortressResources.channels = channels;
-    departing.fortressResources.connections = Array.from({ length: 4 }, () => ({ connectionState: 'connected', close() {
+function simulatedDeparture(mutation, relayOnly = false) {
+  let ticks = 0;
+  const events = [];
+  const roundTrips = new Set();
+  const contexts = Array.from({ length: 3 }, (_, index) => {
+    const mustClose = relayOnly || index === 2;
+    const broken = index === (relayOnly ? 0 : 2);
+    const channels = Array.from({ length: mustClose ? mutation === 'short-inventory' && broken ? 5 : 6 : 0 }, () => ({ readyState: 'open' }));
+    const connections = Array.from({ length: mustClose ? 4 : 0 }, () => ({ connectionState: 'connected', close() {
       assert.equal(events.filter(event => event.startsWith('paused')).length, 3, 'every endpoint must stop service before close');
       events.push('close');
       this.connectionState = 'closed';
-      if (mutation !== 'channel-open') for (const channel of channels) channel.readyState = 'closed';
+      if (mutation === 'slow-close') ticks = 3000;
+      if (!broken || !['channel-open', 'late-close'].includes(mutation)) {
+        for (const channel of channels) channel.readyState = 'closed';
+      }
     } }));
-    const pages = contexts.map((context, index) => ({
-      async evaluate(operation, argument) {
-        context.argument = argument;
-        const result = vm.runInContext(`(${operation.toString()})(argument)`, context);
-        if (context.window.fortressDropArm) {
-          assert.equal(events.filter(event => event.startsWith('ready')).length, 3, 'slow readiness completes before service is stopped');
+    const document = { body: { dataset: { fortressFrame: mutation === 'advanced' && index === 0 ? '7' : '6', fortressDropReady: 'true' } } };
+    const window = { fortressDropGo: mutation === 'released' && index === 0, fortressRtc: {}, fortressResources: { channels, connections } };
+    Object.defineProperty(window, 'fortressDropArm', { set() {
+      assert.equal(events.filter(event => event.startsWith('ready')).length, 3, 'slow readiness completes before service is stopped');
+      events.push(`armed${index}`);
+      if (index === 2 && ['late-pause', 'not-paused'].includes(mutation)) return;
+      document.body.dataset.fortressDropPaused = 'true';
+      events.push(`paused${index}`);
+    } });
+    const pageClock = () => ticks + 100 * index;
+    return vm.createContext({ window, document, performance: { now: () => mutation === 'quantized-release' ? Math.floor(pageClock() / 2) * 2 : pageClock() },
+      requestAnimationFrame: callback => queueMicrotask(() => {
+        ticks = 3000;
+        if (mutation === 'late-pause') document.body.dataset.fortressDropPaused = 'true';
+        if (mutation === 'late-close') channels.forEach(channel => { channel.readyState = 'closed'; });
+        callback();
+      }) });
+  });
+  const pages = contexts.map((context, index) => ({
+    async evaluate(operation, argument) {
+      const source = operation.toString();
+      const ready = source.includes('fortressDropReady');
+      const arm = source.includes('fortressDropArm');
+      const close = source.includes('connection.close()');
+      const release = source.includes('fortressDropGo = true');
+      if (ready) {
+        if (mutation === 'slow-readiness' && index === 2) {
+          await new Promise(resolve => setImmediate(resolve));
+          ticks += 6000;
         }
-        if (context.window.fortressDropGo) {
-          assert.ok(channels.every(channel => channel.readyState === 'closed'), 'release must follow actual RTC closure');
-          events.push(`released${index}`);
+        if (mutation === 'quantized-release' && index === 2) {
+          await new Promise(resolve => setImmediate(resolve));
+          ticks = 1;
         }
-        return result;
-      },
-      async waitForFunction(operation, argument, options) {
-        const source = operation.toString();
-        if (source.includes('fortressDropReady')) {
-          assert.equal(options.timeout, 30000);
-          assert.ok(contexts.every(value => !value.window.fortressDropArm), 'readiness waits keep endpoints unarmed');
-          if (mutation === 'slow-readiness' && index === 2) ticks += 6000;
-          events.push(`ready${index}`);
-        } else {
-          assert.ok(options.timeout > 0 && options.timeout <= 3000, 'quiet waits share the short controller deadline');
-          if (source.includes('fortressDropPaused')) {
-            assert.ok(contexts.every(value => value.window.fortressDropArm), 'all endpoints are armed before pause acknowledgement');
-            if (mutation === 'late-pause' && index === 2) ticks += 3000;
-            if (mutation === 'slow-boundaries' && index === 2) ticks += 1000;
-            context.document.body.dataset.fortressDropPaused = mutation === 'not-paused' && index === 2 ? 'false' : 'true';
-            events.push(`paused${index}`);
-          } else {
-            if (mutation === 'late-close') ticks += 3000;
-            if (mutation === 'slow-boundaries') ticks += 1000;
-          }
-        }
-        if (!vm.runInContext(`(${source})()`, context)) throw new Error('not ready');
-      },
-    }));
-    if (['none', 'slow-readiness', 'slow-boundaries'].includes(mutation)) {
-      await closeDepartingRtc(pages, () => ticks);
-      assert.deepEqual(JSON.parse(JSON.stringify(departing.fortressRtc.departure)), {
-        frame: 6, survivor_frames: [6, 6], connections_created: 4, channels_created: 6, connections_closed: 4, channels_closed: 6,
-      });
-      assert.ok(contexts.every(context => context.window.fortressDropGo === true));
-      assert.equal(events.filter(event => event.startsWith('released')).length, 3);
-    } else {
-      await assert.rejects(closeDepartingRtc(pages, () => ticks));
-      assert.equal(events.filter(event => event.startsWith('released')).length, 0);
-    }
+        events.push(`ready${index}`);
+      } else if (!roundTrips.has(source)) {
+        roundTrips.add(source);
+        // Charge once per serialized controller-to-browser boundary, regardless of parallel pages.
+        if (mutation === 'serial-overhead') ticks += 600;
+        if (mutation === 'slow-boundaries' && (arm || close)) ticks += 1000;
+      }
+      if ((mutation === 'late-arm' && arm) || (mutation === 'late-release' && release)) {
+        await Promise.resolve();
+        ticks = 3000;
+      }
+      if (mutation === 'quantized-release' && release) {
+        await Promise.resolve();
+        ticks = 3001;
+      }
+      if (release) events.push(`release-dispatched${index}`);
+      context.argument = argument;
+      const result = await vm.runInContext(`(${source})(argument)`, context);
+      if (mutation === 'late-close-reply' && close) ticks = 3000;
+      if (release && context.window.fortressDropGo) {
+        assert.ok(contexts.every(({ window }) => window.fortressResources.channels.every(channel => channel.readyState === 'closed')),
+          'release must follow actual RTC closure');
+        events.push(`released${index}`);
+      }
+      return result;
+    },
+    async waitForFunction(operation, argument) {
+      if (!await this.evaluate(operation, argument)) throw new Error('condition not reached');
+    },
+  }));
+  return { contexts, events, run: () => closeDepartingRtc(pages, () => ticks, relayOnly) };
+}
+
+// Value: readiness stays live, and pause, close and release fit the original shared deadline.
+test('physical departure separates slow readiness from the bounded quiet close phase', async () => {
+  for (const mutation of ['none', 'slow-readiness', 'slow-boundaries', 'serial-overhead']) {
+    const { contexts, events, run } = simulatedDeparture(mutation);
+    await run();
+    assert.deepEqual(JSON.parse(JSON.stringify(contexts[2].window.fortressRtc.departure)), {
+      frame: 6, survivor_frames: [6, 6], connections_created: 4, channels_created: 6, connections_closed: 4, channels_closed: 6,
+    });
+    assert.equal(events.filter(event => event.startsWith('released')).length, 3);
   }
+});
+
+// Value: an invalid or late observation never dispatches release, and a delayed release cannot mutate the page.
+test('physical departure rejects invalid and late browser observations', async () => {
+  for (const [mutation, reason] of [
+    ['advanced', /endpoint advanced/], ['released', /endpoint advanced/], ['not-paused', /pause deadline/],
+    ['channel-open', /close deadline/], ['short-inventory', /departure incomplete/], ['late-arm', /arm deadline/],
+    ['late-pause', /pause deadline/], ['late-close', /close deadline/], ['late-close-reply', /phase deadline/],
+    ['late-release', /release deadline/],
+  ]) {
+    const { contexts, events, run } = simulatedDeparture(mutation);
+    await assert.rejects(run(), reason, mutation);
+    assert.ok(contexts.every(context => context.window.fortressRtc.departure === undefined), mutation);
+    assert.ok(events.every(event => !event.startsWith('released')), mutation);
+    if (mutation !== 'late-release') assert.ok(events.every(event => !event.startsWith('release-dispatched')), mutation);
+  }
+});
+
+// Value: a slow close cannot cause other connection mutations after the cutoff.
+test('physical departure fences each close at the deadline', async () => {
+  const slowClose = simulatedDeparture('slow-close');
+  await assert.rejects(slowClose.run(), /close deadline/);
+  assert.equal(slowClose.events.filter(event => event === 'close').length, 1);
+});
+
+// Value: a coarse page clock cannot admit release at the controller deadline.
+test('physical departure fences release with a coarse page clock', async () => {
+  const coarseClock = simulatedDeparture('quantized-release');
+  await assert.rejects(coarseClock.run(), /release deadline/);
+  assert.ok(coarseClock.contexts.every(({ window }) => !window.fortressDropGo && window.fortressRtc.departure === undefined));
+});
+
+// Value: an empty room cannot pass through the pause and close barriers.
+test('physical departure requires exactly three endpoints', async () => {
+  await assert.rejects(closeDepartingRtc([]), /requires three pages/);
 });
 
 // Value: relay agreement cannot start until every endpoint loses every direct path.
 test('relay departure closes every endpoint before releasing any gameplay', async () => {
-  for (const broken of [false, true]) {
-    let released = 0;
-    const states = Array.from({ length: 3 }, () => {
-      const resources = { channels: Array.from({ length: 6 }, () => ({ readyState: 'open' })), connections: [] };
-      resources.connections = Array.from({ length: 2 }, () => ({ connectionState: 'connected', close() {
-        this.connectionState = 'closed';
-        if (!broken || resources !== states[0].window.fortressResources)
-          resources.channels.forEach(channel => { channel.readyState = 'closed'; });
-      } }));
-      return vm.createContext({ window: { fortressResources: resources, fortressRtc: {} },
-        document: { body: { dataset: { fortressFrame: '6', fortressDropReady: 'true', fortressDropPaused: 'true' } } } });
-    });
-    const pages = states.map(state => ({
-      async evaluate(operation, argument) {
-        state.argument = argument;
-        const value = vm.runInContext(`(${operation.toString()})(argument)`, state);
-        if (state.window.fortressDropGo) {
-          assert.ok(states.every(context => context.window.fortressResources.channels.every(channel => channel.readyState === 'closed')));
-          released++;
-        }
-        return value;
-      },
-      async waitForFunction(operation) {
-        if (!vm.runInContext(`(${operation.toString()})()`, state)) throw new Error('not closed');
-      },
-    }));
-    if (broken) await assert.rejects(closeDepartingRtc(pages, () => 0, true), /not closed/);
-    else await closeDepartingRtc(pages, () => 0, true);
-    assert.equal(released, broken ? 0 : 3);
-  }
+  const complete = simulatedDeparture('none', true);
+  await complete.run();
+  assert.ok(complete.contexts.every(({ window }) => window.fortressRtc.departure.channels_closed === 6));
+  const broken = simulatedDeparture('channel-open', true);
+  await assert.rejects(broken.run(), /close deadline/);
+  assert.ok(broken.events.every(event => !event.startsWith('release-dispatched')));
+  assert.ok(broken.contexts.every(({ window }) => window.fortressRtc.departure === undefined));
 });
 
 // Value: a lost inventory answer must retry exact owned bytes through the real channel send wrapper.

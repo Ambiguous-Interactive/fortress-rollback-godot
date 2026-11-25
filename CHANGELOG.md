@@ -60,6 +60,7 @@
 
 ### Improved
 
+- Reduce receive work in SignalFish rooms by checking broadcast addresses before copying gameplay payloads.
 - **Snapshot restore**: Read a restored snapshot with one native buffer copy instead of one interpreted step per byte. The caller-owned destination and underflow behavior are unchanged ([#43](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/43)).
 
 ### Changed

@@ -1409,17 +1409,22 @@ const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-
 const tagged = {index:1, channel:17, sentAt:47199};
 const fail = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks);
 assert.deepEqual(JSON.parse(JSON.stringify(fail)), {
-  ...tagged, closer:null, before, sender, counterparts:[{...closer, owner:0}], minimumGapUs:1999, proof:null,
+  ...tagged, closer:null, before, sender, counterparts:[{...closer, owner:0}], minimumGapUs:1999, maximumGapUs:2399, proof:null,
 });
 const timed = closeEvidence({...tagged, sentAt:47200}, [before], [[closer], [sender]], null, clocks);
 assert.equal(timed.minimumGapUs, 2000);
+assert.equal(timed.maximumGapUs, 2400);
 assert.equal(timed.proof, 'clock-order');
+const early = closeEvidence({...tagged, sentAt:46799}, [before], [[closer], [sender]], null, clocks);
+assert.equal(early.maximumGapUs, 1999);
+assert.equal(early.proof, null);
 const aborted = closeEvidence(tagged, [before], [[closer], [{...sender, closeAborts:2}]], null, clocks);
 assert.equal(aborted.minimumGapUs, 1999);
 assert.equal(aborted.proof, 'sctp-abort');
 const missing = closeEvidence(tagged, [before], [[], [sender]], null, clocks);
 assert.deepEqual(missing.counterparts, []);
 assert.equal(missing.minimumGapUs, null);
+assert.equal(missing.maximumGapUs, null);
 assert.equal(missing.proof, null);
 const duplicate = closeEvidence(tagged, [before], [[closer], [sender], [closer]], null, clocks);
 assert.deepEqual(duplicate.counterparts, [{...closer, owner:0}, {...closer, owner:2}]);
@@ -1619,6 +1624,7 @@ async function collect(sentAt, sender, contradictory = false) {
   assert.equal(conflict.report.clocks[1], null);
   assert.deepEqual(conflict.report.clockSamples[1].after[0], {offsetMin:-41, offsetMax:41});
   assert.equal(conflict.report.proofs[0].minimumGapUs, null);
+  assert.equal(conflict.report.proofs[0].maximumGapUs, null);
 
   const exactAbort = await collect(47081, {...before, closeAborts:1}, true);
   await exactAbort.proof;
