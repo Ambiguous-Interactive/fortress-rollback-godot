@@ -1555,7 +1555,6 @@ const { calibrateDepartureClocks } = require(process.argv[1]);
   ]);
   assert.ok(report.clocks[0]);
   assert.deepEqual(report.clocks.slice(1), [null, null]);
-  now = 40;
   pending.resolve(40000);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(reads, 2);

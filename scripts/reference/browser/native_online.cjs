@@ -930,20 +930,18 @@ async function calibrateDepartureClocks(pages, report, clock = () => performance
   const clockSamples = pages.map(() => ({ before: [], after: [] }));
   report.clockSamples = clockSamples;
   const deadline = clock() + timeout;
-  const reads = await Promise.allSettled(pages.map((page, index) => {
+  const reads = await Promise.allSettled(pages.map(async (page, index) => {
     const label = `native peer ${index} departure clock`;
-    return boundedRoom(async () => {
-      const samples = clockSamples[index].before;
-      for (let attempt = 0; attempt < CLOSE_CLOCK_PRE_SAMPLES; attempt++) {
-        const start = clock();
-        if (start >= deadline) throw new Error(`absolute ${label} deadline`);
-        const sampledAt = await page.evaluate(() => window.fortressNativeWire.observeDeparture());
-        const end = clock();
-        if (end >= deadline) throw new Error(`absolute ${label} deadline`);
-        samples.push(clockWindow(Math.floor(start * 1000), Math.ceil(end * 1000), sampledAt));
-      }
-      return samples.reduce(intersectClock);
-    }, Math.max(0, Math.ceil(deadline - clock())), label);
+    const samples = clockSamples[index].before;
+    for (let attempt = 0; attempt < CLOSE_CLOCK_PRE_SAMPLES; attempt++) {
+      const start = clock();
+      if (start >= deadline) throw new Error(`absolute ${label} deadline`);
+      const sampledAt = await boundedRoom(() => page.evaluate(() => window.fortressNativeWire.observeDeparture()), Math.ceil(deadline - start), label);
+      const end = clock();
+      if (end >= deadline) throw new Error(`absolute ${label} deadline`);
+      samples.push(clockWindow(Math.floor(start * 1000), Math.ceil(end * 1000), sampledAt));
+    }
+    return samples.reduce(intersectClock);
   }));
   report.clocks = reads.map(read => read.status === 'fulfilled' ? read.value : null);
   const failed = reads.flatMap((read, index) => read.status === 'rejected' ? [{ index, reason: read.reason }] : []);
