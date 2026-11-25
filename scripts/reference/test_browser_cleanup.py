@@ -88,10 +88,13 @@ async function respond() {
   }
   await publish(4, [link]);
   assert.equal((await retry).request, 4);
-  const wrongSelection = read(undefined, 3000, [link]);
-  while (await fs.readFile(path + '.request', 'utf8') !== '5\n' + link) await pause(5);
-  await publish(5, [link.split('/').reverse().join('/')]);
-  await assert.rejects(wrongSelection, /receipt selected different links/);
+  await Promise.all([
+    assert.rejects(read(undefined, 3000, [link]), /receipt selected different links/),
+    (async () => {
+      while (await fs.readFile(path + '.request', 'utf8') !== '5\n' + link) await pause(5);
+      await publish(5, [link.split('/').reverse().join('/')]);
+    })(),
+  ]);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         with tempfile.TemporaryDirectory() as directory:
