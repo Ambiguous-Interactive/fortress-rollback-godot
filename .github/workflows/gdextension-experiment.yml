@@ -49,6 +49,7 @@ jobs:
       run:
         shell: bash
     env:
+      BROWSER_PAIR: ${{ inputs.qualification == 'platforms' && 'chromium' || inputs.qualification || 'chromium' }}
       NATIVE_BROWSER_CELL: ${{ inputs.cell }}
       NATIVE_RELAY_TRACE: ${{ inputs.relay_trace }}
       NATIVE_RELEASE_CONTROLS: ${{ inputs.release_controls }}
@@ -166,8 +167,18 @@ jobs:
           git -C "$RUNNER_TEMP/emsdk" checkout --detach FETCH_HEAD
           "$RUNNER_TEMP/emsdk/emsdk" install 3.1.74
           "$RUNNER_TEMP/emsdk/emsdk" activate 3.1.74
+      - name: Install native Web browser dependencies
+        if: matrix.target == 'web'
+        timeout-minutes: 10
+        run: |
+          sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
           npm install --prefix "$RUNNER_TEMP/browsers" playwright@1.64.1
-          "$RUNNER_TEMP/browsers/node_modules/.bin/playwright" install --with-deps chromium firefox webkit
+          bash scripts/reference/retry_apt_fetch.sh "$RUNNER_TEMP/browsers/node_modules/.bin/playwright" install-deps chromium firefox webkit
+      - name: Install pinned native Web browsers
+        if: matrix.target == 'web'
+        timeout-minutes: 10
+        run: |
+          "$RUNNER_TEMP/browsers/node_modules/.bin/playwright" install chromium firefox webkit
           echo "FORTRESS_PLAYWRIGHT_PACKAGE=$RUNNER_TEMP/browsers/node_modules/playwright" >> "$GITHUB_ENV"
       - name: Run exported match and both controls
         if: matrix.target != 'android'
@@ -178,10 +189,19 @@ jobs:
           else
             python experiments/gdextension/platform_test.py "${{ matrix.version }}" "${{ matrix.target }}"
           fi
+      - name: Install native SignalFish room dependencies
+        if: matrix.target == 'web' && env.BROWSER_PAIR != 'chromium'
+        timeout-minutes: 10
+        run: |
+          sudo systemctl mask --runtime coturn.service
+          sudo bash scripts/reference/retry_apt_fetch.sh apt-get install -y coturn
+          if [[ "$BROWSER_PAIR" == *firefox* ]]; then
+            sudo bash scripts/reference/retry_apt_fetch.sh apt-get install -y xdotool
+            xdotool_path="$(command -v xdotool)"
+            echo "FORTRESS_XDOTOOL_EXECUTABLE=$xdotool_path" >> "$GITHUB_ENV"
+          fi
       - name: Qualify the playable native SignalFish rooms
         if: matrix.target == 'web'
-        env:
-          BROWSER_PAIR: ${{ inputs.qualification == 'platforms' && 'chromium' || inputs.qualification || 'chromium' }}
         run: |
           output=".cache/native-experiment/${{ matrix.version }}/web"
           python scripts/reference/fetch.py
@@ -198,14 +218,6 @@ jobs:
           export FORTRESS_CHROMIUM_EXECUTABLE="$(node -p 'require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE).chromium.executablePath()')"
           export FORTRESS_FIREFOX_EXECUTABLE="$(node -p 'require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE).firefox.executablePath()')"
           export FORTRESS_WEBKIT_EXECUTABLE="$(node -p 'require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE).webkit.executablePath()')"
-          if [[ "$BROWSER_PAIR" != chromium ]]; then
-            sudo systemctl mask --runtime coturn.service
-            sudo bash scripts/reference/retry_apt_fetch.sh apt-get install -y coturn
-          fi
-          if [[ "$BROWSER_PAIR" == *firefox* ]]; then
-            sudo bash scripts/reference/retry_apt_fetch.sh apt-get install -y xdotool
-            export FORTRESS_XDOTOOL_EXECUTABLE="$(command -v xdotool)"
-          fi
           cell_args=()
           if [[ "${NATIVE_BROWSER_CELL:-all}" != all ]]; then
             cell_args=(--cell "$NATIVE_BROWSER_CELL")

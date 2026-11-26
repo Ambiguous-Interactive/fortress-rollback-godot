@@ -69,6 +69,59 @@ def active_lines(text):
 
 class WorkflowTierTests(unittest.TestCase):
 
+    # Value: protects=bounded Web setup and browser inventory; fails_when=setup shares room budget or loses dependencies; seam=workflow shell
+    def test_native_web_setup_is_bounded_and_preserves_dependencies(self):
+        workflow = active_lines(read(WORKFLOWS / 'gdextension-experiment.yml'))
+        steps = workflow.split('      - name: ')
+
+        def named_step(name):
+            return next((step for step in steps if step.startswith(name + '\n')), '')
+
+        acquire = named_step('Install native Web browser dependencies')
+        download = named_step('Install pinned native Web browsers')
+        room_dependencies = named_step('Install native SignalFish room dependencies')
+        exported = named_step('Run exported match and both controls')
+        qualify = named_step('Qualify the playable native SignalFish rooms')
+        for step in (acquire, download, room_dependencies):
+            self.assertIn("if: matrix.target == 'web'", step)
+            self.assertRegex(step, r'timeout-minutes: (?:[1-9]|10)\n')
+        self.assertIn("&& env.BROWSER_PAIR != 'chromium'", room_dependencies)
+        self.assertIn('npm install --prefix "$RUNNER_TEMP/browsers" playwright@1.64.1', acquire)
+        self.assertIn('playwright" install chromium firefox webkit', download)
+        order = [steps.index(step) for step in (acquire, download, exported, room_dependencies, qualify)]
+        self.assertEqual(order, sorted(order))
+        self.assertNotIn('install --with-deps', workflow)
+        self.assertNotIn('apt-get install', acquire)
+        self.assertNotIn('apt-get install', qualify)
+        script = acquire.split('        run: |\n', 1)[1]
+        room_script = room_dependencies.split('        run: |\n', 1)[1]
+        mock = r'''
+sudo() {
+    printf 'sudo %s\n' "$*"
+    [[ "$FAIL_STEP" != mirrors || "$*" != *prepare_ubuntu_apt.sh* ]]
+}
+bash() {
+    printf 'bash %s\n' "$*"
+    [[ "$FAIL_STEP" != packages || "$*" != *install-deps* ]]
+}
+npm() { printf 'npm %s\n' "$*"; }
+xdotool() { :; }
+'''
+        for profile, packages, failure in (
+            ('chromium', [], ''), ('chromium-webkit', ['coturn'], ''),
+            ('firefox', ['coturn', 'xdotool'], ''), ('firefox', [], 'mirrors'), ('firefox', [], 'packages'),
+        ):
+            with self.subTest(profile=profile, failure=failure):
+                commands = mock + script + (room_script if profile != 'chromium' else '')
+                result = subprocess.run(['bash', '-eu', '-c', commands], capture_output=True, text=True,
+                                        env={'BROWSER_PAIR': profile, 'RUNNER_TEMP': '/runner', 'FAIL_STEP': failure, 'GITHUB_ENV': '/dev/null'})
+                self.assertEqual(result.returncode, int(bool(failure)), result.stderr)
+                calls = result.stdout.splitlines()
+                self.assertIn('prepare_ubuntu_apt.sh', calls[0])
+                wrapped = 'bash scripts/reference/retry_apt_fetch.sh /runner/browsers/node_modules/.bin/playwright install-deps chromium firefox webkit'
+                self.assertEqual(calls.count(wrapped), int(failure != 'mirrors'))
+                self.assertEqual([line.rsplit(' ', 1)[-1] for line in calls if 'apt-get install -y ' in line], packages)
+
     def test_native_browser_dispatch_can_focus_one_room(self):
         workflow = active_lines(read(WORKFLOWS / 'gdextension-experiment.yml'))
         self.assertRegex(workflow, r"cell:\n +description: .+\n +type: choice\n +default: all")
