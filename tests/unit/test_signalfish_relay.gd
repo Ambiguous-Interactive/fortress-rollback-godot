@@ -15,7 +15,7 @@ const W: String = Fixtures.W
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(["golden", "negotiation", "pressure", "atomic", "ingress", "receive_budget", "fences", "overflow", "traffic",
-		"addressed_plan", "addressed_wire_caps", "addressed_fences"])
+		"addressed_plan", "addressed_wire_caps", "addressed_fences", "addressed_reentry"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -44,6 +44,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_addressed_wire_caps(context)
 		"addressed_fences":
 			_addressed_fences(context)
+		"addressed_reentry":
+			_addressed_reentry(context)
 	context.finish()
 
 
@@ -427,6 +429,68 @@ func _addressed_fences(context: RefCounted) -> void:
 	_destroy(fixture)
 
 
+func _addressed_reentry(context: RefCounted) -> void:
+	var complete: Array = [{"player_id": V, "epoch": 2}, {"player_id": W, "epoch": 3}]
+	var client: AddressedClient = AddressedClient.new()
+	var fixture: Dictionary = _addressed_fixture(context, client, complete, _addressed_controls())
+	var packets: Array[Peer.Packet] = [_packet(fixture, 7)]
+	context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "own a packet before the buffer read")
+	client.transport.on_buffered = func() -> void: client.on_identity = fixture.relay.detach
+	var detached: Relay.Result = fixture.relay.poll(0)
+	context.equal(detached.code, Relay.Code.WRONG_STATE, "deferred detach stops the poll")
+	context.equal(detached.sent, 0, "identity callback detaches before the SDK call")
+	context.equal(client.attempts.size(), 0, "detach in the dynamic gate prevents private emission")
+	context.equal(fixture.relay.status().pending_packets, 0, "deferred detach clears queue after unwind")
+	_destroy(fixture)
+
+	client = AddressedClient.new()
+	fixture = _addressed_fixture(context, client, complete, _addressed_controls())
+	packets = [_packet(fixture, 8)]
+	context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "own a packet before the transport replacement")
+	var replacement: Transport = Transport.new()
+	replacement.buffered = 262144
+	client.transport.on_buffered = func() -> void: client.transport = replacement
+	var replaced: Relay.Result = fixture.relay.poll(0)
+	context.equal(replaced.code, Relay.Code.SDK_FAILURE, "new transport requires a new measured lifetime")
+	context.equal(client.attempts.size(), 0, "a different physical socket cannot use the old socket budget")
+	context.equal(fixture.relay.status().pending_packets, 1, "the unsent packet remains owned")
+	_destroy(fixture)
+
+	for send_result: Error in [OK, ERR_BUSY]:
+		client = AddressedClient.new()
+		client.private_code = send_result
+		fixture = _addressed_fixture(context, client, complete, _addressed_controls())
+		packets = [_packet(fixture, 9)]
+		context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "own one packet before send reentry")
+		client.on_send = func() -> void:
+			fixture.plan.data.addressed_binary_peers = [{"player_id": V, "epoch": 4}, complete[1]]
+			client.session_plan.emit(fixture.plan)
+		var fenced: Relay.Result = fixture.relay.poll(0)
+		context.equal(fenced.code, Relay.Code.WRONG_STATE, "send callback publishes the expired plan immediately")
+		context.equal(fenced.sent, int(send_result == OK), "account for an accepted send before the fence")
+		context.equal(fixture.relay.status().pending_packets, int(send_result == ERR_BUSY), "retain only an unaccepted send")
+		context.equal(client.attempts.size(), 1, "an expired plan cannot dispatch a second send")
+		context.equal(client.sent.size(), 0, "a refused or invalidated private send cannot broadcast")
+		_destroy(fixture)
+
+	client = AddressedClient.new()
+	fixture = _addressed_fixture(context, client, complete, _addressed_controls())
+	packets = [_packet(fixture, 10), _packet(fixture, 11)]
+	context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "own a head and tail before synchronous detach")
+	client.on_send = func() -> void:
+		context.equal(fixture.relay.poll(0).code, Relay.Code.INVALID_ARGUMENT, "nested poll cannot start a send")
+		context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.WRONG_STATE, "nested enqueue cannot take ownership")
+		fixture.relay.detach()
+		context.equal(fixture.relay.status().pending_packets, 2, "active send owns data until its SDK call returns")
+	var stopped: Relay.Result = fixture.relay.poll(0)
+	context.equal(stopped.code, Relay.Code.WRONG_STATE, "synchronous send detach is surfaced")
+	context.equal(stopped.sent, 1, "SDK accepted the head before deferred cleanup")
+	context.equal(client.attempts.size(), 1, "detaching send cannot dispatch the tail")
+	context.equal(fixture.relay.status().pending_packets, 0, "deferred cleanup releases the queue")
+	context.equal(client.get_signal_connection_list("game_data_binary_received").size(), 0, "deferred cleanup releases the signal")
+	_destroy(fixture)
+
+
 class Client:
 	extends Fixtures.FakeClient
 	signal game_data_binary_received(from_uuid: String, encoding: int, bytes: PackedByteArray)
@@ -455,9 +519,20 @@ class AddressedClient:
 
 	var private_code: Error = OK
 	var attempts: Array[Dictionary] = []
+	var on_identity: Callable
+	var on_send: Callable
+
+	func get_player_id() -> String:
+		if on_identity.is_valid():
+			var callback: Callable = on_identity
+			on_identity = Callable()
+			callback.call()
+		return super.get_player_id()
 
 	func send_game_data_binary_to(recipient: String, bytes: PackedByteArray) -> Error:
 		attempts.append({"recipient": recipient, "bytes": bytes.duplicate()})
+		if on_send.is_valid():
+			on_send.call()
 		return private_code
 
 

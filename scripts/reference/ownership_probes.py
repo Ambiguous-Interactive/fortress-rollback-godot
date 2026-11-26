@@ -214,7 +214,7 @@ EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({
     'frame_submit', 'repeat_playback', 'repeat_selection'})
 EXPECTED['res://tests/unit/test_signalfish_relay.gd'] = {
     'golden', 'negotiation', 'pressure', 'atomic', 'ingress', 'receive_budget', 'fences', 'overflow', 'traffic',
-    'addressed_plan', 'addressed_wire_caps', 'addressed_fences'}
+    'addressed_plan', 'addressed_wire_caps', 'addressed_fences', 'addressed_reentry'}
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',

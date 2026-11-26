@@ -1,8 +1,8 @@
 # SignalFish binary relay
 
 `FortressSignalFishRelay` sends and receives bounded rollback protocol packets
-through the optional pinned SDK's binary APIs. It broadcasts a recipient envelope
-and filters other participants' traffic before the peer receives it.
+through the optional SDK's binary APIs. Ordinary relay broadcasts a recipient
+envelope and filters other participants' traffic before peer delivery.
 It reuses the [membership and plan seam](signalfish-membership.md) and the existing
 `FortressPeerSession`; it does not create another rollback engine.
 
@@ -52,6 +52,18 @@ outbound message size. It reserves 128 bytes for the pinned SDK's server envelop
 The socket budget must fit at least one maximum application envelope. A valid
 SDK receive budget is 1–4,096 packets per SDK poll. Production WebSocket polling
 uses that SDK limit; injected transports must enforce their own equivalent bound.
+
+With a compatible server and SDK, **Native / relay** requests private binary
+delivery. The server's session plan must list every frozen remote seat with a
+valid UUID and epoch. Incomplete plans use ordinary delivery. Negotiated
+broadcast adds one carrier byte and addressed delivery adds 17. The queue and
+socket budgets include these bytes.
+
+The v1 addressed request carries the recipient UUID and the application
+envelope. The server checks the current seated recipient at admission. Plan
+epochs fence observed lifetime changes on the sending client. Receive checks
+still bind the application envelope to the SDK-attributed sender, frozen match
+identity, and recipient.
 
 ## Preserve output ownership during pressure
 

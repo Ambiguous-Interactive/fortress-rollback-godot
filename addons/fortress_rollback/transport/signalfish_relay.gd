@@ -244,8 +244,13 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 				result.code = _failure
 				break
 			var buffered: int = transport.call("get_buffered_amount")
+			var current_transport: Object = client.get("transport") if is_instance_valid(client) else null
 			result.code = _gate()
 			if result.code != Code.OK:
+				break
+			if not is_instance_valid(transport) or current_transport != transport:
+				_failure = Code.SDK_FAILURE
+				result.code = _failure
 				break
 			var pending: Outgoing = _pending[0]
 			var send_size: int = pending.envelope.size() + _wire_overhead
@@ -255,14 +260,19 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 			var bytes: PackedByteArray = pending.envelope.duplicate()
 			var sent: Error = client.call("send_game_data_binary_to", pending.recipient, bytes) if _addressed_revision >= 0 \
 				else client.call("send_game_data_binary", bytes)
+			# A callback can fence the session after the SDK has accepted these bytes.
+			if sent == OK:
+				_pending_bytes -= send_size
+				_pending.pop_front()
+				result.sent += 1
+			result.code = _gate()
+			if result.code != Code.OK:
+				break
 			if sent != OK:
 				result.code = Code.BACKPRESSURE if sent == ERR_BUSY else Code.SDK_FAILURE
 				if sent != ERR_BUSY:
 					_failure = result.code
 				break
-			_pending_bytes -= send_size
-			_pending.pop_front()
-			result.sent += 1
 	if receive_pressure and result.code == Code.OK:
 		result.code = Code.BACKPRESSURE
 	# The SDK hands frames over between polls, so this poll reports the window's arrivals.
@@ -377,11 +387,17 @@ func _gate() -> int:
 		return Code.WRONG_STATE
 	if _failure != Code.OK:
 		return _failure
-	var client: Object = _client.get_ref()
+	var binding: WeakRef = _client
+	var adapter: Adapter = _adapter
+	var client: Object = binding.get_ref()
 	var config: Object = _sdk_config.get_ref()
 	if not is_instance_valid(client) or not is_instance_valid(config) or not _raw_mode(config) or config.get("max_inbound_packets_per_poll") > 4096:
 		return Code.INCOMPATIBLE_MODE
-	var state: Dictionary = _adapter.status()
+	var state: Dictionary = adapter.status()
+	if _client != binding:
+		return Code.WRONG_STATE
+	if _failure != Code.OK:
+		return _failure
 	if state.route not in ["mesh", "relay", "relay_required"] or (_peer == null and not _receive_packet.is_valid()):
 		return Code.WRONG_STATE
 	if _addressed_revision >= 0 and state.lifetime_revision != _addressed_revision:
