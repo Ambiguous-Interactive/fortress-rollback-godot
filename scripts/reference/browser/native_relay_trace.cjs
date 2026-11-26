@@ -1,5 +1,64 @@
+function decodeRelayDelivery(bytes, localBytes = null) {
+  // A private delivery prefixes the same five-field map with opcode 1.
+  const addressed = bytes[0] === 1;
+  const mapOffset = Number(addressed);
+  if (bytes[mapOffset] !== 0x85) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = mapOffset + 1;
+  function span(size) {
+    if (size > bytes.length - offset) throw new RangeError('truncated GameData field');
+    const value = bytes.subarray(offset, offset + size);
+    offset += size;
+    return value;
+  }
+  function integer(width) {
+    const at = offset;
+    span(width);
+    if (width === 8) return view.getBigUint64(at);
+    if (width === 4) return view.getUint32(at);
+    if (width === 2) return view.getUint16(at);
+    return view.getUint8(at);
+  }
+  function string() {
+    const marker = integer(1);
+    if (marker < 0xa0 || marker > 0xbf) throw new RangeError('expected short GameData string');
+    return String.fromCharCode(...span(marker & 31));
+  }
+  function binary() {
+    const marker = integer(1);
+    if (marker < 0xc4 || marker > 0xc6) throw new RangeError('expected binary GameData field');
+    return span(integer(1 << (marker - 0xc4)));
+  }
+  function unsigned() {
+    const marker = integer(1);
+    if (marker < 0x80) return BigInt(marker);
+    if (marker < 0xcc || marker > 0xcf) throw new RangeError('expected unsigned GameData stamp');
+    return BigInt(integer(1 << (marker - 0xcc)));
+  }
+  const readers = new Map([['from_player', binary], ['encoding', string], ['payload', binary], ['seq', unsigned], ['epoch', unsigned]]);
+  const fields = new Map();
+  try {
+    for (let i = 0; i < 5; i++) {
+      const key = string();
+      if (!readers.has(key) || fields.has(key)) return null;
+      fields.set(key, readers.get(key)());
+    }
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    return null;
+  }
+  const from = fields.get('from_player');
+  const epoch = fields.get('epoch');
+  const seq = fields.get('seq');
+  if (offset !== bytes.length || from.length !== 16 || fields.get('encoding') !== 'message_pack' || !seq || !epoch || epoch > 0xffffffffn) return null;
+  const envelope = fields.get('payload');
+  // A broadcast envelope can name another peer as its application recipient.
+  if (localBytes && !localBytes.every((byte, index) => envelope[37 + index] === byte)) return null;
+  return { envelope, from: Array.from(from, byte => byte.toString(16).padStart(2, '0')).join(''), epoch: Number(epoch), seq: seq.toString(), addressed };
+}
+
 // Serialized into the browser init script. Keep its dependencies local.
-function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000) {
+function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000, decodeDelivery = decodeRelayDelivery, traceCarrier = false) {
   const cap = 128;
   const archiveCap = 512;
   const wireArchiveCap = 1024;
@@ -7,6 +66,10 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
   const streams = Object.fromEntries(['send', 'raw', 'sdk', 'native'].map(stage => [stage, Object.fromEntries(
     [...new Set(families)].map(family => [family, { count: 0, links: new Map() }]))]));
   const expiryPins = new Map();
+  const carrierCap = 8192;
+  const carriers = new Array(traceCarrier ? carrierCap : 0);
+  let carrierCount = 0;
+  let carrierSkipped = 0;
   let room, local, localBytes, roster, holdPeer, hold;
   function holdCheckpoint(at_ms, end_reason = null) {
     if (!hold) return;
@@ -25,65 +88,6 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
     }
   }
   const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-
-  function decodeDelivery(bytes) {
-    // A private delivery prefixes the same five-field map with opcode 1.
-    const addressed = bytes[0] === 1;
-    const mapOffset = Number(addressed);
-    if (bytes[mapOffset] !== 0x85) return null;
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    let offset = mapOffset + 1;
-    function span(size) {
-      if (size > bytes.length - offset) throw new RangeError('truncated GameData field');
-      const value = bytes.subarray(offset, offset + size);
-      offset += size;
-      return value;
-    }
-    function integer(width) {
-      const at = offset;
-      span(width);
-      if (width === 8) return view.getBigUint64(at);
-      if (width === 4) return view.getUint32(at);
-      if (width === 2) return view.getUint16(at);
-      return view.getUint8(at);
-    }
-    function string() {
-      const marker = integer(1);
-      if (marker < 0xa0 || marker > 0xbf) throw new RangeError('expected short GameData string');
-      return String.fromCharCode(...span(marker & 31));
-    }
-    function binary() {
-      const marker = integer(1);
-      if (marker < 0xc4 || marker > 0xc6) throw new RangeError('expected binary GameData field');
-      return span(integer(1 << (marker - 0xc4)));
-    }
-    function unsigned() {
-      const marker = integer(1);
-      if (marker < 0x80) return BigInt(marker);
-      if (marker < 0xcc || marker > 0xcf) throw new RangeError('expected unsigned GameData stamp');
-      return BigInt(integer(1 << (marker - 0xcc)));
-    }
-    const readers = new Map([['from_player', binary], ['encoding', string], ['payload', binary], ['seq', unsigned], ['epoch', unsigned]]);
-    const fields = new Map();
-    try {
-      for (let i = 0; i < 5; i++) {
-        const key = string();
-        if (!readers.has(key) || fields.has(key)) return null;
-        fields.set(key, readers.get(key)());
-      }
-    } catch (error) {
-      if (!(error instanceof RangeError)) throw error;
-      return null;
-    }
-    const from = fields.get('from_player');
-    const epoch = fields.get('epoch');
-    const seq = fields.get('seq');
-    if (offset !== bytes.length || from.length !== 16 || fields.get('encoding') !== 'message_pack' || !seq || !epoch || epoch > 0xffffffffn) return null;
-    const envelope = fields.get('payload');
-    // A broadcast envelope can name another peer as its application recipient.
-    if (!localBytes.every((byte, index) => envelope[37 + index] === byte)) return null;
-    return { envelope, from: hex(from), epoch: Number(epoch), seq: seq.toString(), addressed };
-  }
 
   function decodeSend(bytes) {
     const opcode = bytes[0];
@@ -180,10 +184,20 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
     endHold(reason, at_ms) {
       holdCheckpoint(at_ms, reason);
     },
-    record(stage, bytes, socket_ordinal = null) {
+    recordCarrier(bytes) {
+      if (!traceCarrier || bytes?.[0] !== 1) return;
+      if (bytes.length > 2048) {
+        carrierSkipped++;
+        return;
+      }
+      const ordinal = ++carrierCount;
+      carriers[(ordinal - 1) % carrierCap] = { ordinal, at_ms: performance.now(), bytes: Uint8Array.from(bytes) };
+      return ordinal;
+    },
+    record(stage, bytes, socket_ordinal = null, carrier_ordinal) {
       if (!roster || !bytes) return;
       const at_ms = performance.now();
-      const delivery = stage === 'raw' ? decodeDelivery(bytes) : decodeSend(bytes);
+      const delivery = stage === 'raw' ? decodeDelivery(bytes, localBytes) : decodeSend(bytes);
       if (!delivery) return;
       const { envelope, carrierOpcode } = delivery;
       const lane = delivery.addressed || carrierOpcode === 1 ? { lane: 'addressed' } : {};
@@ -197,7 +211,8 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
           && event.code === 0 && event.report_token === token).map(({ epoch, seq, lane }) => ({ epoch, seq, ...(lane === undefined ? {} : { lane }) }));
         if (candidates?.length) protocol_reply = { token, candidates };
       }
-      return retain(stage, envelope, identity, { at_ms, socket_ordinal, epoch: delivery.epoch ?? null, seq: delivery.seq ?? null, carrierOpcode, ...lane, protocol_reply });
+      return retain(stage, envelope, identity, { at_ms, socket_ordinal, carrier_ordinal, epoch: delivery.epoch ?? null,
+        seq: delivery.seq ?? null, carrierOpcode, ...lane, protocol_reply });
     },
     recordEngine(stage, from, value, epoch, signedSeq, code, addressed = false) {
       if (!roster || !epoch || value.length > 2514) return;
@@ -302,13 +317,20 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
         stamped.set(key, digests);
         return digests;
       }
+      const count = carrierCount;
+      const skipped = carrierSkipped;
+      const retainedCarriers = traceCarrier ? carriers.filter(Boolean).sort((a, b) => a.ordinal - b.ordinal) : null;
       await Promise.all(entries.map(async ({ stage, family, count, events }) => {
         snapshot.streams[stage][family] = { count, omitted: count - events.length, events: await Promise.all(events.map(async ({ bytes, carrierOpcode, ...event }) =>
           ({ ...event, envelope_bytes: bytes.length, ...await packetDigests(event, bytes) }))) };
       }));
+      if (retainedCarriers) {
+        snapshot.carriers = { count, skipped, omitted: count - retainedCarriers.length,
+          events: await Promise.all(retainedCarriers.map(async ({ bytes, ...event }) => ({ ...event, carrier_sha256: await sha256(bytes) }))) };
+      }
       return snapshot;
     },
   };
 }
 
-module.exports = { createRelayWireTrace };
+module.exports = { createRelayWireTrace, decodeRelayDelivery };
