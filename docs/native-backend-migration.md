@@ -67,6 +67,14 @@ The receipt identifies each replacement by its exact signaling envelope and
 reciprocal ICE credentials. A local control withholds all replacement Offers
 for the second pair and reports which pair is still missing.
 
+WebKit receipts distinguish application channel close calls, channel close
+events and peer connection close calls. Each observation keeps its browser
+timestamp and controller receipt, even when the final page read times out.
+Tagged send diagnostics list the matching reciprocal route and the possible
+gap to each observed stage when the page clocks are bounded. Acceptance
+still requires the SCTP abort or the existing causal proof of completed
+connection close.
+
 To isolate a hosted browser failure on both Godot pins, select the room in the
 manual workflow dispatch.
 

@@ -2076,6 +2076,80 @@ assert.equal(receipts[latest.tag + 1] ?? null, null, 'an unobserved attempt has 
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
+    def test_native_webkit_close_observations_survive_delayed_snapshot(self):
+        # Value: protects=independent exact close receipts; fails_when=stages collapse or a different route joins; seam=browser wire and controller
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire, recordCloseObservation, matchCloseObservations } = require(process.argv[1]);
+let now = 10;
+const observed = [new Map(), new Map()];
+class Connection {
+  signalingState = 'stable';
+  localDescription = { sdp: 'a=ice-ufrag:closer' };
+  remoteDescription = { sdp: 'a=ice-ufrag:sender' };
+  addEventListener() {}
+  createDataChannel() {
+    return { id: 3, send() {}, addEventListener(kind, callback) { this[kind + 'Event'] = callback; }, close() { now += 2; } };
+  }
+  close() { now += 2; this.signalingState = 'closed'; }
+}
+const prefix = 'close ';
+const window = {};
+runInNewContext(`(${instrumentNativeWire})(false, '', undefined, 'close ')`, {
+  window, WebSocket: class {}, RTCPeerConnection: Connection,
+  performance: { now: () => now }, console: { debug: text => recordCloseObservation(observed[0], text.slice(prefix.length), now + 500) },
+});
+const connection = new Connection();
+const channel = connection.createDataChannel('gameplay', {});
+channel.close();
+now = 20;
+channel.closeEvent();
+now = 30;
+connection.close();
+now = 40;
+channel.closeEvent();
+const before = [[{ index: 0, local: 'closer', remote: 'sender' }], [{ index: 17, local: 'sender', remote: 'closer' }]];
+const error = { index: 1, channel: 17, attempt: 279, received_ms: 600 };
+const report = {
+  partialSnapshots: [null, { sends: { 279: { channel: 17, attempt: 279, sentAt: 47199 } } }],
+  clocks: [{ offsetMin: 9900, offsetMax: 10100 }, { offsetMin: -5100, offsetMax: -4900 }],
+};
+const [receipt] = matchCloseObservations([error], before, observed, report);
+assert.equal(receipt.attempt, 279);
+assert.equal(receipt.sentAt, 47199);
+assert.equal(receipt.received_ms, 600);
+assert.deepEqual(receipt.observations.map(({ owner, kind, page_us, received_ms }) => [owner, kind, page_us, received_ms]), [
+  [0, 'channel_close_called', 10000, 512],
+  [0, 'channel_close_event', 20000, 520],
+  [0, 'connection_close_called', 30000, 532],
+]);
+assert.deepEqual(receipt.observations.map(({ minimumGapUs, maximumGapUs }) => [minimumGapUs, maximumGapUs]),
+  [[21999, 22399], [11999, 12399], [1999, 2399]]);
+const [wrong] = matchCloseObservations([error], [[{ ...before[0][0], index: 2 }], before[1]], observed);
+assert.deepEqual(wrong.observations, []);
+const [ambiguous] = matchCloseObservations([error], [...before, before[0]], [...observed, new Map()]);
+assert.deepEqual(ambiguous.observations, []);
+assert.deepEqual(matchCloseObservations([{ ...error, attempt: null }], before, observed), []);
+const early = new Connection();
+early.remoteDescription = null;
+const pending = early.createDataChannel('pending', {});
+now = 50;
+pending.close();
+early.remoteDescription = connection.remoteDescription;
+pending.close();
+assert.deepEqual(observed[0].get('1:channel_close_called'), {
+  kind: 'channel_close_called', index: 1, local: 'closer', remote: null, page_us: 50000, received_ms: 552,
+});
+const newRoute = new Connection();
+newRoute.createDataChannel('restarted', {});
+assert.equal(window.fortressNativeWire.sctpStatus()[2].remote, 'sender');
+newRoute.remoteDescription = { sdp: 'a=ice-ufrag:replacement' };
+assert.equal(window.fortressNativeWire.sctpStatus()[2].remote, 'replacement');
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_native_webkit_close_receipt_names_the_ambiguous_link(self):
         # Value: protects=failed causal attribution; fails_when=actual reciprocal channel or clock gap is lost; seam=browser receipt validator
         script = r"""

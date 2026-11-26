@@ -23,6 +23,8 @@ const FROZEN_UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const CLOSE_CLOCK_PRE_SAMPLES = 3;
 const CLOSE_CLOCK_POST_SAMPLES = 4;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
+const CLOSE_CHECKPOINT = 'fortress native close ';
+const CLOSE_STAGES = ['channel_close_called', 'channel_close_event', 'connection_close_called'];
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
 const DEPARTURE_CHECKPOINT = 'fortress native departure ';
@@ -366,7 +368,7 @@ function browserOptions(name) {
   throw new Error(`unknown browser ${name}`);
 }
 
-function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
+function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, closePrefix) {
   if (relayWireTrace) window.fortressNativeRelayTrace = relayWireTrace;
   const active = [];
   const resources = { rtc: [], sockets: [] };
@@ -652,11 +654,29 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
     if (!holdAll && held.mesh + held.relay === 1) window.fortressNativePostRelease?.mark('hold_first_input', undefined, holdMark());
   }
   const instant = () => Math.round(performance.now() * 1000);
+  function rememberRoute(record) {
+    record.local = ufrag(record.connection.localDescription) ?? record.local;
+    record.remote = ufrag(record.connection.remoteDescription) ?? record.remote;
+  }
+  function publishClose(record, kind, page_us) {
+    if (record.index >= 256) return;
+    const stages = record.closeStages ??= new Set();
+    if (stages.has(kind)) return;
+    stages.add(kind);
+    console.debug(closePrefix + JSON.stringify({ kind, page_us, index: record.index, local: record.local, remote: record.remote }));
+  }
   const closeConnection = RTCPeerConnection.prototype.close;
   RTCPeerConnection.prototype.close = function() {
-    const result = closeConnection.call(this);
-    if (observingDeparture && this.signalingState === 'closed' && ice.has(this)) ice.get(this).closedAt ??= instant();
-    return result;
+    const observed = closePrefix ? resources.rtc.filter(record => record.connection === this && record.channel.id === 3) : [];
+    observed.forEach(rememberRoute);
+    const calledAt = observed.length ? instant() : null;
+    try {
+      const result = closeConnection.call(this);
+      if (observingDeparture && this.signalingState === 'closed' && ice.has(this)) ice.get(this).closedAt ??= instant();
+      return result;
+    } finally {
+      for (const record of observed) publishClose(record, 'connection_close_called', calledAt);
+    }
   };
   const createChannel = RTCPeerConnection.prototype.createDataChannel;
   RTCPeerConnection.prototype.createDataChannel = function(label, options) {
@@ -678,7 +698,26 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
     const index = resources.rtc.length;
     const record = { index, channel, connection: this, sent: 0, received: 0, local: null, remote: null,
       closeAborts: 0, closeEvents: 0, inputsSent: 0, inputsReceived: 0 };
-    channel.addEventListener('close', () => { record.closeEvents++; });
+    if (closePrefix && channel.id === 3) {
+      const closeChannel = channel.close;
+      channel.close = function() {
+        rememberRoute(record);
+        const calledAt = instant();
+        try {
+          return closeChannel.call(this);
+        } finally {
+          publishClose(record, 'channel_close_called', calledAt);
+        }
+      };
+    }
+    channel.addEventListener('close', () => {
+      record.closeEvents++;
+      if (closePrefix && channel.id === 3) {
+        const at = instant();
+        rememberRoute(record);
+        publishClose(record, 'channel_close_event', at);
+      }
+    });
     channel.addEventListener('error', ({ error }) => {
       if (channel.id === 3 && error?.errorDetail === 'sctp-failure' && error.message === 'User-Initiated Abort, reason=Close called') record.closeAborts++;
     });
@@ -827,10 +866,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
   };
   function sctpStatus() {
     return resources.rtc.filter(({channel}) => channel.id === 3).map(record => {
-      if ((!record.local || !record.remote) && record.connection.signalingState !== 'closed') {
-        record.local = ufrag(record.connection.localDescription) ?? record.local;
-        record.remote = ufrag(record.connection.remoteDescription) ?? record.remote;
-      }
+      if ((closePrefix || !record.local || !record.remote) && record.connection.signalingState !== 'closed') rememberRoute(record);
       return { index: record.index, local: record.local, remote: record.remote, closeAborts: record.closeAborts, closeEvents: record.closeEvents,
         open: record.channel.readyState === 'open' && record.connection.connectionState === 'connected',
         ordered: record.channel.ordered, maxRetransmits: record.channel.maxRetransmits, maxPacketLifeTime: record.channel.maxPacketLifeTime,
@@ -952,6 +988,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace) {
       return resources.rtc.filter(({channel, connection}) => channel.readyState === 'open' && connection.connectionState === 'connected').length === peers * 3;
     },
     observeDeparture() { observingDeparture = true; return window.crossOriginIsolated ? instant() : null; },
+    stopObservingDeparture() { observingDeparture = false; },
     departureSends(attempts) {
       return Object.fromEntries(attempts.flatMap(attempt => {
         const receipt = departureSendHistory[attempt % departureSendLimit];
@@ -1046,6 +1083,49 @@ function reportedChannel(stack) {
     ? { channel, attempt } : { channel: null, attempt: null };
 }
 
+function recordCloseObservation(observations, text, received_ms) {
+  if (text.length > 768) return;
+  let value;
+  try { value = JSON.parse(text); } catch { return; }
+  if (!value || !CLOSE_STAGES.includes(value.kind)) return;
+  const { kind, index, local, remote, page_us } = value;
+  const validFragment = fragment => fragment === null || typeof fragment === 'string' && /^[\w+/]{1,256}$/.test(fragment);
+  if (!Number.isSafeInteger(index) || index < 0 || index >= 256 || !Number.isSafeInteger(page_us) || page_us < 0
+    || !validFragment(local) || !validFragment(remote)) return;
+  const key = `${index}:${kind}`;
+  if (!observations.has(key)) observations.set(key, { kind, index, local, remote, page_us, received_ms });
+}
+
+function reciprocalLinks(linksByPage, index, sender) {
+  return linksByPage.flatMap((links, owner) => owner === index ? [] : links
+    .filter(peer => peer.local === sender.remote && peer.remote === sender.local)
+    .map(peer => ({ ...peer, owner })));
+}
+
+function matchCloseObservations(errors, before, observations, report = {}) {
+  if (!before) return [];
+  return errors.filter(({ attempt }) => Number.isSafeInteger(attempt) && attempt > 0).map(({ index, channel, attempt, received_ms }) => {
+    const send = report.partialSnapshots?.[index]?.sends?.[attempt];
+    const latest = exactSendTime(channel, attempt, send);
+    const sentAt = latest ?? report.proofs?.find(proof => proof.index === index && proof.channel === channel && proof.attempt === attempt)?.sentAt ?? null;
+    const receipt = { index, channel, attempt, sentAt, received_ms, observations: [] };
+    const sender = before[index].find(link => link.index === channel);
+    if (!sender?.local || !sender.remote || sender.closed) return receipt;
+    const counterparts = reciprocalLinks(before, index, sender);
+    if (counterparts.length !== 1) return receipt;
+    for (const { owner, index: channelIndex, local, remote } of [{ ...sender, owner: index }, counterparts[0]]) {
+      for (const kind of CLOSE_STAGES) {
+        const event = observations[owner].get(`${channelIndex}:${kind}`);
+        if (event?.local === local && event.remote === remote) {
+          const interval = owner === index ? {} : closeGap(sentAt, event.page_us, report.clocks?.[index], report.clocks?.[owner]);
+          receipt.observations.push({ owner, ...event, ...interval });
+        }
+      }
+    }
+    return receipt;
+  });
+}
+
 function clockWindow(start, end, sampledAt) {
   if (!Number.isSafeInteger(sampledAt) || sampledAt < 0) return null;
   // The isolated browser clocks coarsen by up to 20 us. Allow for two reads and integer rounding.
@@ -1059,25 +1139,30 @@ function intersectClock(previous, sample) {
   return offsetMin <= offsetMax ? { offsetMin, offsetMax } : null;
 }
 
-function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, closer = null, clocks, receipt) {
-  const sentAt = Number.isSafeInteger(attempt) && attempt > 0 && receipt?.attempt === attempt && receipt.channel === channel
+function exactSendTime(channel, attempt, receipt) {
+  return Number.isSafeInteger(attempt) && attempt > 0 && receipt?.attempt === attempt && receipt.channel === channel
     && Number.isSafeInteger(receipt.sentAt) && receipt.sentAt >= 0 ? receipt.sentAt : null;
+}
+
+function closeGap(sentAt, closedAt, senderClock, closerClock) {
+  if (!senderClock || !closerClock || !Number.isSafeInteger(sentAt) || !Number.isSafeInteger(closedAt)) return { minimumGapUs: null, maximumGapUs: null };
+  // Compare the earliest possible send with the latest possible close.
+  return {
+    minimumGapUs: sentAt + senderClock.offsetMin - closedAt - closerClock.offsetMax,
+    maximumGapUs: sentAt + senderClock.offsetMax - closedAt - closerClock.offsetMin,
+  };
+}
+
+function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, closer = null, clocks, receipt) {
+  const sentAt = exactSendTime(channel, attempt, receipt);
   const before = linksBefore.find(peer => peer.index === channel) ?? null;
   const evidence = { index, channel, attempt, sentAt, closer, before, sender: null, counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
   if (!before?.local || !before.remote || before.closed) return evidence;
   evidence.sender = closedByPage[index].find(peer => peer.index === channel && peer.local === before.local && peer.remote === before.remote) ?? null;
-  evidence.counterparts = closedByPage.flatMap((links, owner) => owner === index ? [] : links
-    .filter(peer => peer.local === before.remote && peer.remote === before.local)
-    .map(peer => ({ ...peer, owner })));
+  evidence.counterparts = reciprocalLinks(closedByPage, index, before);
   if (evidence.counterparts.length !== 1) return evidence;
   const [counterpart] = evidence.counterparts;
-  const senderClock = clocks?.[index];
-  const closerClock = clocks?.[counterpart.owner];
-  // Compare the earliest possible send with the latest possible close.
-  if (senderClock && closerClock && Number.isSafeInteger(sentAt) && Number.isSafeInteger(counterpart.closedAt)) {
-    evidence.minimumGapUs = sentAt + senderClock.offsetMin - counterpart.closedAt - closerClock.offsetMax;
-    evidence.maximumGapUs = sentAt + senderClock.offsetMax - counterpart.closedAt - closerClock.offsetMin;
-  }
+  Object.assign(evidence, closeGap(sentAt, counterpart.closedAt, clocks?.[index], clocks?.[counterpart.owner]));
   if (closer !== null) {
     if (counterpart.owner === closer && counterpart.closed && evidence.sender?.closed) evidence.proof = 'stream-close';
   } else if (counterpart.connectionClosed && evidence.sender) {
@@ -1476,6 +1561,15 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const engineTurns = [];
   const physicalCloseReport = {};
   const closeReport = {};
+  const closeObservations = route === 'mesh' && browserPair.includes('webkit') ? Array.from({ length: players }, () => new Map()) : null;
+  let direct, peers;
+  const closeReceipts = () => closeObservations ? {
+    closeObservations: closeObservations.map(events => [...events.values()]),
+    taggedCloseObservations: [
+      ...matchCloseObservations(physicalCloseErrors, direct?.map(peer => peer.wire.sctp), closeObservations, physicalCloseReport),
+      ...matchCloseObservations(departureErrors, peers?.map(peer => peer.wire.sctp), closeObservations, closeReport),
+    ],
+  } : {};
   const wait = async (page, condition, argument = null, timeout = PAGE_WAIT_MS) => {
     const handle = await page.waitForFunction(condition, argument, { timeout });
     await handle.dispose();
@@ -1518,11 +1612,14 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         const departure = route === 'mesh' && phase === 'departure' && index < players - 1;
         const webkitSend = name === 'webkit' && error.name === '' && error.message === WEBKIT_CLOSED_STREAM;
         const errorList = !webkitSend ? errors : physicalClose ? physicalCloseErrors : departure ? departureErrors : errors;
-        errorList.push({ index, phase, text: String(error), ...(webkitSend ? reportedChannel(error.stack) : {}) });
+        errorList.push({ index, phase, text: String(error), ...(webkitSend ? { ...reportedChannel(error.stack), received_ms: performance.now() } : {}) });
       });
       page.on('crash', () => errors.push({ index, phase, text: 'Renderer crashed' }));
       page.on('console', message => {
         const text = message.text();
+        if (closeObservations && text.startsWith(CLOSE_CHECKPOINT)) {
+          recordCloseObservation(closeObservations[index], text.slice(CLOSE_CHECKPOINT.length), performance.now());
+        }
         warmupBarrier?.record(index, text);
         if (postRelease && text.startsWith(POST_RELEASE_CHECKPOINT)) {
           const controller = { controller_ms: performance.now(), controller_order: ++postReleaseOrder };
@@ -1537,7 +1634,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       });
       // Register the browser observers in a single init script.
       const relayTraceScript = traceRelayWire ? `(${createRelayWireTrace})()` : 'undefined';
-      const wireScript = `(${instrumentNativeWire})(${name === 'webkit'}, ${JSON.stringify(traceWarmup ? WARMUP_CHECKPOINT : '')}, ${relayTraceScript});`;
+      const wireScript = `(${instrumentNativeWire})(${name === 'webkit'}, ${JSON.stringify(traceWarmup ? WARMUP_CHECKPOINT : '')}, ${relayTraceScript},
+        ${JSON.stringify(closeObservations ? CLOSE_CHECKPOINT : '')});`;
       await page.addInitScript(postRelease ? wireScript + `(${instrumentPostRelease})(${JSON.stringify(POST_RELEASE_CHECKPOINT)}, ${HISTORY_FRAMES});` : wireScript);
       await page.goto(`${origin}/index.html`);
       await wait(page, () => window.fortressNativeReady === true, null, PAGE_BOOT_MS);
@@ -1597,7 +1695,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       assert.ok(readRelayServer, 'same-link relay retention control requires a trace server');
       sameLinkRetention = await exerciseSameLinkRetention(pages, ready, readRelayServer);
     }
-    let direct, atClose, afterClose, restored, recoveryEvidence, closeLinks;
+    let atClose, afterClose, restored, recoveryEvidence, closeLinks;
+    const physicalCloseSender = (liveClose || (recovery && !overlap)) && browserPeers[1].name === 'webkit' ? pages[1] : null;
     if (liveClose || recovery) {
       direct = await observe();
       for (const peer of direct) {
@@ -1606,6 +1705,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         assert.equal(peer.wire.rtc.filter(([id, state]) => id === 3 && state === 'open').length, players - 1);
       }
     }
+    if (physicalCloseSender) await boundedRoom(() => physicalCloseSender.evaluate(() => window.fortressNativeWire.observeDeparture()),
+      DIAGNOSTIC_MS, 'native physical close send observation');
     if (recovery) {
       ({ atClose, afterClose, restored, recoveryEvidence } = await recoverPairs(direct, {
         pages, observe: () => boundedRoom(observe, 3000, 'native recovery snapshot'), command, pause, overlap, omitSecond,
@@ -1626,6 +1727,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       phase = 'mixed confirmed history';
       closeLinks = await waitForCloseProofs(pages, direct, physicalCloseErrors, physicalCloseReport, { closer: 0 });
     }
+    if (physicalCloseSender) await boundedRoom(() => physicalCloseSender.evaluate(() => window.fortressNativeWire.stopObservingDeparture()),
+      DIAGNOSTIC_MS, 'native physical close observation stop');
     if (!mixed) {
       let relayRelease;
       stalled = Array(players).fill(null);
@@ -1691,7 +1794,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       return receipt;
     }));
     phase = 'post-capture status';
-    const peers = (await boundedRoom(observe, PAGE_WAIT_MS, 'native post-capture status'))
+    peers = (await boundedRoom(observe, PAGE_WAIT_MS, 'native post-capture status'))
       .map((peer, index) => ({ ...peer, rows: history[index].rows, snapshots: history[index].snapshots }));
     compareHistory(peers, comparedFrames);
     if (recovery) assertRecoveredRoom(direct, restored, peers, recoveryEvidence);
@@ -1838,7 +1941,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       relayServer, relayJoined, relayRetention, sameLinkRetention,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
-      departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples,
+      departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier() };
@@ -1876,7 +1979,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     console.error(JSON.stringify({
       phase, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors: [...physicalCloseErrors, ...departureErrors],
-      departureClocks: closeReport.clocks, departureCommands, roomIdentities,
+      departureClocks: closeReport.clocks, departureCommands, roomIdentities, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       departureClockSamples: closeReport.clockSamples, departureClockErrors: closeReport.calibrationErrors,
       physicalClosePartialSnapshots: physicalCloseReport.partialSnapshots,
@@ -1926,4 +2029,5 @@ if (require.main === module) {
 
 module.exports = { armAndWaitForInput, bindDepartureCheckpoints, calibrateDepartureClocks, captureAndReleaseInput, closeEvidence, compareHistory, createReleaseSignal,
   createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt, missedCorrectionDeadline,
-  postReleaseCheckpoint, readConfirmedHistory, relayReleaseEvidence, reportedChannel, waitForCloseProofs, waitForCorrectedHistory, WARMUP_CHECKPOINT };
+  matchCloseObservations, postReleaseCheckpoint, readConfirmedHistory, recordCloseObservation, relayReleaseEvidence, reportedChannel, waitForCloseProofs,
+  waitForCorrectedHistory, WARMUP_CHECKPOINT };

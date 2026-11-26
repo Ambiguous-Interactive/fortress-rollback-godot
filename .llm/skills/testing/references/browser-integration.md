@@ -266,9 +266,9 @@ Keep one latest timely snapshot per page for failure diagnostics, with its
 receipt time. Require the complete qualifying round to prove cross-page close
 order. Bound each calibration evaluation by the shared deadline. A timed-out
 read must never append a late sample or start another read.
-Keep both clock bounds and their samples for passing and failing rooms.
-An interval spanning the minimum gap leaves it ambiguous. An upper bound below
-the threshold proves that the observed send fell short of the required gap.
+Keep clock bounds and samples. Publish [close stages](../../../../docs/native-backend-migration.md#session-boundary) before the final page read.
+An interval spanning the required gap is ambiguous. An upper bound below
+the threshold proves that the observed send fell short of it.
 Use a bounded exact attempt receipt if constructing the stack tag precedes the
 native send. Collect new diagnostics in the next bounded snapshot round.
 Combine consecutive observations on each page before returning to the controller.
