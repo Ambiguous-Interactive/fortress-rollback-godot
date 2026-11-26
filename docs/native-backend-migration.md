@@ -127,12 +127,19 @@ or the end of observation. Identical repeated bytes can obscure per-packet
 latency. Native enqueue represents accepted input to the native socket queue.
 
 The `releaseTiming` receipt follows each prepared request by its unique path.
-The controller records request receipt, first write, and HTTP finish.
-The page records the fetch start, continuation and the matching
-Resource Timing response timestamps. Missing observations are `null`.
-Compare host events with host events and page events with page events.
+The controller records request dispatch, receipt, first write, and HTTP finish.
+The page records the fetch continuation and the matching Resource Timing
+fetch start and response timestamps. The fetch start falls between controller
+dispatch and request receipt. This gives an `offset_ms` bracket with 2 ms
+allowed for page clock precision. The `write_to_response_end_ms` interval
+includes that uncertainty and the response timestamp's precision. The
+controller receipt of the Resource Timing record limits the latest possible
+response end. The interval requires a recorded HTTP 204 from Resource Timing
+or the continuation. A failed request can still have an end timestamp.
+Missing or inconsistent observations leave the delivery interval `null`.
 The controller's finish marks handoff to the OS. The browser's response end
 marks the end of its fetch, and the continuation marks when the page resumes.
+Compare the hold cap, response end and continuation on the same page clock.
 
 Relay receipts separate the first corrected confirmation, the next advancing
 physics turn, and history publication. The normal 40-frame target is observed

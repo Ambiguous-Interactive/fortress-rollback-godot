@@ -262,11 +262,11 @@ Apply each page observation at its completion time before waiting for sibling
 pages. Check that peer's existing deadline first, then rearm the earliest live
 deadline. Exercise asymmetric timely completions and exact expired boundaries;
 an all-pages barrier can otherwise discard valid progress against stale clocks.
-Retain the latest timely snapshot and its receipt time per page. Require a
-complete qualifying round to prove cross-page close order. Bound calibration
-by the shared deadline and ignore late reads without issuing another.
+Retain timely peer receipts, clock brackets, and prior complete proofs on read
+failure. Require a complete round for close proof. Ignore reads past the shared deadline.
 Publish [close stages and release timing](../../../../docs/native-backend-migration.md#session-boundary) independently of the final page read.
-Keep clock bounds and samples. Test HTTP response delay separately from page continuation delay.
+Bracket fetch start with controller dispatch and request receipt. Require HTTP 204 and bound response end by controller receipt.
+Firefox can report response start before the host write. Keep it for diagnosis. Delay delivery and continuation independently.
 An interval spanning the required gap is ambiguous. An upper bound below
 the threshold proves that the observed send fell short of it.
 Use a bounded exact attempt receipt if constructing the stack tag precedes the

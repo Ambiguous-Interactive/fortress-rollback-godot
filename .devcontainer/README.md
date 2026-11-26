@@ -288,6 +288,21 @@ CI runs it inside a freshly built container.
 .devcontainer/verify.sh --quick   # skip the slow checks
 ```
 
+### Native CLI install timeouts
+
+The global npm install reports the last observed phase and prints a bounded
+tail of its evidence journal on failure. A registry HTTP record confirms
+registry activity. A postinstall start with no recorded completion points to
+the wrapper lifecycle. That lifecycle includes the native version probe and
+fallback npm. A completion record leaves later work unclassified. An install
+can also time out before either marker appears.
+
+The journal records HTTP status and wrapper lifecycle markers at
+`install-native-cli-<package-slug>-evidence-v1.log` in the system temporary
+directory. The installer uses npm's background scripts so npm emits complete
+lifecycle records even when script output has no newline. The journal omits
+URLs, script commands, and script output. A successful global install removes it.
+
 ### Browser witnessing capability (#385)
 
 The container carries the runtime libraries for the pinned real-browser

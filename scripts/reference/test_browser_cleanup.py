@@ -1257,7 +1257,7 @@ async function run() {
   const origin = 'http://127.0.0.1:' + server.address().port;
   const path = index => origin + signal.paths[index];
   assert.deepEqual(signal.timings(), signal.paths.map(path => ({
-    path, request_received_ms: null, first_write_ms: null, finished_ms: null, continuation: null, resource: null,
+    path, request_dispatched_ms: null, request_received_ms: null, first_write_ms: null, finished_ms: null, continuation: null, resource: null,
   })));
   let evaluations = 0, releases = 0;
   global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: {
@@ -1285,13 +1285,13 @@ async function run() {
   assert.equal(receipt.continuation, null);
   assert.equal(receipt.resource, null);
   const entered = { path: signal.paths[0], requested_ms: 10, continued_ms: 510, status: 204 };
-  const resource = { path: signal.paths[0], response_start_ms: null, response_end_ms: 25 };
+  const resource = { path: signal.paths[0], fetch_start_ms: 10, response_start_ms: null, response_end_ms: 25, response_status: null };
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, path: signal.paths[1] }), 700), false);
-  assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, response_start_ms: 26 }), 700), false);
+  assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, fetch_start_ms: 26 }), 700), false);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(resource), 700), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(entered), 701), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...entered, continued_ms: 615 }), 800), false);
-  assert.deepEqual(receipt.resource, { response_start_ms: null, response_end_ms: 25, controller_ms: 700 });
+  assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: null, response_end_ms: 25, response_status: null, controller_ms: 700 });
   assert.deepEqual(receipt.continuation, { requested_ms: 10, continued_ms: 510, status: 204, controller_ms: 701 });
   assert.equal(releases, 2);
   assert.equal((await fetch(path(0))).status, 409);
@@ -1310,7 +1310,7 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
         # Value: protects=independent release clocks and exact resource identity; fails_when=timing needs the other event or matches a foreign fetch
         script = r"""
 const assert = require('node:assert/strict');
-const { captureAndReleaseInput, recordReleaseTiming } = require(process.argv[1]);
+const { captureAndReleaseInput, recordReleaseTiming, releaseDeliveryTiming } = require(process.argv[1]);
 const path = '/native-release/control';
 const prefix = 'timing ';
 global.location = { href: 'http://localhost/test' };
@@ -1318,9 +1318,11 @@ global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: { st
 const page = { evaluate(callback, argument) { return callback(argument); } };
 
 async function run(responseDelay, continuationDelay, { unavailable = false, status = 204, nearDeadline = false } = {}) {
-  const receipt = { path, continuation: null, resource: null };
+  const receipt = { path, request_dispatched_ms: 3000, request_received_ms: 3004, first_write_ms: 3010,
+    continuation: null, resource: null };
   let now = 10;
-  let controller = 3000;
+  let controller = 3000 + responseDelay + continuationDelay + 100;
+  const received = controller;
   let observe;
   let disconnected = false;
   let resume;
@@ -1339,7 +1341,7 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
   global.fetch = () => new Promise(resolve => { resume = resolve; });
   const released = captureAndReleaseInput(page, 0, path, prefix);
   const resource = { name: new URL(path, location.href).href, initiatorType: 'fetch',
-    responseStart: 11 + responseDelay, responseEnd: 12 + responseDelay };
+    fetchStart: 10, responseStart: 9, responseEnd: 22 + responseDelay, responseStatus: status };
   if (!unavailable) {
     observe([{ ...resource, name: resource.name + '?other' }, { ...resource, initiatorType: 'xmlhttprequest' }]);
     assert.equal(disconnected, false);
@@ -1355,7 +1357,7 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
   if (status === 204) assert.equal((await released).release, 'released');
   else await assert.rejects(released, /native relay release signal returned HTTP 409/);
   assert.deepEqual(receipt.continuation,
-    { requested_ms: 10, continued_ms: continued, status, controller_ms: continuationDelay ? 3002 : 3001 });
+    { requested_ms: 10, continued_ms: continued, status, controller_ms: received + (continuationDelay ? 2 : 1) });
   if (unavailable) {
     assert.equal(receipt.resource, null);
   } else {
@@ -1364,10 +1366,29 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
       observe([{ ...resource, responseStart: 0 }]);
     }
     assert.equal(disconnected, true);
-    assert.deepEqual(receipt.resource, { response_start_ms: continuationDelay ? 11 : null, response_end_ms: 12 + responseDelay,
-      controller_ms: continuationDelay ? 3001 : 3002 });
+    assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: continuationDelay ? 9 : null, response_end_ms: 22 + responseDelay,
+      response_status: status, controller_ms: received + (continuationDelay ? 1 : 2) });
     assert.equal(receipt.continuation.continued_ms - receipt.resource.response_end_ms, continuationDelay);
+    assert.deepEqual(releaseDeliveryTiming(receipt), {
+      offset_ms: { min: 2988, max: 2996 },
+      write_to_response_end_ms: status === 204 ? { min: Math.max(0, responseDelay - 2), max: responseDelay + 10 } : null,
+    });
+    const resourceOnly = { ...receipt, continuation: null };
+    assert.deepEqual(releaseDeliveryTiming(resourceOnly), releaseDeliveryTiming(receipt));
+    for (const observed of [3009, 3010 + responseDelay - 3]) {
+      const early = { ...receipt.resource, controller_ms: observed };
+      assert.equal(releaseDeliveryTiming({ ...receipt, resource: early }).write_to_response_end_ms, null);
+    }
+    const unknown = { ...receipt.resource, response_status: null };
+    assert.equal(releaseDeliveryTiming({ ...resourceOnly, resource: unknown }).write_to_response_end_ms, null);
+    assert.deepEqual(releaseDeliveryTiming({ ...receipt, resource: unknown }), releaseDeliveryTiming(receipt));
+    const earlyContinuation = { ...receipt.continuation, controller_ms: 3009 };
+    assert.equal(releaseDeliveryTiming({ ...receipt, resource: unknown, continuation: earlyContinuation }).write_to_response_end_ms, null);
+    const failed = { ...receipt.resource, response_status: 0 };
+    assert.equal(releaseDeliveryTiming({ ...receipt, resource: failed }).write_to_response_end_ms, null);
+    assert.equal(releaseDeliveryTiming({ ...receipt, first_write_ms: 5000 }).write_to_response_end_ms, null);
   }
+  assert.equal(releaseDeliveryTiming({ ...receipt, resource: null }).write_to_response_end_ms, null);
 }
 
 let completed = false;
@@ -1379,7 +1400,7 @@ process.once('beforeExit', code => {
   await run(0, 450);
   await run(0, 0, { unavailable: true });
   await run(0, 0, { status: 409 });
-  await run(993, 0, { nearDeadline: true });
+  await run(983, 0, { nearDeadline: true });
   completed = true;
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
@@ -1910,6 +1931,7 @@ global.setTimeout = (callback, ms, ...args) => timeout(callback, [5000, 30000].i
 let releaseRequest;
 global.fetch = path => new Promise(resolve => {
   const owner = window;
+  const requested = performance.now();
   const response = { socket: { destroyed: false }, once(event, callback) { assert.equal(event, 'finish'); this.finish = callback; },
     writeHead(status, headers) { this.status = status; this.headers = new Headers(headers); return this; },
     end() {
@@ -1918,7 +1940,7 @@ global.fetch = path => new Promise(resolve => {
       const at = performance.now();
       resolve({ status: this.status, headers: this.headers });
       setImmediate(() => realm.run(owner, () => owner.resourceObserver([{
-        name: new URL(path, location.href).href, initiatorType: 'fetch', responseStart: at, responseEnd: at,
+        name: new URL(path, location.href).href, initiatorType: 'fetch', fetchStart: requested, responseStart: at, responseEnd: at, responseStatus: this.status,
       }])));
     } };
   if (!releaseRequest({ url: path, method: 'GET' }, response)) throw new Error('fixture release request was not handled');
@@ -2025,6 +2047,8 @@ runMain();
                 for timing in report['releaseTiming']:
                     self.assertEqual(timing['continuation']['status'], 204)
                     self.assertIsNotNone(timing['finished_ms'])
+                    self.assertLessEqual(timing['request_dispatched_ms'], timing['request_received_ms'])
+                    self.assertIsNotNone(timing['write_to_response_end_ms'])
                     self.assertGreater(timing['resource']['controller_ms'], timing['continuation']['controller_ms'])
                 self.assertIn('native peer 0 diagnostics deadline', run.stderr)
                 self.assertIn('native peer 1 diagnostics deadline', run.stderr)
@@ -2408,7 +2432,8 @@ let now = 25;
   assert.deepEqual(crashReport.snapshotErrors, [{index:1, reason:'Error: Page crashed'}]);
   assert.deepEqual(crashReport.partialSnapshots, [{received_ms:26, links:[reciprocal], sends:{}}, null]);
   assert.deepEqual(crashReport.clockSamples, [{before:[], after:[{offsetMin:9459, offsetMax:10541}]}, {before:[], after:[]}]);
-  assert.deepEqual(crashReport.proofs, []);
+  assert.deepEqual(crashReport.proofs, [{...warning[0], sentAt:null, closer:null, before, sender:null,
+    counterparts:[{...reciprocal, owner:0}], minimumGapUs:null, maximumGapUs:null, proof:null}]);
 
   now = 25;
   let senderReads = 0;
@@ -2428,7 +2453,73 @@ let now = 25;
     /WebKit close evidence deadline/);
   assert.deepEqual(lateReport.partialSnapshots, [null, null]);
   assert.deepEqual(lateReport.clockSamples.map(page => page.after), [[], []]);
-  assert.deepEqual(lateReport.proofs, []);
+  assert.deepEqual(lateReport.proofs, [{...warning[0], sentAt:null, closer:null, before, sender:null,
+    counterparts:[], minimumGapUs:null, maximumGapUs:null, proof:null}]);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
+    def test_native_webkit_partial_snapshots_refine_the_exact_close_gap(self):
+        # Value: protects=partial close receipt; fails_when=a crashed bystander erases the sender, counterpart or clock bounds; seam=room verifier
+        script = r"""
+const assert = require('node:assert/strict');
+const { waitForCloseProofs } = require(process.argv[1]);
+const before = {index:17, local:'sender', remote:'leaver', closeAborts:0, closed:false};
+const counterpart = {index:18, local:'leaver', remote:'sender', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
+const initial = [counterpart, before, null].map(link => ({ wire:{ sctp:link ? [link] : [] } }));
+const warning = [{index:1, channel:17, attempt:3}];
+const clocks = [{offsetMin:9500, offsetMax:10500}, {offsetMin:-5500, offsetMax:-4500}, {offsetMin:0, offsetMax:1000}];
+const crashed = {evaluate: async () => { throw Error('Page crashed'); }};
+
+(async () => {
+  for (const [channel, sentAt, counterpartRoute, expectedGap] of [
+    [17, 47081, counterpart, 1999],
+    [17, 47082, counterpart, 2000],
+    [19, 47082, counterpart, null],
+    [17, 47082, {...counterpart, remote:'different'}, null],
+  ]) {
+    const report = {};
+    const leaver = {evaluate: async () => ({links:[counterpartRoute], sampledAt:50000, sends:{}})};
+    const sender = {evaluate: async () => ({links:[before], sampledAt:65000, sends:{3:{channel, attempt:3, sentAt}}})};
+    await assert.rejects(waitForCloseProofs([leaver, sender, crashed], initial, warning, report, {clocks, clock:() => 60}),
+      error => error instanceof AggregateError && error.errors[0].message.includes('peer 2') && error.errors[0].cause.message === 'Page crashed');
+    assert.deepEqual(report.clocks, [{offsetMin:9959, offsetMax:10041}, {offsetMin:-5041, offsetMax:-4959}, clocks[2]]);
+    assert.deepEqual(report.clockSamples.map(page => page.after.length), [1, 1, 0]);
+    assert.deepEqual(report.partialSnapshots.map(snapshot => snapshot?.links ?? null), [[counterpartRoute], [before], null]);
+    assert.equal(report.proofs.length, 1);
+    const [receipt] = report.proofs;
+    assert.equal(receipt.sentAt, channel === 17 ? sentAt : null);
+    assert.deepEqual(receipt.sender, before);
+    assert.deepEqual(receipt.counterparts, counterpartRoute.remote === 'sender' ? [{...counterpart, owner:0}] : []);
+    assert.equal(receipt.minimumGapUs, expectedGap);
+    assert.equal(receipt.maximumGapUs, expectedGap === null ? null : expectedGap + 164);
+    assert.equal(receipt.proof, null);
+  }
+
+  let now = 60;
+  let round = 0;
+  const report = {};
+  const send = {channel:17, attempt:3, sentAt:47081};
+  const provedSend = {channel:17, attempt:4, sentAt:47082};
+  const leaver = {evaluate: async () => {
+    if (++round === 3) throw Error('Page crashed');
+    return {links:[counterpart], sampledAt:now * 1000 - 10000, sends:{}};
+  }};
+  const sendsByRound = [{3:send, 4:provedSend}, {3:send}, {}];
+  const sender = {evaluate: async () => ({
+    links:[before], sampledAt:now * 1000 + (round === 2 ? 4999 : 5000), sends:sendsByRound[round - 1],
+  })};
+  await assert.rejects(waitForCloseProofs([leaver, sender], initial.slice(0, 2), [...warning, {...warning[0], attempt:4}], report, {
+    clocks:clocks.slice(0, 2), clock:() => now, delay:async ms => { now += ms; },
+  }), /WebKit close snapshots failed/);
+  assert.deepEqual(report.partialSnapshots.map(snapshot => [snapshot.received_ms, snapshot.sends]), [[85, {}], [110, {}]]);
+  assert.equal(report.proofs[0].sentAt, send.sentAt);
+  assert.equal(report.proofs[0].minimumGapUs, 2000);
+  assert.deepEqual(report.proofs.map(receipt => receipt.proof), [null, null]);
+  assert.deepEqual(report.lastCompleteProofs.map(receipt => [receipt.attempt, receipt.minimumGapUs, receipt.proof]), [
+    [4, 2000, 'clock-order'], [3, 2000, 'clock-order'],
+  ]);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
