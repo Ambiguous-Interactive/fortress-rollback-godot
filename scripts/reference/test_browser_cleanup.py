@@ -1285,13 +1285,13 @@ async function run() {
   assert.equal(receipt.continuation, null);
   assert.equal(receipt.resource, null);
   const entered = { path: signal.paths[0], requested_ms: 10, continued_ms: 510, status: 204 };
-  const resource = { path: signal.paths[0], fetch_start_ms: 10, response_start_ms: null, response_end_ms: 25 };
+  const resource = { path: signal.paths[0], fetch_start_ms: 10, response_start_ms: null, response_end_ms: 25, response_status: null };
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, path: signal.paths[1] }), 700), false);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, response_start_ms: 26 }), 700), false);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(resource), 700), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(entered), 701), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...entered, continued_ms: 615 }), 800), false);
-  assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: null, response_end_ms: 25, controller_ms: 700 });
+  assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: null, response_end_ms: 25, response_status: null, controller_ms: 700 });
   assert.deepEqual(receipt.continuation, { requested_ms: 10, continued_ms: 510, status: 204, controller_ms: 701 });
   assert.equal(releases, 2);
   assert.equal((await fetch(path(0))).status, 409);
@@ -1321,7 +1321,8 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
   const receipt = { path, request_dispatched_ms: 3000, request_received_ms: 3004, first_write_ms: 3010,
     continuation: null, resource: null };
   let now = 10;
-  let controller = 3000;
+  let controller = 3000 + responseDelay + continuationDelay + 100;
+  const received = controller;
   let observe;
   let disconnected = false;
   let resume;
@@ -1340,7 +1341,7 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
   global.fetch = () => new Promise(resolve => { resume = resolve; });
   const released = captureAndReleaseInput(page, 0, path, prefix);
   const resource = { name: new URL(path, location.href).href, initiatorType: 'fetch',
-    fetchStart: 10, responseStart: 21 + responseDelay, responseEnd: 22 + responseDelay };
+    fetchStart: 10, responseStart: 11, responseEnd: 22 + responseDelay, responseStatus: status };
   if (!unavailable) {
     observe([{ ...resource, name: resource.name + '?other' }, { ...resource, initiatorType: 'xmlhttprequest' }]);
     assert.equal(disconnected, false);
@@ -1356,7 +1357,7 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
   if (status === 204) assert.equal((await released).release, 'released');
   else await assert.rejects(released, /native relay release signal returned HTTP 409/);
   assert.deepEqual(receipt.continuation,
-    { requested_ms: 10, continued_ms: continued, status, controller_ms: continuationDelay ? 3002 : 3001 });
+    { requested_ms: 10, continued_ms: continued, status, controller_ms: received + (continuationDelay ? 2 : 1) });
   if (unavailable) {
     assert.equal(receipt.resource, null);
   } else {
@@ -1365,13 +1366,23 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
       observe([{ ...resource, responseStart: 0 }]);
     }
     assert.equal(disconnected, true);
-    assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: continuationDelay ? 21 : null, response_end_ms: 22 + responseDelay,
-      controller_ms: continuationDelay ? 3001 : 3002 });
+    assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: continuationDelay ? 11 : null, response_end_ms: 22 + responseDelay,
+      response_status: status, controller_ms: received + (continuationDelay ? 1 : 2) });
     assert.equal(receipt.continuation.continued_ms - receipt.resource.response_end_ms, continuationDelay);
     assert.deepEqual(releaseDeliveryTiming(receipt), {
       offset_ms: { min: 2988, max: 2996 },
-      write_to_response_end_ms: { min: Math.max(0, responseDelay - 2), max: responseDelay + 10 },
+      write_to_response_end_ms: status === 204 ? { min: Math.max(0, responseDelay - 2), max: responseDelay + 10 } : null,
     });
+    const resourceOnly = { ...receipt, continuation: null };
+    assert.deepEqual(releaseDeliveryTiming(resourceOnly), releaseDeliveryTiming(receipt));
+    for (const observed of [3009, 3010 + responseDelay - 3]) {
+      const early = { ...receipt.resource, controller_ms: observed };
+      assert.equal(releaseDeliveryTiming({ ...receipt, resource: early }).write_to_response_end_ms, null);
+    }
+    const unknown = { ...receipt.resource, response_status: null };
+    assert.equal(releaseDeliveryTiming({ ...resourceOnly, resource: unknown }).write_to_response_end_ms, null);
+    const failed = { ...receipt.resource, response_status: 0 };
+    assert.equal(releaseDeliveryTiming({ ...receipt, resource: failed }).write_to_response_end_ms, null);
     assert.equal(releaseDeliveryTiming({ ...receipt, first_write_ms: 5000 }).write_to_response_end_ms, null);
   }
   assert.equal(releaseDeliveryTiming({ ...receipt, resource: null }).write_to_response_end_ms, null);
@@ -1926,7 +1937,7 @@ global.fetch = path => new Promise(resolve => {
       const at = performance.now();
       resolve({ status: this.status, headers: this.headers });
       setImmediate(() => realm.run(owner, () => owner.resourceObserver([{
-        name: new URL(path, location.href).href, initiatorType: 'fetch', fetchStart: requested, responseStart: at, responseEnd: at,
+        name: new URL(path, location.href).href, initiatorType: 'fetch', fetchStart: requested, responseStart: at, responseEnd: at, responseStatus: this.status,
       }])));
     } };
   if (!releaseRequest({ url: path, method: 'GET' }, response)) throw new Error('fixture release request was not handled');

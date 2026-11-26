@@ -132,8 +132,11 @@ The page records the fetch continuation and the matching Resource Timing
 fetch start and response timestamps. The fetch start falls between controller
 dispatch and request receipt. This gives an `offset_ms` bracket with 2 ms
 allowed for page clock precision. The `write_to_response_end_ms` interval
-includes that uncertainty and the response timestamp's precision. Missing
-or inconsistent observations leave the delivery interval `null`.
+includes that uncertainty and the response timestamp's precision. The
+controller receipt of the Resource Timing record limits the latest possible
+response end. The interval requires a recorded HTTP 204 from Resource Timing
+or the continuation. A failed request can still have an end timestamp.
+Missing or inconsistent observations leave the delivery interval `null`.
 The controller's finish marks handoff to the OS. The browser's response end
 marks the end of its fetch, and the continuation marks when the page resumes.
 Compare the hold cap, response end and continuation on the same page clock.

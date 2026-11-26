@@ -1423,7 +1423,7 @@ function createReleaseSignal(players) {
 
 function recordReleaseTiming(receipt, text, controller_ms) {
   try {
-    const { path, requested_ms, continued_ms, status, fetch_start_ms, response_start_ms, response_end_ms } = JSON.parse(text);
+    const { path, requested_ms, continued_ms, status, fetch_start_ms, response_start_ms, response_end_ms, response_status } = JSON.parse(text);
     if (path !== receipt.path) return false;
     const time = value => Number.isFinite(value) && value >= 0;
     if (!receipt.continuation && time(requested_ms) && time(continued_ms) && requested_ms <= continued_ms
@@ -1432,9 +1432,10 @@ function recordReleaseTiming(receipt, text, controller_ms) {
       return true;
     }
     if (!receipt.resource && [fetch_start_ms, response_start_ms, response_end_ms].every(value => value === null || time(value))
+      && (response_status === null || response_status === 0 || Number.isInteger(response_status) && response_status >= 100 && response_status <= 599)
       && (fetch_start_ms === null || [response_start_ms, response_end_ms].every(value => value === null || fetch_start_ms <= value))
       && (response_start_ms === null || response_end_ms === null || response_start_ms <= response_end_ms)) {
-      receipt.resource = { fetch_start_ms, response_start_ms, response_end_ms, controller_ms };
+      receipt.resource = { fetch_start_ms, response_start_ms, response_end_ms, response_status, controller_ms };
       return true;
     }
   } catch {
@@ -1443,9 +1444,9 @@ function recordReleaseTiming(receipt, text, controller_ms) {
   return false;
 }
 
-function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, first_write_ms, resource }) {
+function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, first_write_ms, resource, continuation }) {
   const timing = { offset_ms: null, write_to_response_end_ms: null };
-  const { fetch_start_ms, response_end_ms } = resource ?? {};
+  const { fetch_start_ms, response_end_ms, response_status, controller_ms } = resource ?? {};
   if (![request_dispatched_ms, request_received_ms, fetch_start_ms].every(Number.isFinite)
     || request_dispatched_ms > request_received_ms) return timing;
   // The fetch starts after evaluation dispatch and before the HTTP request arrives.
@@ -1453,11 +1454,11 @@ function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, fir
   const minOffset = request_dispatched_ms - fetch_start_ms - precisionMs;
   const maxOffset = request_received_ms - fetch_start_ms + precisionMs;
   timing.offset_ms = { min: minOffset, max: maxOffset };
-  if (!Number.isFinite(first_write_ms) || first_write_ms < request_received_ms || !Number.isFinite(response_end_ms)) return timing;
-  const latest = response_end_ms + maxOffset + precisionMs - first_write_ms;
-  if (latest >= 0) {
-    timing.write_to_response_end_ms = { min: Math.max(0, response_end_ms + minOffset - precisionMs - first_write_ms), max: latest };
-  }
+  if (![first_write_ms, response_end_ms, controller_ms].every(Number.isFinite) || first_write_ms < request_received_ms
+    || (response_status ?? continuation?.status) !== 204 || (continuation && continuation.status !== 204)) return timing;
+  const min = Math.max(0, response_end_ms + minOffset - precisionMs - first_write_ms);
+  const max = Math.min(response_end_ms + maxOffset + precisionMs, controller_ms) - first_write_ms;
+  if (max >= min) timing.write_to_response_end_ms = { min, max };
   return timing;
 }
 
@@ -1472,7 +1473,8 @@ function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = n
           const entry = list.getEntries().find(entry => entry.name === url && entry.initiatorType === 'fetch');
           if (!entry) return;
           observer.disconnect();
-          publish({ fetch_start_ms: entry.fetchStart ?? null, response_start_ms: entry.responseStart || null, response_end_ms: entry.responseEnd || null });
+          publish({ fetch_start_ms: entry.fetchStart ?? null, response_start_ms: entry.responseStart || null,
+            response_end_ms: entry.responseEnd || null, response_status: entry.responseStatus ?? null });
         });
         observer.observe({ type: 'resource' });
       }
