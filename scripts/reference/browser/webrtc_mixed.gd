@@ -119,7 +119,7 @@ func service(host: Node) -> bool:
 			host.errors.append("mixed_overlap_%d" % code)
 			return false
 	if host.recording_pressure and not refused_head.is_empty():
-		if relay._pending.is_empty() or relay._pending[0] != refused_head:
+		if relay._pending.is_empty() or relay._pending[0].envelope != refused_head:
 			host.errors.append("recording_pressure_head_changed")
 			return false
 	var result: Relay.Result = fallback.poll(host.transport_us, host._next_token)
@@ -130,7 +130,7 @@ func service(host: Node) -> bool:
 		if result.code == Relay.Code.BACKPRESSURE and not relay._pending.is_empty():
 			pressure_refusals += 1
 			if host.peers[0].status().current_frame > 128: pressure_post_wrap_refusals += 1
-			refused_head = relay._pending[0].duplicate()
+			refused_head = relay._pending[0].envelope.duplicate()
 	if result.code not in [Relay.Code.OK, Relay.Code.BACKPRESSURE]:
 		host.errors.append("mixed_poll_%d_peer_%d" % [result.code, result.peer_code])
 		return false

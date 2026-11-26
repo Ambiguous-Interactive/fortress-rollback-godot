@@ -254,6 +254,31 @@ assert.throws(() => assertJoinedRelayControl({ rows: complete.map(row => ({ ...r
 writes[0].actual_recipient = sender;
 assert.throws(() => joinRelayReceipts(server, [pageA, pageB]), /addressed socket/);
 writes[0].actual_recipient = recipient;
+const privatePacket = { ...packet, lane: 'addressed', socket_ordinal: 7, ordinal: 3 };
+server.streams.ingress.input.events.push(privatePacket);
+writes.push({ ...privatePacket, actual_recipient: recipient, ordinal: 13 });
+const senderStages = pageA.streams.send.input.events;
+senderStages.push({ ...privatePacket, ordinal: 17 });
+for (const [index, stage] of ['raw', 'sdk', 'native'].entries()) {
+  const arrivals = pageB.streams[stage].input.events;
+  arrivals.push({ ...packet, ordinal: 20 + index, code: 0 }, { ...privatePacket, ordinal: 30 + index, code: 0 });
+}
+pageB.streams.native.input.events.push({ ...privatePacket, ordinal: 33, code: 1 });
+const privateJoin = joinRelayReceipts(server, [pageA, pageB]);
+const privateRows = privateJoin.rows.filter(row => row.seq === packet.seq).sort((a, b) => a.send - b.send);
+assert.deepEqual(privateRows.map(row => [row.lane, row.send, row.ingress, row.write, row.raw, row.sdk, row.native, row.native_accepted]), [
+  [undefined, 1, [1], [1], [20], [21], [22], [22]],
+  ['addressed', 17, [3], [13], [30], [31], [32, 33], [32]],
+]);
+assert.deepEqual(privateJoin.unjoined_sends, []);
+senderStages[2] = { ...privatePacket, lane: undefined };
+assert.throws(() => joinRelayReceipts(server, [pageA, pageB]), /relay socket ordinal disagrees/);
+senderStages.pop();
+pageB.streams.raw.input.events.splice(-2);
+pageB.streams.sdk.input.events.splice(-2);
+pageB.streams.native.input.events.splice(-3);
+server.streams.ingress.input.events.pop();
+writes.pop();
 pageA.sockets = 2;
 const ambiguous = joinRelayReceipts(server, [pageA, pageB]);
 assert.ok(ambiguous.rows.every(row => row.send === null));
@@ -423,6 +448,45 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
   const secondFreezeCalls = digestCalls;
   assert.deepEqual(await digestFixture.freeze(), digestReceipt);
   assert.equal(digestCalls - secondFreezeCalls, 10, 'digest reuse must stay inside one freeze');
+
+  const lanes = createRelayWireTrace();
+  lanes.bind(room, local, [source, local, other]);
+  const ordinary = delivered(original, 5n);
+  assert.equal(lanes.record('raw', Buffer.concat([bytes('00'), ordinary])), undefined);
+  assert.equal(lanes.record('raw', Buffer.concat([bytes('01'), ordinary.subarray(0, -1)])), undefined);
+  assert.equal(lanes.record('raw', ordinary).ordinal, 1);
+  lanes.recordEngine('sdk', source, original.toString('hex'), 1, '5', null);
+  const addressedRaw = lanes.record('raw', Buffer.concat([bytes('01'), ordinary]));
+  assert.equal(addressedRaw.lane, 'addressed');
+  addressedRaw.delivery_gate = 1;
+  const expectedStamp = { kind: 4, epoch: 1, seq: '5' };
+  assert.equal(lanes.hasBlockedRelayStamps(source, 1, [expectedStamp]), false);
+  assert.equal(lanes.hasBlockedRelayStamps(source, 1, [{ ...expectedStamp, lane: 'addressed' }]), true);
+  lanes.recordEngine('native', source, original.subarray(57).toString('hex'), 1, '5', 0);
+  const broadcastPin = lanes.expiryFrontier(source).packets[0];
+  assert.equal(broadcastPin.lane, undefined);
+  assert.equal(broadcastPin.stages.raw.ordinal, 1);
+  lanes.recordEngine('sdk', source, original.toString('hex'), 1, '5', null, true);
+  lanes.recordEngine('native', source, original.subarray(57).toString('hex'), 1, '5', 0, true);
+  const privatePin = lanes.expiryFrontier(source).packets[0];
+  assert.equal(privatePin.lane, 'addressed');
+  assert.equal(privatePin.stages.sdk.ordinal, 2);
+  assert.equal(privatePin.stages.raw.ordinal, 2);
+  assert.equal(lanes.record('send', Buffer.concat([bytes('01' + other), outgoing]), 10), undefined);
+  assert.equal(lanes.record('send', Buffer.concat([bytes('00'), outgoing]), 11).lane, undefined);
+  lanes.record('send', Buffer.concat([bytes('01' + source), outgoing]), 12);
+  const repeated = [];
+  lanes.repeatQuality(source, other, wire => repeated.push(Buffer.from(wire)));
+  assert.deepEqual(repeated.map(wire => [wire[0], wire.subarray(1, 17).toString('hex'), wire.subarray(54, 70).toString('hex')]),
+    [[1, source, source], [1, source, source], [1, other, other]]);
+  const laneReceipt = await lanes.freeze();
+  assert.deepEqual(laneReceipt.streams.send.quality.events.map(event => [event.socket_ordinal, event.lane, event.carrierOpcode]),
+    [[11, undefined, undefined], [12, 'addressed', undefined]]);
+  for (const stage of ['raw', 'sdk', 'native']) {
+    const events = laneReceipt.streams[stage].quality.events;
+    assert.deepEqual(events.map(event => [event.epoch, event.seq, event.lane]), [[1, '5', undefined], [1, '5', 'addressed']]);
+    checkDigests(events, [original, original]);
+  }
 
   const members = [source, local, other, ...['55', '66', '77', '88', '99'].map(value => value.repeat(16))];
   const pressured = createRelayWireTrace();
@@ -1337,13 +1401,21 @@ reverse.socket.message({data: relayFrame(ack11, receiver, sender)});
 reverse.wire.observeWarmupInput('native', receiver, ack11.toString('hex'), 0);
 assert.equal(reverse.wire.warmupStatus().ack_link.raw.count, 2);
 assert.equal(reverse.wire.warmupStatus().ack_link.native.count, 2);
+const ordinaryRecent = wire.warmupStatus().input_link.raw.recent;
+assert.equal(ordinaryRecent.seq, '12', 'return to initial bytes on the same lane preserves the most recent distinct delivery');
+assert.equal(ordinaryRecent.payload, input10.toString('hex'));
+const privateWire = Buffer.concat([Buffer.from([1]), delivery(relayFrame(input9, sender, receiver), sender, 11)]);
+socket.message({data: privateWire});
 wire.finishWarmup('playing', 20, 12);
 assert.deepEqual(barrier.errors, Array(8).fill(null));
 const sample = barrier.checkpoints[1].input_link;
-assert.equal(sample.raw.count, 5);
+assert.equal(sample.raw.count, 6);
 assert.equal(sample.raw.first.seq, '11', 'duplicates cannot change the earliest exact delivery');
-assert.equal(sample.raw.recent.seq, '12', 'return to initial bytes cannot overwrite their most recent distinct replacement');
-assert.equal(sample.raw.recent.payload, input10.toString('hex'));
+assert.equal(sample.raw.first.lane, undefined);
+assert.equal(sample.raw.recent.seq, sample.raw.first.seq);
+assert.equal(sample.raw.recent.payload, sample.raw.first.payload);
+assert.equal(sample.raw.recent.lane, 'addressed', 'an equal payload and stamp can arrive on a different lane');
+assert.equal(barrier.inputErrors[1], null);
 assert.equal(sample.sdk.count, 1);
 assert.equal(sample.sdk.recent, null);
 assert.equal(sample.native.count, 2);
@@ -1357,7 +1429,7 @@ wire.observeWarmupInput('native', sender, input10.toString('hex'), 0);
 socket.message({data: relayFrame(input10, sender, receiver)});
 socket.send(relayFrame(ack, receiver, sender));
 assert.equal(wire.warmupStatus().input_link.native.count, 2);
-assert.equal(wire.warmupStatus().input_link.raw.count, 5);
+assert.equal(wire.warmupStatus().input_link.raw.count, 6);
 assert.equal(wire.warmupStatus().input_link.ack.count, 1);
 const wrongAck = JSON.parse(JSON.stringify(barrier.checkpoints[0].ack_link));
 wrongAck.raw.first.payload = '00'.repeat(32);
@@ -2784,6 +2856,108 @@ assert.equal(receipts[a.tag] ?? null, null, 'older attempts must be evicted');
 assert.equal(receipts[b.tag] ?? null, null, 'a reused slot must not return its old attempt');
 assert.equal(receipts[latest.tag]?.sentAt, latest.at);
 assert.equal(receipts[latest.tag + 1] ?? null, null, 'an unobserved attempt has no receipt');
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
+    def test_native_webkit_joins_exact_engine_send_to_first_tagged_boundary(self):
+        # Value: protects=exact engine-to-DOM send attribution; fails_when=wrong bytes/peer or another attempt joins; seam=browser wire and controller
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { closeEvidence, frozenMeshSendRoutes, instrumentNativeWire, matchCloseObservations } = require(process.argv[1]);
+const window = { crossOriginIsolated: true };
+let now = 10;
+class Connection {
+  constructor(local, remote) {
+    this.localDescription = { sdp: `a=ice-ufrag:${local}` };
+    this.remoteDescription = { sdp: `a=ice-ufrag:${remote}` };
+  }
+  close() {}
+  addEventListener() {}
+  createDataChannel() {
+    return { id: 3, readyState: 'open', bufferedAmount: 12, send() {}, addEventListener() {} };
+  }
+}
+runInNewContext(`(${instrumentNativeWire})(true, '', undefined, 'close ')`, {
+  window, WebSocket: class {}, RTCPeerConnection: Connection, ArrayBuffer, Uint8Array, DataView,
+  performance: { now: () => now },
+});
+const wire = window.fortressNativeWire;
+const connection = new Connection('a', 'b');
+const channel = connection.createDataChannel('gameplay', {});
+const wrongChannel = new Connection('c', 'd').createDataChannel('gameplay', {});
+const uuids = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333'];
+const [sender, recipient, bystander] = uuids;
+const session = Buffer.alloc(16, 42);
+const bytes = Buffer.concat([session, Buffer.from([0xf5, 0x52, 2, 0, 0, 0, 0, 0, 5, 0, 0, 0, 6])]);
+const other = Buffer.from(bytes);
+other[other.length - 1]++;
+wire.bind(session.toString('hex'), sender, uuids);
+assert.equal(wire.meshSendTracing(), false);
+assert.equal(wire.beginMeshSend(recipient, bytes.toString('hex')), 0);
+const before = [[{ index: 0, local: 'a', remote: 'b' }, { index: 1, local: 'c', remote: 'd' }],
+  [{ index: 19, local: 'b', remote: 'a' }], [{ index: 8, local: 'd', remote: 'c' }]];
+const identities = { uuids, roster: uuids };
+const [frozenRoutes] = frozenMeshSendRoutes(before, identities);
+assert.deepEqual(frozenRoutes.map(({ index, player }) => [index, player]), [[0, recipient], [1, bystander]]);
+const ambiguous = [[...before[0], { ...before[0][0], index: 23 }], ...before.slice(1)];
+assert.deepEqual(frozenMeshSendRoutes(ambiguous, identities)[0].map(route => route.index), [1]);
+wire.observeDeparture(frozenRoutes);
+assert.equal(wire.meshSendTracing(), true);
+assert.equal(wire.beginMeshSend(sender, bytes.toString('hex')), 0);
+assert.equal(wire.beginMeshSend(recipient, 'X'.repeat(58)), 0);
+const send = wire.beginMeshSend(recipient, bytes.toString('hex'));
+now = 11;
+channel.send(other);
+wrongChannel.send(bytes);
+now = 12;
+connection.signalingState = 'closed';  // Keep the frozen SDP. The DOM wrapper still attempts the send.
+channel.send(bytes);
+channel.send(bytes);  // Only the first matching DOM call belongs to this one addressed send.
+now = 13;
+wire.endMeshSend(send + 1, 13);
+wire.endMeshSend(send, 9);
+channel.send(bytes);  // An identical later payload cannot inherit the previous engine attempt.
+const wrongPeer = wire.beginMeshSend(bystander, bytes.toString('hex'));
+channel.send(bytes);
+wire.endMeshSend(wrongPeer, 0);
+const nested = wire.beginMeshSend(recipient, bytes.toString('hex'));
+assert.equal(wire.beginMeshSend('', bytes.toString('hex')), 0);
+channel.send(bytes);
+wire.endMeshSend(nested, 0);
+const replaced = wire.beginMeshSend(recipient, bytes.toString('hex'));
+connection.remoteDescription = { sdp: 'a=ice-ufrag:replacement' };
+channel.send(bytes);
+wire.endMeshSend(replaced, 0);
+const sends = wire.departureSends([1, 2, 3, 4, 5, 6, 7, 8]);
+const errors = Object.values(sends).map(({ attempt, channel }) => ({ index: 0, channel, attempt }));
+const observations = [new Map(), new Map(), new Map()];
+const report = { partialSnapshots: [{ sends }], clocks: [] };
+const expected = { id: send, player: recipient, bytes: bytes.length, enteredAt: 10000, returnedAt: 13000, code: 9 };
+const records = matchCloseObservations(errors, before, observations, report, identities);
+assert.deepEqual(records.map(record => record.engineSend), [null, null, expected, null, null, null, null, null]);
+const proof = receipt => closeEvidence(errors[2], before[0], before, null, undefined, receipt, identities);
+assert.deepEqual(proof(sends[3]).engineSend, expected);
+for (const change of [{ enteredAt: 12001 }, { returnedAt: 11999 }, { code: -1 }, { id: '1' }, { bytes: 1201 }, { player: bystander }]) {
+  const original = sends[3].engineSend;
+  sends[3].engineSend = { ...original, ...change };
+  const [invalid] = matchCloseObservations([errors[2]], before, observations, report, identities);
+  assert.equal(invalid.engineSend, null, 'malformed boundary must not be attributed');
+  assert.equal(invalid.sentAt, 12000, 'tagged send evidence remains available without the engine receipt');
+  assert.equal(proof(sends[3]).engineSend, undefined, 'direct close proof also checks the exact recipient and boundary');
+  sends[3].engineSend = original;
+}
+const [withoutRoster] = matchCloseObservations([errors[2]], before, observations, report);
+assert.equal(withoutRoster.engineSend, null);
+assert.equal(closeEvidence(errors[2], before[0], before, null, undefined, sends[3]).engineSend, undefined);
+const stale = { partialSnapshots: [{ sends: { 3: { ...sends[3], attempt: 4 } } }],
+  proofs: [{ ...errors[2], sentAt: 12000 }] };
+const [prior] = matchCloseObservations([errors[2]], before, observations, stale, identities);
+assert.equal(prior.sentAt, 12000);
+assert.equal(prior.engineSend, null, 'a prior timestamp cannot validate the engine boundary of the wrong attempt');
+wire.stopObservingDeparture();
+assert.equal(wire.meshSendTracing(), false);
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)

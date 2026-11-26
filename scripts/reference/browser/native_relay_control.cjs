@@ -7,7 +7,10 @@ function events(trace, stage, family) {
   return trace.streams[stage][family].events;
 }
 
-const stampKey = ({ sender, recipient, epoch, seq }) => `${sender}/${recipient}/${epoch}/${seq}`;
+function stampKey({ sender, recipient, epoch, seq, lane }) {
+  assert.ok(lane === undefined || lane === 'addressed', 'invalid relay stamp lane');
+  return `${sender}/${recipient}/${lane === undefined ? '' : lane + '/'}${epoch}/${seq}`;
+}
 const sendKey = ({ sender, socket_ordinal }) => `${sender}/${socket_ordinal}`;
 const sameEnvelope = (a, b) => a.envelope_bytes === b.envelope_bytes && a.envelope_sha256 === b.envelope_sha256;
 
@@ -102,7 +105,7 @@ async function exerciseRelayDelivery(pages, ready, readReceipt) {
   assert.deepEqual(accepted.map(event => event.recipient), [recipient, recipient, other]);
   assert.ok(accepted.every((event, index) => stampKey(event) === stampKey(written[index])
     && sameEnvelope(event, written[index]) && written[index].actual_recipient === event.recipient && event.at_ns <= written[index].at_ns));
-  assert.equal(new Set(accepted.map(event => `${event.epoch}/${event.seq}`)).size, 3);
+  assert.equal(new Set(accepted.map(({ lane, epoch, seq }) => `${lane ?? 'broadcast'}/${epoch}/${seq}`)).size, 3);
   assert.ok(sameEnvelope(accepted[0], accepted[1]) && accepted[0].envelope_sha256 !== accepted[2].envelope_sha256);
   assert.equal(new Set(accepted.map(event => event.payload_sha256)).size, 1);
   const release = await delayedPage.waitForFunction(stamps => window.fortressNativeWire.releaseRelayControl(stamps), accepted.slice(0, 2), { timeout: 1000 });
@@ -126,7 +129,8 @@ async function exerciseRelayDelivery(pages, ready, readReceipt) {
   }));
   const sent = await sourcePage.evaluate(() => window.fortressNativeRelayTrace.freeze());
   const sends = accepted.map(expected => events(sent, 'send', 'quality').find(event => sendKey(event) === sendKey(expected)));
-  assert.ok(sends.every((event, index) => event && sameEnvelope(event, accepted[index])), 'server did not stamp the exact original send bytes');
+  assert.ok(sends.every((event, index) => event && event.lane === accepted[index].lane && sameEnvelope(event, accepted[index])),
+    'server did not stamp the exact original send bytes');
   for (const stage of ['raw', 'sdk', 'native']) {
     assert.ok(browser[0][0][stage].ordinal < browser[0][1][stage].ordinal, `relay control reordered ${stage} delivery`);
   }
@@ -213,7 +217,7 @@ async function exerciseSameLinkRetention(pages, ready, readReceipt) {
       }) ? { receipt, received } : null;
     }, timeLeft(), links);
     server = observed.receipt;
-    const stamps = observed.received.map(({ kind, epoch, seq }) => ({ kind, epoch, seq }));
+    const stamps = observed.received.map(({ kind, epoch, seq, lane }) => ({ kind, epoch, seq, lane }));
     const handle = await reporter.waitForFunction(expected => window.fortressNativeWire.resumeBlockedRelay(expected), stamps, { timeout: timeLeft() });
     resumed = await handle.jsonValue();
     await handle.dispose();
@@ -288,9 +292,9 @@ function validateRelayExpiryFrontier(frontier, uuid, local, at_ms) {
   };
   const seen = new Set();
   return { room, sender, recipient, packets: packets.map(packet => {
-    const { kind, epoch, seq, envelope, stages } = packet ?? {};
+    const { kind, epoch, seq, lane, envelope, stages } = packet ?? {};
     requireValid((kind === 2 || kind === 4) && !seen.has(kind) && uint(epoch, 0xffffffff)
-      && typeof seq === 'string' && /^[1-9][0-9]{0,19}$/.test(seq) && BigInt(seq) <= 0xffffffffffffffffn
+      && (lane === undefined || lane === 'addressed') && typeof seq === 'string' && /^[1-9][0-9]{0,19}$/.test(seq) && BigInt(seq) <= 0xffffffffffffffffn
       && typeof envelope === 'string' && /^(?:[0-9a-f]{2}){85,1257}$/.test(envelope)
       && envelope.startsWith('4653523101' + room + sender + recipient), 'stamp and envelope');
     seen.add(kind);
@@ -311,7 +315,7 @@ function validateRelayExpiryFrontier(frontier, uuid, local, at_ms) {
     const sdk = stages.sdk === undefined ? null : mark(stages.sdk, native.at_ms, 'SDK stage');
     const raw = stages.raw === undefined ? null : mark(stages.raw, sdk?.at_ms ?? native.at_ms, 'raw stage');
     const hash = data => createHash('sha256').update(data).digest('hex');
-    return { sender, recipient, kind, epoch, seq, envelope_bytes: bytes.length,
+    return { sender, recipient, kind, epoch, seq, ...(lane === undefined ? {} : { lane }), envelope_bytes: bytes.length,
       envelope_sha256: hash(bytes), payload_sha256: hash(payload), stages: { raw, sdk, native } };
   }) };
 }
@@ -338,7 +342,8 @@ function joinRelayReceipts(server, pages, expiries = []) {
   function attach(family, stage, packet) {
     const key = stampKey(packet);
     if (!rows.has(key)) rows.set(key, { family, kind: packet.kind, sender: packet.sender, recipient: packet.recipient,
-      epoch: packet.epoch, seq: packet.seq, envelope_bytes: packet.envelope_bytes, envelope_sha256: packet.envelope_sha256,
+      epoch: packet.epoch, seq: packet.seq, ...(packet.lane === undefined ? {} : { lane: packet.lane }),
+      envelope_bytes: packet.envelope_bytes, envelope_sha256: packet.envelope_sha256,
       send: null, ingress: [], write: [], raw: [], sdk: [], native: [], native_accepted: [] });
     const row = rows.get(key);
     assert.ok(sameEnvelope(row, packet) && row.kind === packet.kind && row.family === family, `relay receipt disagrees for ${key}`);
@@ -383,7 +388,7 @@ function joinRelayReceipts(server, pages, expiries = []) {
       const candidates = sends.get(key);
       if (candidates?.length === 1 && candidates[0].sockets === 1) {
         const source = candidates[0].packet;
-        assert.ok(source.recipient === packet.recipient && sameEnvelope(source, packet), `relay socket ordinal disagrees for ${key}`);
+        assert.ok(source.recipient === packet.recipient && source.lane === packet.lane && sameEnvelope(source, packet), `relay socket ordinal disagrees for ${key}`);
         row.send = source.ordinal;
         matchedSends.add(key);
       }

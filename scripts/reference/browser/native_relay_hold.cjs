@@ -9,20 +9,21 @@ const ID = /^[0-9a-f]{32}$/;
 const uint = (value, minimum = 1, maximum = Number.MAX_SAFE_INTEGER) =>
   Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 const ms = value => Number.isFinite(value) && value >= 0;
-const stamp = ({ epoch, seq } = {}) => uint(epoch, 1, 0xffffffff) && typeof seq === 'string' && /^[1-9][0-9]{0,19}$/.test(seq)
+const validLane = lane => lane === undefined || lane === 'addressed';
+const stamp = ({ epoch, seq, lane } = {}) => validLane(lane) && uint(epoch, 1, 0xffffffff) && typeof seq === 'string' && /^[1-9][0-9]{0,19}$/.test(seq)
   && BigInt(seq) <= 0xffffffffffffffffn;
 const direction = ({ sender, recipient }) => `${sender}/${recipient}`;
-const stamped = event => `${direction(event)}/${event.epoch}/${event.seq}/${event.envelope_sha256}`;
-const socket = event => `${direction(event)}/${event.socket_ordinal}/${event.envelope_sha256}`;
+const stamped = event => `${direction(event)}/${event.lane ?? 'broadcast'}/${event.epoch}/${event.seq}/${event.envelope_sha256}`;
+const socket = event => `${direction(event)}/${event.lane ?? 'broadcast'}/${event.socket_ordinal}/${event.envelope_sha256}`;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const samePacket = (a, b) => a.kind === b.kind && a.envelope_bytes === b.envelope_bytes && a.payload_sha256 === b.payload_sha256;
+const samePacket = (a, b) => a.kind === b.kind && a.lane === b.lane && a.envelope_bytes === b.envelope_bytes && a.payload_sha256 === b.payload_sha256;
 
 function parsePacket(stage, event, page, through) {
-  const { envelope, ordinal, at_ms, epoch, seq, socket_ordinal, hold_gate_match, protocol_reply } = event ?? {};
+  const { envelope, ordinal, at_ms, epoch, seq, lane, socket_ordinal, hold_gate_match, protocol_reply } = event ?? {};
   const sender = stage === 'send' ? page.local : page.remote;
   const recipient = stage === 'send' ? page.remote : page.local;
   if (typeof envelope !== 'string' || !/^(?:[0-9a-f]{2}){101,103}$/.test(envelope)
-      || !uint(ordinal) || !ms(at_ms) || at_ms < page.started_ms || at_ms > through
+      || !validLane(lane) || !uint(ordinal) || !ms(at_ms) || at_ms < page.started_ms || at_ms > through
       || (stage === 'send' ? epoch !== null || seq !== null || !uint(socket_ordinal) : socket_ordinal !== null || !stamp(event))) return null;
   const bytes = Buffer.from(envelope, 'hex');
   const payload = bytes.subarray(57);
@@ -35,9 +36,9 @@ function parsePacket(stage, event, page, through) {
       || (hold_gate_match !== undefined && (stage !== 'raw' || kind !== 5 || hold_gate_match !== true))
       || (protocol_reply !== undefined && (stage !== 'send' || kind !== 5 || protocol_reply?.token !== token
         || !Array.isArray(protocol_reply.candidates) || protocol_reply.candidates.length > 128 || !protocol_reply.candidates.every(stamp)))) return null;
-  return { ordinal, at_ms, sender, recipient, kind, token, epoch, seq, socket_ordinal, envelope,
+  return { ordinal, at_ms, sender, recipient, kind, token, epoch, seq, ...(lane === undefined ? {} : { lane }), socket_ordinal, envelope,
     envelope_bytes: bytes.length, envelope_sha256: digest(bytes), payload_sha256: digest(payload),
-    hold_gate_match, protocol_reply: protocol_reply?.candidates.map(({ epoch, seq }) => ({ epoch, seq })) };
+    hold_gate_match, protocol_reply: protocol_reply?.candidates.map(({ epoch, seq, lane }) => ({ epoch, seq, ...(lane === undefined ? {} : { lane }) })) };
 }
 
 function createRelayHold(room, uuids, cap = RELAY_HOLD_CAP) {
@@ -126,9 +127,10 @@ function joinPackets(pages, ingress, write) {
   function attach(packet, row, send) {
     const { sender, recipient, kind, token } = packet;
     const { epoch, seq } = row ?? { epoch: null, seq: null };
+    const { lane } = packet;
     const key = row ? stamped(row) : `${sender}/send/${send.ordinal}`;
     const ordinals = index => (index.get(key) ?? []).filter(event => samePacket(packet, event)).map(event => event.ordinal);
-    const match = packets.get(key) ?? { sender, recipient, kind, token, epoch, seq, stages: {
+    const match = packets.get(key) ?? { sender, recipient, kind, token, epoch, seq, ...(lane === undefined ? {} : { lane }), stages: {
       send: null, ingress: ordinals(accepted), write: ordinals(written), raw: ordinals(raw),
     } };
     if (send) {
@@ -146,13 +148,14 @@ function joinPackets(pages, ingress, write) {
     }
   }
   const reports = indexBy([...packets.values()].filter(packet => packet.kind === 4 && packet.seq !== null),
-    packet => `${direction(packet)}/${packet.epoch}/${packet.seq}/${packet.token}`);
+    packet => `${direction(packet)}/${packet.lane ?? 'broadcast'}/${packet.epoch}/${packet.seq}/${packet.token}`);
   for (const packet of packets.values()) {
     if (packet.kind === 4) delete packet.report_candidates;
     else {
-      packet.report_candidates = [...new Map((packet.report_candidates ?? []).map(candidate => [`${candidate.epoch}/${candidate.seq}`, candidate])).values()];
-      packet.joined_report_candidates = packet.report_candidates.filter(({ epoch, seq }) =>
-        reports.get(`${packet.recipient}/${packet.sender}/${epoch}/${seq}/${packet.token}`)?.length === 1);
+      packet.report_candidates = [...new Map((packet.report_candidates ?? []).map(candidate =>
+        [`${candidate.lane ?? 'broadcast'}/${candidate.epoch}/${candidate.seq}`, candidate])).values()];
+      packet.joined_report_candidates = packet.report_candidates.filter(({ epoch, seq, lane }) =>
+        reports.get(`${packet.recipient}/${packet.sender}/${lane ?? 'broadcast'}/${epoch}/${seq}/${packet.token}`)?.length === 1);
     }
   }
   return [...packets.values()];

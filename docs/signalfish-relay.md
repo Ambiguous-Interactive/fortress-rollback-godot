@@ -1,8 +1,8 @@
 # SignalFish binary relay
 
 `FortressSignalFishRelay` sends and receives bounded rollback protocol packets
-through the optional pinned SDK's binary APIs. It broadcasts a recipient envelope
-and filters other participants' traffic before the peer receives it.
+through the optional SDK's binary APIs. Ordinary relay broadcasts a recipient
+envelope and filters other participants' traffic before peer delivery.
 It reuses the [membership and plan seam](signalfish-membership.md) and the existing
 `FortressPeerSession`; it does not create another rollback engine.
 
@@ -52,6 +52,19 @@ outbound message size. It reserves 128 bytes for the pinned SDK's server envelop
 The socket budget must fit at least one maximum application envelope. A valid
 SDK receive budget is 1–4,096 packets per SDK poll. Production WebSocket polling
 uses that SDK limit; injected transports must enforce their own equivalent bound.
+
+With a compatible server and SDK, **Native / relay** requests private binary
+delivery. The server's session plan must list every frozen remote seat with a
+valid UUID and epoch. An incomplete plan at setup selects ordinary delivery.
+Changes to the peer or epoch list invalidate an active private route.
+Negotiated broadcast adds one carrier byte and addressed delivery adds 17.
+The queue and socket budgets include these bytes.
+
+The v1 addressed request carries the recipient UUID and the application
+envelope. The server checks the current seated recipient at admission. Plan
+epochs fence observed lifetime changes on the sending client. Receive checks
+still bind the application envelope to the SDK-attributed sender, frozen match
+identity, and recipient.
 
 ## Preserve output ownership during pressure
 
@@ -181,12 +194,12 @@ executable from the installed pinned Rust toolchain and the verified server sour
 ```sh
 python3 scripts/reference/signalfish_build_server.py \
   --cargo <pinned-toolchain>/bin/cargo \
-  --source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
+  --source .cache/reference/signal-fish-server-3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1 \
   --output .cache/reference/results/signalfish-server-build
 python3 scripts/reference/signalfish_live_probe.py \
   --godot <editor> \
   --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-  --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
+  --server-source .cache/reference/signal-fish-server-3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1 \
   --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
   --output .cache/reference/results/signalfish-live-<version>
 ```

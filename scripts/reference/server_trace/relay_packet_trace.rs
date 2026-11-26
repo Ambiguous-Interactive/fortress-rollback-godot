@@ -74,6 +74,8 @@ struct Event {
     envelope_sha256: String,
     payload_sha256: String,
     socket_ordinal: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lane: Option<&'static str>,
 }
 
 #[derive(Default)]
@@ -324,8 +326,8 @@ pub(crate) fn enabled() -> bool {
 }
 
 pub(crate) enum Boundary {
-    Ingress { socket_ordinal: u64, received_at: Instant },
-    Write { recipient: PlayerId, written_at: Instant },
+    Ingress { socket_ordinal: u64, received_at: Instant, addressed_to: Option<PlayerId> },
+    Write { recipient: PlayerId, written_at: Instant, addressed: bool },
 }
 
 pub(crate) fn record(boundary: Boundary, room_id: RoomId, sender: PlayerId, seq: u64, epoch: u32, envelope: &[u8]) {
@@ -356,20 +358,28 @@ fn record_packet(trace: &Trace, boundary: Boundary, room_id: RoomId, sender: Pla
     let recipient = hex(&envelope[37..53]);
     let Some(link) = scope.link(&sender, &recipient) else { return };
 
-    let (at, socket_ordinal, actual_recipient) = match boundary {
-        Boundary::Ingress { socket_ordinal, received_at } => (received_at, Some(socket_ordinal), None),
+    let (at, socket_ordinal, actual_recipient, addressed) = match boundary {
+        Boundary::Ingress { socket_ordinal, received_at, addressed_to } => {
+            if addressed_to.is_some_and(|actual| envelope[37..53] != *actual.as_bytes()) {
+                return;
+            }
+            (received_at, Some(socket_ordinal), None, addressed_to.is_some())
+        },
         Boundary::Write {
             recipient: actual,
             written_at,
+            addressed,
         } => {
             if envelope[37..53] != *actual.as_bytes() {
-                // SignalFish broadcasts to the room. Keep addressed writes in the packet ring.
-                if let Ok(mut state) = trace.state.lock() {
-                    state.unaddressed_writes += 1;
+                // Count copies made by room fan-out outside the addressed packet ring.
+                if !addressed {
+                    if let Ok(mut state) = trace.state.lock() {
+                        state.unaddressed_writes += 1;
+                    }
                 }
                 return;
             }
-            (written_at, None, Some(actual.simple().to_string()))
+            (written_at, None, Some(actual.simple().to_string()), addressed)
         }
     };
     let event = Event {
@@ -385,6 +395,7 @@ fn record_packet(trace: &Trace, boundary: Boundary, room_id: RoomId, sender: Pla
         envelope_sha256: hex(&Sha256::digest(envelope)),
         payload_sha256: hex(&Sha256::digest(&envelope[ENVELOPE_HEADER_BYTES..])),
         socket_ordinal,
+        lane: addressed.then_some("addressed"),
     };
     if let Ok(mut state) = trace.state.lock() {
         let families = if socket_ordinal.is_some() {
@@ -433,10 +444,35 @@ mod tests {
         envelope[73..77].copy_from_slice(&[0xf5, 0x52, 2, 0]);
         envelope[77..81].copy_from_slice(&(seq as u32).to_le_bytes());
         envelope[81..85].copy_from_slice(&tag.to_le_bytes());
-        record_packet(trace, Boundary::Ingress { socket_ordinal: seq, received_at: trace.origin }, room_id, sender, seq, 7, &envelope);
-        record_packet(trace, Boundary::Write { recipient, written_at: trace.origin }, room_id, sender, seq, 7, &envelope);
-        record_packet(trace, Boundary::Write { recipient: sender, written_at: trace.origin }, room_id, sender, seq, 7, &envelope);
+        record_packet(trace, Boundary::Ingress { socket_ordinal: seq, received_at: trace.origin, addressed_to: None }, room_id, sender, seq, 7, &envelope);
+        record_packet(trace, Boundary::Write { recipient, written_at: trace.origin, addressed: false }, room_id, sender, seq, 7, &envelope);
+        record_packet(trace, Boundary::Write { recipient: sender, written_at: trace.origin, addressed: false }, room_id, sender, seq, 7, &envelope);
         envelope
+    }
+
+    #[test]
+    fn addressed_receipts_keep_their_lane_and_match_the_actual_target() {
+        let room = RoomId::from_u128(1);
+        let roster = [2, 3, 4].map(PlayerId::from_u128);
+        let [sender, recipient, bystander] = roster;
+        let trace = trace_for(room, &roster);
+        let envelope = record_pair(&trace, room, sender, recipient, 4, 1);
+        for target in [recipient, bystander] {
+            record_packet(&trace, Boundary::Ingress { socket_ordinal: 2, received_at: trace.origin, addressed_to: Some(target) },
+                room, sender, 1, 7, &envelope);
+            record_packet(&trace, Boundary::Write { recipient: target, written_at: trace.origin, addressed: true }, room, sender, 1, 7, &envelope);
+        }
+        let streams = serde_json::to_value(&*trace.state.lock().unwrap()).unwrap();
+        for stage in ["ingress", "write"] {
+            let events = streams[stage]["quality"]["events"].as_array().unwrap();
+            assert_eq!(events.len(), 2, "{stage} must ignore the mismatched target");
+            assert!(events[0].get("lane").is_none(), "legacy receipt shape changed");
+            assert_eq!(events[1]["lane"], "addressed");
+            for field in ["sender", "recipient", "epoch", "seq", "envelope_sha256", "payload_sha256"] {
+                assert_eq!(events[0][field], events[1][field], "{field}");
+            }
+        }
+        assert_eq!(streams["unaddressed_writes"], 1, "only ordinary room fan-out is counted");
     }
 
     // Value: protects=quiet directed packet joins; fails_when=busy links evict quiet links; why_new=single-link captures cannot expose cross-link eviction; seam=none

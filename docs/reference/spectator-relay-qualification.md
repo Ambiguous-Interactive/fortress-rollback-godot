@@ -170,7 +170,7 @@ that build's integration run:
 python3 scripts/reference/signalfish_spectator_live.py \
   --godot godot \
   --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-  --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
+  --server-source .cache/reference/signal-fish-server-3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1 \
   --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
   --output .cache/reference/results/spectator-live
 ```

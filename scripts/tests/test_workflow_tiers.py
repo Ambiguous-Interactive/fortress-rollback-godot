@@ -69,6 +69,27 @@ def active_lines(text):
 
 class WorkflowTierTests(unittest.TestCase):
 
+    def test_relay_server_workflows_use_the_verified_manifest_source(self):
+        for path, job_name in ((QUALIFY, 'server'), (NIGHTLY, 'signalfish')):
+            with self.subTest(workflow=path.name):
+                job = '\n'.join(job_blocks(active_lines(read(path)))[job_name])
+                self.assertNotRegex(job, r'signal-fish-server-(?:[0-9a-f]{40}|\*)')
+                steps = {}
+                for step in job.split('      - name: ')[1:]:
+                    name, _, body = step.partition('\n')
+                    steps[name] = body
+                pinned = steps['Verify the pinned sources and name the server build cache']
+                self.assertLess(pinned.index('python3 scripts/reference/fetch.py'), pinned.index("jq -er '.sources.server.root' docs/reference/pins.json"))
+                self.assertIn('sha256sum "$server_source/Cargo.lock"', pinned)
+                self.assertIn('echo "source=$server_source" >> "$GITHUB_OUTPUT"', pinned)
+                build = steps['Build the pinned local SignalFish server']
+                self.assertIn('SERVER_SOURCE: ${{ steps.pinned.outputs.source }}', build)
+                self.assertIn('--source "$SERVER_SOURCE"', build)
+                if path == NIGHTLY:
+                    witness = steps['Verify real browser WebRTC on the pinned engine']
+                    self.assertIn('SERVER_SOURCE: ${{ steps.pinned.outputs.source }}', witness)
+                    self.assertIn('--server-source "$SERVER_SOURCE"', witness)
+
     # Value: protects=bounded Web setup and browser inventory; fails_when=setup shares room budget or loses dependencies; seam=workflow shell
     def test_native_web_setup_is_bounded_and_preserves_dependencies(self):
         workflow = active_lines(read(WORKFLOWS / 'gdextension-experiment.yml'))

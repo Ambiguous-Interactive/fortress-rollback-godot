@@ -269,9 +269,9 @@ Bracket fetch start, network request start, and response end with controller dis
 Firefox can report response start before host write. Keep it for diagnosis. Run stock and each delay on the same runner, preserving every failed attempt.
 An interval spanning the required gap is ambiguous. An upper bound below
 the threshold proves that the observed send fell short of it.
-Use a bounded exact attempt receipt if constructing the stack tag precedes the
-native send. Collect new diagnostics in the next bounded snapshot round.
-Combine consecutive observations on each page before returning to the controller.
+Keep a bounded receipt for the exact DOM attempt and join it to the engine call only after matching bytes and the frozen reciprocal channel.
+Keep entry, DOM send and return on the sender clock. Nested calls invalidate attribution. Engine return codes do not establish browser delivery.
+Collect diagnostics in the next bounded snapshot and combine consecutive page observations before returning to the controller.
 Keep the cross-page barriers that require every endpoint to pause before the close
 and every required link to close before release.
 Observe each page independently with one evaluation in flight per page; slower

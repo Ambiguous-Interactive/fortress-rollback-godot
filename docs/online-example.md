@@ -77,11 +77,11 @@ Close the editor/game before adding files. Download and verify the optional SDK,
 then install only its addon directory, including its license:
 
 ```sh
-curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/2b66860cc4778d649af3e0c845edce3980985c1b -o "$TOOLS_DIR/sdk.tar.gz"
-echo "85fc96daf806f69cc4d0d560a052c39923e064c8072f20ad64166d33515ef34f  $TOOLS_DIR/sdk.tar.gz" | sha256sum -c -
+curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/a634bf7ee3c19fd81eb66eec56e089f963670d86 -o "$TOOLS_DIR/sdk.tar.gz"
+echo "33187cf315acc5b301cb91255308ba8c31b5297c4c296e07b2aaf24f3d20b93f  $TOOLS_DIR/sdk.tar.gz" | sha256sum -c -
 tar -xzf "$TOOLS_DIR/sdk.tar.gz" -C "$TOOLS_DIR"
 python3 scripts/reference/online_install.py --project "$EXAMPLE_DIR" \
-  --sdk "$TOOLS_DIR/signal-fish-client-godot-2b66860cc4778d649af3e0c845edce3980985c1b"
+  --sdk "$TOOLS_DIR/signal-fish-client-godot-a634bf7ee3c19fd81eb66eec56e089f963670d86"
 "$GODOT" --headless --path "$EXAMPLE_DIR" --editor --quit
 ```
 
@@ -91,10 +91,10 @@ separate server; the installed Godot project needs neither Rust nor native WebRT
 Local browser ICE uses no STUN/TURN server and proves no public-network connectivity.
 
 ```sh
-curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-server/tar.gz/9c2fb8fa635a69241b8ccf38be651d561fef7434 -o "$TOOLS_DIR/server.tar.gz"
-echo "1c618785dd93e1a69f27687f1f8f75fbfb15e49f3a3a0f130aa3ee17af40a076  $TOOLS_DIR/server.tar.gz" | sha256sum -c -
+curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-server/tar.gz/3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1 -o "$TOOLS_DIR/server.tar.gz"
+echo "edb354df9f6578bcc6e49f1a560ae0fc875604a4694f10166fcc434ad541825f  $TOOLS_DIR/server.tar.gz" | sha256sum -c -
 tar -xzf "$TOOLS_DIR/server.tar.gz" -C "$TOOLS_DIR"
-SERVER_SOURCE="$TOOLS_DIR/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434"
+SERVER_SOURCE="$TOOLS_DIR/signal-fish-server-3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1"
 rustup toolchain install 1.94.0 --profile minimal
 cargo +1.94.0 build --manifest-path "$SERVER_SOURCE/Cargo.toml" --locked --no-default-features \
   --bin signal-fish-server --target-dir "$TOOLS_DIR/server-target"
@@ -469,7 +469,7 @@ Run the regression after the [source-bound server build](signalfish-relay.md#rep
 ```sh
 python3 scripts/reference/signalfish_webrtc_probe.py --online-example \
   --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-  --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+  --server-source .cache/reference/signal-fish-server-3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1 \
   --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
   --output .cache/reference/results/online-example
 ```

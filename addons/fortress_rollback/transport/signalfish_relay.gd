@@ -12,6 +12,19 @@ const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Code = Types.Code
 const Options = Types.Options
 const Result = Types.Result
+const ADDRESSED_BINARY_GAME_DATA_CAPABILITY: String = "addressed_binary_game_data"
+const ADDRESSED_WIRE_OVERHEAD: int = 17
+const NEGOTIATED_WIRE_OVERHEAD: int = 1
+
+
+class Outgoing:
+	extends RefCounted
+	var recipient: String
+	var envelope: PackedByteArray
+
+	func _init(to_uuid: String, bytes: PackedByteArray) -> void:
+		recipient = to_uuid
+		envelope = bytes
 
 
 class Incoming:
@@ -34,7 +47,9 @@ var _options: Types.Options
 var _session: PackedByteArray = PackedByteArray()
 var _local_wire_uuid: PackedByteArray
 var _remote_wire_uuids: Dictionary = {}
-var _pending: Array[PackedByteArray] = []
+var _pending: Array[Outgoing] = []
+var _addressed_revision: int = -1
+var _wire_overhead: int = 0
 var _received: Array[Incoming] = []
 var _pending_bytes: int = 0
 var _received_bytes: int = 0
@@ -89,16 +104,29 @@ func _configure(client: Object, sdk_config: Object, protocol_info: Object, membe
 			return Code.INVALID_ARGUMENT
 	if sdk_config.get("max_inbound_packets_per_poll") > 4096:
 		return Code.INVALID_ARGUMENT
-	var frame_size: int = controls.max_packet_bytes + Envelope.HEADER_BYTES
-	if sdk_config.get("max_buffered_bytes") < frame_size:
-		return Code.TOO_LARGE
-	if sdk_config.get("max_outbound_frame_bytes") < frame_size or sdk_config.get("max_inbound_frame_bytes") < frame_size + 128:
-		return Code.TOO_LARGE
-	if not protocol_info.get("max_outbound_message_size") is int or protocol_info.get("max_outbound_message_size") < frame_size + 128:
-		return Code.TOO_LARGE
 	if membership.handshake_message() == null or client.call("get_player_id") != membership.local_uuid():
 		return Code.INVALID_ARGUMENT
+	# Variant is the optional SDK capability return. Require an explicit boolean confirmation.
+	var capability: Variant = client.call("has_addressed_binary_game_data") if client.has_method("has_addressed_binary_game_data") else false
+	if _client != null or not is_instance_valid(client):
+		return Code.WRONG_STATE
+	var negotiated: bool = capability is bool and capability
+	var revision: int = adapter.addressed_binary_revision(client, membership) if negotiated and peer == null and client.has_method("send_game_data_binary_to") else -1
+	if _client != null or not is_instance_valid(client):
+		return Code.WRONG_STATE
+	var overhead: int = ADDRESSED_WIRE_OVERHEAD if revision >= 0 else (NEGOTIATED_WIRE_OVERHEAD if negotiated else 0)
+	var envelope_size: int = controls.max_packet_bytes + Envelope.HEADER_BYTES
+	var send_size: int = envelope_size + overhead
+	var receive_size: int = envelope_size + 128 + (NEGOTIATED_WIRE_OVERHEAD if negotiated else 0)
+	if sdk_config.get("max_buffered_bytes") < send_size or sdk_config.get("max_outbound_frame_bytes") < send_size \
+		or controls.max_pending_bytes < send_size or controls.max_socket_buffered_bytes < send_size:
+		return Code.TOO_LARGE
+	if sdk_config.get("max_inbound_frame_bytes") < receive_size \
+		or not protocol_info.get("max_outbound_message_size") is int or protocol_info.get("max_outbound_message_size") < receive_size:
+		return Code.TOO_LARGE
 	_client = weakref(client)
+	_addressed_revision = revision
+	_wire_overhead = overhead
 	_sdk_config = weakref(sdk_config)
 	_membership = membership
 	_adapter = adapter
@@ -132,7 +160,7 @@ func enqueue_batch(packets: Array[Peer.Packet]) -> int:
 			return Code.INVALID_ARGUMENT
 		if packet.bytes.size() > _options.max_packet_bytes:
 			return Code.TOO_LARGE
-		needed += Envelope.HEADER_BYTES + packet.bytes.size()
+		needed += Envelope.HEADER_BYTES + packet.bytes.size() + _wire_overhead
 		if needed > _options.max_pending_bytes - _pending_bytes:
 			return Code.BACKPRESSURE
 		var uuid: String = ""
@@ -143,7 +171,8 @@ func enqueue_batch(packets: Array[Peer.Packet]) -> int:
 			return Code.WRONG_SOURCE
 		destinations.append(uuid)
 	for index: int in packets.size():
-		_pending.append(Envelope.encode(_session, _membership.local_uuid(), destinations[index], packets[index].bytes))
+		var recipient: String = destinations[index]
+		_pending.append(Outgoing.new(recipient, Envelope.encode(_session, _membership.local_uuid(), recipient, packets[index].bytes)))
 	_pending_bytes += needed
 	return Code.OK
 
@@ -218,18 +247,32 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 			result.code = _gate()
 			if result.code != Code.OK:
 				break
-			if buffered < 0 or buffered > _options.max_socket_buffered_bytes - _pending[0].size():
+			var current_transport: Object = client.get("transport") if is_instance_valid(client) else null
+			if not is_instance_valid(transport) or current_transport != transport:
+				_failure = Code.SDK_FAILURE
+				result.code = _failure
+				break
+			var pending: Outgoing = _pending[0]
+			var send_size: int = pending.envelope.size() + _wire_overhead
+			if buffered < 0 or buffered > _options.max_socket_buffered_bytes - send_size:
 				result.code = Code.BACKPRESSURE
 				break
-			var sent: Error = client.call("send_game_data_binary", _pending[0].duplicate())
+			var bytes: PackedByteArray = pending.envelope.duplicate()
+			var sent: Error = client.call("send_game_data_binary_to", pending.recipient, bytes) if _addressed_revision >= 0 \
+				else client.call("send_game_data_binary", bytes)
+			# A callback can fence the session after the SDK has accepted these bytes.
+			if sent == OK:
+				_pending_bytes -= send_size
+				_pending.pop_front()
+				result.sent += 1
+			result.code = _gate()
+			if result.code != Code.OK:
+				break
 			if sent != OK:
 				result.code = Code.BACKPRESSURE if sent == ERR_BUSY else Code.SDK_FAILURE
 				if sent != ERR_BUSY:
 					_failure = result.code
 				break
-			_pending_bytes -= _pending[0].size()
-			_pending.pop_front()
-			result.sent += 1
 	if receive_pressure and result.code == Code.OK:
 		result.code = Code.BACKPRESSURE
 	# The SDK hands frames over between polls, so this poll reports the window's arrivals.
@@ -286,6 +329,8 @@ func detach() -> void:
 	_local_wire_uuid.clear()
 	_remote_wire_uuids.clear()
 	_pending.clear()
+	_addressed_revision = -1
+	_wire_overhead = 0
 	_received.clear()
 	_pending_bytes = 0
 	_received_bytes = 0
@@ -342,11 +387,20 @@ func _gate() -> int:
 		return Code.WRONG_STATE
 	if _failure != Code.OK:
 		return _failure
-	var client: Object = _client.get_ref()
+	var binding: WeakRef = _client
+	var adapter: Adapter = _adapter
+	var client: Object = binding.get_ref()
 	var config: Object = _sdk_config.get_ref()
 	if not is_instance_valid(client) or not is_instance_valid(config) or not _raw_mode(config) or config.get("max_inbound_packets_per_poll") > 4096:
 		return Code.INCOMPATIBLE_MODE
-	if _adapter.status().route not in ["mesh", "relay", "relay_required"] or (_peer == null and not _receive_packet.is_valid()):
+	var state: Dictionary = adapter.status()
+	if _client != binding:
+		return Code.WRONG_STATE
+	if _failure != Code.OK:
+		return _failure
+	if state.route not in ["mesh", "relay", "relay_required"] or (_peer == null and not _receive_packet.is_valid()):
+		return Code.WRONG_STATE
+	if _addressed_revision >= 0 and state.lifetime_revision != _addressed_revision:
 		return Code.WRONG_STATE
 	return Code.OK
 

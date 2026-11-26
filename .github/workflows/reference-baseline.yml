@@ -281,17 +281,12 @@ jobs:
       - name: Verify the pinned sources and name the server build cache
         id: pinned
         run: |
-          PYTHONPATH=scripts/reference python3 - <<'PY'
-          from fetch import load_manifest, sources
-          manifest = load_manifest()
-          trees = sources(manifest)
-          lock = trees['server'] / 'Cargo.lock'
-          if not lock.is_file():
-              raise SystemExit('the pinned server source has no Cargo.lock')
-          print(lock)
-          PY
+          python3 scripts/reference/fetch.py
+          server_source=".cache/reference/$(jq -er '.sources.server.root' docs/reference/pins.json)"
+          test -f "$server_source/Cargo.lock"
+          echo "source=$server_source" >> "$GITHUB_OUTPUT"
           echo "pins=$(sha256sum docs/reference/pins.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          digest="$(sha256sum .cache/reference/signal-fish-server-*/Cargo.lock scripts/reference/signalfish_build_server.py | sha256sum | cut -d' ' -f1)"
+          digest="$(sha256sum "$server_source/Cargo.lock" scripts/reference/signalfish_build_server.py | sha256sum | cut -d' ' -f1)"
           echo "build=$digest" >> "$GITHUB_OUTPUT"
       - name: Restore the shared relay server build tree
         uses: actions/cache@v6.1.0
@@ -304,6 +299,8 @@ jobs:
             reference-signalfish-server-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned.outputs.pins }}-
       - name: Build the pinned local SignalFish server
         id: build
+        env:
+          SERVER_SOURCE: ${{ steps.pinned.outputs.source }}
         run: |
           PYTHONPATH=scripts/reference python3 - <<'PY'
           from fetch import load_manifest
@@ -315,7 +312,7 @@ jobs:
           echo "tool_bin=$(realpath --relative-to="$PWD" "$(dirname "$cargo")")" >> "$GITHUB_OUTPUT"
           python3 scripts/reference/signalfish_build_server.py \
             --cargo "$cargo" \
-            --source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
+            --source "$SERVER_SOURCE" \
             --output .cache/reference/server-build
       - name: Bind the relay receipt to this candidate
         id: receipt

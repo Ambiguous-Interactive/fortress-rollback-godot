@@ -15,7 +15,7 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
       end_reason = 'window';
     }
     const streams = Object.fromEntries(Object.entries(hold.streams).map(([stage, stream]) => [stage, {
-      count: stream.count, events: stream.pending.splice(0).map(({ bytes, ...event }) => ({ ...event, envelope: hex(bytes) })),
+      count: stream.count, events: stream.pending.splice(0).map(({ bytes, carrierOpcode, ...event }) => ({ ...event, envelope: hex(bytes) })),
     }]));
     console.debug(holdPrefix + JSON.stringify({ room, local, sockets: hold.sockets(), sequence: ++hold.sequence,
       started_ms: hold.started, through_ms: at_ms, end_reason, streams }));
@@ -27,10 +27,12 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
   const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 
   function decodeDelivery(bytes) {
-    // The pinned server writes a five-field named MessagePack map.
-    if (bytes[0] !== 0x85) return null;
+    // A private delivery prefixes the same five-field map with opcode 1.
+    const addressed = bytes[0] === 1;
+    const mapOffset = Number(addressed);
+    if (bytes[mapOffset] !== 0x85) return null;
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    let offset = 1;
+    let offset = mapOffset + 1;
     function span(size) {
       if (size > bytes.length - offset) throw new RangeError('truncated GameData field');
       const value = bytes.subarray(offset, offset + size);
@@ -78,9 +80,31 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
     const seq = fields.get('seq');
     if (offset !== bytes.length || from.length !== 16 || fields.get('encoding') !== 'message_pack' || !seq || !epoch || epoch > 0xffffffffn) return null;
     const envelope = fields.get('payload');
-    // SignalFish also broadcasts every envelope addressed to another peer.
+    // A broadcast envelope can name another peer as its application recipient.
     if (!localBytes.every((byte, index) => envelope[37 + index] === byte)) return null;
-    return { envelope, from: hex(from), epoch: Number(epoch), seq: seq.toString() };
+    return { envelope, from: hex(from), epoch: Number(epoch), seq: seq.toString(), addressed };
+  }
+
+  function decodeSend(bytes) {
+    const opcode = bytes[0];
+    if (opcode === 0) return { envelope: bytes.subarray(1), carrierOpcode: opcode };
+    if (opcode === 1) {
+      if (bytes.length < 17) return null;
+      const envelope = bytes.subarray(17);
+      if (!bytes.subarray(1, 17).every((byte, index) => envelope[37 + index] === byte)) return null;
+      return { envelope, carrierOpcode: opcode };
+    }
+    return { envelope: bytes };
+  }
+
+  function encodeSend(envelope, carrierOpcode) {
+    if (carrierOpcode === undefined) return envelope;
+    const offset = carrierOpcode === 1 ? 17 : 1;
+    const wire = new Uint8Array(offset + envelope.length);
+    wire[0] = carrierOpcode;
+    if (carrierOpcode === 1) wire.set(envelope.subarray(37, 53), 1);
+    wire.set(envelope, offset);
+    return wire;
   }
 
   function identify(envelope) {
@@ -121,9 +145,9 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
   }
 
   function pinAcceptance(native, family) {
-    const { sender, kind, epoch, seq, bytes } = native;
+    const { sender, kind, epoch, seq, lane, bytes } = native;
     function previous(stage, ceiling) {
-      return streams[stage][family].links.get(sender)?.findLast(event => event.epoch === epoch && event.seq === seq
+      return streams[stage][family].links.get(sender)?.findLast(event => event.epoch === epoch && event.seq === seq && event.lane === lane
         && event.at_ms <= ceiling && !event.delivery_blocked && event.bytes.length === bytes.length && bytes.every((byte, index) => byte === event.bytes[index]));
     }
     const sdk = previous('sdk', native.at_ms);
@@ -159,9 +183,10 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
     record(stage, bytes, socket_ordinal = null) {
       if (!roster || !bytes) return;
       const at_ms = performance.now();
-      const delivery = stage === 'raw' ? decodeDelivery(bytes) : null;
-      if (stage === 'raw' && !delivery) return;
-      const envelope = delivery?.envelope ?? bytes;
+      const delivery = stage === 'raw' ? decodeDelivery(bytes) : decodeSend(bytes);
+      if (!delivery) return;
+      const { envelope, carrierOpcode } = delivery;
+      const lane = delivery.addressed || carrierOpcode === 1 ? { lane: 'addressed' } : {};
       const identity = identify(envelope);
       if (!identity || (stage === 'raw' ? delivery.from !== identity.sender || identity.recipient !== local : identity.sender !== local)) return;
       let protocol_reply;
@@ -169,12 +194,12 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
         const token = hex(envelope.subarray(-16));
         // An echo proves processing of this token on the link. Identical reports can share it.
         const candidates = streams.native.quality.links.get(identity.recipient)?.slice(-cap).filter(event => event.kind === 4
-          && event.code === 0 && event.report_token === token).map(({ epoch, seq }) => ({ epoch, seq }));
+          && event.code === 0 && event.report_token === token).map(({ epoch, seq, lane }) => ({ epoch, seq, ...(lane === undefined ? {} : { lane }) }));
         if (candidates?.length) protocol_reply = { token, candidates };
       }
-      return retain(stage, envelope, identity, { at_ms, socket_ordinal, epoch: delivery?.epoch ?? null, seq: delivery?.seq ?? null, protocol_reply });
+      return retain(stage, envelope, identity, { at_ms, socket_ordinal, epoch: delivery.epoch ?? null, seq: delivery.seq ?? null, carrierOpcode, ...lane, protocol_reply });
     },
-    recordEngine(stage, from, value, epoch, signedSeq, code) {
+    recordEngine(stage, from, value, epoch, signedSeq, code, addressed = false) {
       if (!roster || !epoch || value.length > 2514) return;
       const at_ms = performance.now();
       const sender = from.replaceAll('-', '');
@@ -192,16 +217,16 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
       const seq = BigInt.asUintN(64, BigInt(signedSeq));
       const report_token = stage === 'native' && identity.kind === 4 ? hex(envelope.subarray(-16)) : undefined;
       if (seq === 0n) return;
-      const packet = retain(stage, envelope, identity, { at_ms, epoch, seq: seq.toString(), code, report_token });
+      const packet = retain(stage, envelope, identity, { at_ms, epoch, seq: seq.toString(), ...(addressed ? { lane: 'addressed' } : {}), code, report_token });
       if (stage === 'native' && code === 0 && (identity.kind === 2 || identity.kind === 4)) pinAcceptance(packet, families[identity.kind]);
     },
     expiryFrontier(sender) {
       if (!roster?.has(sender) || sender === local) return undefined;
       const pins = expiryPins.get(sender);
       const packets = [pins?.get(2), pins?.get(4)].filter(Boolean).map(({ raw, sdk, native }) => {
-        const { bytes, kind, epoch, seq } = native;
+        const { bytes, kind, epoch, seq, lane } = native;
         const mark = event => event && { ordinal: event.ordinal, at_ms: event.at_ms };
-        return { kind, epoch, seq, envelope: hex(bytes), stages: { raw: mark(raw), sdk: mark(sdk), native: mark(native) } };
+        return { kind, epoch, seq, ...(lane === undefined ? {} : { lane }), envelope: hex(bytes), stages: { raw: mark(raw), sdk: mark(sdk), native: mark(native) } };
       });
       return { room, sender, recipient: local, packets };
     },
@@ -211,7 +236,7 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
       const addressed = original.bytes.slice();
       const readdressed = addressed.slice();
       readdressed.set(unhex(other), 37);
-      return [send(addressed), send(addressed), send(readdressed)];
+      return [addressed, addressed, readdressed].map(bytes => send(encodeSend(bytes, original.carrierOpcode)));
     },
     pressureLink(recipient, send) {
       const originals = [['input', 2], ['quality', 4]].map(([family, kind]) =>
@@ -219,19 +244,19 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
       if (originals.some(packet => !packet)) throw new Error('missing same-link pressure packets');
       const ordinals = [];
       for (let index = 0; index < 520; index++) {
-        for (const { bytes } of originals) ordinals.push(send(bytes));
+        for (const { bytes, carrierOpcode } of originals) ordinals.push(send(encodeSend(bytes, carrierOpcode)));
       }
       return ordinals;
     },
     hasBlockedRelayStamps(sender, gate, stamps) {
-      const key = ({ kind, epoch, seq }) => `${kind}/${epoch}/${seq}`;
+      const key = ({ kind, epoch, seq, lane }) => `${kind}/${lane ?? 'broadcast'}/${epoch}/${seq}`;
       const blocked = new Set(['input', 'quality'].flatMap(family => (streams.raw[family].links.get(sender) ?? [])
         .filter(event => event.delivery_gate === gate).map(key)));
       return stamps.length > 0 && stamps.every(stamp => blocked.has(key(stamp)));
     },
     freezeEnqueued(stamps) {
       if (!stamps.every(stamp => streams.native.quality.links.get(stamp.sender)?.slice(-cap).some(event =>
-        event.recipient === stamp.recipient && event.epoch === stamp.epoch && event.seq === stamp.seq && event.code === 0))) return null;
+        event.recipient === stamp.recipient && event.epoch === stamp.epoch && event.seq === stamp.seq && event.lane === stamp.lane && event.code === 0))) return null;
       return this.freeze();
     },
     retentionSample(sender) {
@@ -240,8 +265,8 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
       const frontier = [['input', 2], ['quality', 4]].map(([family, kind]) => {
         const match = streams.native[family].links.get(sender)?.findLast(event => event.kind === kind && event.code === 0);
         if (!match) return null;
-        const { recipient, epoch, seq } = match;
-        return { family, sender, recipient, epoch, seq };
+        const { recipient, epoch, seq, lane } = match;
+        return { family, sender, recipient, epoch, seq, ...(lane === undefined ? {} : { lane }) };
       });
       return { counts, frontier };
     },
@@ -267,10 +292,10 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
       const hashPacket = async bytes => ({
         envelope_sha256: await sha256(bytes), payload_sha256: await sha256(bytes.subarray(57)),
       });
-      function packetDigests({ sender, recipient, epoch, seq }, bytes) {
+      function packetDigests({ sender, recipient, epoch, seq, lane }, bytes) {
         if (seq === null) return hashPacket(bytes);
         // Each traced envelope is at most 1,257 bytes, so this key can include the exact bytes.
-        const key = `${sender}/${recipient}/${epoch}/${seq}:${String.fromCharCode(...bytes)}`;
+        const key = `${sender}/${recipient}/${lane ?? 'broadcast'}/${epoch}/${seq}:${String.fromCharCode(...bytes)}`;
         const cached = stamped.get(key);
         if (cached) return cached;
         const digests = hashPacket(bytes);
@@ -278,7 +303,7 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
         return digests;
       }
       await Promise.all(entries.map(async ({ stage, family, count, events }) => {
-        snapshot.streams[stage][family] = { count, omitted: count - events.length, events: await Promise.all(events.map(async ({ bytes, ...event }) =>
+        snapshot.streams[stage][family] = { count, omitted: count - events.length, events: await Promise.all(events.map(async ({ bytes, carrierOpcode, ...event }) =>
           ({ ...event, envelope_bytes: bytes.length, ...await packetDigests(event, bytes) }))) };
       }));
       return snapshot;
