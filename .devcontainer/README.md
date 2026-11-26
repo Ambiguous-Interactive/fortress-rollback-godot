@@ -159,8 +159,8 @@ Makefile Tools, Code Spell Checker, Error Lens, Even Better TOML.
 
 Formatter note: the Godot Format extension bundles **GDQuest's** GDScript
 formatter for format-on-save. The CLI `gdformat`/`gdlint` tools (used by
-agents) come from the pinned **gdtoolkit** — a different engine; don't expect
-byte-identical output between them.
+agents) come from the pinned **gdtoolkit**. Both set a 180-character line limit.
+The two engines can format the same code differently.
 
 ## Secrets (`.devcontainer/devcontainer.env`)
 

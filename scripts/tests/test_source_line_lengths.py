@@ -1,5 +1,6 @@
 """Protect the source-width gate at its command-line boundary."""
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,18 @@ from git_test_environment import fixture_environment
 
 
 class SourceLineLengthsTest(unittest.TestCase):
+    # Value: protects=180-column editor formatter; fails_when=the editor extension falls back to 100 columns; seam=editor configuration
+    def test_editor_and_formatter_use_the_source_limit(self):
+        root = CHECKER.parents[1]
+        container = json.loads((root / '.devcontainer/devcontainer.json').read_text(encoding='utf-8'))
+        settings = container['customizations']['vscode']['settings']
+        self.assertEqual(settings.get('editor.rulers'), [180])
+        self.assertEqual(settings.get('godotFormatter.maxLineLength'), 180)
+        self.assertEqual(settings.get('godotFormatter.linterMaxLineLength'), 180)
+        for name, line in (('.editorconfig', 'max_line_length = 180'), ('gdformatrc', 'line_length: 180'), ('gdlintrc', 'max-line-length: 180')):
+            with self.subTest(config=name):
+                self.assertIn(line, (root / name).read_text(encoding='utf-8').splitlines())
+
     # Value: protects=180-column gate; fails_when=boundary or source scope drifts; why_new=no source-width gate exists; seam=none
     def test_source_boundary_and_data_exclusion(self):
         with tempfile.TemporaryDirectory() as directory:
