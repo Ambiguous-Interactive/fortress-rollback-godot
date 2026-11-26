@@ -407,9 +407,11 @@ room and ready again with the new room code.
 A connection failure, membership change, reconnect or terminal rollback error
 stops the old game and clears its gameplay queues. When SignalFish removes a
 native mesh player, the survivors keep their signaling sockets and remaining
-WebRTC connections until their own Leave. Other failures detach the mesh and
-close the SignalFish connection. A failure during an active send finishes
-queue cleanup after the send unwinds. Failed ticks service signaling without
+WebRTC connections until their own Leave. A waiting survivor closes its
+connection if SignalFish still has not confirmed the departure after three
+seconds. Other failures detach the mesh and close the SignalFish connection.
+A failure during an active send finishes queue cleanup after the send unwinds.
+Failed ticks service signaling without
 advancing gameplay. The first failure message remains visible until Leave.
 Automatic SDK reconnect is disabled.
 Rejoining a server room cannot recover rollback
