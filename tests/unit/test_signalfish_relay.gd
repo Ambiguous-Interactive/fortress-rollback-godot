@@ -14,7 +14,8 @@ const W: String = Fixtures.W
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["golden", "negotiation", "pressure", "atomic", "ingress", "receive_budget", "fences", "overflow", "traffic"])
+	return PackedStringArray(["golden", "negotiation", "pressure", "atomic", "ingress", "receive_budget", "fences", "overflow", "traffic",
+		"addressed_plan", "addressed_wire_caps", "addressed_fences"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -37,6 +38,12 @@ func run_case(name: String, context: RefCounted) -> void:
 			_overflow(context)
 		"traffic":
 			_traffic(context)
+		"addressed_plan":
+			_addressed_plan(context)
+		"addressed_wire_caps":
+			_addressed_wire_caps(context)
+		"addressed_fences":
+			_addressed_fences(context)
 	context.finish()
 
 
@@ -286,6 +293,140 @@ func _traffic(context: RefCounted) -> void:
 	_destroy(fixture)
 
 
+func _addressed_fixture(context: RefCounted, client: Client, entries: Variant, controls: Relay.Options) -> Dictionary:
+	var fixture: RefCounted = Fixtures.new()
+	var membership: Membership = fixture._membership(context, U, PackedStringArray([U, V, W]))
+	var mesh: Fixtures.FakeMesh = Fixtures.FakeMesh.new()
+	var adapter: Adapter = Adapter.new()
+	context.equal(adapter.attach(client, mesh, membership), OK, "three frozen relay seats")
+	var plan: Fixtures.Plan = Fixtures.Plan.new()
+	plan.data.topology = "relay"
+	plan.data.transport = "relay"
+	plan.data.peers.clear()
+	if entries != null:
+		plan.data.addressed_binary_peers = entries
+	client.session_plan.emit(plan)
+	var config: SDKConfig = SDKConfig.new()
+	var info: Info = Info.new()
+	var relay: Relay = Relay.new()
+	context.equal(relay.configure_packet_receiver(client, config, info, membership, adapter, _receive_native, controls), Relay.Code.OK, "native relay setup")
+	return {"relay": relay, "client": client, "mesh": mesh, "adapter": adapter, "membership": membership, "config": config, "info": info, "plan": plan}
+
+
+func _receive_native(_player: String, _bytes: PackedByteArray) -> int:
+	return 0
+
+
+func _addressed_controls() -> Relay.Options:
+	var controls: Relay.Options = Relay.Options.new()
+	controls.max_packet_bytes = 44
+	return controls
+
+
+func _addressed_plan(context: RefCounted) -> void:
+	var complete: Array = [{"player_id": W, "epoch": 4294967295}, {"player_id": V, "epoch": 1.0}]
+	var alternatives: Array = [null, {}, [], [complete[0]], [complete[0], complete[0]], [complete[0], {"player_id": U, "epoch": 1}],
+		[complete[0], {"player_id": "bad", "epoch": 1}], [complete[0], {"player_id": V}], [complete[0], {"player_id": V, "epoch": true}],
+		[complete[0], {"player_id": V, "epoch": 0}], [complete[0], {"player_id": V, "epoch": 1.25}],
+		[complete[0], {"player_id": V, "epoch": 4294967296}], [complete[0], {"player_id": V, "epoch": NAN}],
+		[complete[0], {"player_id": V, "epoch": "1"}], [complete[0], false], complete]
+	for index: int in alternatives.size():
+		var client: AddressedClient = AddressedClient.new()
+		var fixture: Dictionary = _addressed_fixture(context, client, alternatives[index], _addressed_controls())
+		var packets: Array[Peer.Packet] = [_packet(fixture, 7)]
+		context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "accepted native input")
+		context.equal(fixture.relay.poll(0).sent, 1, "one addressed envelope sent")
+		var is_private: bool = index == alternatives.size() - 1
+		context.equal(client.attempts.size(), int(is_private), "private API requires the complete exact frozen roster")
+		context.equal(client.sent.size(), int(not is_private), "malformed and mixed rosters use ordinary relay")
+		_destroy(fixture)
+	for negotiated: bool in [false, true]:
+		var client: AddressedClient = AddressedClient.new()
+		client.negotiated = negotiated
+		var fixture: Dictionary = _addressed_fixture(context, client, [complete[0]] if negotiated else complete, _addressed_controls())
+		var packets: Array[Peer.Packet] = [_packet(fixture, 7)]
+		context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "ordinary lane owns bytes before plan or SDK changes")
+		fixture.plan.data.addressed_binary_peers = complete
+		client.session_plan.emit(fixture.plan)
+		context.equal(fixture.relay.poll(0).sent, 1, "ordinary lane completes after an optional plan refresh")
+		context.equal(client.sent.size(), 1, "unnegotiated or originally mixed room stays ordinary")
+		context.equal(client.attempts.size(), 0, "server metadata does not upgrade an owned broadcast")
+		_destroy(fixture)
+
+
+func _addressed_wire_caps(context: RefCounted) -> void:
+	var complete: Array = [{"player_id": V, "epoch": 2}, {"player_id": W, "epoch": 3}]
+	for overhead: int in [0, 1, 17]:
+		var client: Client = Client.new()
+		if overhead != 0:
+			client.free()
+			client = NegotiatedOnlyClient.new() if overhead == 1 else AddressedClient.new()
+		var controls: Relay.Options = _addressed_controls()
+		var frame: int = controls.max_packet_bytes + Envelope.HEADER_BYTES + overhead
+		controls.max_pending_bytes = frame
+		controls.max_socket_buffered_bytes = frame
+		var fixture: Dictionary = _addressed_fixture(context, client, complete, controls)
+		fixture.relay.detach()
+		fixture.config.max_outbound_frame_bytes = frame - 1
+		context.equal(fixture.relay.configure_packet_receiver(client, fixture.config, fixture.info, fixture.membership, fixture.adapter, _receive_native, controls),
+			Relay.Code.TOO_LARGE, "SDK outbound cap includes lane overhead")
+		fixture.config.max_outbound_frame_bytes = frame
+		fixture.config.max_buffered_bytes = frame - 1
+		context.equal(fixture.relay.configure_packet_receiver(client, fixture.config, fixture.info, fixture.membership, fixture.adapter, _receive_native, controls),
+			Relay.Code.TOO_LARGE, "SDK socket cap includes lane overhead")
+		fixture.config.max_buffered_bytes = frame
+		if overhead > 0:
+			controls.max_pending_bytes = frame - 1
+			context.equal(fixture.relay.configure_packet_receiver(client, fixture.config, fixture.info, fixture.membership, fixture.adapter, _receive_native, controls),
+				Relay.Code.TOO_LARGE, "relay queue cap includes lane overhead")
+			controls.max_pending_bytes = frame
+			controls.max_socket_buffered_bytes = frame - 1
+			context.equal(fixture.relay.configure_packet_receiver(client, fixture.config, fixture.info, fixture.membership, fixture.adapter, _receive_native, controls),
+				Relay.Code.TOO_LARGE, "relay socket cap includes lane overhead")
+			controls.max_socket_buffered_bytes = frame
+		context.equal(fixture.relay.configure_packet_receiver(client, fixture.config, fixture.info, fixture.membership, fixture.adapter, _receive_native, controls),
+			Relay.Code.OK, "exact lane cap accepted")
+		var packets: Array[Peer.Packet] = [_packet(fixture, 9)]
+		packets[0].bytes.resize(44)
+		context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "queue owns exact wire cap")
+		context.equal(fixture.relay.status().pending_bytes, frame, "queued wire occupancy")
+		context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.BACKPRESSURE, "no queue growth after full wire cap")
+		client.transport.buffered = 1
+		context.equal(fixture.relay.poll(0).code, Relay.Code.BACKPRESSURE, "one extra buffered byte blocks send")
+		client.transport.buffered = 0
+		context.equal(fixture.relay.poll(1).sent, 1, "exact buffered cap sends")
+		context.equal(fixture.relay.status().pending_bytes, 0, "drain returns exact wire occupancy")
+		_destroy(fixture)
+
+
+func _addressed_fences(context: RefCounted) -> void:
+	var complete: Array = [{"player_id": V, "epoch": 2}, {"player_id": W, "epoch": 3}]
+	var client: AddressedClient = AddressedClient.new()
+	var fixture: Dictionary = _addressed_fixture(context, client, complete, _addressed_controls())
+	var packets: Array[Peer.Packet] = [_packet(fixture, 7), Peer.Packet.new(fixture.membership.identity(W), PackedByteArray([8]))]
+	context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "queue both private seats")
+	var envelope: PackedByteArray = Envelope.encode(fixture.membership.handshake_message().session_id, U, V, PackedByteArray([7]))
+	packets[0].bytes[0] = 99
+	client.private_code = ERR_BUSY
+	context.equal(fixture.relay.poll(0).code, Relay.Code.BACKPRESSURE, "private refusal is retryable")
+	context.equal(fixture.relay.status().pending_packets, 2, "private refusal keeps the exact head")
+	context.equal(client.sent.size(), 0, "private refusal cannot become broadcast")
+	context.equal(client.attempts, [{"recipient": V, "bytes": envelope}], "private uses the frozen UUID and byte-identical envelope")
+	client.private_code = OK
+	context.equal(fixture.relay.poll(1).sent, 2, "retry preserves FIFO")
+	context.equal(client.attempts[1], client.attempts[0], "private retry descriptor is unchanged")
+	context.equal(client.attempts[2].recipient, W, "the next peer remains behind the retry")
+	context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "queue before changed-negotiation fence")
+	fixture.plan.data.addressed_binary_peers = [{"player_id": V, "epoch": 4}, complete[1]]
+	client.session_plan.emit(fixture.plan)
+	fixture.plan.data.addressed_binary_peers = complete
+	client.session_plan.emit(fixture.plan)
+	context.equal(fixture.relay.poll(2).code, Relay.Code.WRONG_STATE, "same UUID changing epoch and returning leaves a fence")
+	context.equal(client.attempts.size(), 3, "old-lifetime private packets cannot send")
+	context.equal(client.sent.size(), 0, "old-lifetime private packets cannot broadcast")
+	_destroy(fixture)
+
+
 class Client:
 	extends Fixtures.FakeClient
 	signal game_data_binary_received(from_uuid: String, encoding: int, bytes: PackedByteArray)
@@ -298,6 +439,26 @@ class Client:
 			return ERR_BUSY
 		sent.append(bytes.duplicate())
 		return OK
+
+
+class NegotiatedOnlyClient:
+	extends Client
+
+	var negotiated: bool = true
+
+	func has_addressed_binary_game_data() -> bool:
+		return negotiated
+
+
+class AddressedClient:
+	extends NegotiatedOnlyClient
+
+	var private_code: Error = OK
+	var attempts: Array[Dictionary] = []
+
+	func send_game_data_binary_to(recipient: String, bytes: PackedByteArray) -> Error:
+		attempts.append({"recipient": recipient, "bytes": bytes.duplicate()})
+		return private_code
 
 
 class Transport:

@@ -29,6 +29,7 @@ var _is_stopping_mesh: bool = false
 var _restart_required: bool = false
 var _room_id: String = ""
 var _lifetime_revision: int = 0
+var _addressed_peers: Dictionary = {}
 var _is_applying_plan: bool = false
 var _state: Dictionary = {"route": "unconfigured", "generation": "", "offerers": {}, "error": OK, "byte_delivery_implemented": false}
 
@@ -107,6 +108,7 @@ func detach() -> void:
 	_mesh = null
 	_membership = null
 	_room_id = ""
+	_addressed_peers.clear()
 	_state = {"route": "unconfigured", "generation": "", "offerers": {}, "error": OK, "byte_delivery_implemented": false}
 	_is_detaching = false
 
@@ -174,10 +176,38 @@ func _apply_checked_plan(plan: Object) -> Error:
 	elif not _mesh_attached:
 		_restart_required = true
 		return _refuse(ERR_UNAVAILABLE)
-	if _state.route != route or _state.generation != data.generation or _state.offerers != offerers:
+	var addressed_peers: Dictionary = _validated_addressed_peers(data.get("addressed_binary_peers")) if route in ["relay", "relay_required"] else {}
+	if _state.route != route or _state.generation != data.generation or _state.offerers != offerers or _addressed_peers != addressed_peers:
 		_lifetime_revision += 1
+	_addressed_peers = addressed_peers
 	_state = {"route": route, "generation": data.generation, "offerers": offerers.duplicate(), "error": OK, "byte_delivery_implemented": false}
 	return OK
+
+
+## Return the current relay lifetime only when its plan covers every frozen remote seat.
+func addressed_binary_revision(client: Object, membership: Membership) -> int:
+	_check_lifetime()
+	if _addressed_peers.is_empty() or _client == null or _client.get_ref() != client or _membership != membership:
+		return -1
+	return _lifetime_revision
+
+
+func _validated_addressed_peers(value: Variant) -> Dictionary:
+	if not value is Array or value.size() != _membership.roster().size() - 1:
+		return {}
+	var remotes: Dictionary = {}
+	for entry: Variant in value:
+		if not entry is Dictionary or not entry.get("player_id") is String:
+			return {}
+		var uuid: String = entry.player_id
+		if not Membership.valid_uuid(uuid) or uuid == _membership.local_uuid() or _membership.slot(uuid) < 0 or remotes.has(uuid):
+			return {}
+		# Godot JSON numbers may be floats. Every u32 value has an exact float representation.
+		var epoch: Variant = entry.get("epoch")
+		if not (epoch is int or epoch is float) or not is_finite(float(epoch)) or epoch < 1 or epoch > 4294967295 or epoch != floorf(float(epoch)):
+			return {}
+		remotes[uuid] = int(epoch)
+	return remotes
 
 
 func status() -> Dictionary:
@@ -239,6 +269,7 @@ func _stop_mesh() -> void:
 
 func _refuse(code: Error) -> Error:
 	_lifetime_revision += 1
+	_addressed_peers.clear()
 	_state = {"route": "restart_required" if _restart_required else "blocked", "generation": "", "offerers": {}, "error": code, "byte_delivery_implemented": false}
 	_stop_mesh()
 	return code

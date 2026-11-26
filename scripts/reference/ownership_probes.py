@@ -212,6 +212,9 @@ EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callb
 EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({
     'full_length_recording', 'empty_terminal', 'input_inspection', 'dropped_file', 'recording_metadata',
     'frame_submit', 'repeat_playback', 'repeat_selection'})
+EXPECTED['res://tests/unit/test_signalfish_relay.gd'] = {
+    'golden', 'negotiation', 'pressure', 'atomic', 'ingress', 'receive_budget', 'fences', 'overflow', 'traffic',
+    'addressed_plan', 'addressed_wire_caps', 'addressed_fences'}
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',
@@ -449,6 +452,7 @@ const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
 const DriverPeerParity = preload("res://tests/unit/test_driver_peer_parity.gd")
 const DriverLifecycleParity = preload("res://tests/unit/test_driver_lifecycle_parity.gd")
 const DriverDropParity = preload("res://tests/unit/test_driver_drop_parity.gd")
+const PlayerRelay = preload("res://tests/unit/test_signalfish_relay.gd")
 const SpectatorRelay = preload("res://tests/unit/test_signalfish_spectator_relay.gd")
 const FallbackFailure = preload("res://tests/unit/test_signalfish_fallback_failure.gd")
 const SpectatorHost = preload("res://tests/unit/test_signalfish_spectator_host.gd")
@@ -473,7 +477,7 @@ func _run_suites() -> void:
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropReplay, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
 		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit, DropOverlap,
 		DriverInputPolicy, DriverTermination, PeerExampleOwnership, ExampleSceneExit, ExampleShortcuts, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation,
-		FallbackFailure, SpectatorRecordingFeedback, DriverLifecycleParity, AdapterReentry, OfflineSceneControls, PeerSceneControls, SpectatorHostStep]
+		FallbackFailure, SpectatorRecordingFeedback, DriverLifecycleParity, AdapterReentry, OfflineSceneControls, PeerSceneControls, SpectatorHostStep, PlayerRelay]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.
 \t# JSON decoding is a dynamic boundary; reject unknown or repeated paths.

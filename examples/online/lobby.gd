@@ -101,6 +101,12 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 	if route == "relay":
 		_config.set("supported_transports", PackedStringArray(["relay"]))
 		_config.set("supported_topologies", PackedStringArray(["relay"]))
+		if backend_choice == "native" and "requested_capabilities" in _config \
+			and client.has_method("has_addressed_binary_game_data") and client.has_method("send_game_data_binary_to"):
+			var capabilities: PackedStringArray = _config.get("requested_capabilities")
+			if not capabilities.has(Match.Relay.ADDRESSED_BINARY_GAME_DATA_CAPABILITY):
+				capabilities.append(Match.Relay.ADDRESSED_BINARY_GAME_DATA_CAPABILITY)
+				_config.set("requested_capabilities", capabilities)
 	_config.set("game_data_format", "message_pack")
 	_config.set("decode_msgpack_payloads", false)
 	_config.set("auto_poll", false)
