@@ -2514,18 +2514,19 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       }
     } else failures.push(error);
     const correctionDeadlineReached = missedCorrectionDeadline(phase, error, correctionDeadline, performance.now());
+    const holdServerRead = collectHoldServer();
+    const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
+      ...window.fortressNative, wire: window.fortressNativeWire?.status(), warmup: window.fortressNativeWire?.warmupStatus(),
+      stalled: window.fortressNativeStalled,
+    })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
+    // Console expiry may arrive while the bounded status reads are still settling.
     const expiryLinks = roomIdentities?.uuids.flatMap((uuid, index) => {
       const sender = postRelease?.[index].native_expiry?.uuid ?? warmupBarrier?.checkpoints[index]?.cutoff?.terminal_uuid;
       return sender ? [`${sender.replaceAll('-', '')}/${uuid.replaceAll('-', '')}`] : [];
     }) ?? [];
     const relayWireFailure = traceRelayWire ? collectRelayWire(expiryLinks) : null;
-    const holdServerRead = collectHoldServer();
     const relayServerFailure = readRelayServer && roomIdentities
       ? Promise.allSettled([(holdServerRead ?? Promise.resolve()).then(() => readRelayServer(undefined, DIAGNOSTIC_MS, expiryLinks))]) : null;
-    const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
-      ...window.fortressNative, wire: window.fortressNativeWire?.status(), warmup: window.fortressNativeWire?.warmupStatus(),
-      stalled: window.fortressNativeStalled,
-    })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
     const diagnostics = states.map((state, index) => {
       if (state.status === 'rejected') return { status: state.status, reason: String(state.reason) };
       const { stalled: saved, ...current } = state.value;
