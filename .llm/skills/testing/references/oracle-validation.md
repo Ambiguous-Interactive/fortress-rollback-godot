@@ -24,6 +24,8 @@ them before shared validation runs. Constrain omitted setup records to their
 exact allowed position. Formal projection must account for the observed initial
 state and every supported post-state, including actual backlog and pacing advice.
 Do not substitute a model's sentinel rules for runtime policy observations.
+Test each prediction boundary before confirmation and after confirmed frame
+zero. The two conditions can use different frame-distance calculations.
 Label synthetic bootstrap separately, retain startup counterexamples, and require
 transition-control rejection inside the actual observed suffix, not only its setup.
 When a detailed observation stream accompanies a smaller comparison projection, validate its complete
