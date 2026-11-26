@@ -15,6 +15,9 @@ class BrowserCleanupTests(unittest.TestCase):
     def test_native_webkit_https_departure_clock_requires_exact_ordered_exchange(self):
         subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_departure_clock.test.cjs')], check=True, timeout=10)
 
+    def test_native_relay_proxy_preserves_carriers_and_distinguishes_observation_gaps(self):
+        subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_relay_proxy.test.cjs')], check=True, timeout=20)
+
     def test_native_relay_hold_keeps_exact_receipt_when_final_read_times_out(self):
         subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_relay_hold.test.cjs')], check=True, timeout=10)
 
@@ -133,8 +136,11 @@ const local = '22'.repeat(16);
 const source = '33'.repeat(16);
 const other = '44'.repeat(16);
 const packets = [];
+const carrierEntries = [];
+let beforeDecode;
 const trace = {
   bind() {},
+  recordCarrier(data) { carrierEntries.push(data[0]); },
   record(_stage, data) {
     if (!data) return;
     const packet = { sender: data[1] === 1 ? other : source, recipient: local, epoch: 1, seq: String(data[0]), kind: data[2] ?? 4 };
@@ -154,9 +160,13 @@ const trace = {
 };
 let clock = 10;
 let slowFreeze = false;
-const realm = { window, trace, WebSocket: Socket, RTCPeerConnection: class {}, Uint8Array, ArrayBuffer, DataView, performance: { now: () => clock },
+const realm = { window, trace, holdBeforeDecode(socket, event) {
+  if (event.data[0] !== 99) return false;
+  beforeDecode = () => socket.dispatchEvent(event);
+  return true;
+}, WebSocket: Socket, RTCPeerConnection: class {}, Uint8Array, ArrayBuffer, DataView, performance: { now: () => clock },
   setTimeout: run => { alarm = run; }, clearTimeout: () => {} };
-runInNewContext(`(${instrumentNativeWire})(false, '', trace)`, realm);
+runInNewContext(`(${instrumentNativeWire})(false, '', trace, '', holdBeforeDecode)`, realm);
 const socket = new window.WebSocket();
 const wire = window.fortressNativeWire;
 const seen = [];
@@ -218,6 +228,17 @@ assert.equal(wire.releaseRelayControl(stamps), null);
 deliver(11);
 assert.equal(wire.releaseRelayControl(stamps).reason, 'controller');
 assert.deepEqual(seen, [9, 10, 10, 11]);
+deliver(99);
+assert.equal(carrierEntries.filter(value => value === 99).length, 1);
+assert.equal(packets.some(packet => packet.seq === '99'), false);
+assert.equal(seen.includes(99), false);
+beforeDecode();
+assert.equal(carrierEntries.filter(value => value === 99).length, 1);
+assert.equal(packets.some(packet => packet.seq === '99'), true);
+assert.equal(seen.at(-1), 99);
+beforeDecode();
+assert.equal(packets.filter(packet => packet.seq === '99').length, 1);
+assert.equal(seen.filter(value => value === 99).length, 1);
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
@@ -1257,7 +1278,7 @@ assert.equal(after.relaySenders[remote], wireBeforeCutoff.relaySenders[remote] +
 const assert = require('node:assert/strict');
 const { runInNewContext } = require('node:vm');
 const { instrumentNativeWire, createWarmupBarrier, WARMUP_CHECKPOINT } = require(process.argv[1]);
-const { createRelayWireTrace } = require(process.argv[2]);
+const { createRelayWireTrace, decodeRelayDelivery } = require(process.argv[2]);
 const roster = Array.from({length: 8}, (_, i) => (i + 16).toString(16).repeat(16));
 const [sender, receiver, other] = roster;
 const room = '01'.repeat(16);
@@ -1305,7 +1326,7 @@ function makeWire(local, index) {
     setTimeout: callback => tasks.push(callback),
     Uint8Array, ArrayBuffer, DataView, WebSocket: Socket, RTCPeerConnection: class {},
   };
-  runInNewContext(`(${instrumentNativeWire})(false, ${JSON.stringify(WARMUP_CHECKPOINT)}, (${createRelayWireTrace})())`, realm);
+  runInNewContext(`(${instrumentNativeWire})(false, ${JSON.stringify(WARMUP_CHECKPOINT)}, (${createRelayWireTrace})('', 512, 45000, (${decodeRelayDelivery})))`, realm);
   const socket = new window.WebSocket(), wire = window.fortressNativeWire;
   wire.bind(room, local, roster);
   return { socket, wire, tasks };

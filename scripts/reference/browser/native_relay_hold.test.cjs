@@ -3,7 +3,7 @@ const { createHash } = require('node:crypto');
 const { test } = require('node:test');
 const { runInNewContext } = require('node:vm');
 const { instrumentNativeWire } = require('./native_online.cjs');
-const { createRelayWireTrace } = require('./native_relay_trace.cjs');
+const { createRelayWireTrace, decodeRelayDelivery } = require('./native_relay_trace.cjs');
 const { createRelayHold, RELAY_HOLD_PREFIX } = require('./native_relay_hold.cjs');
 const { readRelayWireReceipt } = require('./native_relay_control.cjs');
 const { boundedRoom } = require('./webrtc_watchdog.cjs');
@@ -184,7 +184,7 @@ test('relay hold keeps the first observations at capacity without changing the r
     setInterval: callback => { scheduler = callback; return 1; },
     clearInterval: () => { scheduler = null; },
   };
-  runInNewContext(`(${instrumentNativeWire})(false, '', (${trace})(${JSON.stringify(RELAY_HOLD_PREFIX)}, 2))`, realm);
+  runInNewContext(`(${instrumentNativeWire})(false, '', (${trace})(${JSON.stringify(RELAY_HOLD_PREFIX)}, 2, 45000, (${decodeRelayDelivery})))`, realm);
   const { fortressNativeWire: wire, WebSocket } = realm.window;
   const socket = new WebSocket();
   wire.bind(room, first, [other, first, second]);

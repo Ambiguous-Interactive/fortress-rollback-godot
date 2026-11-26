@@ -4,7 +4,7 @@ const path = require('node:path');
 const https = require('node:https');
 const net = require('node:net');
 
-async function createHost(root, endpoint, certificate, privateKey, port = 0, handleRequest) {
+async function createHost(root, endpoint, certificate, privateKey, port = 0, handleRequest, forwardUpstream) {
   root = path.resolve(root);
   const backend = new URL(endpoint);
   if (backend.protocol !== 'ws:' || backend.hostname !== '127.0.0.1' || !backend.port)
@@ -33,7 +33,9 @@ async function createHost(root, endpoint, certificate, privateKey, port = 0, han
         headers += `${request.rawHeaders[index]}: ${request.rawHeaders[index + 1]}\r\n`;
       upstream.write(headers + '\r\n');
       if (head.length) upstream.write(head);
-      upstream.pipe(socket); socket.pipe(upstream);
+      if (forwardUpstream) forwardUpstream(upstream, socket);
+      else upstream.pipe(socket);
+      socket.pipe(upstream);
     });
     const pair = { socket, upstream };
     proxyPairs.add(pair);

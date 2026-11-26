@@ -117,8 +117,9 @@ sender identity only for the recipient's own traffic.
 
 Ordinary receipts include up to 128 records per directed link and stage.
 When a native expiry identifies links to diagnose, the browser and server
-publish only those links. Their input and quality histories expand to at most
-512 records per stage. Count and omitted fields still describe the full stream.
+publish only those links. Browser SDK and native histories expand to 512
+records per link and family. Browser wire and server limits are described
+below. Counts and omissions still describe the full stream.
 The reporter pins the latest natively accepted input and quality report
 on each directed link. The expiry checkpoint publishes those original
 stamps and any earlier raw arrival and SDK observations. The failure
@@ -148,6 +149,24 @@ stages can reflect an observation gap or eviction. Compare ingress and write
 on the server clock. Compare sends and arrivals from the same page on its
 page clock. The receipt preserves each clock and includes no cross-clock
 duration.
+
+A local traced server run also publishes `relayReceive`. The development
+TLS proxy observes complete addressed WebSocket messages at its TCP inlet and
+records the completion of the TLS socket write. The browser records the
+message bytes before the relay decoder runs. Match the addressed envelope to
+the server write by room, endpoints, epoch, sequence and envelope SHA-256.
+The complete carrier SHA-256 joins the same proxy observation to the browser
+event. A TLS write callback describes the proxy's local write.
+The browser receipt supplies the independent delivery observation.
+
+Each proxy socket retains 8,192 addressed records, with a cap of 16 sockets.
+Each page retains 8,192 addressed message events. Capture stops retaining
+bytes for individual messages larger than 2,048 bytes. Forwarding preserves
+the original stream, including fragmented WebSocket messages and ping frames.
+The `coverage_gap` field identifies an omitted archive, an unavailable page,
+invalid proxy framing, or a TLS write after the browser read began.
+`first_unobserved` identifies a stage at the measured cutoff.
+Use the proxy and page timestamps within their respective clock domains.
 
 Use the same-link pressure control with a local traced server build receipt.
 The control drops addressed packets after raw arrival for one link while
