@@ -91,10 +91,10 @@ separate server; the installed Godot project needs neither Rust nor native WebRT
 Local browser ICE uses no STUN/TURN server and proves no public-network connectivity.
 
 ```sh
-curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-server/tar.gz/9c2fb8fa635a69241b8ccf38be651d561fef7434 -o "$TOOLS_DIR/server.tar.gz"
-echo "1c618785dd93e1a69f27687f1f8f75fbfb15e49f3a3a0f130aa3ee17af40a076  $TOOLS_DIR/server.tar.gz" | sha256sum -c -
+curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-server/tar.gz/3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1 -o "$TOOLS_DIR/server.tar.gz"
+echo "edb354df9f6578bcc6e49f1a560ae0fc875604a4694f10166fcc434ad541825f  $TOOLS_DIR/server.tar.gz" | sha256sum -c -
 tar -xzf "$TOOLS_DIR/server.tar.gz" -C "$TOOLS_DIR"
-SERVER_SOURCE="$TOOLS_DIR/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434"
+SERVER_SOURCE="$TOOLS_DIR/signal-fish-server-3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1"
 rustup toolchain install 1.94.0 --profile minimal
 cargo +1.94.0 build --manifest-path "$SERVER_SOURCE/Cargo.toml" --locked --no-default-features \
   --bin signal-fish-server --target-dir "$TOOLS_DIR/server-target"
@@ -469,7 +469,7 @@ Run the regression after the [source-bound server build](signalfish-relay.md#rep
 ```sh
 python3 scripts/reference/signalfish_webrtc_probe.py --online-example \
   --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-  --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+  --server-source .cache/reference/signal-fish-server-3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1 \
   --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
   --output .cache/reference/results/online-example
 ```
