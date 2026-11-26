@@ -203,11 +203,20 @@ func _receive(transport: Object, now_us: int, factory: Callable, result: Types.R
 			_incoming = transport.call("get_packet")
 			_incoming = _incoming.duplicate()
 			_consumed += 1
-			if transport.call("get_packet_error") != OK:
+			var packet_error: int = transport.call("get_packet_error")
+			var uuid: String = _membership.uuid_for_peer_id(_source)
+			if packet_error != OK:
+				if packet_error == ERR_UNAVAILABLE and _incoming.is_empty() and not uuid.is_empty() and uuid != _membership.local_uuid():
+					var source_present: bool = transport.call("has_peer", _source)
+					result.code = _gate()
+					if result.code != Code.OK:
+						return
+					# Godot repairs its cached receive cursor when the selected peer was removed.
+					if not source_present:
+						continue
 				_failure = Code.SDK_FAILURE
 				result.code = _failure
 				return
-			var uuid: String = _membership.uuid_for_peer_id(_source)
 			if uuid.is_empty() or uuid == _membership.local_uuid() or channel != 0 or mode != MultiplayerPeer.TRANSFER_MODE_UNRELIABLE \
 				or _incoming.is_empty() or _incoming.size() > _options.max_packet_bytes:
 				_rejected += 1

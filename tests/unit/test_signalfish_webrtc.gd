@@ -11,10 +11,14 @@ const V: String = M.V
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(["send", "atomic", "channel", "receive", "fences", "reentry", "plan_cycle", "plan_roles", "plan_repeat", "plan_detach",
-		"configuration", "activity"])
+		"configuration", "activity", "removed_receive_cursor"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
+	if name == "removed_receive_cursor":
+		_removed_receive_cursor(context)
+		context.finish()
+		return
 	var fixture: Dictionary = build(context)
 	match name:
 		"configuration":
@@ -228,6 +232,49 @@ func _activity(context: RefCounted, fixture: Dictionary) -> void:
 	context.equal(fixture.direct.idle(), true, "a drained output queue is idle again")
 
 
+func _removed_receive_cursor(context: RefCounted) -> void:
+	for control: String in ["removed", "live", "other_error", "lifetime"]:
+		var membership: M.M = M.new()._membership(context, U, PackedStringArray([U, V, M.W]))
+		var client: M.FakeClient = M.FakeClient.new()
+		var mesh: FakeMesh = FakeMesh.new()
+		var transport: CursorTransport = CursorTransport.new()
+		mesh.transport = transport
+		var adapter: A = A.new()
+		context.equal(adapter.attach(client, mesh, membership), OK, "attach actual adapter for " + control)
+		var plan: M.Plan = M.Plan.new()
+		plan.data.peers.append({"player_id": M.W, "initiate": true})
+		client.session_plan.emit(plan)
+		var options: W.Options = W.Options.new()
+		options.max_receives_per_poll = 1
+		var direct: W = W.new()
+		var delivered: Array[PackedByteArray] = []
+		var receive: Callable = func(uuid: String, bytes: PackedByteArray) -> int:
+			context.equal(uuid, M.W, "the next live peer owns the delivered bytes")
+			delivered.append(bytes)
+			return M.I.Code.OK
+		context.equal(direct.configure_packet_receiver(mesh, membership, adapter, receive, options), W.Code.OK, "configure " + control)
+		var source: int = membership.uuid_to_peer_id(V)
+		transport.removed_peer = 0 if control == "live" else source
+		if control == "lifetime":
+			transport.on_absent = func() -> void: client.room_left.emit()
+		transport.incoming.assign([
+			{"source": source, "channel": 0, "mode": 0, "bytes": PackedByteArray(), "error": ERR_BUG if control == "other_error" else ERR_UNAVAILABLE},
+			{"source": membership.uuid_to_peer_id(M.W), "channel": 0, "mode": 0, "bytes": PackedByteArray([41, 42])}
+		])
+		var first: W.Result = direct.poll(0)
+		var expected: int = {"removed": W.Code.OK, "live": W.Code.SDK_FAILURE, "other_error": W.Code.SDK_FAILURE, "lifetime": W.Code.WRONG_STATE}[control]
+		context.equal(first.code, expected, "classify the empty read for " + control)
+		context.equal(first.activity, 1, "the stale read consumes one work unit")
+		context.equal(delivered.is_empty(), true, "the receive limit leaves the live packet queued")
+		if control == "removed":
+			context.equal(direct.poll(1).received, 1, "the surviving sender still delivers after cursor repair")
+			context.equal(delivered, [PackedByteArray([41, 42])], "the survivor's exact bytes reach its receiver")
+		direct.detach()
+		adapter.detach()
+		client.free()
+		mesh.free()
+
+
 class FakeMesh:
 	extends M.FakeMesh
 	var transport: Transport = Transport.new()
@@ -326,3 +373,24 @@ class Transport:
 			return ERR_BUSY
 		sent.append(bytes.duplicate())
 		return OK
+
+
+class CursorTransport:
+	extends Transport
+	var removed_peer: int = 0
+	var last_error: int = OK
+	var on_absent: Callable
+
+	func has_peer(id: int) -> bool:
+		if id != removed_peer:
+			return true
+		if on_absent.is_valid():
+			on_absent.call()
+		return false
+
+	func get_packet() -> PackedByteArray:
+		last_error = incoming[0].get("error", OK)
+		return super.get_packet()
+
+	func get_packet_error() -> int:
+		return last_error
