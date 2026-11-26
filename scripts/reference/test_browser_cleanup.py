@@ -1350,7 +1350,7 @@ class Socket {
   static OPEN = 1;
   readyState = Socket.OPEN;
   bufferedAmount = 0;
-  addEventListener() {}
+  addEventListener(kind, callback) { this[kind] = callback; }
   send(bytes) {
     released.push(bytes.at(-1));
     releasedPackets.push(Array.from(bytes));
@@ -1373,6 +1373,18 @@ const relay = (kind, value) => {
   return bytes;
 };
 async function run() {
+  const otherRecipient = relay(2, 100);
+  otherRecipient.fill(3, 21, 37);
+  socket.message({ data: otherRecipient });
+  const addressed = otherRecipient.slice();
+  addressed.fill(1, 37, 53);
+  socket.message({ data: addressed });
+  assert.equal(wire.status().relay_trace.broadcasts, 2);
+  assert.equal(wire.status().relaySenders['03'.repeat(16)], 1);
+  assert.equal(wire.status().relayInputSenders['03'.repeat(16)], 1);
+  otherRecipient[73] = 0;
+  assert.throws(() => socket.message({ data: otherRecipient }), /native gameplay wire header/);
+  assert.equal(wire.status().relay_trace.broadcasts, 2);
   wire.arm();
   for (let i = 0; i < 33; i++) {
     const bytes = relay(2, i);
@@ -2072,6 +2084,83 @@ assert.equal(receipts[a.tag] ?? null, null, 'older attempts must be evicted');
 assert.equal(receipts[b.tag] ?? null, null, 'a reused slot must not return its old attempt');
 assert.equal(receipts[latest.tag]?.sentAt, latest.at);
 assert.equal(receipts[latest.tag + 1] ?? null, null, 'an unobserved attempt has no receipt');
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
+    def test_native_webkit_close_observations_survive_delayed_snapshot(self):
+        # Value: protects=independent exact close receipts; fails_when=stages collapse or a different route joins; seam=browser wire and controller
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire, recordCloseObservation, matchCloseObservations } = require(process.argv[1]);
+let now = 10;
+const observed = [new Map(), new Map()];
+class Connection {
+  signalingState = 'stable';
+  remoteDescription = { sdp: 'a=ice-ufrag:sender' };
+  get localDescription() {
+    if (this.signalingState === 'closed') throw new Error('Peer connection is closed');
+    return { sdp: 'a=ice-ufrag:closer' };
+  }
+  addEventListener() {}
+  createDataChannel() {
+    return { id: 3, send() {}, addEventListener(kind, callback) { this[kind + 'Event'] = callback; }, close() { now += 2; } };
+  }
+  close() { now += 2; this.signalingState = 'closed'; }
+}
+const prefix = 'close ';
+const window = {};
+runInNewContext(`(${instrumentNativeWire})(false, '', undefined, 'close ')`, {
+  window, WebSocket: class {}, RTCPeerConnection: Connection,
+  performance: { now: () => now }, console: { debug: text => recordCloseObservation(observed[0], text.slice(prefix.length), now + 500) },
+});
+const connection = new Connection();
+const channel = connection.createDataChannel('gameplay', {});
+channel.close();
+now = 30;
+connection.close();
+now = 40;
+channel.closeEvent();
+now = 45;
+channel.closeEvent();
+const before = [[{ index: 0, local: 'closer', remote: 'sender' }], [{ index: 17, local: 'sender', remote: 'closer' }]];
+const error = { index: 1, channel: 17, attempt: 279, received_ms: 600 };
+const report = {
+  partialSnapshots: [null, { sends: { 279: { channel: 17, attempt: 279, sentAt: 47199 } } }],
+  clocks: [{ offsetMin: 9900, offsetMax: 10100 }, { offsetMin: -5100, offsetMax: -4900 }],
+};
+const [receipt] = matchCloseObservations([error], before, observed, report);
+assert.equal(receipt.attempt, 279);
+assert.equal(receipt.sentAt, 47199);
+assert.equal(receipt.received_ms, 600);
+assert.deepEqual(receipt.observations.map(({ owner, kind, page_us, received_ms }) => [owner, kind, page_us, received_ms]), [
+  [0, 'channel_close_called', 10000, 512],
+  [0, 'channel_close_event', 40000, 540],
+  [0, 'connection_close_called', 30000, 532],
+]);
+assert.deepEqual(receipt.observations.map(({ minimumGapUs, maximumGapUs }) => [minimumGapUs, maximumGapUs]),
+  [[21999, 22399], [-8001, -7601], [1999, 2399]]);
+const [wrong] = matchCloseObservations([error], [[{ ...before[0][0], index: 2 }], before[1]], observed);
+assert.deepEqual(wrong.observations, []);
+const [ambiguous] = matchCloseObservations([error], [...before, before[0]], [...observed, new Map()]);
+assert.deepEqual(ambiguous.observations, []);
+assert.deepEqual(matchCloseObservations([{ ...error, attempt: null }], before, observed), []);
+const early = new Connection();
+early.remoteDescription = null;
+const pending = early.createDataChannel('pending', {});
+now = 50;
+pending.close();
+early.remoteDescription = connection.remoteDescription;
+pending.close();
+assert.deepEqual(observed[0].get('1:channel_close_called'), {
+  kind: 'channel_close_called', index: 1, local: 'closer', remote: null, page_us: 50000, received_ms: 552,
+});
+const newRoute = new Connection();
+newRoute.createDataChannel('restarted', {});
+assert.equal(window.fortressNativeWire.sctpStatus()[2].remote, 'sender');
+newRoute.remoteDescription = { sdp: 'a=ice-ufrag:replacement' };
+assert.equal(window.fortressNativeWire.sctpStatus()[2].remote, 'replacement');
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)

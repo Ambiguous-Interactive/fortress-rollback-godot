@@ -199,8 +199,11 @@ The control also verifies that an active owner's lock record and receipts
 survive. A helper that changes its source after compilation fails receipt
 binding.
 
-Harness-specific escaped-descendant adoption and interpreter provenance
-controls remain open, along with broader browser release and replay parity.
+At the download command boundary, a real forked child starts a new session and
+outlives its parent. The launcher must name and terminate that child and remove
+the stale success receipt. A separate control replaces a running disposable
+Python executable before publication and requires the interpreter digest check
+to reject the result. Broader browser release and replay parity remain separate.
 
 ## Tested representation decision
 

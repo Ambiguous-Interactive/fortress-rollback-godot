@@ -67,6 +67,14 @@ The receipt identifies each replacement by its exact signaling envelope and
 reciprocal ICE credentials. A local control withholds all replacement Offers
 for the second pair and reports which pair is still missing.
 
+WebKit receipts distinguish application channel close calls, channel close
+events and peer connection close calls. Each observation keeps its browser
+timestamp and controller receipt, even when the final page read times out.
+Tagged send diagnostics list the matching reciprocal route and the possible
+gap to each observed stage when the page clocks are bounded. Acceptance
+still requires the SCTP abort or the existing causal proof of completed
+connection close.
+
 To isolate a hosted browser failure on both Godot pins, select the room in the
 manual workflow dispatch.
 
@@ -89,6 +97,9 @@ The traced run builds the pinned server with receipt hooks on each Godot pin.
 The job artifact includes the build receipt and log, the browser log, and any
 published server scope and packet snapshot. Pair each traced run with a stock
 run at the same revision, browser profile, and room size to measure overhead.
+The browser receipt counts valid native room broadcasts separately from
+addressed packets. Validate the native header before filtering and decode
+sender identity only for the recipient's own traffic.
 
 Ordinary receipts include up to 128 records per directed link and stage.
 When a native expiry identifies links to diagnose, the browser and server
