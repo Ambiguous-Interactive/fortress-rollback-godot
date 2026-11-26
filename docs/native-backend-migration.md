@@ -108,6 +108,13 @@ Ordinary receipts include up to 128 records per directed link and stage.
 When a native expiry identifies links to diagnose, the browser and server
 publish only those links. Their input and quality histories expand to at most
 512 records per stage. Count and omitted fields still describe the full stream.
+The reporter pins the latest natively accepted input and quality report
+on each directed link. The expiry checkpoint publishes those original
+stamps and any earlier raw arrival and SDK observations. The failure
+receipt joins them to retained sender and server evidence and lists
+each missing stage. A later expiry can fall outside the upstream link
+selection. Its receipt identifies that scope, and its original browser
+observations remain available independently of the general relay trace.
 
 During the traced gameplay hold, the `relayHold` receipt covers both directions
 between the first two UUIDs in the sorted frozen roster. Each page publishes its
@@ -146,6 +153,13 @@ observation interval, queue samples, and cutoff remain available if the final
 renderer read times out. A missing observation can reflect sampling, eviction,
 or the end of observation. Identical repeated bytes can obscure per-packet
 latency. Native enqueue represents accepted input to the native socket queue.
+For the first two UUIDs in the sorted frozen roster, the second page also
+retains the first and latest distinct gameplay input at raw arrival, SDK
+delivery, and native admission, plus the corresponding direction's outgoing
+ACK observations. Each stage keeps exact bytes. Raw observations include the
+transport stamp when the traced server is enabled. Use that stamp and the
+payload digest to join the actual addressed write. An ACK describes the
+receiver's protocol frontier across all prior inputs on that link.
 
 The `releaseTiming` receipt follows each prepared request by its unique path.
 The controller records request dispatch, receipt, header preparation,
