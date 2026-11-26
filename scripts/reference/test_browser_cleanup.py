@@ -2432,7 +2432,8 @@ let now = 25;
   assert.deepEqual(crashReport.snapshotErrors, [{index:1, reason:'Error: Page crashed'}]);
   assert.deepEqual(crashReport.partialSnapshots, [{received_ms:26, links:[reciprocal], sends:{}}, null]);
   assert.deepEqual(crashReport.clockSamples, [{before:[], after:[{offsetMin:9459, offsetMax:10541}]}, {before:[], after:[]}]);
-  assert.deepEqual(crashReport.proofs, []);
+  assert.deepEqual(crashReport.proofs, [{...warning[0], sentAt:null, closer:null, before, sender:null,
+    counterparts:[{...reciprocal, owner:0}], minimumGapUs:null, maximumGapUs:null, proof:null}]);
 
   now = 25;
   let senderReads = 0;
@@ -2452,7 +2453,68 @@ let now = 25;
     /WebKit close evidence deadline/);
   assert.deepEqual(lateReport.partialSnapshots, [null, null]);
   assert.deepEqual(lateReport.clockSamples.map(page => page.after), [[], []]);
-  assert.deepEqual(lateReport.proofs, []);
+  assert.deepEqual(lateReport.proofs, [{...warning[0], sentAt:null, closer:null, before, sender:null,
+    counterparts:[], minimumGapUs:null, maximumGapUs:null, proof:null}]);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
+    def test_native_webkit_partial_snapshots_refine_the_exact_close_gap(self):
+        # Value: protects=partial close receipt; fails_when=a crashed bystander erases the sender, counterpart or clock bounds; seam=room verifier
+        script = r"""
+const assert = require('node:assert/strict');
+const { waitForCloseProofs } = require(process.argv[1]);
+const before = {index:17, local:'sender', remote:'leaver', closeAborts:0, closed:false};
+const counterpart = {index:18, local:'leaver', remote:'sender', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
+const initial = [counterpart, before, null].map(link => ({ wire:{ sctp:link ? [link] : [] } }));
+const warning = [{index:1, channel:17, attempt:3}];
+const clocks = [{offsetMin:9500, offsetMax:10500}, {offsetMin:-5500, offsetMax:-4500}, {offsetMin:0, offsetMax:1000}];
+const crashed = {evaluate: async () => { throw Error('Page crashed'); }};
+
+(async () => {
+  for (const [channel, sentAt, counterpartRoute, expectedGap] of [
+    [17, 47081, counterpart, 1999],
+    [17, 47082, counterpart, 2000],
+    [19, 47082, counterpart, null],
+    [17, 47082, {...counterpart, remote:'different'}, null],
+  ]) {
+    const report = {};
+    const leaver = {evaluate: async () => ({links:[counterpartRoute], sampledAt:50000, sends:{}})};
+    const sender = {evaluate: async () => ({links:[before], sampledAt:65000, sends:{3:{channel, attempt:3, sentAt}}})};
+    await assert.rejects(waitForCloseProofs([leaver, sender, crashed], initial, warning, report, {clocks, clock:() => 60}),
+      error => error instanceof AggregateError && error.errors[0].message.includes('peer 2') && error.errors[0].cause.message === 'Page crashed');
+    assert.deepEqual(report.clocks, [{offsetMin:9959, offsetMax:10041}, {offsetMin:-5041, offsetMax:-4959}, clocks[2]]);
+    assert.deepEqual(report.clockSamples.map(page => page.after.length), [1, 1, 0]);
+    assert.deepEqual(report.partialSnapshots.map(snapshot => snapshot?.links ?? null), [[counterpartRoute], [before], null]);
+    assert.equal(report.proofs.length, 1);
+    const [receipt] = report.proofs;
+    assert.equal(receipt.sentAt, channel === 17 ? sentAt : null);
+    assert.deepEqual(receipt.sender, before);
+    assert.deepEqual(receipt.counterparts, counterpartRoute.remote === 'sender' ? [{...counterpart, owner:0}] : []);
+    assert.equal(receipt.minimumGapUs, expectedGap);
+    assert.equal(receipt.maximumGapUs, expectedGap === null ? null : expectedGap + 164);
+    assert.equal(receipt.proof, null);
+  }
+
+  let now = 60;
+  let round = 0;
+  const report = {};
+  const send = {channel:17, attempt:3, sentAt:47081};
+  const provedSend = {channel:17, attempt:4, sentAt:47082};
+  const leaver = {evaluate: async () => {
+    if (++round === 2) throw Error('Page crashed');
+    return {links:[counterpart], sampledAt:50000, sends:{}};
+  }};
+  const sender = {evaluate: async () => ({links:[before], sampledAt:now * 1000 + 5000, sends:round === 1 ? {3:send, 4:provedSend} : {}})};
+  await assert.rejects(waitForCloseProofs([leaver, sender], initial.slice(0, 2), [...warning, {...warning[0], attempt:4}], report, {
+    clocks:clocks.slice(0, 2), clock:() => now, delay:async ms => { now += ms; },
+  }), /WebKit close snapshots failed/);
+  assert.deepEqual(report.partialSnapshots.map(snapshot => [snapshot.received_ms, snapshot.sends]), [[60, {}], [85, {}]]);
+  assert.equal(report.proofs[0].sentAt, send.sentAt);
+  assert.equal(report.proofs[0].minimumGapUs, 1999);
+  assert.deepEqual(report.proofs.map(receipt => receipt.proof), [null, null]);
+  assert.deepEqual(report.lastCompleteProofs.map(receipt => [receipt.attempt, receipt.minimumGapUs, receipt.proof]), [[4, 2000, 'clock-order']]);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]

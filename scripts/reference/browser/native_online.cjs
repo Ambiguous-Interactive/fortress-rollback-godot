@@ -1207,9 +1207,10 @@ async function calibrateDepartureClocks(pages, report, clock = () => performance
 async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks = report.clocks, clock = () => performance.now(), delay = pause } = {}) {
   if (!errors.length) return undefined;
   report.proofs = [];
-  report.clocks = clocks;
+  report.clocks = clocks?.slice();
   if (clocks) report.clockSamples ??= pages.map(() => ({ before: [], after: [] }));
   const latestSnapshots = pages.map(() => null);
+  const observedSends = pages.map(() => Object.create(null));
   report.partialSnapshots = latestSnapshots;
   let rounds = 0;
   const deadline = clock() + DIAGNOSTIC_MS;
@@ -1233,20 +1234,27 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
       if (entry.status !== 'fulfilled' || entry.value.receivedAt >= deadline) return;
       const { receivedAt, links, sends, bound } = entry.value;
       latestSnapshots[index] = { received_ms: receivedAt, links, sends };
-      if (sampleClock) report.clockSamples[index].after.push(bound);
+      Object.assign(observedSends[index], sends);
+      if (sampleClock) {
+        report.clockSamples[index].after.push(bound);
+        report.clocks[index] = intersectClock(report.clocks[index], bound);
+      }
+    });
+    const complete = !failed.length && clock() < deadline;
+    if (!complete) report.lastCompleteProofs = report.proofs.filter(evidence => evidence.proof);
+    const links = latestSnapshots.map(snapshot => snapshot?.links ?? []);
+    report.proofs = roundErrors.map(error => {
+      const sends = complete ? latestSnapshots[error.index].sends : observedSends[error.index];
+      const evidence = closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks, sends?.[error.attempt]);
+      if (!complete) evidence.proof = null;
+      return evidence;
     });
     report.snapshotErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
     if (failed.length) {
       throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} close snapshot failed`, { cause: reason })),
         'WebKit close snapshots failed');
     }
-    if (clock() >= deadline) break;
-    const links = snapshots.map(entry => entry.value.links);
-    if (sampleClock) {
-      report.clocks = report.clocks.map((bound, index) => intersectClock(bound, snapshots[index].value.bound));
-    }
-    report.proofs = roundErrors.map(error => closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks,
-      snapshots[error.index].value.sends?.[error.attempt]));
+    if (!complete) break;
     for (const proof of report.proofs) assert.ok(proof.before, `WebKit send failure for peer ${proof.index} lacked a sending channel`);
     const remaining = deadline - clock();
     if (remaining <= 0) break;
@@ -2057,6 +2065,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       phase, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks, departureCommands, roomIdentities, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
+      lastCompleteCloseProofs: [...(physicalCloseReport.lastCompleteProofs ?? []), ...(closeReport.lastCompleteProofs ?? [])],
       departureClockSamples: closeReport.clockSamples, departureClockErrors: closeReport.calibrationErrors,
       physicalClosePartialSnapshots: physicalCloseReport.partialSnapshots,
       closePartialSnapshots: closeReport.partialSnapshots, physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
