@@ -156,11 +156,16 @@ latency. Native enqueue represents accepted input to the native socket queue.
 For the first two UUIDs in the sorted frozen roster, the second page also
 retains the first and latest distinct gameplay input at raw arrival, SDK
 delivery, and native admission, plus the corresponding direction's outgoing
-ACK observations. Each stage keeps exact bytes. Joining a raw observation to
+ACK observations. The first page samples that same reverse direction in
+`ack_link` at raw arrival, SDK delivery, and native inbox enqueue. This
+separates missing ACK receipt from ACKs that reached the native inbox while
+confirmation remained stalled. Each stage keeps exact bytes. Joining a raw observation to
 the addressed write requires both a matching decoded transport stamp and the
 payload digest. When delivery decoding cannot match the packet, the collector
 keeps its browser bytes with `epoch` and `seq` set to `null`. An ACK describes
-the receiver's protocol frontier across all prior inputs on that link.
+the receiver's protocol frontier across all prior inputs on that link. Inbox
+acceptance alone does not establish application to the sender's native
+confirmation state.
 
 The `releaseTiming` receipt follows each prepared request by its unique path.
 The controller records request dispatch, receipt, header preparation,

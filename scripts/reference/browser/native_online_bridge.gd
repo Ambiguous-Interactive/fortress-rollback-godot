@@ -71,6 +71,7 @@ class ObservedMatch:
 	var warmup_session: PackedByteArray
 	var warmup_recipient: PackedByteArray
 	var warmup_input_sender: String
+	var warmup_ack_sender: String
 	var last_native_acceptances: Dictionary = {}
 
 	func observe_sdk(sender: String, encoding: int, bytes: PackedByteArray) -> void:
@@ -78,7 +79,8 @@ class ObservedMatch:
 			return
 		var quality: bool = bytes.size() == RelayEnvelope.HEADER_BYTES + 46 and (bytes[RelayEnvelope.HEADER_BYTES + 30] & 3) == 0
 		var watched_input: bool = sender == warmup_input_sender and bytes.size() > RelayEnvelope.HEADER_BYTES + 108
-		if not (watched_input or quality) or bytes.slice(37, 53) != warmup_recipient:
+		var watched_ack: bool = sender == warmup_ack_sender and bytes.size() == RelayEnvelope.HEADER_BYTES + 32
+		if not (watched_input or watched_ack or quality) or bytes.slice(37, 53) != warmup_recipient:
 			return
 		var envelope: RelayEnvelope.Decoded = RelayEnvelope.decode(bytes, NATIVE_PACKET_BYTES)
 		if envelope.code == RelayEnvelope.R.Code.OK and envelope.sender == sender and envelope.session == warmup_session:
@@ -100,10 +102,11 @@ class ObservedMatch:
 			return
 		var quality: bool = bytes.size() == 46 and (bytes[30] & 3) == 0
 		var watched_input: bool = sender == warmup_input_sender and bytes.size() > 108 and bytes.size() <= NATIVE_PACKET_BYTES
-		if not (watched_input or quality) or bytes.decode_u32(16) != 0x000252f5 or bytes.slice(0, 16) != warmup_session:
+		var watched_ack: bool = sender == warmup_ack_sender and bytes.size() == 32
+		if not (watched_input or watched_ack or quality) or bytes.decode_u32(16) != 0x000252f5 or bytes.slice(0, 16) != warmup_session:
 			return
 		var kind: int = bytes.decode_u32(24)
-		if watched_input and kind == 2:
+		if (watched_input and kind == 2) or (watched_ack and kind == 3):
 			warmup_wire.observeWarmupInput(stage, sender, bytes.hex_encode(), code)
 		elif quality and kind == 4:
 			warmup_wire.recordWarmup(stage, sender, bytes.hex_encode(), code)
@@ -456,6 +459,8 @@ func _command(value: Dictionary) -> void:
 				warmup_match.warmup_recipient = uuid.replace("-", "").hex_decode()
 				if roster.size() == 8 and uuid == roster[1]:
 					warmup_match.warmup_input_sender = roster[0]
+				elif roster.size() == 8 and uuid == roster[0]:
+					warmup_match.warmup_ack_sender = roster[1]
 			JavaScriptBridge.eval("window.fortressNativeWire.bind(...%s)" % JSON.stringify([session_id, uuid, roster]))
 			if lobby.relay_trace != null:
 				JavaScriptBridge.eval("window.fortressNativePostRelease.bindDeparture(...%s)" % JSON.stringify([uuid, roster]))

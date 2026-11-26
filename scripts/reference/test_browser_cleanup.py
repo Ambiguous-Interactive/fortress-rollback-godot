@@ -1138,7 +1138,7 @@ assert.equal(after.relaySenders[remote], wireBeforeCutoff.relaySenders[remote] +
         subprocess.run(command, check=True, timeout=10)
 
     def test_native_warmup_keeps_exact_input_stages_without_a_final_read(self):
-        # Value: protects=bounded exact input evidence; fails_when=unavailable stages are inferred or physical input is overwritten; seam=warmup console
+        # Value: protects=input and reverse ACK evidence; fails_when=unavailable stages are inferred or exact bytes are overwritten; seam=warmup console
         script = r"""
 const assert = require('node:assert/strict');
 const { runInNewContext } = require('node:vm');
@@ -1182,17 +1182,21 @@ class Socket {
   send() { if (this.reject) throw new Error('socket send failed'); }
 }
 let time = 1;
-const window = {}, tasks = [];
 const barrier = createWarmupBarrier(8, () => time);
-const realm = {
-  window, performance: {now: () => time}, console: {debug: value => barrier.record(1, value)},
-  setTimeout: callback => tasks.push(callback),
-  Uint8Array, ArrayBuffer, DataView, WebSocket: Socket, RTCPeerConnection: class {},
-};
-runInNewContext(`(${instrumentNativeWire})(false, ${JSON.stringify(WARMUP_CHECKPOINT)}, (${createRelayWireTrace})())`, realm);
-const socket = new window.WebSocket();
-const wire = window.fortressNativeWire;
-wire.bind(room, receiver, roster);
+function makeWire(local, index) {
+  const window = {}, tasks = [];
+  const realm = {
+    window, performance: {now: () => time}, console: {debug: value => barrier.record(index, value)},
+    setTimeout: callback => tasks.push(callback),
+    Uint8Array, ArrayBuffer, DataView, WebSocket: Socket, RTCPeerConnection: class {},
+  };
+  runInNewContext(`(${instrumentNativeWire})(false, ${JSON.stringify(WARMUP_CHECKPOINT)}, (${createRelayWireTrace})())`, realm);
+  const socket = new window.WebSocket(), wire = window.fortressNativeWire;
+  wire.bind(room, local, roster);
+  return { socket, wire, tasks };
+}
+const { socket, wire, tasks } = makeWire(receiver, 1);
+const reverse = makeWire(sender, 0);
 const input9 = payload(2, 9, 8);
 socket.message({data: delivery(relayFrame(input9, sender, receiver), sender, 11)});
 tasks.shift()?.();
@@ -1242,7 +1246,42 @@ assert.throws(() => socket.send(relayFrame(ack, receiver, sender)), /socket send
 assert.equal(wire.warmupStatus().input_link.ack.count, 0);
 socket.reject = false;
 socket.send(relayFrame(ack, receiver, sender));
+reverse.socket.message({data: delivery(relayFrame(ack, receiver, sender), receiver, 21)});
+reverse.tasks.shift()?.();
+const earlyAck = barrier.checkpoints[0]?.ack_link;
+assert.ok(earlyAck, 'the watched reverse ACK must be observed on its addressed receiver');
+assert.equal(earlyAck.sender, receiver);
+assert.equal(earlyAck.recipient, sender);
+assert.equal(earlyAck.raw.first.payload, ack.toString('hex'));
+assert.equal(earlyAck.raw.first.start_frame, null);
+assert.equal(earlyAck.raw.first.ack_frame, 10);
+assert.equal(earlyAck.raw.first.seq, '21');
+assert.equal(earlyAck.sdk.first, null);
+assert.equal(earlyAck.native.first, null);
+const ack11 = payload(3, null, 11);
+reverse.socket.message({data: relayFrame(ack11, receiver, sender)});
+reverse.socket.message({data: relayFrame(ack11, other, sender)});
+reverse.socket.message({data: relayFrame(ack11, receiver, other)});
+reverse.socket.message({data: relayFrame(input9, receiver, sender)});
+reverse.wire.observeWarmupInput('sdk', receiver, ack.toString('hex'), -1);
+reverse.wire.observeWarmupInput('native', receiver, ack.toString('hex'), 6);
+reverse.wire.observeWarmupInput('native', receiver, ack.toString('hex'), 0);
+reverse.wire.observeWarmupInput('sdk', other, ack11.toString('hex'), -1);
+reverse.wire.observeWarmupInput('sdk', receiver, input9.toString('hex'), -1);
 time = 1050;
+reverse.wire.finishWarmup('playing', 16, 12);
+const ackSample = barrier.checkpoints[0].ack_link;
+assert.equal(ackSample.raw.count, 2);
+assert.equal(ackSample.raw.recent.ack_frame, 11);
+assert.equal(ackSample.raw.recent.seq, null);
+assert.equal(ackSample.sdk.count, 1);
+assert.equal(ackSample.native.count, 2);
+assert.equal(ackSample.native.first.code, 6);
+assert.equal(ackSample.native.recent.code, 0);
+reverse.socket.message({data: relayFrame(ack11, receiver, sender)});
+reverse.wire.observeWarmupInput('native', receiver, ack11.toString('hex'), 0);
+assert.equal(reverse.wire.warmupStatus().ack_link.raw.count, 2);
+assert.equal(reverse.wire.warmupStatus().ack_link.native.count, 2);
 wire.finishWarmup('playing', 20, 12);
 assert.deepEqual(barrier.errors, Array(8).fill(null));
 const sample = barrier.checkpoints[1].input_link;
@@ -1265,6 +1304,8 @@ socket.send(relayFrame(ack, receiver, sender));
 assert.equal(wire.warmupStatus().input_link.native.count, 2);
 assert.equal(wire.warmupStatus().input_link.raw.count, 5);
 assert.equal(wire.warmupStatus().input_link.ack.count, 1);
+const wrongAck = JSON.parse(JSON.stringify(barrier.checkpoints[0].ack_link));
+wrongAck.native.first.start_frame = 0;
 const wrong = JSON.parse(JSON.stringify(barrier.checkpoints[1]));
 wrong.input_link.sender = other;
 const brokenStream = JSON.parse(JSON.stringify(barrier.checkpoints[1]));
@@ -1278,7 +1319,7 @@ assert.equal(barrier.checkpoints[2].input_link, undefined);
   await gate.wait(async () => {
     for (const [index, recipient] of roster.entries()) {
       const page = { ...wrong, recipient, links: roster.filter(sender => sender !== recipient).map(sender => ({sender})),
-        input_link: index === 1 ? wrong.input_link : undefined };
+        input_link: index === 1 ? wrong.input_link : undefined, ack_link: index === 0 ? wrongAck : undefined };
       gate.record(index, WARMUP_CHECKPOINT + JSON.stringify(page));
     }
   }, 50);
@@ -1286,6 +1327,8 @@ assert.equal(barrier.checkpoints[2].input_link, undefined);
   assert.match(gate.inputErrors[1], /invalid warmup input link/);
   assert.equal(gate.errors[1], null);
   assert.equal(gate.checkpoints[1].input_link, undefined);
+  assert.match(gate.ackErrors[0], /invalid warmup ACK link/);
+  assert.equal(gate.checkpoints[0].ack_link, undefined);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs'),
