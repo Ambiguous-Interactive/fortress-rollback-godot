@@ -398,21 +398,20 @@ own initial state; see [replays](integration.md#record-and-replay-a-match).
 ## Leave and restart
 
 **Leave / new room** detaches the fallback coordinator, direct and relay
-adapters, membership adapter and SDK objects. To restart, both players leave;
-the creator creates a fresh room and shares its new code. Join that fresh room,
-ready again and start again. The scene does not restart inside the old room.
-In a native WebRTC match, pressing Leave stops gameplay immediately. The client
-uses SignalFish to ask the other players to stop sending before it closes the
-WebRTC connections. It waits up to two seconds for their acknowledgments.
-After SignalFish removes the departing player, the other clients keep their
-signaling sockets and remaining WebRTC connections until their own Leave.
+adapters, membership adapter and SDK objects. In a native WebRTC match, Leave
+stops gameplay immediately. The client uses SignalFish to ask other players to
+stop sending and waits up to two seconds for their acknowledgments before
+closing the local connections. Once Leave completes, join or create a fresh
+room and ready again with the new room code.
 
 A connection failure, membership change, reconnect or terminal rollback error
-stops the old game, detaches its transport queues and WebRTC mesh, and closes its
-SignalFish connection. A failure during an active send finishes queue cleanup
-after the send unwinds. Failed ticks service the SDK close handshake without
-advancing gameplay. The first failure message remains visible until Leave;
-then establish a fresh room. Automatic SDK reconnect is disabled.
+stops the old game and clears its gameplay queues. When SignalFish removes a
+native mesh player, the survivors keep their signaling sockets and remaining
+WebRTC connections until their own Leave. Other failures detach the mesh and
+close the SignalFish connection. A failure during an active send finishes
+queue cleanup after the send unwinds. Failed ticks service signaling without
+advancing gameplay. The first failure message remains visible until Leave.
+Automatic SDK reconnect is disabled.
 Rejoining a server room cannot recover rollback
 history or authorize a new session over old packet queues.
 
