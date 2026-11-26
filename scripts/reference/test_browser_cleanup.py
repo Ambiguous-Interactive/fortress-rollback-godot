@@ -536,6 +536,23 @@ const afterRead = structuredClone(expiry);
 afterRead[0].frontier.packets[0].stages.raw = null;
 assert.deepEqual(relayExpiryRows(afterRead, joined, [source + '/' + local])[0].missing, ['raw'], 'later page data cannot fill a missing pre-acceptance stage');
 assert.equal(trace.expiryFrontier(other).packets.find(packet => packet.kind === 2), undefined);
+const nativeOnly = bytes(other, 2);
+trace.recordEngine('native', other, nativeOnly.subarray(57).toString('hex'), 1, '530', 0);
+const frontier = trace.expiryFrontier(other);
+const nativeOnlyPin = frontier.packets.find(packet => packet.kind === 2);
+assert.equal(nativeOnlyPin.stages.raw, undefined);
+assert.equal(nativeOnlyPin.stages.sdk, undefined);
+const nativeOnlyReceipt = {};
+const original = JSON.parse(consoleLines[0].slice(prefix.length));
+postReleaseCheckpoint(nativeOnlyReceipt, prefix + JSON.stringify({
+  ...original, frontier, uuid: format(other), endpoint: frozen.indexOf(format(other)) + 1, page_ms: performance.now(),
+}), {controller_ms: 101, controller_order: 3}, frozen, format(local));
+assert.equal(nativeOnlyReceipt.checkpoint_error, undefined);
+const nativeOnlyInput = nativeOnlyReceipt.native_expiry.frontier.packets.find(packet => packet.kind === 2);
+assert.equal(nativeOnlyInput.seq, '530');
+assert.ok(nativeOnlyInput.stages.native.ordinal > 0);
+assert.equal(nativeOnlyInput.stages.sdk, null);
+assert.equal(nativeOnlyInput.stages.raw, null);
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs'),
                         str(ROOT / 'scripts/reference/browser/native_online.cjs'), str(ROOT / 'scripts/reference/browser/native_relay_control.cjs')],
@@ -1515,9 +1532,14 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
         script = r"""
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { captureAndReleaseInput, createReleaseSignal, recordReleaseTiming } = require(process.argv[1]);
+const { captureAndReleaseInput, createReleaseSignal, recordReleaseTiming, releaseDeliveryTiming } = require(process.argv[1]);
 const signal = createReleaseSignal(2);
-const server = http.createServer((req, res) => { if (!signal.handle(req, res)) res.writeHead(404).end(); });
+let redirectsFollowed = 0;
+const server = http.createServer((req, res) => {
+  if (req.url === '/redirect') res.writeHead(302, { Location: '/unexpected' }).end();
+  else if (req.url === '/unexpected') { redirectsFollowed++; res.writeHead(204).end(); }
+  else if (!signal.handle(req, res)) res.writeHead(404).end();
+});
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = 'http://127.0.0.1:' + server.address().port;
@@ -1564,6 +1586,19 @@ async function run() {
   assert.equal(releases, 2);
   assert.equal((await fetch(path(0))).status, 409);
   assert.throws(() => signal.release(performance.now() + 500), /relay release requests unavailable/);
+  const redirect = { path: origin + '/redirect', request_dispatched_ms: 1, request_received_ms: 3,
+    resource: { fetch_start_ms: 2, response_end_ms: 4, response_status: 302, controller_ms: 10 } };
+  assert.ok(releaseDeliveryTiming(redirect).offset_ms, 'a resource timing entry alone can otherwise supply an offset');
+  console.debug = text => {
+    assert.ok(text.startsWith('timing '));
+    recordReleaseTiming(redirect, text.slice('timing '.length), 11);
+  };
+  await assert.rejects(captureAndReleaseInput(page, 0, redirect.path, 'timing '), /fetch failed/);
+  assert.equal(redirectsFollowed, 0);
+  assert.equal(redirect.fetch_failed, true);
+  assert.equal(redirect.response_mismatch, undefined);
+  assert.equal(releaseDeliveryTiming(redirect).offset_ms, null);
+  assert.equal(releases, 2);
 }
 const deadline = setTimeout(() => { throw new Error('relay release signal test did not settle'); }, 3000);
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {

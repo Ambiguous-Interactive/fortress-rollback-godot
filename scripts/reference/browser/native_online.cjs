@@ -1596,9 +1596,13 @@ function createReleaseSignal(players, delayMs = 0) {
 
 function recordReleaseTiming(receipt, text, controller_ms) {
   try {
-    const { path, response_mismatch, requested_ms, fetch_resolved_ms, continued_ms, status, fetch_start_ms, request_start_ms = null,
+    const { path, fetch_failed, response_mismatch, requested_ms, fetch_resolved_ms, continued_ms, status, fetch_start_ms, request_start_ms = null,
       response_start_ms, response_end_ms, response_status } = JSON.parse(text);
     if (path !== receipt.path) return false;
+    if (fetch_failed === true) {
+      receipt.fetch_failed = true;
+      return true;
+    }
     if (response_mismatch === true) {
       receipt.response_mismatch = true;
       return true;
@@ -1624,9 +1628,9 @@ function recordReleaseTiming(receipt, text, controller_ms) {
 }
 
 function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, first_write_ms, handoff_ms, finished_ms, resource, continuation,
-  response_mismatch }, holdCap) {
+  fetch_failed, response_mismatch }, holdCap) {
   const timing = { offset_ms: null, write_to_response_end_ms: null, handoff_to_response_end_ms: null, hold_cap_to_response_end_ms: null };
-  if (response_mismatch) return timing;
+  if (fetch_failed || response_mismatch) return timing;
   const { fetch_start_ms, request_start_ms, response_end_ms, response_status, controller_ms } = resource ?? {};
   const delivered = (response_status ?? continuation?.status) === 204 && (!continuation || continuation.status === 204);
   if (delivered && Number.isFinite(response_end_ms) && Number.isFinite(holdCap?.page_ms))
@@ -1691,7 +1695,13 @@ function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = n
         observer.observe({ type: 'resource' });
       }
       const requested_ms = performance.now();
-      const signal = await fetch(url, { cache: 'no-store', redirect: 'error' });
+      let signal;
+      try {
+        signal = await fetch(url, { cache: 'no-store', redirect: 'error' });
+      } catch (error) {
+        if (timingPrefix) publish({ fetch_failed: true });
+        throw error;
+      }
       const fetchResolved = performance.now();
       if (signal.url !== url || signal.redirected) {
         if (timingPrefix) publish({ response_mismatch: true });
