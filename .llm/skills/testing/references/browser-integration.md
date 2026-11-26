@@ -206,10 +206,10 @@ The pinned Chromium and WebKit controls admitted only six requests in one contex
 Report cumulative held, pending and released packets at the cap. A cap can
 occur during a partial drain. Retain these checkpoints if the evaluation
 never returns.
-Emit the history request and publication separately from controller receipt.
+Separate the history request, page publication and controller receipt. Keep each timely history when another page fails.
 Retain each page's later engine-turn baseline and advancement dispatch and
-receipt under the same deadline. Keep responsive pages' receipts when one
-page read fails. Earlier correction progress cannot prove a later turn.
+receipt under the same deadline. Earlier correction progress cannot prove a later turn.
+For native mesh departure, keep servicing the sockets and fence later SDK callbacks. Read the roster and survivor sockets before explicit Leave.
 Sample a corrected frontier at the end of the physics turn that crosses it.
 A rendered snapshot can skip intervening physics turns. If late controller
 input raises the target, backfill from bounded page-local observations and

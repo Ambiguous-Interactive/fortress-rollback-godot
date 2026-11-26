@@ -2514,7 +2514,7 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
     def test_native_engine_turn_reports_the_actual_baseline_and_later_frame(self):
-        # Value: protects=engine turn evidence; fails_when=earlier progress replaces the baseline or final reads own the trace; seam=browser entrypoint
+        # Value: protects=engine turns and published history; fails_when=earlier progress replaces the baseline or final reads erase receipts; seam=browser entrypoint
         script = r"""
 const assert = require('node:assert/strict');
 const { AsyncLocalStorage } = require('node:async_hooks');
@@ -2523,6 +2523,7 @@ const entrypoint = process.argv[1];
 const control = process.argv[2];
 const rejecting = control.startsWith('rejection');
 const stuck = control === 'same frame' || control === 'rejection and timeout';
+const historyControl = control.startsWith('history ');
 const realm = new AsyncLocalStorage();
 const windows = [];
 const roster = [1, 2].map(value => '00000000-0000-0000-0000-00000000000' + value);
@@ -2565,16 +2566,38 @@ global.requestAnimationFrame = callback => {
 function makePage() {
   const index = windows.length;
   const state = { state: 'lobby', room: 'test', command_code: 0, ready_enabled: true, start_enabled: true,
-    frame: 18, confirmed: 0, turns: 20, stalls: 0, prediction: 12, restores: 2, history_limit: 128, uuid: roster[index], frozen_roster: roster };
+    frame: 18, confirmed: 0, turns: 20, stalls: 0, prediction: 12, restores: 2, history_limit: 128,
+    uuid: roster[index], frozen_roster: roster, slot: index, session_id: '01'.repeat(16), room_id: 'test' };
   const events = {};
   let lateBaseline;
+  let publishHistory;
   const hold = () => ({ at_ms: performance.now(), held: { mesh: 0, relay: 1 }, bytes: 1, queued: 1, released: 0 });
   function mark(kind, fields = {}) {
     const { state: status, frame, confirmed, turns, restores } = state;
     const sample = { kind, page_ms: performance.now(), state: status, frame, confirmed, turns, restores, ...fields };
     events.console({ text: () => 'fortress native post-release ' + JSON.stringify(sample) });
   }
+  function expire() {
+    mark('native_expiry', { endpoint: 2, uuid: roster[1],
+      expiry: { observed_us: 3000000, sdk_queued: 0, sdk_peak: 51, last_accepted: null } });
+  }
   const pageWindow = { index, fortressNative: state, fortressNativeReady: true, publishTiming: text => events.console({ text: () => text }),
+    set fortressNativeCapture({ id, frames }) {
+      if ((index === 1 && control === 'history missing') || (index === 0 && control === 'history rejected first')) return;
+      const rows = {}, snapshots = {};
+      for (let frame = 0; frame < frames; frame++) {
+        rows[frame] = frame >= 12 && frame % 2 === 0 ? [0, 0] : [1, 2];
+        snapshots[frame + 1] = '01';
+      }
+      if (index === 1 && control === 'history divergent') snapshots[frames] = 'ff';
+      const publish = () => {
+        mark('history_published', { frames });
+        publishHistory({ text: () => 'fortress native history ' + JSON.stringify({ id, frames, rows, snapshots }) });
+      };
+      if (index === 1 && ['history staggered', 'history rejected first'].includes(control)) setImmediate(publish);
+      else publish();
+      if (control === 'history staggered' && index === 0) expire();
+    },
     fortressNativePostRelease: { mark(kind, frames, progress) { mark(kind, { frames, ...progress }); }, arm() {}, setTarget() {} },
     fortressNativeWire: {
       arm() { state.stalls++; return hold(); },
@@ -2601,7 +2624,12 @@ function makePage() {
     on(event, handler) { events[event] = handler; },
     async addInitScript() {}, async goto() {}, keyboard: { async down() {} },
     async evaluate(operation, argument) {
+      if (historyControl && operation.toString().includes('wire: window.fortressNativeWire.status()')) {
+        if (index === 0 && control !== 'history staggered') expire();
+        throw new Error('fixture post-history expiry');
+      }
       if (operation.toString().includes('warmupStatus()')) {
+        if (control === 'history rejected first') throw new Error('fixture diagnostic RPC failed');
         lateBaseline?.(state.frame);
         return unavailable();
       }
@@ -2617,7 +2645,16 @@ function makePage() {
       if (!ready) return unavailable();
       return { async dispose() {} };
     },
-    async waitForEvent() { throw Error('fixture stops after the engine turn'); },
+    async waitForEvent(event, options) {
+      if (!historyControl) throw Error('fixture stops after the engine turn');
+      assert.equal(event, 'console');
+      if (index === 0 && control === 'history rejected first') throw new Error('fixture capture RPC failed');
+      if (index === 1 && control === 'history missing') return unavailable();
+      return new Promise(resolve => { publishHistory = message => {
+        assert.equal(options.predicate(message), true);
+        resolve();
+      }; });
+    },
   };
 }
 require('node:module')._load = function (name, ...args) {
@@ -2640,21 +2677,57 @@ process.argv = [process.execPath, entrypoint, '.', 'ws://127.0.0.1/v3/ws', 'rela
 runMain();
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
-        for control in ('baseline timeout', 'same frame', 'higher frame', 'rejection', 'rejection and timeout'):
+        for control in ('baseline timeout', 'same frame', 'higher frame', 'rejection', 'rejection and timeout',
+                        'history complete', 'history missing', 'history divergent', 'history staggered', 'history rejected first'):
             with self.subTest(control=control):
                 run = subprocess.run([*command, control], capture_output=True, encoding='utf-8', timeout=10)
                 self.assertEqual(run.returncode, 1, run.stderr)
                 self.assertEqual(run.stdout, '')
                 report_line, _, failure = run.stderr.partition('\n')
                 report = json.loads(report_line)
-                expected_phase = 'confirmed history capture' if control == 'higher frame' else 'post-confirmation engine turn'
+                if control in ('history complete', 'history divergent', 'history staggered'):
+                    expected_phase = 'post-capture status'
+                elif control in ('higher frame', 'history missing', 'history rejected first'):
+                    expected_phase = 'confirmed history capture'
+                else:
+                    expected_phase = 'post-confirmation engine turn'
                 self.assertEqual(report['phase'], expected_phase)
                 if control in ('baseline timeout', 'same frame', 'rejection and timeout'):
                     self.assertIn('absolute native post-confirmation engine turn deadline', failure)
                 if control.startswith('rejection'):
                     self.assertIn('fixture baseline RPC failed', failure)
-                self.assertEqual(report['compared_frames'], 40)
+                self.assertEqual(report['target_frames'], 40)
+                self.assertNotIn('compared_frames', report)
                 self.assertEqual([state['status'] for state in report['states']], ['rejected', 'rejected'])
+                if control.startswith('history '):
+                    evidence = report['historyEvidence']
+                    first, second = evidence['receipts']
+                    captured = second if control == 'history rejected first' else first
+                    self.assertEqual(captured['rows']['39'], [1, 2])
+                    self.assertEqual(captured['snapshots']['40'], '01')
+                    self.assertEqual(captured['slot'], int(control == 'history rejected first'))
+                    self.assertEqual(captured['frames'], 40)
+                    if control == 'history rejected first':
+                        self.assertIn('fixture capture RPC failed', failure)
+                        self.assertIsNone(first)
+                        self.assertNotIn('compared_frames', evidence)
+                    elif control == 'history missing':
+                        self.assertIsNone(second)
+                        self.assertNotIn('compared_frames', evidence)
+                    else:
+                        self.assertEqual(second['slot'], 1)
+                        self.assertIn('fixture post-history expiry', failure)
+                        self.assertEqual(report['departureCommands'], [])
+                        reporter = report['postRelease'][0]
+                        self.assertLess(reporter['history_published']['page_ms'], reporter['native_expiry']['page_ms'])
+                        if control == 'history divergent':
+                            self.assertNotIn('compared_frames', evidence)
+                            self.assertIn('canonical state at frame 40', evidence['comparison_error'])
+                        else:
+                            self.assertEqual(evidence['compared_frames'], 40)
+                        if control == 'history staggered':
+                            self.assertLess(reporter['native_expiry']['controller_order'],
+                                            report['postRelease'][1]['history_published']['controller_order'])
                 self.assertEqual(len(report['releaseTiming']), 2)
                 for timing in report['releaseTiming']:
                     self.assertEqual(timing['continuation']['status'], 204)
@@ -2662,8 +2735,9 @@ runMain();
                     self.assertLessEqual(timing['request_dispatched_ms'], timing['request_received_ms'])
                     self.assertIsNotNone(timing['write_to_response_end_ms'])
                     self.assertGreater(timing['resource']['controller_ms'], timing['continuation']['controller_ms'])
-                self.assertIn('native peer 0 diagnostics deadline', run.stderr)
-                self.assertIn('native peer 1 diagnostics deadline', run.stderr)
+                if control != 'history rejected first':
+                    self.assertIn('native peer 0 diagnostics deadline', run.stderr)
+                    self.assertIn('native peer 1 diagnostics deadline', run.stderr)
                 engine_turns = report.get('engineTurns')
                 self.assertIsNotNone(engine_turns, 'engine turn evidence must survive unavailable final reads')
                 self.assertEqual(len(engine_turns), 2)

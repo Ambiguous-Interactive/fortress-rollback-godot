@@ -504,7 +504,7 @@ func _stopped_text(prefix: String, text: String, code: int) -> String:
 	return "%s: %s (code %d). Leave and create a new room." % [prefix, text, code]
 
 
-func detach() -> void:
+func detach(retain_room_mesh: bool = false) -> void:
 	_revision += 1
 	has_started = false
 	if driver.uses_native_backend():
@@ -514,7 +514,8 @@ func detach() -> void:
 	fallback.detach()
 	direct.detach()
 	relay.detach()
-	adapter.detach()
+	if not retain_room_mesh:
+		adapter.detach()
 	_pending.clear()
 
 
