@@ -78,7 +78,7 @@ then install only its addon directory, including its license:
 
 ```sh
 curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/a634bf7ee3c19fd81eb66eec56e089f963670d86 -o "$TOOLS_DIR/sdk.tar.gz"
-echo "85fc96daf806f69cc4d0d560a052c39923e064c8072f20ad64166d33515ef34f  $TOOLS_DIR/sdk.tar.gz" | sha256sum -c -
+echo "33187cf315acc5b301cb91255308ba8c31b5297c4c296e07b2aaf24f3d20b93f  $TOOLS_DIR/sdk.tar.gz" | sha256sum -c -
 tar -xzf "$TOOLS_DIR/sdk.tar.gz" -C "$TOOLS_DIR"
 python3 scripts/reference/online_install.py --project "$EXAMPLE_DIR" \
   --sdk "$TOOLS_DIR/signal-fish-client-godot-a634bf7ee3c19fd81eb66eec56e089f963670d86"

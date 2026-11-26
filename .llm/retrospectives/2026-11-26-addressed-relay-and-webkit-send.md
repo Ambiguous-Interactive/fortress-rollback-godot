@@ -8,6 +8,7 @@
 | A dynamic SDK call can change the relay's lifetime or socket. | The relay fixture replaced the socket during the adapter identity check after sampling its buffer. The stale ordering sent against the replacement. | Check the socket after the lifetime gate and account accepted bytes before reporting a later lifetime change. |
 | A browser export validates the scripts inside the native addon archive. | The preview correctly rejected a stale runtime entry. A replacement archive with only the changed relay script kept the native Wasm bytes identical and passed the runtime inventory check. | Repack the frozen native artifact with the exact candidate runtime before running a preview. |
 | Independent receipt streams can produce the same stamp and packet bytes. | A warmup sample disappeared when an addressed packet repeated a broadcast stamp and bytes. Removing the carrier from any stamped stage broke the six-stage regression. | Key every receipt join and warmup sample by carrier as well as stamp and bytes. |
+| A pin update can leave an installation guide with a stale digest. | The guide's `sha256sum -c` failed on the verified SDK archive until its digest matched the manifest. | Run the documented checksum command when changing an archive URL. |
 
 The [browser integration guide](../skills/testing/references/browser-integration.md)
 now records the recipient and call-order requirements. The plan drops the
