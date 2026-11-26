@@ -1,11 +1,27 @@
 // Serialized into the browser init script. Keep its dependencies local.
-function createRelayWireTrace() {
+function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000) {
   const cap = 128;
   const archiveCap = 512;
   const families = ['sync', 'sync', 'input', 'input', 'quality', 'quality'];
   const streams = Object.fromEntries(['send', 'raw', 'sdk', 'native'].map(stage => [stage, Object.fromEntries(
     [...new Set(families)].map(family => [family, { count: 0, links: new Map() }]))]));
-  let room, local, localBytes, roster;
+  let room, local, localBytes, roster, holdPeer, hold;
+  function holdCheckpoint(at_ms, end_reason = null) {
+    if (!hold) return;
+    if (at_ms >= hold.deadline) {
+      at_ms = hold.deadline;
+      end_reason = 'window';
+    }
+    const streams = Object.fromEntries(Object.entries(hold.streams).map(([stage, stream]) => [stage, {
+      count: stream.count, events: stream.pending.splice(0).map(({ bytes, ...event }) => ({ ...event, envelope: hex(bytes) })),
+    }]));
+    console.debug(holdPrefix + JSON.stringify({ room, local, sockets: hold.sockets(), sequence: ++hold.sequence,
+      started_ms: hold.started, through_ms: at_ms, end_reason, streams }));
+    if (end_reason) {
+      clearInterval(hold.timer);
+      hold = null;
+    }
+  }
   const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 
   function decodeDelivery(bytes) {
@@ -96,6 +112,8 @@ function createRelayWireTrace() {
     if (events.length === (identity.kind < 2 ? cap : archiveCap)) events.shift();
     const packet = { ordinal, ...identity, ...metadata, bytes: Uint8Array.from(envelope) };
     events.push(packet);
+    const holdStream = hold?.streams[stage];
+    if (holdStream && identity.kind >= 4 && peer === holdPeer && packet.at_ms < hold.deadline && holdStream.count++ < holdCap) holdStream.pending.push(packet);
     return packet;
   }
 
@@ -111,6 +129,17 @@ function createRelayWireTrace() {
       local = uuid;
       localBytes = unhex(uuid);
       roster = identities;
+      const pair = holdPrefix ? [...members].sort().slice(0, 2) : [];
+      if (pair.includes(local)) holdPeer = pair.find(peer => peer !== local);
+    },
+    beginHold(sockets, started) {
+      if (!holdPeer || hold) return;
+      hold = { sockets, started, deadline: started + holdWindow, sequence: 0, streams: { send: { count: 0, pending: [] }, raw: { count: 0, pending: [] } } };
+      hold.timer = setInterval(() => holdCheckpoint(performance.now()), 1000);
+      holdCheckpoint(started);
+    },
+    endHold(reason, at_ms) {
+      holdCheckpoint(at_ms, reason);
     },
     record(stage, bytes, socket_ordinal = null) {
       if (!roster || !bytes) return;

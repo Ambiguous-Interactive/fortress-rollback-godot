@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_native_relay_hold_keeps_exact_receipt_when_final_read_times_out(self):
+        subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_relay_hold.test.cjs')], check=True, timeout=10)
+
     def test_relay_wire_receipt_crosses_page_boundary_as_json_text(self):
         script = r"""
 const assert = require('node:assert/strict');

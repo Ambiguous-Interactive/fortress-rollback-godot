@@ -106,6 +106,23 @@ When a native expiry identifies links to diagnose, the browser and server
 publish only those links. Their input and quality histories expand to at most
 512 records per stage. Count and omitted fields still describe the full stream.
 
+During the traced gameplay hold, the `relayHold` receipt covers both directions
+between the first two UUIDs in the sorted frozen roster. Each page publishes its
+first 512 quality sends and raw arrivals per stage in console batches. Capture
+ends at release, terminal failure, the hold cap, or 45 seconds of page time.
+Previously received batches survive a final page-read timeout. The regular
+hold summaries still cover every link.
+
+Each packet row names its directional endpoints, token and any known delivery
+stamp. Join a browser send to ingress by its single socket's ordinal and exact
+envelope. Join ingress, addressed writes and raw arrivals by stamp and exact
+envelope. The reply's recorded native acceptance candidates identify matching
+report stamps on the reverse link. Multiple candidates stay visible. Empty
+stages can reflect an observation gap or eviction. Compare ingress and write
+on the server clock. Compare sends and arrivals from the same page on its
+page clock. The receipt preserves each clock and includes no cross-clock
+duration.
+
 Use the same-link pressure control with a local traced server build receipt.
 The control drops addressed packets after raw arrival for one link while
 the sender sends 129 inputs and 129 quality reports. It joins the earlier
