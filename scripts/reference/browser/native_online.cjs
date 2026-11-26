@@ -2312,7 +2312,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
     phase = 'confirmed history capture';
-    const history = await Promise.all(pages.map(async (page, index) => {
+    const captures = await Promise.allSettled(pages.map(async (page, index) => {
       const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence, players), PAGE_WAIT_MS,
         `native peer ${index} confirmed history capture`);
       if (relayHistory) {
@@ -2322,6 +2322,9 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       }
       return receipt;
     }));
+    const captureFailure = captures.find(result => result.status === 'rejected');
+    if (captureFailure) throw captureFailure.reason;
+    const history = captures.map(result => result.value);
     phase = 'post-capture status';
     peers = (await boundedRoom(observe, PAGE_WAIT_MS, 'native post-capture status'))
       .map((peer, index) => ({ ...peer, rows: history[index].rows, snapshots: history[index].snapshots }));
@@ -2414,6 +2417,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     const terminal = await observe(survivors);
     await Promise.all(survivors.map((page, index) => wait(page, turns => window.fortressNative.turns >= turns + 8, terminal[index].turns)));
     const after = await observe(survivors);
+    const survivorRoster = ready.slice(0, -1).map(peer => peer.uuid).sort();
     for (const [index, peer] of after.entries()) {
       const before = terminal[index];
       assert.equal(peer.state, 'failed');
@@ -2432,7 +2436,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       } else {
         assert.equal(peer.terminal_endpoint, 0, 'SDK departure must not report a native expiry endpoint');
         if (route === 'mesh') {
-          assert.deepEqual(peer.sdk_roster.sort(), roster.filter(uuid => uuid !== roomIdentities.uuids.at(-1)),
+          assert.deepEqual(peer.sdk_roster.sort(), survivorRoster,
             'the SDK must remove the intended leaver and keep every survivor until their own Leave');
           assert.deepEqual(peer.wire.sockets, [1], 'a survivor must keep its signaling socket open until Leave');
         }
@@ -2523,7 +2527,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       }
     }
     console.error(JSON.stringify({
-      phase, compared_frames: comparedFrames, historyEvidence: historyFailureEvidence(relayHistory, comparedFrames, roomIdentities),
+      phase, target_frames: comparedFrames, historyEvidence: historyFailureEvidence(relayHistory, comparedFrames, roomIdentities),
       browser_peers: browserPeers, bootstrap_ms, errors, releaseDelay, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks, departureCommands, roomIdentities, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],

@@ -2583,7 +2583,7 @@ function makePage() {
   }
   const pageWindow = { index, fortressNative: state, fortressNativeReady: true, publishTiming: text => events.console({ text: () => text }),
     set fortressNativeCapture({ id, frames }) {
-      if (index === 1 && control === 'history missing') return;
+      if ((index === 1 && control === 'history missing') || (index === 0 && control === 'history rejected first')) return;
       const rows = {}, snapshots = {};
       for (let frame = 0; frame < frames; frame++) {
         rows[frame] = frame >= 12 && frame % 2 === 0 ? [0, 0] : [1, 2];
@@ -2594,7 +2594,7 @@ function makePage() {
         mark('history_published', { frames });
         publishHistory({ text: () => 'fortress native history ' + JSON.stringify({ id, frames, rows, snapshots }) });
       };
-      if (control === 'history staggered' && index === 1) setImmediate(publish);
+      if (index === 1 && ['history staggered', 'history rejected first'].includes(control)) setImmediate(publish);
       else publish();
       if (control === 'history staggered' && index === 0) expire();
     },
@@ -2629,6 +2629,7 @@ function makePage() {
         throw new Error('fixture post-history expiry');
       }
       if (operation.toString().includes('warmupStatus()')) {
+        if (control === 'history rejected first') throw new Error('fixture diagnostic RPC failed');
         lateBaseline?.(state.frame);
         return unavailable();
       }
@@ -2647,6 +2648,7 @@ function makePage() {
     async waitForEvent(event, options) {
       if (!historyControl) throw Error('fixture stops after the engine turn');
       assert.equal(event, 'console');
+      if (index === 0 && control === 'history rejected first') throw new Error('fixture capture RPC failed');
       if (index === 1 && control === 'history missing') return unavailable();
       return new Promise(resolve => { publishHistory = message => {
         assert.equal(options.predicate(message), true);
@@ -2676,7 +2678,7 @@ runMain();
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         for control in ('baseline timeout', 'same frame', 'higher frame', 'rejection', 'rejection and timeout',
-                        'history complete', 'history missing', 'history divergent', 'history staggered'):
+                        'history complete', 'history missing', 'history divergent', 'history staggered', 'history rejected first'):
             with self.subTest(control=control):
                 run = subprocess.run([*command, control], capture_output=True, encoding='utf-8', timeout=10)
                 self.assertEqual(run.returncode, 1, run.stderr)
@@ -2685,7 +2687,7 @@ runMain();
                 report = json.loads(report_line)
                 if control in ('history complete', 'history divergent', 'history staggered'):
                     expected_phase = 'post-capture status'
-                elif control in ('higher frame', 'history missing'):
+                elif control in ('higher frame', 'history missing', 'history rejected first'):
                     expected_phase = 'confirmed history capture'
                 else:
                     expected_phase = 'post-confirmation engine turn'
@@ -2694,16 +2696,22 @@ runMain();
                     self.assertIn('absolute native post-confirmation engine turn deadline', failure)
                 if control.startswith('rejection'):
                     self.assertIn('fixture baseline RPC failed', failure)
-                self.assertEqual(report['compared_frames'], 40)
+                self.assertEqual(report['target_frames'], 40)
+                self.assertNotIn('compared_frames', report)
                 self.assertEqual([state['status'] for state in report['states']], ['rejected', 'rejected'])
                 if control.startswith('history '):
                     evidence = report['historyEvidence']
                     first, second = evidence['receipts']
-                    self.assertEqual(first['rows']['39'], [1, 2])
-                    self.assertEqual(first['snapshots']['40'], '01')
-                    self.assertEqual(first['slot'], 0)
-                    self.assertEqual(first['frames'], 40)
-                    if control == 'history missing':
+                    captured = second if control == 'history rejected first' else first
+                    self.assertEqual(captured['rows']['39'], [1, 2])
+                    self.assertEqual(captured['snapshots']['40'], '01')
+                    self.assertEqual(captured['slot'], int(control == 'history rejected first'))
+                    self.assertEqual(captured['frames'], 40)
+                    if control == 'history rejected first':
+                        self.assertIn('fixture capture RPC failed', failure)
+                        self.assertIsNone(first)
+                        self.assertNotIn('compared_frames', evidence)
+                    elif control == 'history missing':
                         self.assertIsNone(second)
                         self.assertNotIn('compared_frames', evidence)
                     else:
@@ -2727,8 +2735,9 @@ runMain();
                     self.assertLessEqual(timing['request_dispatched_ms'], timing['request_received_ms'])
                     self.assertIsNotNone(timing['write_to_response_end_ms'])
                     self.assertGreater(timing['resource']['controller_ms'], timing['continuation']['controller_ms'])
-                self.assertIn('native peer 0 diagnostics deadline', run.stderr)
-                self.assertIn('native peer 1 diagnostics deadline', run.stderr)
+                if control != 'history rejected first':
+                    self.assertIn('native peer 0 diagnostics deadline', run.stderr)
+                    self.assertIn('native peer 1 diagnostics deadline', run.stderr)
                 engine_turns = report.get('engineTurns')
                 self.assertIsNotNone(engine_turns, 'engine turn evidence must survive unavailable final reads')
                 self.assertEqual(len(engine_turns), 2)
