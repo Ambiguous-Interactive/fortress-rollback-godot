@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { setTimeout: pause } = require('node:timers/promises');
 const { clockExchangeWindow, createDepartureClock } = require('./native_departure_clock.cjs');
 const { closeEvidence, waitForCloseProofs } = require('./native_online.cjs');
 
@@ -68,9 +69,31 @@ test('an HTTPS sample cannot establish a WebKit close below the causal margin', 
   const report = { clocks: ambiguous };
   const httpsClock = { sample: async (page) => ({ bound: tight[pages.indexOf(page)] }) };
   await waitForCloseProofs(pages, [{ wire: { sctp: [] } }, { wire: { sctp: [before] } }], [warning], report, {
-    clock: () => 0, delay: async () => { throw new Error('unexpected close proof retry'); }, httpsClock,
+    clock: () => 0, delay: () => pause(0), httpsClock,
   });
   assert.equal(report.proofs[0].proof, 'clock-order');
   assert.equal(report.proofs[0].minimumGapUs, 2000);
   assert.deepEqual(report.httpsClockSamples.map(sample => sample.after.length), [1, 1]);
+});
+
+test('optional HTTPS cannot spend the deadline for a fresh abort snapshot', async () => {
+  let now = 0;
+  let rounds = 0;
+  const sender = { index: 17, local: 'sender', remote: 'closer', closed: false, closeAborts: 0 };
+  const closer = { index: 4, local: 'closer', remote: 'sender', closed: true, connectionClosed: true, closedAt: 5000 };
+  const before = [{ wire: { sctp: [] } }, { wire: { sctp: [sender] } }];
+  const pages = [{ async evaluate() {
+    if (++rounds === 1) now = 4900;
+    return { links: [closer], sampledAt: null, sends: {} };
+  } }, { async evaluate() {
+    return { links: [{ ...sender, closeAborts: rounds > 1 ? 1 : 0 }], sampledAt: null,
+      sends: { 3: { attempt: 3, channel: 17, sentAt: 7000 } } };
+  } }];
+  const report = {};
+  const httpsClock = { async sample() { await pause(10); now = 5100; return { bound: null, error: 'unavailable' }; } };
+  await waitForCloseProofs(pages, before, [{ index: 1, channel: 17, attempt: 3 }], report, {
+    clock: () => now, delay: async ms => { now += ms; }, httpsClock,
+  });
+  assert.equal(rounds, 2);
+  assert.equal(report.proofs[0].proof, 'sctp-abort');
 });

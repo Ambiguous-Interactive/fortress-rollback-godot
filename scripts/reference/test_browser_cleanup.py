@@ -1377,9 +1377,12 @@ for (const outcome of ['delivered', 'cancelled', 'expired']) {
   console.debug = () => {};
   const page = { evaluate(callback, argument) { return callback(argument); } };
   for (const budget of ['1000000', '400000']) {
-    global.fetch = async () => ({ status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': budget }) });
+    global.fetch = async (url, options) => {
+      assert.equal(options.redirect, 'error');
+      return { url, status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': budget }) };
+    };
     global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: { status: () => ({}), release: () => 'released' } };
-    const release = captureAndReleaseInput(page, 0, '/native-release/control', '', 450);
+    const release = captureAndReleaseInput(page, 0, 'https://localhost/native-release/control', '', 450);
     await Promise.resolve();
     assert.equal(window.fortressNativeStalled, undefined);
     advance();
@@ -1468,7 +1471,7 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
     }
   }
   const continued = now = resource.responseEnd + continuationDelay;
-  resume({ status, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '1000000' }) });
+  resume({ url: resource.name, status, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '1000000' }) });
   if (status === 204) assert.equal((await released).release, 'released');
   else await assert.rejects(released, /native relay release signal returned HTTP 409/);
   assert.deepEqual(receipt.continuation,
@@ -1563,12 +1566,17 @@ async function run() {
   const page = { evaluate(callback, argument) { return callback(argument); } };
   let deliver;
   global.fetch = () => new Promise(resolve => { deliver = resolve; });
-  const delayed = captureAndReleaseInput(page, 0, '/prepared');
+  const delayed = captureAndReleaseInput(page, 0, 'https://localhost/prepared');
   const checked = assert.rejects(delayed, /native relay release deadline/);
   now = 900;
-  deliver({ status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '600000' }) });
+  deliver({ url: 'https://localhost/prepared', status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '600000' }) });
   await checked;
   assert.equal(window.fortressNativeStalled, undefined, 'a late response cannot publish even its stalled snapshot');
+  for (const response of [{ url: 'https://localhost/another-nonce' }, { url: 'https://localhost/prepared', redirected: true }]) {
+    global.fetch = async () => ({ ...response, status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '600000' }) });
+    await assert.rejects(captureAndReleaseInput(page, 0, 'https://localhost/prepared'), /does not match the release request/);
+    assert.equal(window.fortressNativeStalled, undefined);
+  }
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });
 """
@@ -2056,12 +2064,12 @@ global.fetch = path => new Promise(resolve => {
       this.writableEnded = true;
       this.finish();
       const at = performance.now();
-      resolve({ status: this.status, headers: this.headers });
+      resolve({ url: path, status: this.status, headers: this.headers });
       setImmediate(() => realm.run(owner, () => owner.resourceObserver([{
         name: new URL(path, location.href).href, initiatorType: 'fetch', fetchStart: requested, responseStart: at, responseEnd: at, responseStatus: this.status,
       }])));
     } };
-  if (!releaseRequest({ url: path, method: 'GET' }, response)) throw new Error('fixture release request was not handled');
+  if (!releaseRequest({ url: new URL(path).pathname, method: 'GET' }, response)) throw new Error('fixture release request was not handled');
 });
 global.requestAnimationFrame = callback => {
   if (window.index === 1 && stuck) return;

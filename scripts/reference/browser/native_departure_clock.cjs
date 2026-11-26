@@ -10,7 +10,8 @@ function micros(value) {
 }
 
 function clockExchangeWindow(nonce, host, page) {
-  if (page?.nonce !== nonce || page.status !== 204 || !micros(page.sentUs) || !micros(page.receivedUs) || page.receivedUs < page.sentUs
+  if (typeof nonce !== 'string' || !nonce || !page || page.nonce !== nonce || page.status !== 204
+    || !micros(page.sentUs) || !micros(page.receivedUs) || page.receivedUs < page.sentUs
     || !micros(host?.receivedUs) || !micros(host.writeUs) || host.writeUs < host.receivedUs) return null;
   const { requestUs, responseUs } = page;
   // Prefer the network boundaries when the same nonce has a complete resource entry.

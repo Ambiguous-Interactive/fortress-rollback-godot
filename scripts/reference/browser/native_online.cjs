@@ -1192,17 +1192,19 @@ function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, c
   return evidence;
 }
 
-async function sampleDepartureHttps(pages, report, stage, httpsClock, deadline, clock) {
-  const timeout = Math.min(CLOSE_HTTPS_SAMPLE_MS, Math.floor(deadline - clock()));
-  if (timeout <= 0) return;
-  report.httpsClockSamples ??= pages.map(() => ({ before: [], after: [] }));
-  await Promise.all(pages.map(async (page, index) => {
-    const sample = await httpsClock.sample(page, timeout);
+async function departureHttpsSamples(pages, httpsClock, timeout) {
+  const settled = await Promise.allSettled(pages.map(async page => httpsClock.sample(page, timeout)));
+  return settled.map(sample => sample.status === 'fulfilled' ? sample.value : { bound: null, error: String(sample.reason) });
+}
+
+function recordDepartureHttps(samples, report, stage, timely) {
+  report.httpsClockSamples ??= samples.map(() => ({ before: [], after: [] }));
+  samples.forEach((sample, index) => {
     report.httpsClockSamples[index][stage].push(sample);
-    if (!sample.bound || clock() >= deadline || !report.clocks[index]) return;
+    if (!sample.bound || !timely || !report.clocks?.[index]) return;
     report.clocks[index] = intersectClock(report.clocks[index], sample.bound);
     if (!report.clocks[index]) sample.error = 'HTTPS and debugger clock bounds disagree';
-  }));
+  });
 }
 
 async function calibrateDepartureClocks(pages, report, clock = () => performance.now(), timeout = PAGE_WAIT_MS, httpsClock) {
@@ -1230,7 +1232,12 @@ async function calibrateDepartureClocks(pages, report, clock = () => performance
       'WebKit departure clock calibration failed');
   }
   if (httpsClock) {
-    for (let i = 0; i < CLOSE_HTTPS_PRE_SAMPLES; i++) await sampleDepartureHttps(pages, report, 'before', httpsClock, deadline, clock);
+    for (let i = 0; i < CLOSE_HTTPS_PRE_SAMPLES; i++) {
+      const remaining = Math.floor(deadline - clock());
+      if (remaining <= 0) break;
+      const samples = await departureHttpsSamples(pages, httpsClock, Math.min(CLOSE_HTTPS_SAMPLE_MS, remaining));
+      recordDepartureHttps(samples, report, 'before', clock() < deadline);
+    }
   }
 }
 
@@ -1245,6 +1252,7 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
   report.partialSnapshots = latestSnapshots;
   let rounds = 0;
   let sampledHttps = false;
+  let httpsSamples;
   const deadline = clock() + DIAGNOSTIC_MS;
   while (clock() < deadline) {
     const roundErrors = errors.slice();
@@ -1288,10 +1296,15 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
         'WebKit close snapshots failed');
     }
     if (!complete) break;
-    if (httpsClock && !sampledHttps && report.proofs.some(evidence => !evidence.proof)) {
+    const httpsBudget = httpsClock ? Math.min(CLOSE_HTTPS_SAMPLE_MS, Math.floor(deadline - clock())) : 0;
+    if (!sampledHttps && httpsBudget > 0 && report.proofs.some(evidence => !evidence.proof)) {
       sampledHttps = true;
-      await sampleDepartureHttps(pages, report, 'after', httpsClock, deadline, clock);
-      if (clock() >= deadline) break;
+      // Keep snapshot retries active while the optional exchange is pending.
+      void departureHttpsSamples(pages, httpsClock, httpsBudget).then(samples => { httpsSamples = samples; });
+    }
+    if (httpsSamples) {
+      recordDepartureHttps(httpsSamples, report, 'after', clock() < deadline);
+      httpsSamples = null;
       report.proofs = proveRound();
     }
     for (const evidence of report.proofs) {
@@ -1569,9 +1582,9 @@ function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = n
   return page.evaluate(async ({ index, signalPath, timingPrefix, delayMs }) => {
     let cutoffUs = null;
     if (signalPath !== null) {
+      const url = new URL(signalPath, globalThis.location?.href).href;
       const publish = fields => console.debug(timingPrefix + JSON.stringify({ path: signalPath, ...fields }));
       if (timingPrefix && globalThis.PerformanceObserver?.supportedEntryTypes?.includes('resource')) {
-        const url = new URL(signalPath, location.href).href;
         const observer = new PerformanceObserver(list => {
           const entry = list.getEntries().find(entry => entry.name === url && entry.initiatorType === 'fetch');
           if (!entry) return;
@@ -1583,8 +1596,9 @@ function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = n
         observer.observe({ type: 'resource' });
       }
       const requested_ms = performance.now();
-      const signal = await fetch(signalPath, { cache: 'no-store' });
+      const signal = await fetch(url, { cache: 'no-store', redirect: 'error' });
       const fetchResolved = performance.now();
+      if (signal.url !== url || signal.redirected) throw new Error('native relay response does not match the release request');
       const status = signal.status;
       if (delayMs && status === 204) await new Promise(resolve => setTimeout(resolve, delayMs));
       const continued_ms = delayMs ? performance.now() : fetchResolved;
