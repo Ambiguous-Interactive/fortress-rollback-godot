@@ -2431,6 +2431,11 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         assert.deepEqual([peer.saves, peer.restores, peer.advances], peer.failure_tick_callbacks, 'no callback may run on or after native expiry');
       } else {
         assert.equal(peer.terminal_endpoint, 0, 'SDK departure must not report a native expiry endpoint');
+        if (route === 'mesh') {
+          assert.deepEqual(peer.sdk_roster.sort(), roster.filter(uuid => uuid !== roomIdentities.uuids.at(-1)),
+            'the SDK must remove the intended leaver and keep every survivor until their own Leave');
+          assert.deepEqual(peer.wire.sockets, [1], 'a survivor must keep its signaling socket open until Leave');
+        }
       }
       for (const key of ['frame', 'confirmed', 'reason', 'terminal_detail', 'terminal_endpoint', 'message', 'game_frame', 'saves', 'restores', 'advances'])
         assert.equal(peer[key], before[key], `terminal ${key} changed for survivor ${index}`);
