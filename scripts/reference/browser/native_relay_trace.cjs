@@ -5,6 +5,7 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
   const families = ['sync', 'sync', 'input', 'input', 'quality', 'quality'];
   const streams = Object.fromEntries(['send', 'raw', 'sdk', 'native'].map(stage => [stage, Object.fromEntries(
     [...new Set(families)].map(family => [family, { count: 0, links: new Map() }]))]));
+  const expiryPins = new Map();
   let room, local, localBytes, roster, holdPeer, hold;
   function holdCheckpoint(at_ms, end_reason = null) {
     if (!hold) return;
@@ -117,6 +118,18 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
     return packet;
   }
 
+  function pinAcceptance(native, family) {
+    const { sender, kind, epoch, seq, bytes } = native;
+    function previous(stage, ceiling) {
+      return streams[stage][family].links.get(sender)?.findLast(event => event.epoch === epoch && event.seq === seq
+        && event.at_ms <= ceiling && !event.delivery_blocked && event.bytes.length === bytes.length && bytes.every((byte, index) => byte === event.bytes[index]));
+    }
+    const sdk = previous('sdk', native.at_ms);
+    const raw = previous('raw', sdk?.at_ms ?? native.at_ms);
+    if (!expiryPins.has(sender)) expiryPins.set(sender, new Map());
+    expiryPins.get(sender).set(kind, { raw, sdk, native });
+  }
+
   const sha256 = async bytes => hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
   const unhex = value => Uint8Array.from(value.match(/../g) ?? [], byte => parseInt(byte, 16));
   return {
@@ -176,7 +189,19 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
       if (!identity || identity.sender !== sender || identity.recipient !== local) return;
       const seq = BigInt.asUintN(64, BigInt(signedSeq));
       const report_token = stage === 'native' && identity.kind === 4 ? hex(envelope.subarray(-16)) : undefined;
-      if (seq !== 0n) retain(stage, envelope, identity, { at_ms, epoch, seq: seq.toString(), code, report_token });
+      if (seq === 0n) return;
+      const packet = retain(stage, envelope, identity, { at_ms, epoch, seq: seq.toString(), code, report_token });
+      if (stage === 'native' && code === 0 && (identity.kind === 2 || identity.kind === 4)) pinAcceptance(packet, families[identity.kind]);
+    },
+    expiryFrontier(sender) {
+      if (!roster?.has(sender) || sender === local) return undefined;
+      const pins = expiryPins.get(sender);
+      const packets = [pins?.get(2), pins?.get(4)].filter(Boolean).map(({ raw, sdk, native }) => {
+        const { bytes, kind, epoch, seq } = native;
+        const mark = event => event && { ordinal: event.ordinal, at_ms: event.at_ms };
+        return { kind, epoch, seq, envelope: hex(bytes), stages: { raw: mark(raw), sdk: mark(sdk), native: mark(native) } };
+      });
+      return { room, sender, recipient: local, packets };
     },
     repeatQuality(recipient, other, send) {
       const original = streams.send.quality.links.get(recipient)?.slice(-cap).findLast(event => event.kind === 4);

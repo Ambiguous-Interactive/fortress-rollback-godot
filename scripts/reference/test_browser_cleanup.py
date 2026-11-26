@@ -435,6 +435,102 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs')], check=True, timeout=10)
 
+    def test_native_expiry_keeps_the_last_accepted_stamps_beyond_ring_pressure(self):
+        # Value: protects=expiry-time packet evidence; fails_when=newer raw or refused packets evict the native acceptance; seam=browser trace and departure receipt
+        script = r"""
+const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
+const { createRelayWireTrace } = require(process.argv[1]);
+const { instrumentNativeWire, instrumentPostRelease, postReleaseCheckpoint } = require(process.argv[2]);
+const { joinRelayReceipts, relayExpiryRows } = require(process.argv[3]);
+const [room, source, local, other] = ['11', '22', '33', '44'].map(value => value.repeat(16));
+const roster = [source, local, other];
+const hex = value => Buffer.from(value, 'hex');
+const trace = createRelayWireTrace();
+trace.bind(room, local, roster);
+const bytes = (sender, kind, mutation = 0) => {
+  const body = Buffer.alloc({2: 24, 4: 18, 5: 16}[kind]);
+  body[body.length - 1] = mutation;
+  const payload = Buffer.concat([hex(room), hex('f552020001000000'), Buffer.from([kind, 0, 0, 0]), body]);
+  return Buffer.concat([hex('4653523101'), hex(room), hex(sender), hex(local), Buffer.from([payload.length, 0, 0, 0]), payload]);
+};
+const name = value => Buffer.concat([Buffer.from([0xa0 + value.length]), Buffer.from(value)]);
+function arrive(sender, buffer, seq) {
+  const stamp = Buffer.alloc(9);
+  stamp[0] = 0xcf;
+  stamp.writeBigUInt64BE(BigInt(seq), 1);
+  return trace.record('raw', Buffer.concat([hex('85'), name('from_player'), hex('c410'), hex(sender),
+    name('encoding'), name('message_pack'), name('payload'), Buffer.from([0xc4, buffer.length]), buffer,
+    name('seq'), stamp, name('epoch'), hex('01')]));
+}
+const inBytes = bytes(source, 2);
+const report = bytes(source, 4);
+for (const [packet, seq] of [[inBytes, '3'], [report, '4']]) {
+  arrive(source, packet, seq);
+  trace.recordEngine('sdk', source, packet.toString('hex'), 1, seq, null);
+  trace.recordEngine('native', source, packet.subarray(57).toString('hex'), 1, seq, 0);
+}
+for (let i = 5; i <= 528; i++) {
+  for (const [sender, kind] of [[source, 2], [source, 4], [other, 4]]) {
+    const packet = bytes(sender, kind);
+    arrive(sender, packet, i);
+    trace.recordEngine('sdk', sender, packet.toString('hex'), 1, String(i), null);
+    trace.recordEngine('native', sender, packet.subarray(57).toString('hex'), 1, String(i), sender === source ? 1 : 0);
+  }
+}
+const reply = bytes(source, 5);
+arrive(source, reply, 529);
+trace.recordEngine('sdk', source, reply.toString('hex'), 1, '529', null);
+trace.recordEngine('native', source, reply.subarray(57).toString('hex'), 1, '529', 0);
+const consoleLines = [];
+const savedDebug = console.debug;
+console.debug = line => consoleLines.push(line);
+const format = uuid => uuid.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+const frozen = roster.map(format);
+const prefix = 'fortress native post-release ';
+globalThis.window = { fortressNativeWire: { relayExpiryFrontier: sender => trace.expiryFrontier(sender) } };
+instrumentPostRelease(prefix, 40);
+window.fortressNativePostRelease.bindDeparture(format(local), frozen);
+window.fortressNativePostRelease.recordDeparture('native_expiry', 1, JSON.stringify({
+  observed_us: 4000, sdk_queued: 0, sdk_peak: 1, last_accepted: null,
+}));
+window.fortressNativePostRelease.recordDeparture('native_expiry', 3);
+console.debug = savedDebug;
+assert.equal(consoleLines.length, 1);
+const latched = {};
+postReleaseCheckpoint(latched, consoleLines[0], {controller_ms: 100, controller_order: 1}, frozen, format(local));
+assert.ok(latched.native_expiry?.frontier);
+assert.deepEqual(latched.native_expiry.frontier.packets.map(packet => packet.seq), ['3', '4']);
+assert.deepEqual(latched.native_expiry.frontier.packets.map(packet => Object.keys(packet.stages)), [
+  ['raw', 'sdk', 'native'], ['raw', 'sdk', 'native'],
+]);
+const altered = JSON.parse(consoleLines[0].slice(prefix.length));
+altered.frontier.packets[1].envelope = bytes(other, 4).toString('hex');
+const rejected = {};
+postReleaseCheckpoint(rejected, prefix + JSON.stringify(altered), {controller_ms: 100, controller_order: 2}, frozen, format(local));
+assert.ok(rejected.native_expiry, 'retain the expiry independently of diagnostic validation');
+assert.equal(rejected.native_expiry.frontier, undefined);
+assert.match(rejected.checkpoint_error, /invalid native expiry frontier/);
+const expiry = [latched.native_expiry];
+const stage = (input = [], quality = []) => ({ sync: { events: [] }, input: { events: input }, quality: { events: quality } });
+const digest = value => createHash('sha256').update(value).digest('hex');
+const ingress = { sender: source, recipient: local, epoch: 1, seq: '3', kind: 2, envelope_bytes: inBytes.length,
+  envelope_sha256: digest(inBytes), ordinal: 10, socket_ordinal: 20 };
+const server = { room, roster, streams: { ingress: stage([ingress]), write: stage([{ ...ingress, actual_recipient: local }]) } };
+const sourcePage = { room, local: source, sockets: 1, streams: { raw: stage(), sdk: stage(), native: stage(),
+  send: stage([{ ...ingress, ordinal: 30 }]) } };
+const joined = joinRelayReceipts(server, [sourcePage, { error: 'final read timed out' }], expiry);
+const [inputRow, reportRow] = relayExpiryRows(expiry, joined);
+assert.deepEqual(inputRow.missing, []);
+assert.deepEqual(reportRow.missing, ['send', 'ingress', 'write']);
+const withoutServer = relayExpiryRows(expiry, null);
+assert.deepEqual(withoutServer.map(row => row.missing), [['send', 'ingress', 'write'], ['send', 'ingress', 'write']]);
+assert.equal(trace.expiryFrontier(other).packets.find(packet => packet.kind === 2), undefined);
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs'),
+                        str(ROOT / 'scripts/reference/browser/native_online.cjs'), str(ROOT / 'scripts/reference/browser/native_relay_control.cjs')],
+                       check=True, timeout=10)
+
     def test_same_link_pressure_requires_original_and_exact_blocked_packets(self):
         # Value: protects=pressure confined to the raw boundary; fails_when=missing originals or leaked stamped packets pass; seam=control receipt
         script = r"""

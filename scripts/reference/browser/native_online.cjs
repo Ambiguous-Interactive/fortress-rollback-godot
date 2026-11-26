@@ -3,7 +3,7 @@ const { assertRecoveredRoom, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace } = require('./native_relay_trace.cjs');
 const { createRelayHold, RELAY_HOLD_CAP, RELAY_HOLD_PREFIX, RELAY_HOLD_WINDOW_MS } = require('./native_relay_hold.cjs');
 const { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, exerciseSameLinkRetention,
-  joinRelayReceipts, readRelayWireReceipt } = require('./native_relay_control.cjs');
+  joinRelayReceipts, readRelayWireReceipt, relayExpiryRows, validateRelayExpiryFrontier } = require('./native_relay_control.cjs');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
@@ -224,13 +224,15 @@ function instrumentPostRelease(prefix, minimumFrames) {
       const endpoint = sdk ? roster.indexOf(remote) + 1 : remote;
       const uuid = roster[endpoint - 1];
       if (!uuid || uuid === local || (sdk ? departed.has(uuid) : expired)) return;
+      let frontier;
       if (sdk) departed.add(uuid);
       else {
         expired = true;
         window.fortressNativeWire?.endRelayHold?.('terminal');
+        frontier = window.fortressNativeWire?.relayExpiryFrontier?.(uuid.replaceAll('-', ''));
       }
       console.debug(prefix + JSON.stringify({ kind, endpoint, uuid, page_ms: performance.now(),
-        expiry: evidence === undefined ? undefined : JSON.parse(evidence) }));
+        expiry: evidence === undefined ? undefined : JSON.parse(evidence), frontier }));
     },
     mark,
     observe,
@@ -241,12 +243,21 @@ function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTa
   if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
   try {
     const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes, queued, released, emitted_ms, endpoint, uuid,
-      expiry, socket_state, socket_stage, held_send, pending, control_round_trips, buffered_bytes, traffic } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
+      expiry, frontier, socket_state, socket_stage, held_send, pending, control_round_trips, buffered_bytes, traffic } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
     if (LIFETIME_MARKS.has(kind)) {
       if (!Number.isFinite(page_ms) || page_ms < 0 || !Number.isSafeInteger(endpoint) || endpoint < 1
         || endpoint > INPUTS.length || typeof uuid !== 'string' || !FROZEN_UUID.test(uuid)) throw new Error('invalid room departure sample');
       const receipt = { kind, endpoint, uuid, page_ms, ...controller };
-      if (kind === 'native_expiry') receipt.expiry = validateExpiry(expiry);
+      if (kind === 'native_expiry') {
+        receipt.expiry = validateExpiry(expiry);
+        if (frontier !== undefined) {
+          try {
+            receipt.frontier = validateRelayExpiryFrontier(frontier, uuid, local, page_ms);
+          } catch (error) {
+            peer.checkpoint_error ??= String(error);
+          }
+        }
+      }
       retainDepartureCheckpoint(peer, receipt, roster, local);
       return;
     }
@@ -993,6 +1004,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       const sockets = resources.sockets.length;
       return relayWireTrace && { ...await relayWireTrace.freeze(links), sockets };
     },
+    relayExpiryFrontier: sender => relayWireTrace?.expiryFrontier(sender),
     holdRelayControl: delayRelayDelivery,
     releaseRelayControl: stamps => relayDelay?.releaseWhenHeld(stamps) ?? expiredRelayDelay,
     muteRelayLink(recipient) {
@@ -2269,13 +2281,14 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     });
     const relayWire = relayWireFailure && (await relayWireFailure).map(({ status, value, reason }) =>
       status === 'fulfilled' ? value ?? null : { error: String(reason) });
+    const expiries = postRelease?.flatMap(peer => peer.native_expiry ? [peer.native_expiry] : []) ?? [];
     let relayJoined;
     let relayJoinError;
     if (relayServerFailure) {
       try {
         const [serverReceipt] = await relayServerFailure;
         if (serverReceipt.status === 'rejected') throw serverReceipt.reason;
-        relayJoined = joinRelayReceipts(serverReceipt.value, relayWire);
+        relayJoined = joinRelayReceipts(serverReceipt.value, relayWire, expiries);
       } catch (joinError) {
         relayJoinError = String(joinError);
       }
@@ -2293,6 +2306,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupInputErrors: warmupBarrier?.inputErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
+      relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined) : undefined,
       relayHold: relayHold && await relayHoldReceipt(),
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
