@@ -1,4 +1,4 @@
-const { createDepartureClock } = require('./native_departure_clock.cjs');
+const { createDepartureClock, CLOSE_HTTPS_PRE_SAMPLES } = require('./native_departure_clock.cjs');
 const { assertRecoveredRoom, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace } = require('./native_relay_trace.cjs');
 const { createRelayHold, RELAY_HOLD_CAP, RELAY_HOLD_PREFIX, RELAY_HOLD_WINDOW_MS } = require('./native_relay_hold.cjs');
@@ -24,7 +24,6 @@ const CANONICAL_SNAPSHOT = /^(?:[0-9a-f]{2})+$/;
 const FROZEN_UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const CLOSE_CLOCK_PRE_SAMPLES = 3;
 const CLOSE_CLOCK_POST_SAMPLES = 4;
-const CLOSE_HTTPS_PRE_SAMPLES = 2;
 const CLOSE_HTTPS_SAMPLE_MS = 500;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const CLOSE_CHECKPOINT = 'fortress native close ';
@@ -1281,16 +1280,25 @@ function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, c
   return evidence;
 }
 
-async function departureHttpsSamples(pages, httpsClock, timeout) {
-  const settled = await Promise.allSettled(pages.map(async page => httpsClock.sample(page, timeout)));
-  return settled.map(sample => sample.status === 'fulfilled' ? sample.value : { bound: null, error: String(sample.reason) });
+async function departureHttpsSamples(pages, httpsClock, timeout, onSample) {
+  return Promise.all(pages.map(async (page, index) => {
+    let sample;
+    try {
+      sample = await httpsClock.sample(page, timeout);
+    } catch (error) {
+      sample = { bound: null, error: String(error) };
+    }
+    onSample?.(sample, index);
+    return sample;
+  }));
 }
 
-function recordDepartureHttps(samples, report, stage, timely) {
+function recordDepartureHttps(samples, report, stage, useBounds) {
   report.httpsClockSamples ??= samples.map(() => ({ before: [], after: [] }));
   samples.forEach((sample, index) => {
+    if (!sample) return;
     report.httpsClockSamples[index][stage].push(sample);
-    if (!sample.bound || !timely || !report.clocks?.[index]) return;
+    if (!sample.bound || !useBounds || !report.clocks?.[index]) return;
     report.clocks[index] = intersectClock(report.clocks[index], sample.bound);
     if (!report.clocks[index]) sample.error = 'HTTPS and debugger clock bounds disagree';
   });
@@ -1341,7 +1349,12 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
   report.partialSnapshots = latestSnapshots;
   let rounds = 0;
   let sampledHttps = false;
-  let httpsSamples;
+  const httpsSamples = pages.map(() => null);
+  const recordSettledHttps = useBounds => {
+    if (!httpsSamples.some(Boolean)) return;
+    recordDepartureHttps(httpsSamples, report, 'after', useBounds);
+    httpsSamples.fill(null);
+  };
   const deadline = clock() + DIAGNOSTIC_MS;
   while (clock() < deadline) {
     const roundErrors = errors.slice();
@@ -1370,14 +1383,14 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
       }
     });
     const complete = !failed.length && clock() < deadline;
+    recordSettledHttps(complete);
     const links = latestSnapshots.map(snapshot => snapshot?.links ?? []);
-    const proveRound = () => roundErrors.map(error => {
+    report.proofs = roundErrors.map(error => {
       const sends = complete ? latestSnapshots[error.index].sends : observedSends[error.index];
       const evidence = closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks, sends?.[error.attempt]);
       if (!complete) evidence.proof = null;
       return evidence;
     });
-    report.proofs = proveRound();
     report.snapshotErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
     if (failed.length) {
       report.lastCompleteProofs = [...completeProofs.values()];
@@ -1389,12 +1402,10 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
     if (!sampledHttps && httpsBudget > 0 && report.proofs.some(evidence => !evidence.proof)) {
       sampledHttps = true;
       // Keep snapshot retries active while the optional exchange is pending.
-      void departureHttpsSamples(pages, httpsClock, httpsBudget).then(samples => { httpsSamples = samples; });
-    }
-    if (httpsSamples) {
-      recordDepartureHttps(httpsSamples, report, 'after', clock() < deadline);
-      httpsSamples = null;
-      report.proofs = proveRound();
+      void departureHttpsSamples(pages, httpsClock, httpsBudget, (sample, index) => {
+        // Only the snapshot owner publishes to the report, even if this settles after teardown.
+        if (clock() < deadline) httpsSamples[index] = sample;
+      });
     }
     for (const evidence of report.proofs) {
       const { index, channel, attempt, proof } = evidence;
@@ -1406,6 +1417,7 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
     if (roundErrors.length === errors.length && report.proofs.every(proof => proof.proof)) return links;
     await delay(Math.min(25, remaining));
   }
+  recordSettledHttps(false);
   report.lastCompleteProofs = [...completeProofs.values()];
   const pending = [...new Set(report.proofs.filter(proof => !proof.proof).map(proof => `peer ${proof.index} channel ${proof.channel}`))];
   throw new Error(`WebKit close evidence deadline${pending.length ? ` for ${pending.join(', ')}` : ''}`);
@@ -1951,6 +1963,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push({ index, phase, text });
       });
       page.on('requestfailed', request => {
+        if (departureClock?.ownsRequest(page, origin, request)) return;
         const url = new URL(request.url());
         errors.push({ index, phase, host: url.host, path: url.pathname, method: request.method(), resource: request.resourceType(),
           code: request.failure()?.errorText });

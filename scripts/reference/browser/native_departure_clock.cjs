@@ -4,6 +4,7 @@ const { boundedRoom } = require('./webrtc_watchdog.cjs');
 const PATH_PREFIX = '/native-departure-clock/';
 const NONCE_HEADER = 'X-Fortress-Clock-Nonce';
 const CLOCK_PRECISION_US = 41;
+const CLOSE_HTTPS_PRE_SAMPLES = 2;
 
 function micros(value) {
   return Number.isSafeInteger(value) && value >= 0;
@@ -39,7 +40,15 @@ async function fetchClock({ path, nonceHeader }) {
 
 function createDepartureClock(clock = () => performance.now()) {
   const pending = new Map();
+  // Playwright may publish requestfailed after sample() has removed the pending exchange.
+  const issuedByPage = new WeakMap();
   return {
+    ownsRequest(page, origin, request) {
+      const paths = issuedByPage.get(page);
+      if (!paths || request.method() !== 'GET' || request.resourceType() !== 'fetch') return false;
+      const url = request.url();
+      return url.startsWith(origin) && paths.has(url.slice(origin.length));
+    },
     handle(request, response) {
       if (!request.url.startsWith(PATH_PREFIX)) return false;
       const receivedUs = Math.round(clock() * 1000);
@@ -58,6 +67,10 @@ function createDepartureClock(clock = () => performance.now()) {
       const nonce = randomUUID();
       const path = PATH_PREFIX + nonce;
       const entry = { nonce, host: null, page: null, bound: null };
+      const paths = issuedByPage.get(page) ?? new Set();
+      if (paths.size >= CLOSE_HTTPS_PRE_SAMPLES + 1) return { ...entry, error: 'native HTTPS clock sample limit' };
+      paths.add(path);
+      issuedByPage.set(page, paths);
       const deadline = clock() + timeout;
       pending.set(path, entry);
       try {
@@ -75,4 +88,4 @@ function createDepartureClock(clock = () => performance.now()) {
   };
 }
 
-module.exports = { clockExchangeWindow, createDepartureClock };
+module.exports = { clockExchangeWindow, createDepartureClock, CLOSE_HTTPS_PRE_SAMPLES };
