@@ -106,6 +106,24 @@ When a native expiry identifies links to diagnose, the browser and server
 publish only those links. Their input and quality histories expand to at most
 512 records per stage. Count and omitted fields still describe the full stream.
 
+During the traced gameplay hold, the `relayHold` receipt covers both directions
+between the first two UUIDs in the sorted frozen roster. Each page publishes its
+first 512 quality sends and raw arrivals per stage in console batches. Capture
+ends at release, terminal failure, the hold cap, or 45 seconds of page time.
+Previously received batches survive a final page-read timeout. The regular
+hold summaries still cover every link.
+
+Each packet row names its directional endpoints, token and any known delivery
+stamp. Join a browser send to ingress by its single socket's ordinal and exact
+envelope. Join ingress, addressed writes and raw arrivals by stamp and exact
+envelope. The reply's recorded native acceptance candidates identify matching
+report stamps on the reverse link. All observed candidates stay visible,
+including when a candidate has no joined report row during the hold. Empty
+stages can reflect an observation gap or eviction. Compare ingress and write
+on the server clock. Compare sends and arrivals from the same page on its
+page clock. The receipt preserves each clock and includes no cross-clock
+duration.
+
 Use the same-link pressure control with a local traced server build receipt.
 The control drops addressed packets after raw arrival for one link while
 the sender sends 129 inputs and 129 quality reports. It joins the earlier
@@ -140,6 +158,25 @@ Missing or inconsistent observations leave the delivery interval `null`.
 The controller's finish marks handoff to the OS. The browser's response end
 marks the end of its fetch, and the continuation marks when the page resumes.
 Compare the hold cap, response end and continuation on the same page clock.
+
+The native browser workflow accepts `qualification=firefox`, `cell=relay:8`,
+and `release_controls=true`. On each Godot pin, one runner executes the stock
+eight-player room, Firefox relay:4, Chromium relay:8, and both delay controls.
+Each attempt writes to its own directory and a failing room leaves the workflow
+red. The delivery control waits 450 ms between preparing the response and
+ending it. The continuation control waits 450 ms after Fetch resolves and
+before the page starts releasing packets. Both require a measured interval
+at the selected boundary and use the regular packet cap and correction deadline.
+
+Run one control locally with the normal pinned browser setup.
+
+```sh
+python3 scripts/reference/native_online_probe.py --version "$GODOT_PIN" --browser-pair firefox --cell relay:8 \
+  --release-delay "$DELAY" --addon "$WEB_ADDON" --output "$OUTPUT"
+```
+
+Set `DELAY` to `delivery` or `continuation`. A room that stops during warmup
+or prediction stall has yet to apply either delay.
 
 Relay receipts separate the first corrected confirmation, the next advancing
 physics turn, and history publication. The normal 40-frame target is observed

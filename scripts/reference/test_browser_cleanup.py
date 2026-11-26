@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_native_relay_hold_keeps_exact_receipt_when_final_read_times_out(self):
+        subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_relay_hold.test.cjs')], check=True, timeout=10)
+
     def test_relay_wire_receipt_crosses_page_boundary_as_json_text(self):
         script = r"""
 const assert = require('node:assert/strict');
@@ -1303,6 +1306,82 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
   signal.cancel();
   server.close();
 });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
+    def test_native_relay_release_controls_delay_only_the_selected_boundary(self):
+        # Value: protects=independent host and page delays; fails_when=either delay is skipped or survives cancellation
+        script = r"""
+const assert = require('node:assert/strict');
+const { assertReleaseDelay, captureAndReleaseInput, createReleaseSignal } = require(process.argv[1]);
+let timer;
+let now = 100;
+global.performance = { now: () => now };
+global.setTimeout = (callback, delay) => {
+  assert.equal(delay, 450);
+  assert.equal(timer, undefined);
+  timer = callback;
+  return callback;
+};
+global.clearTimeout = callback => {
+  assert.equal(callback, timer);
+  timer = undefined;
+};
+const advance = () => {
+  const callback = timer;
+  assert.ok(callback);
+  timer = undefined;
+  now += 450;
+  callback();
+};
+
+for (const outcome of ['delivered', 'cancelled', 'expired']) {
+  const host = createReleaseSignal(1, 450);
+  let finish;
+  const response = {
+    socket: {}, writeHead(code) { assert.equal(code, 204); return this; },
+    once(event, callback) { assert.equal(event, 'finish'); finish = callback; },
+    end() { assert.equal(this.destroyed, undefined); finish(); },
+    destroy() { this.destroyed = true; },
+  };
+  assert.equal(host.handle({ url: host.paths[0], method: 'GET' }, response), true);
+  host.release(now + (outcome === 'expired' ? 449 : 500));
+  const [receipt] = host.timings();
+  assert.equal(receipt.finished_ms, null);
+  if (outcome === 'cancelled') host.cancel();
+  else advance();
+  assert.equal(timer, undefined);
+  assert.equal(response.destroyed, outcome === 'delivered' ? undefined : true);
+  assert.equal(receipt.finished_ms, outcome === 'delivered' ? receipt.first_write_ms + 450 : null);
+}
+
+(async () => {
+  const receipt = { request_dispatched_ms: 2000, request_received_ms: 2700, first_write_ms: 2701, finished_ms: 2702,
+    resource: { fetch_start_ms: 550, response_end_ms: 1250, response_status: 204, controller_ms: 3600 } };
+  assert.throws(() => assertReleaseDelay([receipt], 'delivery'), /lacks the delivery delay/);
+  assertReleaseDelay([{ ...receipt, finished_ms: 3151 }], 'delivery');
+  assert.throws(() => assertReleaseDelay([receipt], 'continuation'), /lacks the continuation delay/);
+  const continuation = { status: 204, controller_ms: 3900, fetch_resolved_ms: 1252, continued_ms: 1702 };
+  assertReleaseDelay([{ ...receipt, continuation }], 'continuation');
+  assert.throws(() => assertReleaseDelay([{ ...receipt, continuation: { ...continuation, status: 500 } }], 'continuation'),
+    /lacks release delivery timing/);
+  assert.throws(() => assertReleaseDelay([{ ...receipt, resource: null, finished_ms: 3151 }], 'delivery'), /lacks release delivery timing/);
+  console.debug = () => {};
+  const page = { evaluate(callback, argument) { return callback(argument); } };
+  for (const budget of ['1000000', '400000']) {
+    global.fetch = async () => ({ status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': budget }) });
+    global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: { status: () => ({}), release: () => 'released' } };
+    const release = captureAndReleaseInput(page, 0, '/native-release/control', '', 450);
+    await Promise.resolve();
+    assert.equal(window.fortressNativeStalled, undefined);
+    advance();
+    if (budget === '1000000') assert.equal((await release).release, 'released');
+    else {
+      await assert.rejects(release, /native relay release deadline/);
+      assert.equal(window.fortressNativeStalled, undefined);
+    }
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 

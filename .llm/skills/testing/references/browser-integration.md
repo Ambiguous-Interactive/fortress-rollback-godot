@@ -266,7 +266,7 @@ Retain timely peer receipts, clock brackets, and prior complete proofs on read
 failure. Require a complete round for close proof. Ignore reads past the shared deadline.
 Publish [close stages and release timing](../../../../docs/native-backend-migration.md#session-boundary) independently of the final page read.
 Bracket fetch start with controller dispatch and request receipt. Require HTTP 204 and bound response end by controller receipt.
-Firefox can report response start before the host write. Keep it for diagnosis. Delay delivery and continuation independently.
+Firefox can report response start before host write. Keep it for diagnosis. Run stock and each delay on the same runner, preserving every failed attempt.
 An interval spanning the required gap is ambiguous. An upper bound below
 the threshold proves that the observed send fell short of it.
 Use a bounded exact attempt receipt if constructing the stack tag precedes the
