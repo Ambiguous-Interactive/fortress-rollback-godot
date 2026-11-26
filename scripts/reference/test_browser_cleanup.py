@@ -141,14 +141,19 @@ const trace = {
     packets.push(packet);
     return packet;
   },
-  retentionSample: () => ({ frontier: ['input', 'quality'] }),
-  expiryFrontier: sender => ({ sender, captured_ms: clock }),
+  retentionSample: () => ({ frontier: ['input', 'quality'], counts: { raw: { input: 1, quality: 2 } } }),
+  expiryFrontier: sender => {
+    const captured_ms = clock;
+    if (slowFreeze) clock += 2;
+    return { sender, captured_ms };
+  },
   hasBlockedRelayStamps(sender, gate, stamps) {
     return stamps.every(stamp => packets.some(packet => packet.delivery_gate === gate && packet.sender === sender
       && packet.kind === stamp.kind && packet.epoch === stamp.epoch && packet.seq === stamp.seq));
   },
 };
 let clock = 10;
+let slowFreeze = false;
 const realm = { window, trace, WebSocket: Socket, RTCPeerConnection: class {}, Uint8Array, ArrayBuffer, DataView, performance: { now: () => clock },
   setTimeout: run => { alarm = run; }, clearTimeout: () => {} };
 runInNewContext(`(${instrumentNativeWire})(false, '', trace)`, realm);
@@ -186,6 +191,14 @@ assert.equal(wire.resumeBlockedRelay(pressureStamps), null, 'an earlier gate mus
 wire.resumeBlockedRelay();
 deliver(14);
 assert.deepEqual(seen.splice(0), [14]);
+const finalGate = wire.blockRelayLink(source);
+deliver(12);
+deliver(13);
+clock = finalGate.started_ms + 1249;
+slowFreeze = true;
+const late = wire.resumeBlockedRelay(pressureStamps);
+assert.ok(late.resumed_ms >= late.deadline_ms, 'freeze completion must precede the resume deadline');
+assert.equal(late.frontier, undefined);
 wire.holdRelayControl();
 deliver(8);
 alarm();
@@ -592,7 +605,7 @@ function fixture() {
   const server = { room, roster: [sender, recipient], streams: { ingress: stage(), write: stage() } };
   const source = { room, local: sender, sockets: 1, streams: { send: stage(), raw: stage(), sdk: stage(), native: stage() } };
   const reporter = { room, local: recipient, sockets: 1, streams: { send: stage(), raw: stage(), sdk: stage(), native: stage() } };
-  const before = { started_ms: 25, frontier: [] };
+  const before = { started_ms: 25, frontier: [], raw_watermark: { input: 2, quality: 2 } };
   const resumed = { resumed_ms: 35, deadline_ms: 40, delivery_gate: 1, frontier: { room, sender, recipient, packets: [] } };
   const ordinals = [];
   for (const [family, kind] of [['input', 2], ['quality', 4]]) {
@@ -633,6 +646,8 @@ assert.deepEqual(qualify(fixture()).frontier.map(row => row.seq), ['4', '5']);
 for (const [change, diagnostic] of [
   [f => f.server.streams.ingress.input.events.splice(1, 1), /lost the original input packet stage/],
   [f => delete f.resumed.frontier.packets[0].stages.raw, /lost the original input packet stage/],
+  [f => { f.resumed.frontier.packets[0].stages.raw.at_ms = f.before.started_ms; f.before.raw_watermark.input = 1; }, /lost the original input packet stage/],
+  [f => { f.resumed.frontier.packets[0].stages.raw.at_ms = f.before.started_ms; f.before.raw_watermark.input = '2'; }, /invalid raw ordinal watermark/],
   [f => f.ordinals.splice(f.ordinals.length - 8), /needs over 512 new quality arrivals/],
   [f => f.reporter.streams.raw.quality.events[4].delivery_blocked = false, /did not stop at raw arrival/],
   [f => f.reporter.streams.raw.quality.events[4].delivery_gate = 2, /did not stop at raw arrival/],
@@ -1217,6 +1232,7 @@ class Socket {
 }
 let time = 1;
 const barrier = createWarmupBarrier(8, () => time);
+barrier.bindSession(room);
 function makeWire(local, index) {
   const window = {}, tasks = [];
   const realm = {
@@ -1304,7 +1320,7 @@ reverse.wire.observeWarmupInput('sdk', other, ack11.toString('hex'), -1);
 reverse.wire.observeWarmupInput('sdk', receiver, input9.toString('hex'), -1);
 time = 1050;
 const nativeSlots = roster.slice(1).map((_, i) => ({
-  slot: i + 1, receipt_frame: 16, pending_output: i, gossip_bound: i === 0 ? 8 : 16,
+  slot: i + 1, receipt_frame: 16, connected: i !== 1, pending_output: i, gossip_bound: i === 0 ? 8 : i === 1 ? 17 : 16,
 }));
 reverse.wire.recordWarmupTick(0, 0, 8, 20, 'playing', 16, 8, JSON.stringify(nativeSlots));
 reverse.wire.finishWarmup('playing', 16, 12);
@@ -1344,7 +1360,13 @@ assert.equal(wire.warmupStatus().input_link.native.count, 2);
 assert.equal(wire.warmupStatus().input_link.raw.count, 5);
 assert.equal(wire.warmupStatus().input_link.ack.count, 1);
 const wrongAck = JSON.parse(JSON.stringify(barrier.checkpoints[0].ack_link));
-wrongAck.native.first.start_frame = 0;
+wrongAck.raw.first.payload = '00'.repeat(32);
+const wrongBounds = nativeSlots.map((slot, index) => index === 0 ? { ...slot, gossip_bound: 17 } : slot);
+const foreignSession = createWarmupBarrier(8, () => time);
+foreignSession.bindSession('ff'.repeat(16));
+foreignSession.record(0, WARMUP_CHECKPOINT + JSON.stringify(barrier.checkpoints[0]));
+assert.match(foreignSession.ackErrors[0], /invalid warmup ACK link/);
+assert.equal(foreignSession.errors[0], null);
 const wrong = JSON.parse(JSON.stringify(barrier.checkpoints[1]));
 wrong.input_link.sender = other;
 const brokenStream = JSON.parse(JSON.stringify(barrier.checkpoints[1]));
@@ -1359,7 +1381,7 @@ assert.equal(barrier.checkpoints[2].input_link, undefined);
     for (const [index, recipient] of roster.entries()) {
       const page = { ...wrong, recipient, links: roster.filter(sender => sender !== recipient).map(sender => ({sender})),
         input_link: index === 1 ? wrong.input_link : undefined, ack_link: index === 0 ? wrongAck : undefined,
-        native_frontier: index === 0 ? { at_ms: 1050, frame: 16, confirmed: 8, slots: nativeSlots.slice(1) } : undefined };
+        native_frontier: index === 0 ? { at_ms: 1050, frame: 16, confirmed: 8, slots: wrongBounds } : undefined };
       gate.record(index, WARMUP_CHECKPOINT + JSON.stringify(page));
     }
   }, 50);

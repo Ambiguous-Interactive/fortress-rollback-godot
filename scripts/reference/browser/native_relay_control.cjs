@@ -241,11 +241,14 @@ function checkSameLinkRetention(server, browsers, before, resumed, ordinals) {
   const frontier = [];
   const pressure = {};
   for (const [family, kind] of [['input', 2], ['quality', 4]]) {
+    const rawWatermark = before.raw_watermark?.[family];
+    assert.ok(Number.isSafeInteger(rawWatermark) && rawWatermark >= 0, `invalid raw ordinal watermark for ${family}`);
     const raw = new Map(events(reporter, 'raw', family).map(event => [stampKey(event), event]));
     const packet = pinned.packets.find(packet => packet.kind === kind);
     const originalKey = packet && stampKey(packet);
     const row = rows.get(originalKey);
-    assert.ok(row && packet.stages.raw && packet.stages.raw.at_ms <= before.started_ms && packet.stages.sdk && completeRelayRow(row),
+    assert.ok(row && packet.stages.raw && packet.stages.raw.at_ms <= before.started_ms && packet.stages.raw.ordinal <= rawWatermark
+      && packet.stages.sdk && completeRelayRow(row),
       `same-link control lost the original ${family} packet stage`);
     const matches = event => stampKey(event) === originalKey;
     const ingress = events(server, 'ingress', family);

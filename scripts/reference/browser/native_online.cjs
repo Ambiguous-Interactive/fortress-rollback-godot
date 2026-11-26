@@ -53,10 +53,16 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
   let startedAt = Infinity;
   let deadline = Infinity;
   let waiting = false;
+  let session;
   let complete;
   const ready = new Promise(resolve => { complete = resolve; });
   const states = new Set(['offline', 'connecting', 'joining', 'lobby', 'starting', 'playing', 'failed']);
   const isFrontier = value => states.has(value?.state) && Number.isSafeInteger(value.frame) && Number.isSafeInteger(value.confirmed);
+  function validAckPayload(payload, frame) {
+    if (payload.length !== 64 || (session !== undefined && payload.slice(0, 32) !== session)) return false;
+    const bytes = Buffer.from(payload, 'hex');
+    return bytes.readUInt32LE(16) === 0x000252f5 && bytes.readUInt32LE(24) === 3 && bytes.readInt32LE(28) === frame;
+  }
   function validWarmupLink(link, sample, roster, inboundAck) {
     const [first, second] = [...roster].sort();
     const [sender, recipient] = inboundAck ? [second, first] : [first, second];
@@ -69,7 +75,7 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
       if (!stream.count) return stream.first === null && stream.recent === null;
       const valid = row => row && Number.isFinite(row.at_ms) && row.at_ms >= sample.started_ms && row.at_ms <= sample.through_ms
         && typeof row.payload === 'string' && row.payload.length <= 2400 && /^(?:[0-9a-f]{2})+$/.test(row.payload)
-        && (ack ? row.payload.length === 64 : row.payload.length >= 218)
+        && (ack ? validAckPayload(row.payload, row.ack_frame) : row.payload.length >= 218)
         && Number.isSafeInteger(row.ack_frame) && row.ack_frame >= -1
         && (ack ? row.start_frame === null : Number.isSafeInteger(row.start_frame) && row.start_frame >= 0)
         && (stage === 'native' ? Number.isInteger(row.code) : row.code === null)
@@ -86,12 +92,14 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
       && frame(frontier.frame) && frame(frontier.confirmed) && frontier.frame - frontier.confirmed >= 2
       && Array.isArray(frontier.slots) && frontier.slots.length === players - 1
       && frontier.slots.every((row, index) => row?.slot === index + Number(index >= localSlot)
-        && frame(row.receipt_frame) && (row.gossip_bound === null || frame(row.gossip_bound))
+        && typeof row.connected === 'boolean' && frame(row.receipt_frame)
+        && (row.gossip_bound === null || frame(row.gossip_bound) && (!row.connected || row.gossip_bound <= row.receipt_frame))
         && (row.pending_output === null || Number.isSafeInteger(row.pending_output) && row.pending_output >= 0));
   }
   return {
     get checkpoints() { return latest.map(record => record?.sample ?? null); },
     errors, inputErrors, ackErrors, nativeErrors, received,
+    bindSession(expected) { session = expected; },
     frontier() {
       const peers = latest.map((record, index) => {
         const { sample, received_ms } = record ?? { sample: null, received_ms: null };
@@ -1053,21 +1061,21 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       const socket = resources.sockets[0];
       if (!relayWireTrace || resources.sockets.length !== 1 || socket.readyState !== nativeSocket.OPEN
           || blockedRelay || sender === localUuid || !roomRoster.includes(sender)) throw new Error('invalid same-link delivery gate');
-      const { frontier } = relayWireTrace.retentionSample(sender);
+      const { frontier, counts } = relayWireTrace.retentionSample(sender);
       if (!frontier.every(Boolean)) throw new Error('same-link control requires accepted input and quality before pressure');
       const started_ms = performance.now();
       blockedRelay = { socket, sender, id: ++relayGateSequence, deadline_ms: started_ms + 1250, inputs: 0, reports: 0 };
-      return { started_ms, frontier };
+      return { started_ms, frontier, raw_watermark: counts.raw };
     },
     resumeBlockedRelay(stamps) {
       if (!blockedRelay) return null;
       const { sender, id, deadline_ms, inputs, reports } = blockedRelay;
       if (stamps && performance.now() < deadline_ms && !relayWireTrace.hasBlockedRelayStamps(sender, id, stamps)) return null;
-      const resumed_ms = performance.now();
       // The SDK may finish work queued before the gate opened. Freeze the last acceptance before allowing a new raw packet through.
-      const frontier = stamps && resumed_ms < deadline_ms ? relayWireTrace.expiryFrontier(sender) : undefined;
+      const frontier = stamps && performance.now() < deadline_ms ? relayWireTrace.expiryFrontier(sender) : undefined;
       blockedRelay = null;
-      return { delivery_gate: id, resumed_ms, deadline_ms, inputs, reports, frontier };
+      const resumed_ms = performance.now();
+      return { delivery_gate: id, resumed_ms, deadline_ms, inputs, reports, frontier: resumed_ms < deadline_ms ? frontier : undefined };
     },
     pressureRelayLink(recipient) {
       const socket = resources.sockets[0];
@@ -2064,6 +2072,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     await Promise.all(pages.slice(1).map((page, index) => connect(page, index + 1, room)));
     await Promise.all(pages.map(page => wait(page, () => window.fortressNative.ready_enabled)));
     const ready = await Promise.all(pages.map(page => command(page, 'ready')));
+    warmupBarrier?.bindSession(ready[0].session_id);
     if (postRelease || traceMeshDeparture) {
       const uuids = ready.map(peer => peer.uuid);
       const roster = [...uuids].sort();

@@ -53,6 +53,7 @@ impl NonBlockingSocket<u16> for Socket {
 pub(crate) struct ConfirmationSlot {
     pub(crate) slot: usize,
     pub(crate) receipt_frame: i32,
+    pub(crate) connected: bool,
     pub(crate) pending_output: Option<u64>,
     pub(crate) gossip_bound: Option<i32>,
 }
@@ -172,6 +173,7 @@ impl Peer {
         slots
             .filter_map(|handle| {
                 let receipt_frame = self.session.diagnostic_player_receipt_frame(handle)?.as_i32();
+                let connected = self.session.diagnostic_player_connected(handle)?;
                 let pending_output = self.session.peer_metrics(handle).ok().map(|stats| stats.pending_output_len);
                 // The target bound folds every remote view, regardless of the queried endpoint.
                 let gossip_bound = self
@@ -182,6 +184,7 @@ impl Peer {
                 Some(ConfirmationSlot {
                     slot: handle.as_usize(),
                     receipt_frame,
+                    connected,
                     pending_output,
                     gossip_bound,
                 })

@@ -139,6 +139,7 @@ fn routes_a_mesh_with_multiple_local_slots_in_ascending_slot_order() {
         let expected: Vec<_> = (0..4).filter(|slot| !peer.local_slots.contains(&PlayerHandle::new(*slot))).collect();
         assert_eq!(observed.iter().map(|row| row.slot).collect::<Vec<_>>(), expected);
         for row in observed {
+            assert!(row.connected);
             assert!(row.receipt_frame >= confirmed);
             assert!(row.pending_output.unwrap() <= 8);
             let bound = row.gossip_bound.unwrap();

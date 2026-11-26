@@ -114,6 +114,7 @@ impl FortressNativeSession {
                 let mut row = VarDictionary::new();
                 row.set("slot", slot.slot as i64);
                 row.set("receipt_frame", slot.receipt_frame);
+                row.set("connected", slot.connected);
                 row.set("pending_output", &slot.pending_output.map_or_else(Variant::nil, |count| (count as i64).to_variant()));
                 row.set("gossip_bound", &slot.gossip_bound.map_or_else(Variant::nil, |frame| frame.to_variant()));
                 row
