@@ -13,4 +13,14 @@ close stages. The [migration contract](../../docs/native-backend-migration.md#se
 defines each clock and replaces the dispatch-to-entry interval as the only
 measure of release latency.
 
+The hosted Firefox 4.7.2 room hit the cap on every page before Resource Timing
+reported response end. Continuations arrived another 3.85 seconds later.
+Controller writes began within 0.98 ms of dispatch. The cap and response
+ordering show why controller timing alone misses both delay boundaries.
+The 4.3 room hit the cap before the controller dispatched release while it
+waited for matched control replies. The local Firefox rooms, hosted Firefox
+four-player controls and hosted Chromium eight-player controls passed both
+pins. Keep the failed hosted boundaries distinct in the follow-up.
+[Hosted Firefox rooms](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45752366186)
+
 State `findings-acted`.
