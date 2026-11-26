@@ -2774,6 +2774,9 @@ const { runInNewContext } = require('node:vm');
 const { instrumentNativeWire, recordCloseObservation, matchCloseObservations } = require(process.argv[1]);
 let now = 10;
 const observed = [new Map(), new Map()];
+let emissions = 0;
+const uuids = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'];
+const identities = { uuids, roster: uuids };
 class Connection {
   signalingState = 'stable';
   remoteDescription = { sdp: 'a=ice-ufrag:sender' };
@@ -2791,7 +2794,11 @@ const prefix = 'close ';
 const window = {};
 runInNewContext(`(${instrumentNativeWire})(false, '', undefined, 'close ')`, {
   window, WebSocket: class {}, RTCPeerConnection: Connection,
-  performance: { now: () => now }, console: { debug: text => recordCloseObservation(observed[0], text.slice(prefix.length), now + 500) },
+  performance: { now: () => now },
+  console: { debug: text => {
+    emissions++;
+    recordCloseObservation(observed[0], text.slice(prefix.length), now + 500, identities, 0);
+  } },
 });
 const connection = new Connection();
 const channel = connection.createDataChannel('gameplay', {});
@@ -2802,17 +2809,41 @@ now = 40;
 channel.closeEvent();
 now = 45;
 channel.closeEvent();
+const wire = window.fortressNativeWire;
+wire.bind('abcdef0123456789abcdef0123456789', uuids[0], uuids);
+wire.recordMeshDeparture('sdk_player_left', uuids[1]);  // Before observation starts.
+assert.equal(observed[0].size, 3);
+wire.observeDeparture();
+now = 46;
+wire.recordMeshDeparture('sdk_player_left', uuids[1]);
+now = 47;
+wire.recordMeshDeparture('mesh_remove_peer', uuids[1], true);
+wire.recordMeshDeparture('mesh_remove_peer', uuids[1], false);  // A duplicate does not replace exact first evidence.
+wire.recordMeshDeparture('sdk_player_left', uuids[0]);
+for (const value of [
+  { kind: 'mesh_remove_peer', player: uuids[1], had_peer: 1 },
+  { kind: 'sdk_player_left', player: uuids[1], had_peer: false },
+  { kind: 'sdk_player_left', player: uuids[0] },
+  { kind: 'sdk_player_left', player: '33333333-3333-3333-3333-333333333333' },
+]) recordCloseObservation(observed[0], JSON.stringify({ ...value, page_us: 48000 }), 548, identities, 0);
+assert.equal(observed[0].size, 5);
+assert.equal(emissions, 5, 'a duplicate departure must not emit another receipt');
 const before = [[{ index: 0, local: 'closer', remote: 'sender' }], [{ index: 17, local: 'sender', remote: 'closer' }]];
 const error = { index: 1, channel: 17, attempt: 279, received_ms: 600 };
 const report = {
   partialSnapshots: [null, { sends: { 279: { channel: 17, attempt: 279, sentAt: 47199, readyState: 'open', bufferedAmount: 49 } } }],
   clocks: [{ offsetMin: 9900, offsetMax: 10100 }, { offsetMin: -5100, offsetMax: -4900 }],
 };
-const [receipt] = matchCloseObservations([error], before, observed, report);
+const [receipt] = matchCloseObservations([error], before, observed, report, identities);
 assert.equal(receipt.attempt, 279);
 assert.equal(receipt.sentAt, 47199);
 assert.deepEqual(receipt.sendState, { readyState: 'open', bufferedAmount: 49 });
 assert.equal(receipt.received_ms, 600);
+assert.deepEqual(receipt.lifecycle, [
+  { owner: 0, kind: 'sdk_player_left', player: uuids[1], page_us: 46000, received_ms: 546, minimumGapUs: -14001, maximumGapUs: -13601 },
+  { owner: 0, kind: 'mesh_remove_peer', player: uuids[1], had_peer: true, page_us: 47000, received_ms: 547,
+    minimumGapUs: -15001, maximumGapUs: -14601 },
+]);
 assert.deepEqual(receipt.observations.map(({ owner, kind, page_us, received_ms }) => [owner, kind, page_us, received_ms]), [
   [0, 'channel_close_called', 10000, 512],
   [0, 'channel_close_event', 40000, 540],

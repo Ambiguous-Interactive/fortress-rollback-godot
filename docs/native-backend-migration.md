@@ -74,8 +74,12 @@ Tagged send diagnostics list the matching reciprocal route and the possible
 gap to each observed stage when the page clocks are bounded. The exact send
 attempt also carries the channel's readiness and queued bytes sampled immediately
 before calling the browser send. Missing samples leave this evidence empty.
-Nonce-matched
-same-origin HTTPS exchanges bracket each page clock with controller receipt
+Ordinary WebKit mesh departures also record the SDK's public `player_left`
+event and the peer factory's `remove_peer` entry for each frozen remote UUID.
+A removal entry records whether the peer was still registered. These are
+separate observations because the SDK's internal removal callback has no
+public event. The reciprocal route joins the observations to the tagged send
+without using them as close proof. Nonce-matched same-origin HTTPS exchanges bracket each page clock with controller receipt
 and response timestamps. The receipt keeps the HTTPS and debugger samples so
 an ambiguous interval can be reproduced. Acceptance requires a fresh SCTP
 abort or completed connection close followed by the tagged send, with at least

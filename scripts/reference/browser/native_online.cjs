@@ -28,6 +28,7 @@ const CLOSE_HTTPS_SAMPLE_MS = 500;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const CLOSE_CHECKPOINT = 'fortress native close ';
 const CLOSE_STAGES = ['channel_close_called', 'channel_close_event', 'connection_close_called'];
+const MESH_DEPARTURE_STAGES = ['sdk_player_left', 'mesh_remove_peer'];
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
 const RELEASE_TIMING_CHECKPOINT = 'fortress native release timing ';
@@ -445,6 +446,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   let observingDeparture = false;
   const departureSendLimit = 4096;
   const departureSendHistory = [];
+  const meshDepartureKeys = new Set();
   let departureSendCount = 0;
   let holding = false;
   let releasingRelay = false;
@@ -1130,6 +1132,15 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     },
     observeDeparture() { observingDeparture = true; return window.crossOriginIsolated ? instant() : null; },
     stopObservingDeparture() { observingDeparture = false; },
+    recordMeshDeparture(kind, player, had_peer) {
+      if (!closePrefix || !observingDeparture || typeof player !== 'string') return;
+      const validStage = kind === 'sdk_player_left' ? had_peer === undefined : kind === 'mesh_remove_peer' && typeof had_peer === 'boolean';
+      const peer = player.replaceAll('-', '');
+      const key = `${kind}:${peer}`;
+      if (!validStage || peer === localUuid || !roomRoster.includes(peer) || meshDepartureKeys.has(key)) return;
+      meshDepartureKeys.add(key);
+      console.debug(closePrefix + JSON.stringify({ kind, player, had_peer, page_us: instant() }));
+    },
     departureSends(attempts) {
       return Object.fromEntries(attempts.flatMap(attempt => {
         const receipt = departureSendHistory[attempt % departureSendLimit];
@@ -1227,15 +1238,23 @@ function reportedChannel(stack) {
     ? { channel, attempt } : { channel: null, attempt: null };
 }
 
-function recordCloseObservation(observations, text, received_ms) {
+function recordCloseObservation(observations, text, received_ms, identities, owner) {
   if (text.length > 768) return;
   let value;
   try { value = JSON.parse(text); } catch { return; }
-  if (!value || !CLOSE_STAGES.includes(value.kind)) return;
+  if (!value || !Number.isSafeInteger(value.page_us) || value.page_us < 0) return;
+  if (MESH_DEPARTURE_STAGES.includes(value.kind)) {
+    const { kind, player, had_peer, page_us } = value;
+    if (!identities?.uuids[owner] || identities.uuids[owner] === player || !identities.roster.includes(player)
+      || (kind === 'mesh_remove_peer' ? typeof had_peer !== 'boolean' : had_peer !== undefined)) return;
+    const key = `${kind}:${player}`;
+    if (!observations.has(key)) observations.set(key, { kind, player, ...(had_peer === undefined ? {} : { had_peer }), page_us, received_ms });
+    return;
+  }
+  if (!CLOSE_STAGES.includes(value.kind)) return;
   const { kind, index, local, remote, page_us } = value;
   const validFragment = fragment => fragment === null || typeof fragment === 'string' && /^[\w+/]{1,256}$/.test(fragment);
-  if (!Number.isSafeInteger(index) || index < 0 || index >= 256 || !Number.isSafeInteger(page_us) || page_us < 0
-    || !validFragment(local) || !validFragment(remote)) return;
+  if (!Number.isSafeInteger(index) || index < 0 || index >= 256 || !validFragment(local) || !validFragment(remote)) return;
   const key = `${index}:${kind}`;
   if (!observations.has(key)) observations.set(key, { kind, index, local, remote, page_us, received_ms });
 }
@@ -1246,7 +1265,7 @@ function reciprocalLinks(linksByPage, index, sender) {
     .map(peer => ({ ...peer, owner })));
 }
 
-function matchCloseObservations(errors, before, observations, report = {}) {
+function matchCloseObservations(errors, before, observations, report = {}, identities) {
   if (!before) return [];
   return errors.filter(({ attempt }) => Number.isSafeInteger(attempt) && attempt > 0).map(({ index, channel, attempt, received_ms }) => {
     const send = report.partialSnapshots?.[index]?.sends?.[attempt];
@@ -1254,17 +1273,27 @@ function matchCloseObservations(errors, before, observations, report = {}) {
     const prior = latest === null ? report.proofs?.find(proof => proof.index === index && proof.channel === channel && proof.attempt === attempt) : null;
     const sentAt = latest ?? prior?.sentAt ?? null;
     const sendState = prior?.sendState ?? exactSendState(latest, send);
-    const receipt = { index, channel, attempt, sentAt, sendState, received_ms, observations: [] };
+    const receipt = { index, channel, attempt, sentAt, sendState, received_ms, observations: [], lifecycle: [] };
     const sender = before[index].find(link => link.index === channel);
     if (!sender?.local || !sender.remote || sender.closed) return receipt;
     const counterparts = reciprocalLinks(before, index, sender);
     if (counterparts.length !== 1) return receipt;
-    for (const { owner, index: channelIndex, local, remote } of [{ ...sender, owner: index }, counterparts[0]]) {
+    const counterpart = counterparts[0];
+    for (const { owner, index: channelIndex, local, remote } of [{ ...sender, owner: index }, counterpart]) {
       for (const kind of CLOSE_STAGES) {
         const event = observations[owner].get(`${channelIndex}:${kind}`);
         if (event?.local === local && event.remote === remote) {
           const interval = owner === index ? {} : closeGap(sentAt, event.page_us, report.clocks?.[index], report.clocks?.[owner]);
           receipt.observations.push({ owner, ...event, ...interval });
+        }
+      }
+      const remotePlayer = identities?.uuids[owner === index ? counterpart.owner : index];
+      if (!remotePlayer) continue;
+      for (const kind of MESH_DEPARTURE_STAGES) {
+        const event = observations[owner].get(`${kind}:${remotePlayer}`);
+        if (event) {
+          const interval = owner === index ? {} : closeGap(sentAt, event.page_us, report.clocks?.[index], report.clocks?.[owner]);
+          receipt.lifecycle.push({ owner, ...event, ...interval });
         }
       }
     }
@@ -1938,12 +1967,13 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const physicalCloseReport = {};
   const closeReport = {};
   const closeObservations = webkitMesh ? Array.from({ length: players }, () => new Map()) : null;
+  const traceMeshDeparture = webkitMesh && mode === 'mesh';
   let direct, peers;
   const closeReceipts = () => closeObservations ? {
     closeObservations: closeObservations.map(events => [...events.values()]),
     taggedCloseObservations: [
-      ...matchCloseObservations(physicalCloseErrors, direct?.map(peer => peer.wire.sctp), closeObservations, physicalCloseReport),
-      ...matchCloseObservations(departureErrors, peers?.map(peer => peer.wire.sctp), closeObservations, closeReport),
+      ...matchCloseObservations(physicalCloseErrors, direct?.map(peer => peer.wire.sctp), closeObservations, physicalCloseReport, roomIdentities),
+      ...matchCloseObservations(departureErrors, peers?.map(peer => peer.wire.sctp), closeObservations, closeReport, roomIdentities),
     ],
   } : {};
   const wait = async (page, condition, argument = null, timeout = PAGE_WAIT_MS) => {
@@ -1994,7 +2024,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       page.on('console', message => {
         const text = message.text();
         if (closeObservations && text.startsWith(CLOSE_CHECKPOINT)) {
-          recordCloseObservation(closeObservations[index], text.slice(CLOSE_CHECKPOINT.length), performance.now());
+          recordCloseObservation(closeObservations[index], text.slice(CLOSE_CHECKPOINT.length), performance.now(), roomIdentities, index);
         }
         warmupBarrier?.record(index, text);
         if (relayHold && text.startsWith(RELAY_HOLD_PREFIX)) relayHold.record(index, text, performance.now());
@@ -2026,7 +2056,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     phase = 'lobby';
     function connect(page, index, room) {
       return command(page, 'connect', { endpoint: socketEndpoint, name: `Player ${index}`, room, route, players,
-        wait_for_full_mesh: mode === 'mesh' || recovery, observe_recovery: recovery, trace_warmup: traceWarmup });
+        wait_for_full_mesh: mode === 'mesh' || recovery, observe_recovery: recovery, trace_close: traceMeshDeparture, trace_warmup: traceWarmup });
     }
     await connect(pages[0], 0, '');
     await wait(pages[0], () => window.fortressNative.state === 'lobby' && window.fortressNative.room !== '');
@@ -2034,14 +2064,20 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     await Promise.all(pages.slice(1).map((page, index) => connect(page, index + 1, room)));
     await Promise.all(pages.map(page => wait(page, () => window.fortressNative.ready_enabled)));
     const ready = await Promise.all(pages.map(page => command(page, 'ready')));
-    if (postRelease) {
+    if (postRelease || traceMeshDeparture) {
       const uuids = ready.map(peer => peer.uuid);
       const roster = [...uuids].sort();
-      assert.ok(roster.every(uuid => FROZEN_UUID.test(uuid)) && new Set(uuids).size === players);
-      for (const peer of ready) assert.deepEqual(peer.frozen_roster, roster, 'native departure requires the frozen roster');
-      roomIdentities = { uuids, roster };
-      if (traceRelayWire) relayHold = createRelayHold(ready[0].session_id, uuids);
-      postRelease.forEach((peer, index) => bindDepartureCheckpoints(peer, roster, uuids[index]));
+      const validRoster = roster.every(uuid => FROZEN_UUID.test(uuid)) && new Set(uuids).size === players;
+      if (postRelease) {
+        assert.ok(validRoster);
+        for (const peer of ready) assert.deepEqual(peer.frozen_roster, roster, 'native departure requires the frozen roster');
+        if (traceRelayWire) relayHold = createRelayHold(ready[0].session_id, uuids);
+        postRelease.forEach((peer, index) => bindDepartureCheckpoints(peer, roster, uuids[index]));
+        roomIdentities = { uuids, roster };
+      } else if (validRoster && ready.every(peer => Array.isArray(peer.frozen_roster) && peer.frozen_roster.length === players
+        && peer.frozen_roster.every((uuid, index) => uuid === roster[index]))) {
+        roomIdentities = { uuids, roster };
+      }
     }
     if (readRelayServer) await bindRelayServer(ready, traceScopePath, readRelayServer);
     await wait(pages[0], () => window.fortressNative.start_enabled);
