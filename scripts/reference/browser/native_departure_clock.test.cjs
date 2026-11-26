@@ -98,6 +98,26 @@ test('optional HTTPS cannot spend the deadline for a fresh abort snapshot', asyn
   assert.equal(report.proofs[0].proof, 'sctp-abort');
 });
 
+test('overlapping physical closes prove each warning against its own reciprocal closer', async () => {
+  const channels = [[0, 1], [1, 0], [2, 3], [3, 2]].map(([index, remote]) => ({
+    index: 3, local: `page-${index}`, remote: `page-${remote}`, closed: false, closeAborts: 0,
+  }));
+  const before = channels.map(channel => ({ wire: { sctp: [channel] } }));
+  const pages = channels.map(channel => ({ async evaluate() {
+    return { links: [{ ...channel, closed: true }], sends: {} };
+  } }));
+  const errors = [1, 3].map(index => ({ index, channel: 3, attempt: null }));
+  const report = {};
+  let now = 0;
+  const timing = { clock: () => now, delay: async () => { now = 5000; } };
+  await waitForCloseProofs(pages, before, errors, report, { ...timing, closers: new Map([[1, 0], [3, 2]]) });
+  assert.deepEqual(report.proofs.map(({ index, closer, proof }) => [index, closer, proof]), [
+    [1, 0, 'stream-close'], [3, 2, 'stream-close'],
+  ]);
+  await assert.rejects(waitForCloseProofs(pages, before, errors, {}, { ...timing, closers: new Map([[1, 2], [3, 0]]) }),
+    /WebKit close evidence deadline for peer 1 channel 3, peer 3 channel 3/);
+});
+
 test('only a room-issued exact HTTPS fetch belongs to its original page after timeout', async () => {
   const origin = 'https://127.0.0.1:8765';
   const clock = createDepartureClock();

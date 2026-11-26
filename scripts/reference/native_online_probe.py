@@ -26,10 +26,10 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 import host_capacity  # noqa: E402
 from package_addon import ADDON, snapshot as runtime_snapshot  # noqa: E402
 
-CELLS = tuple(f'{route}:{count}' for route in ('mesh', 'relay') for count in (2, 4, 8)) + ('mesh-startup:4', 'mesh-close:4', 'mesh-recovery:4')
 OVERLAP_CELL = 'mesh-recovery-overlap:4'
+CELLS = tuple(f'{route}:{count}' for route in ('mesh', 'relay') for count in (2, 4, 8)) + (
+    'mesh-startup:4', 'mesh-close:4', 'mesh-recovery:4', OVERLAP_CELL)
 RECOVERY_MODES = ('mesh-recovery', 'mesh-recovery-overlap')
-OVERLAP_PROFILES = ('chromium', 'chromium-firefox')
 BROWSER_PAIRS = ('chromium', 'firefox', 'webkit', 'chromium-firefox', 'chromium-webkit', 'firefox-webkit')
 BROWSER = ROOT / 'scripts/reference/browser'
 TRACE_SOURCE = Path(__file__).with_name('server_trace')
@@ -188,7 +188,7 @@ def validate_trace_build(receipt, revision, frozen):
 def main():
     parser = ReceiptParser(description=__doc__, receipt=REPORT)
     parser.add_argument('--version', help='pinned Godot version, defaults to current stable')
-    parser.add_argument('--cell', action='append', choices=(*CELLS, OVERLAP_CELL))
+    parser.add_argument('--cell', action='append', choices=CELLS)
     parser.add_argument('--omit-second-replacement', action='store_true', help='negative control for the overlapping recovery cell')
     parser.add_argument('--trace-relay-wire', action='store_true', help='capture bounded browser, SDK and native inbox packet receipts in relay cells')
     parser.add_argument('--relay-trace-server', type=Path, help='build receipt for the optional instrumented local relay server')
@@ -204,7 +204,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     output, cache, addon = args.output.resolve(), args.cache.resolve(), args.addon.resolve()
-    logs = [cell.replace(':', '-') + '.log' for cell in (*CELLS, OVERLAP_CELL)]
+    logs = [cell.replace(':', '-') + '.log' for cell in CELLS]
     logs += ['mesh-server.log', 'relay-server.log', 'import.log', 'export.log', 'version.log', 'tls.log', 'stun.log']
     trace_files = ('.log', '-scope.json', '-scope.json.new', '-trace.json', '-trace.json.request', '-trace.json.request.next')
     logs += [f'relay-{players}-server{suffix}' for players in (2, 4, 8) for suffix in trace_files]
@@ -225,10 +225,7 @@ def main():
     for variable in ('FORTRESS_PLAYWRIGHT_PACKAGE', *tools.values()):
         if not environment.get(variable):
             parser.error(f'{variable} must name the installed browser tool')
-    overlap_cells = (OVERLAP_CELL,) if args.browser_pair in OVERLAP_PROFILES else ()
-    cells = tuple(dict.fromkeys(args.cell or (*CELLS, *overlap_cells)))
-    if OVERLAP_CELL in cells and not overlap_cells:
-        parser.error(f'{OVERLAP_CELL} requires one of: {", ".join(OVERLAP_PROFILES)}')
+    cells = tuple(dict.fromkeys(args.cell)) if args.cell else CELLS
     if args.omit_second_replacement and cells != (OVERLAP_CELL,):
         parser.error(f'--omit-second-replacement requires --cell {OVERLAP_CELL}')
     trace_wire = args.trace_relay_wire or args.relay_trace_server is not None

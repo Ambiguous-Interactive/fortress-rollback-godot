@@ -2,6 +2,15 @@
 
 const assert = require('node:assert/strict');
 
+const PHYSICAL_PAIRS = [[0, 1], [2, 3]];
+
+class OmittedReplacement extends Error {
+  constructor(slots) {
+    super('the selected replacement Offers were withheld');
+    this.slots = slots;
+  }
+}
+
 function reciprocalPair(peers, exclude = []) {
   const [left, right] = peers;
   const eligible = (record, index) => record.open && record.unreliable && record.local && record.remote
@@ -102,8 +111,9 @@ function verifyReplacement(pair, direct, peers) {
 }
 
 async function recoverPairs(direct, { pages, observe, command, pause, setPhase, overlap, omitSecond }) {
-  const pairs = [makePair(direct, [0, 1], overlap ? 'drop-first-offer' : null)];
-  if (overlap) pairs.push(makePair(direct, [2, 3], omitSecond ? 'drop-all-offers' : null));
+  const [first, second] = PHYSICAL_PAIRS;
+  const pairs = [makePair(direct, first, overlap ? 'drop-first-offer' : null)];
+  if (overlap) pairs.push(makePair(direct, second, omitSecond ? 'drop-all-offers' : null));
   const targets = pairs.flatMap(({ slots: [a, b] }) => [b, a]);
   const old = pairs.flatMap(pair => pair.old);
   const healthy = direct.map((peer, index) => peer.wire.sctp.filter(record => record.index !== old[index]?.index));
@@ -194,9 +204,10 @@ async function recoverPairs(direct, { pages, observe, command, pause, setPhase, 
     assert.ok(sent.observed.some(event => event.attempt > 1), 'second pair must attempt a retry');
     assert.equal(sent.droppedOffers, sent.observed.length, 'second pair must drop every Offer');
     assert.deepEqual(restored[answerer].wire.recovery.delivered, [], 'second pair must receive no Offer');
+    throw new OmittedReplacement(missing[0].slots);
   }
-  if (missing.length) throw new Error(`missing replacement for pair ${missing.map(pair => pair.slots.join('-')).join(', ')}`);
+  if (missing.length) throw new Error(`replacement absent for pair ${missing.map(pair => pair.slots.join('-')).join(', ')}`);
   throw new Error('healthy direct gameplay did not advance after replacement');
 }
 
-module.exports = { assertRecoveredRoom, assertStableRoom, recoverPairs };
+module.exports = { assertRecoveredRoom, assertStableRoom, OmittedReplacement, PHYSICAL_PAIRS, recoverPairs };
