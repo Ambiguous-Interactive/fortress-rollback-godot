@@ -90,7 +90,7 @@ func cases() -> PackedStringArray:
 	return PackedStringArray([
 		"parity", "reentry", "failure", "validation", "stall", "terminate_reconfigure",
 		"notifications", "input_validation", "missing_samples", "input_exhaustion",
-		"client_status",
+		"client_status", "unavailable_rollback_snapshot",
 	])
 
 
@@ -118,7 +118,49 @@ func run_case(name: String, context: RefCounted) -> void:
 			_input_exhaustion(context)
 		"client_status":
 			_client_status(context)
+		"unavailable_rollback_snapshot":
+			_unavailable_rollback_snapshot(context)
 	context.finish()
+
+
+# Value: protects=rollback failure reports the rejected load boundary; fails_when=stale snapshot drops attribution;
+# why_new=callback-failure tests do not exercise preflight; seam=replace only the saved frame tag
+func _unavailable_rollback_snapshot(context: RefCounted) -> void:
+	for stale: bool in [false, true]:
+		var config: Config = Config.new()
+		config.local_players = PackedInt32Array([0])
+		config.sync_test = false
+		config.check_distance = 0
+		config.max_snapshot_bytes = 8
+		config.storage_budget_bytes = 65536
+		var session: Session = Session.new()
+		context.equal(session.configure(config), Types.Code.OK, "configure external input session")
+		var game: Game = Game.new()
+		var driver: Driver = Driver.new(session, game)
+		var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, 0, PackedByteArray([0]))]
+		context.equal(driver.step(0, samples).code, Types.Code.OK, "advance with predicted remote input")
+		context.equal(session.receive_input(1, 0, PackedByteArray([7])).code, Types.Code.OK, "receive differing actual input")
+		context.equal(driver.status().pending_rollback_frame, 0, "rollback needs saved boundary zero")
+		if stale:
+			session._history._slots[0].frame = config.history_slots
+		var previous_trace: PackedStringArray = game.trace.duplicate()
+		samples[0] = Driver.LocalInput.new(0, 1, PackedByteArray([1]))
+		var result: Driver.StepResult = driver.step(1, samples)
+		if not stale:
+			context.equal(result.code, Types.Code.OK, "retained snapshot allows correction")
+			context.equal(game.trace.slice(previous_trace.size()), PackedStringArray(["load:0", "advance:0", "save:1", "advance:1"]), "ordered correction callbacks")
+			context.equal(game.value, 77, "corrected state uses the original and predicted remote input")
+			continue
+		context.equal(result.code, Types.Code.HISTORY_UNAVAILABLE, "stale snapshot blocks correction")
+		context.equal(result.failure_frame, 0, "step reports the required rollback boundary")
+		context.equal(result.failure_kind, Types.Kind.LOAD, "step reports the rejected request kind")
+		context.equal(game.trace, previous_trace, "preflight fails before any callback")
+		context.equal(driver.status().current_frame, 1, "failed correction leaves exposed frame unchanged")
+		session.terminate(Types.Code.DESYNC, 2)
+		var failure: Types.Status = driver.status()
+		context.equal(failure.reason, Types.Code.HISTORY_UNAVAILABLE, "first terminal cause persists")
+		context.equal(failure.failure_frame, 0, "failure reports the required rollback boundary")
+		context.equal(failure.failure_kind, Types.Kind.LOAD, "failure reports the rejected request kind")
 
 
 func _session() -> RefCounted:

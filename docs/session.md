@@ -71,11 +71,11 @@ var result: RefCounted = driver.step_local(now_us, rows)
 Here `sample_buttons(player)` is the application's fixed-width input sampler.
 The driver copies accepted bytes; callers may reuse their buffers after the call.
 `StepResult` reports code, before/after frame, drained events, the session's terminal
-`reason` and its `failure_frame`. The driver consumes the expert engine's requests in
-order; it has no rollback algorithm. `driver.status()` and `driver.statistics()` report
-the session state and counters, so a client that only holds the driver still learns the
-current frame, the confirmed frame, the lifecycle and the exact cause of a stop. Peer
-results carry the same cause from the shared core session.
+`reason`, `failure_frame` and `failure_kind`. If a required rollback snapshot is
+unavailable, the failure identifies its `LOAD` boundary before any callback runs.
+The driver consumes the expert engine's requests in order.
+`driver.status()` and `driver.statistics()` expose the session state and counters.
+Peer results carry the same terminal cause from the shared core session.
 
 The native driver/expert comparison includes actual encoded P2P sessions with
 2 and 8 endpoints, plus 6 player slots shared across 3 endpoints. The eight-peer

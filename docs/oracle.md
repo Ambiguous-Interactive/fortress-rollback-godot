@@ -21,8 +21,9 @@ toolchain and builds the oracle, and the receipt names the executable that ran.
 
 Use `--offline` after the pinned references, Rust toolchain and crates are cached.
 The launcher validates source archive integrity and every extracted file before reuse.
-Cargo builds with the committed lockfile, Rust 1.94.0 and no upstream default or
-optional features. The upstream default prediction window is eight frames.
+Cargo uses the [committed toolchain pin](reference/pins.json) and lockfile.
+The build disables upstream default and optional features. The upstream default
+prediction window is eight frames.
 Run separately with Godot 4.3 and current pinned 4.7.2. CI runs both.
 
 The result directory contains exact scenarios, traces, process logs, mutants
@@ -34,7 +35,7 @@ not a release coverage certificate.
 ## Scenario versions 1 and 2
 
 All fields are required; unknown fields fail. `format` is integer 1 or 2 and
-`upstream_revision` is `f13cd5c0f2815926785a395947e18da0dbea0dd8`.
+`upstream_revision` is the exact [Fortress pin](reference/pins.json).
 `players` is 2–8; `input_width` is four bytes; `check_distance` and
 `input_delay` are 0–7. `operations` contains 1–10000 ordered operations:
 
@@ -136,13 +137,12 @@ fail at that exact load's canonical state comparison.
 
 ## Remaining requirements
 
-V2 remains open. The scenario vocabulary currently covers sync-test public APIs;
-P2P setup, injected time, packet deliveries and protocol observations still need
-their implementation and tests, tracked in
-[follow-up #59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59).
-The sync-test corpus now compares two actual session implementations. V3 still
-requires P2P time/delivery comparison, richer generated exploration and shrinking.
-There is no browser oracle execution or full-feature differential claim.
+This launcher compares the two actual sync-test implementations. The separate
+[P2P oracle](oracle-p2p.md) exercises explicit time and packet delivery,
+compares protocol observations, and shrinks the first divergence.
+[Follow-up #59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59)
+tracks wider fault envelopes and sustained controls for V2 and V3.
+Browser and advanced-feature qualification have separate gates.
 
 The corpus observes missing-input errors and recovery retries through the real
 API, including after rollback begins. Other error/recovery classes need their own

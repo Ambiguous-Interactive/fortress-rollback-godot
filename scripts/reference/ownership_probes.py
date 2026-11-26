@@ -129,7 +129,7 @@ EXPECTED.update({
 })
 EXPECTED.update({
     'res://tests/unit/test_driver.gd': {'parity', 'reentry', 'failure', 'validation', 'stall',
-        'terminate_reconfigure', 'notifications', 'input_validation', 'missing_samples', 'client_status'},
+        'terminate_reconfigure', 'notifications', 'input_validation', 'missing_samples', 'client_status', 'unavailable_rollback_snapshot'},
     'res://tests/unit/test_replay_checkpoints.gd': {'cached_navigation', 'bounded_cache', 'restore_failures', 'checkpoint_callbacks'},
     'res://tests/unit/test_spectator_stream.gd': {'wire_golden', 'byte_delivery', 'malformed', 'authentication', 'negotiation',
         'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive', 'viewer_lifetime', 'viewer_lifetime_control',

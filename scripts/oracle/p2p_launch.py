@@ -96,6 +96,8 @@ def case_builders(binary, observe=source):
     for players in (2, 4, 8):
         for mode in ('loss', 'reorder', 'stall', 'retry'):
             builders[f'mesh_{players}_{mode}'] = partial(build_case, binary, players, 0, mode, observe=observe)
+    for window in (2, 3):
+        builders[f'mesh_2_window_{window}_stall'] = partial(build_case, binary, 2, 0, 'stall', window=window, observe=observe)
     # The maximum comparable prediction window: the ordinary cases hold the deepest configured
     # rollback boundary, and the stall schedule that exceeds window four instead recovers through
     # a six-frame prediction run, so both the threshold refusal and the deep recovery path compare.

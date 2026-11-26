@@ -2,7 +2,7 @@
 
 This source audit scopes [C1](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/25)
 and [C2](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/26)
-against Fortress `f13cd5c0f2815926785a395947e18da0dbea0dd8`.
+against Fortress `d124c89080004d96971a629bb0427056ee1805e3`.
 It contributes to [B2](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/13);
 it does not complete that inventory or certify source-family coverage.
 The [session ADR](contracts.md) remains authoritative for the Godot API boundary.
@@ -14,10 +14,10 @@ Method names are the stable anchors; line numbers help locate this revision.
 
 | Source | Audited anchors |
 | --- | --- |
-| [Queue](https://github.com/wallstop/fortress-rollback/blob/f13cd5c0f2815926785a395947e18da0dbea0dd8/src/input_queue/mod.rs) | `try_with_queue_length` (275), `set_frame_delay_with_reclaim_floor` (396), `reset_prediction` (539), `confirmed_input` (547), `discard_confirmed_frames` (828), `input` (937), `add_input_with_reclaim_floor` (1506), `add_input_by_frame` (1541), `advance_queue_head` (1789) |
-| [Strategies](https://github.com/wallstop/fortress-rollback/blob/f13cd5c0f2815926785a395947e18da0dbea0dd8/src/input_queue/prediction.rs) | `PredictionStrategy`, `RepeatLastConfirmed::predict`, `BlankPrediction::predict` |
-| [Sync layer](https://github.com/wallstop/fortress-rollback/blob/f13cd5c0f2815926785a395947e18da0dbea0dd8/src/sync_layer/mod.rs) | `rollback_window_floor`, `add_local_input`, `add_remote_input`, `reset_prediction`, `set_last_confirmed_frame` |
-| [P2P session](https://github.com/wallstop/fortress-rollback/blob/f13cd5c0f2815926785a395947e18da0dbea0dd8/src/sessions/p2p_session.rs) | `advance_frame` prediction and lockstep gates, around lines 3194–3208 |
+| [Queue](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/input_queue/mod.rs) | `try_with_queue_length` (275), `set_frame_delay_with_reclaim_floor` (388), `reset_prediction` (539), `confirmed_input` (547), `discard_confirmed_frames` (828), `input` (937), `add_input_with_reclaim_floor` (1504), `add_input_by_frame` (1541), `advance_queue_head` (1794) |
+| [Strategies](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/input_queue/prediction.rs) | `PredictionStrategy`, `RepeatLastConfirmed::predict`, `BlankPrediction::predict` |
+| [Sync layer](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/sync_layer/mod.rs) | `rollback_window_floor`, `add_local_input`, `add_remote_input`, `reset_prediction`, `set_last_confirmed_frame` |
+| [P2P session](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/sessions/p2p_session.rs) | `advance_frame` prediction and lockstep gates, around lines 3194–3207 |
 
 ## Retained actual inputs and delay
 
@@ -206,8 +206,8 @@ validates its floor from `current_frame - max_prediction_frames`; local arrival
 progress cannot authorize reclamation. Raw callers must supply a trustworthy floor.
 
 The session uses this path and tests asymmetric corrected resimulation against
-uninterrupted canonical history. Follow-up #61 still owns remaining actual
-upstream P2P recovery observations and its complete acceptance gate.
+uninterrupted canonical history. The [#61 closure evidence](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/61)
+includes actual P2P recovery after repeated partitions.
 
 ### Independent upstream floor observations
 
@@ -269,5 +269,7 @@ global floor with the fast player's local high-water — the exact reclamation d
 acceptance names. The mutant must accept the above-floor add the clean floor refuses at
 the frame-twelve boundary, which is the comparison's first divergence. Reproduce with
 `make sync-floor-probes GODOT=/path/to/godot`. This delivers the session-level floor,
-occupancy and tag observation slice of #61; actual P2P transport observations stay open
-there and in #59.
+occupancy and tag observations for #61. The [P2P oracle](oracle-p2p.md) compares
+production byte-session recovery against pinned upstream packet delivery.
+[#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59)
+owns the broader differential envelope.

@@ -545,7 +545,7 @@ func _begin_advance(allow_advance: bool) -> Types.Result:
 	_plan.clear()
 	if rollback != -1:
 		if _current - rollback > _config.max_prediction_frames or _history.inspect(rollback).code != History.Code.OK:
-			return _fatal(Code.HISTORY_UNAVAILABLE)
+			return _fatal(Code.HISTORY_UNAVAILABLE, rollback, Kind.LOAD)
 		for player: int in range(_queues.size()):
 			if _received[player] >= rollback and _queues[player].retained_confirmed_input(rollback).code != Queue.Code.OK:
 				return _fatal(Code.HISTORY_UNAVAILABLE, rollback, Kind.LOAD)

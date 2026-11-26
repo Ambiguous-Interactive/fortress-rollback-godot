@@ -177,6 +177,7 @@ class ObservedLobby:
 	var _engine_mesh_open: bool = false
 	var leave_unacknowledged: Variant
 	var _last_play_tick_us: int = -1
+	var _play_tick_gap_us: int = -1
 	var _next_warmup_tick_us: int = 0
 	var _next_native_frontier_us: int = 0
 	var _sdk_before_poll: int = -1
@@ -230,6 +231,10 @@ class ObservedLobby:
 					"observed_us": Time.get_ticks_usec(),
 					"sdk_queued": queued,
 					"sdk_peak": maxi(sdk_receive_peak, queued),
+					"sdk_before_poll": _sdk_before_poll,
+					"service_started_us": _last_now,
+					"service_gap_us": _play_tick_gap_us,
+					"service_gap_peak_us": play_tick_gap_peak_us,
 					"last_accepted": observed_match.last_native_acceptances.get(roster[endpoint - 1]),
 				}
 				relay_trace.recordDeparture("native_expiry", endpoint, JSON.stringify(evidence))
@@ -287,16 +292,17 @@ class ObservedLobby:
 		var callbacks: PackedInt32Array = []
 		_sdk_before_poll = -1
 		_sdk_poll_budget = -1
+		_play_tick_gap_us = -1
 		if state == "playing":
-			if _last_play_tick_us >= 0:
-				play_tick_gap_peak_us = maxi(play_tick_gap_peak_us, now_us - _last_play_tick_us)
-			_last_play_tick_us = now_us
+			_play_tick_gap_us = now_us - _last_play_tick_us if _last_play_tick_us >= 0 else -1
+			play_tick_gap_peak_us = maxi(play_tick_gap_peak_us, _play_tick_gap_us)
 			callbacks = [observations.saves, observations.restores, observations.advances]
 			var frame: int = game_match.status().current_frame
 			# Variations after the warmup force correction when delivery is held.
 			if frame >= GATE_FRAME and frame % 2 == 0:
 				buttons = 0
 		super.tick(now_us, buttons)
+		_last_play_tick_us = now_us if state == "playing" else -1
 		if relay_trace != null and state == "playing":
 			var status: Types.Status = game_match.status()
 			relay_trace.observe(state, turns, status.current_frame, status.confirmed_frame, observations.restores, observations.history_limit)
@@ -351,7 +357,7 @@ class ObservedLobby:
 				"sdk_after": _sdk_packets(),
 				"sdk_budget": _sdk_poll_budget,
 				"batch_admitted": admitted,
-				"service_started_us": _last_play_tick_us,
+				"service_started_us": _last_now,
 				"poll_started_us": started_us,
 				"poll_finished_us": Time.get_ticks_usec(),
 			})

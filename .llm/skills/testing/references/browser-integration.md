@@ -157,10 +157,10 @@ the original rejection and bound each diagnostic independently of gameplay.
 When a one-time browser gate already emits a console checkpoint, use that
 receipt for the controller barrier. Require the original game-state
 predicate, one timely receipt per page, and the original deadline.
-Pair each bounded warmup tick's queue counts with the state and frame frontier
-from that physics turn. Preserve the first valid cutoff and its controller
-receipt even if later diagnostic reads fail. A last sample below the gate
-describes the observation, and a late receipt describes controller delivery. Keep optional packet diagnostics independent of the gate.
+Pair warmup queue counts with the state and frame frontier from the same turn.
+Preserve the first valid cutoff and controller receipt across later read failures.
+A sample below the gate describes observation. A late receipt describes controller
+delivery. Keep optional packet diagnostics independent of the gate.
 Start readiness sampling in the same page call that arms a hold. Keep page
 clock marks and controller receipt times on their own clocks.
 Publish the arm, first readiness and first cap hit while the page runs. Keep
@@ -171,9 +171,8 @@ the terminal sample separately. Keep one recent report and reply per link
 and direction so a busy link cannot evict a quiet link's observation.
 Periodic samples describe traffic at the sampled time. Use native inbox
 receipts to establish acceptance before expiry.
-Name the native expiry endpoint in the warmup cutoff while the frozen roster
-is available. Match its UUID to retained quality traffic and service samples.
-Check roster uniqueness before accepting an endpoint-to-UUID receipt.
+Record the warmup expiry endpoint while its roster is frozen. Check uniqueness
+before matching the endpoint's UUID to retained quality traffic and service samples.
 Capture interrupted status in the same observation that satisfies the
 interruption predicate. Another peer's wait can outlast the first peer.
 When a room barrier permits release, save the pre-release snapshot and start
@@ -184,7 +183,8 @@ Use the room's readiness samples for the correction baseline. One peer's
 release can correct another peer before its own release snapshot runs.
 Retain release and first-correction checkpoints in the controller while the
 room is live. A failed final page read can hide even a successful drain.
-Capture the receive backlog and last accepted packet before expiry cleanup.
+Before expiry cleanup, capture queue depth, last accepted packet and
+current and peak Godot service intervals. Expiry may precede the SDK poll.
 Use the frozen roster to join the reporter to the sender. Join the sender's
 sampled release position by controller receipt order, including equal clock
 values. Keep transport acceptance on the reporter's clock.

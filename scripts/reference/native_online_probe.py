@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """Export the installed native online example and qualify live SignalFish rooms."""
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 import hashlib
-from ipaddress import IPv4Address
 import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
-import socket
-import struct
-import subprocess
 import sys
 import tempfile
 import zipfile
 
+from browser.local_stun import local_port, local_stun
 from browser.owned_server import OwnedServer
 from browser.native_relay_stage import instrument_relay_delivery
 from browser.webrtc_import import freeze_after_import
@@ -23,7 +20,6 @@ from godot_smoke import prepare_editor, run
 from online_install import create_project, install_sdk, server_config
 from receipt_arguments import ReceiptParser
 from run import begin_results
-from signalfish_live_probe import wait_ready
 from signalfish_probe import inventory
 
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -43,7 +39,6 @@ REPORT = 'native-online.json'
 MIN_COMPARED_FRAMES = 40
 HISTORY_LIMIT = 128
 RECOVERY_HISTORY_LIMIT = 512
-STUN_COOKIE = 0x2112A442
 
 
 def install_addon(project, archive):
@@ -103,77 +98,6 @@ def stage_export(root, output, editor, templates, sdk, addon, environment, trace
     if inventory(tracked) != frozen:
         raise ValueError('Web export changed the staged project')
     return export, frozen
-
-
-def local_port(address='127.0.0.1'):
-    with socket.socket() as selection:
-        selection.bind((address, 0))
-        return selection.getsockname()[1]
-
-
-def stun_address():
-    candidate = os.environ.get('FORTRESS_STUN_ADDRESS')
-    if not candidate:
-        with socket.socket(type=socket.SOCK_DGRAM) as route:
-            # Reading the selected route does not send a datagram.
-            route.connect(('192.0.2.1', 9))
-            candidate = route.getsockname()[0]
-    address = IPv4Address(candidate)
-    if address.is_loopback or address.is_unspecified:
-        raise ValueError('browser STUN witness requires a non-loopback IPv4 interface')
-    return str(address)
-
-
-def verify_stun_binding(address, port):
-    request = struct.pack('!HHI', 1, 0, STUN_COOKIE) + os.urandom(12)
-    try:
-        with socket.socket(type=socket.SOCK_DGRAM) as probe:
-            probe.settimeout(2)
-            probe.connect((address, port))
-            local_address, local_port_number = probe.getsockname()
-            probe.send(request)
-            response = probe.recv(2048)
-    except OSError as error:
-        raise ValueError('local listener did not answer a STUN Binding request') from error
-    if (len(response) <= 20 or response[:2] != b'\x01\x01' or response[4:20] != request[4:]
-            or int.from_bytes(response[2:4], 'big') != len(response) - 20):
-        raise ValueError('invalid STUN Binding response')
-    expected = struct.pack('!BBHI', 0, 1, local_port_number ^ (STUN_COOKIE >> 16), int(IPv4Address(local_address)) ^ STUN_COOKIE)
-    offset = 20
-    mapped = False
-    while offset + 4 <= len(response):
-        kind, size = struct.unpack_from('!HH', response, offset)
-        offset += 4
-        end = offset + ((size + 3) & ~3)
-        if end > len(response):
-            raise ValueError('truncated STUN Binding attribute')
-        if kind == 0x0020:
-            if mapped or response[offset:offset + size] != expected:
-                raise ValueError('invalid STUN Binding address')
-            mapped = True
-        offset = end
-    if not mapped or offset != len(response):
-        raise ValueError('missing valid STUN Binding address')
-
-
-@contextmanager
-def local_stun(tool, root, log):
-    address = stun_address()
-    port = local_port(address)
-    command = [str(tool), '-n', '--stun-only', '--no-auth', '--no-cli', '--no-tls', '--no-dtls',
-               f'--listening-ip={address}', f'--relay-ip={address}', '--relay-threads=1', f'--listening-port={port}',
-               f'--pidfile={root / "stun.pid"}', f'--userdb={root / "stun.sqlite"}', '--log-file=stdout', '--simple-log']
-    with log.open('wb') as stream, subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT) as server:
-        try:
-            wait_ready(server, port, address)
-            verify_stun_binding(address, port)
-            yield f'stun:{address}:{port}'
-            if server.poll() is not None:
-                raise ValueError('local STUN listener exited during gameplay')
-        finally:
-            if server.poll() is None:
-                server.kill()
-                server.wait(timeout=5)
 
 
 def create_server_config(source, route, port, stun_server=None):
@@ -336,7 +260,7 @@ def main():
              'server_config': server_source / 'config.example.json', **{name: Path(environment[var]) for name, var in tools.items()},
              'runner': Path(__file__), 'editor_setup': BROWSER.parent / 'godot_smoke.py', 'artifact_helper': BROWSER.parent / 'fetch.py',
              'client': BROWSER / 'native_online.cjs', 'host': BROWSER / 'online_host.cjs', 'display': BROWSER / 'webrtc_display.cjs',
-             'watchdog': BROWSER / 'webrtc_watchdog.cjs', 'recovery': BROWSER / 'native_recovery.cjs',
+             'watchdog': BROWSER / 'webrtc_watchdog.cjs', 'recovery': BROWSER / 'native_recovery.cjs', 'local_stun': BROWSER / 'local_stun.py',
              'bridge': BROWSER / 'native_online_bridge.gd', 'sdk': sdk / 'addons/signal_fish', 'relay_wire_trace': BROWSER / 'native_relay_trace.cjs',
              'relay_stage': BROWSER / 'native_relay_stage.py', 'relay_control': BROWSER / 'native_relay_control.cjs',
              'relay_hold': BROWSER / 'native_relay_hold.cjs', 'departure_clock': BROWSER / 'native_departure_clock.cjs',

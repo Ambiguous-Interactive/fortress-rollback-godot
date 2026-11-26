@@ -1,4 +1,5 @@
 """Value: corrupt/missing/hostile pins must not become trusted oracle sources."""
+from contextlib import chdir
 import copy
 import hashlib
 import io
@@ -16,6 +17,7 @@ import zipfile
 import urllib.error
 import run as rust_runner
 import godot_smoke as godot_runner
+from browser import local_stun as stun_fixture
 import native_online_probe as native_online_runner
 from package_addon import snapshot as runtime_snapshot
 
@@ -400,7 +402,7 @@ class ReferenceContracts(unittest.TestCase):
             with self.subTest(peers=wrong), self.assertRaisesRegex(ValueError, 'wrong browser composition'):
                 native_online_runner.validate_cell({**evidence, 'browser_peers': wrong}, 'mesh-startup', 4, pair)
 
-    def test_native_online_stun_readiness_requires_a_udp_binding(self):
+    def test_stun_readiness_requires_a_udp_binding(self):
         # Value: protects=STUN evidence; fails_when=TCP-only or fake mapped address qualifies; why_new=browser STUN fixture; seam=actual socket
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -423,18 +425,23 @@ with socket.create_server(address) as server, socket.socket(type=socket.SOCK_DGR
     while True:
         server.accept()[0].close()
 '''
-            with patch.object(native_online_runner, 'stun_address', return_value='127.0.0.1'):
+            with patch.object(stun_fixture, 'stun_address', return_value='127.0.0.1'):
                 for name in ('tcp-only', 'empty-mapping', 'wrong-mapping', 'valid-mapping'):
                     with self.subTest(name=name):
                         tool = root / name
                         tool.write_text(script, encoding='utf-8')
                         tool.chmod(0o700)
-                        stun = native_online_runner.local_stun(tool, root, root / 'stun.log')
                         if name == 'valid-mapping':
-                            with stun as endpoint:
+                            search = root / 'search'
+                            search.mkdir()
+                            wrong_tool = search / name
+                            wrong_tool.write_text('#!/bin/sh\necho WRONG_STUN_EXECUTABLE\nexit 1\n', encoding='utf-8')
+                            wrong_tool.chmod(0o700)
+                            with chdir(root), patch.dict(os.environ, {'PATH': str(search)}), \
+                                    stun_fixture.local_stun(Path(name), root, root / 'stun.log') as endpoint:
                                 self.assertRegex(endpoint, r'^stun:127\.0\.0\.1:[0-9]+$')
                         else:
-                            with self.assertRaisesRegex(ValueError, 'STUN Binding'), stun:
+                            with self.assertRaisesRegex(ValueError, 'STUN Binding'), stun_fixture.local_stun(tool, root, root / 'stun.log'):
                                 pass
 
     def test_native_online_invalidates_receipt_before_manifest_load(self):
