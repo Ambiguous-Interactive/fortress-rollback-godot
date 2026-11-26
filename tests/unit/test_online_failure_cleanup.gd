@@ -54,7 +54,7 @@ func cases() -> PackedStringArray:
 	return PackedStringArray(["relay_send_failure", "sdk_failure_deadline", "mesh_departure"])
 
 
-func _build(context: RefCounted) -> Dictionary:
+func _build(context: RefCounted, start_game: bool = true) -> Dictionary:
 	var lobby: Lobby = Lobby.new()
 	var client: Client = Client.new()
 	client.local = Fixture.U
@@ -71,7 +71,8 @@ func _build(context: RefCounted) -> Dictionary:
 	config.max_buffered_bytes = 4096
 	config.max_outbound_frame_bytes = 4096
 	var info: Fixture.RelayFixture.Info = Fixture.RelayFixture.Info.new()
-	context.equal(game.start_transport(client, mesh, config, info, 0), OK, "real composed direct and relay adapters")
+	if start_game:
+		context.equal(game.start_transport(client, mesh, config, info, 0), OK, "real composed direct and relay adapters")
 	lobby.client = client
 	lobby.mesh = mesh
 	lobby.state = "playing"
@@ -86,7 +87,8 @@ func run_case(name: String, context: RefCounted) -> void:
 		context.finish()
 		return
 	if name == "mesh_departure":
-		_mesh_departure(context)
+		for initial_state: String in ["lobby", "starting", "playing"]:
+			_mesh_departure(context, initial_state)
 		context.finish()
 		return
 	var fixture: Dictionary = _build(context)
@@ -125,12 +127,15 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.finish()
 
 
-func _mesh_departure(context: RefCounted) -> void:
-	var fixture: Dictionary = _build(context)
+func _mesh_departure(context: RefCounted, initial_state: String) -> void:
+	var fixture: Dictionary = _build(context, initial_state == "playing")
 	var lobby: Lobby = fixture.lobby
+	lobby.state = initial_state
 	var client: Client = fixture.client
 	var mesh: BrowserMesh = fixture.mesh
 	var game: Fixture.Match = fixture.driver
+	context.equal(mesh.attached, true, "the SDK mesh is attached during " + initial_state)
+	context.equal(game.has_started, initial_state == "playing", "only the playing fixture has started transport")
 	game.adapter.retain_mesh_on_player_departure = true
 	game.adapter.mesh_departed.connect(lobby._on_mesh_departure)
 	var outcomes: Array[Array] = []

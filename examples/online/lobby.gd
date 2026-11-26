@@ -457,7 +457,7 @@ func _on_mesh_departure() -> void:
 func _fail(reason: String) -> void:
 	if state == "failed":
 		return
-	var keep_mesh: bool = state == "playing" and game_match.adapter.has_retained_mesh()
+	var keep_mesh: bool = game_match.adapter.has_retained_mesh()
 	state = "failed"
 	message = reason + " Leave, then create or join a fresh room."
 	_cleanup_pending = true
