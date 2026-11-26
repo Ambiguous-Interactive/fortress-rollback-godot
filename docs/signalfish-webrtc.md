@@ -229,12 +229,13 @@ only the launcher's own windows before navigation. Receipts record the verified
 window geometry, display bounds and WebGL preferences. Hidden-tab suspension and
 operating-system behavior remain separate lifecycle acceptance work.
 
-CI gates the complete Chromium witness against both engine pins. Firefox and
-mixed browser selection remains experimental manual coverage: their clean two-
-and four-player CI rooms passed, but eight-player rooms failed progress watchdogs
-or ICE under the CI workload. A complete current-source Firefox matrix receipt
-has not been established. The launcher retains every eight-player gate and all
-controls; it does not skip failed rooms. Resource investigation and WebKit,
-actual Safari and devices remain open acceptance work in
-[S5](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39).
-A Firefox or mixed receipt does not establish those targets.
+Merge qualification runs the complete Chromium witness against both engine
+pins. Nightly runs the Firefox witness and the eight original gameplay and
+negative controls with alternating Chromium–Firefox peers on both pins.
+
+For alternating peers, install Coturn alongside Xvfb and xdotool. The launcher
+starts a verified UDP STUN-only listener on the host's IPv4 interface. Set
+`FORTRESS_STUN_EXECUTABLE` to use a specific `turnserver` binary or
+`FORTRESS_STUN_ADDRESS` to select a local IPv4 interface. The receipt includes
+the listener binary digest, SignalFish ICE settings, and STUN log digest.
+Browser release qualification stays in [S5](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39).
