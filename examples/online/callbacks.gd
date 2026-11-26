@@ -30,6 +30,10 @@ func on_protocol_error(reason: String) -> void:
 	_dispatch("_on_protocol_error", [reason])
 
 
+func on_mesh_departure() -> void:
+	_dispatch("_on_mesh_departure", [])
+
+
 func _dispatch(method: String, arguments: Array) -> void:
 	var owner: RefCounted = _owner.get_ref()
 	if owner != null and owner.get("_connection_revision") == _revision:

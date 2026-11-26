@@ -248,7 +248,8 @@ func _tick(now_us: int, buttons: int) -> void:
 	if state == "failed":
 		# The SDK needs polling to finish its WebSocket close handshake.
 		_finish_cleanup()
-		client.call("poll")
+		if not game_match.adapter.has_retained_mesh():
+			client.call("poll")
 		return
 	if now_us < _last_now:
 		_fail("Host clock moved backwards.")
@@ -401,6 +402,9 @@ func _release_node(node: Node, defer_release: bool) -> void:
 func _connect_callbacks() -> void:
 	_connection_revision += 1
 	_callbacks = Callbacks.new(self, _connection_revision)
+	if backend == "native":
+		game_match.adapter.retain_mesh_on_player_departure = true
+		game_match.adapter.mesh_departed.connect(_callbacks.on_mesh_departure)
 	client.connect("protocol_info", _callbacks.on_info)
 	client.connect("room_joined", _callbacks.on_room)
 	client.connect("lobby_state_changed", _callbacks.on_lobby)
@@ -446,21 +450,27 @@ func _on_protocol_error(reason: String) -> void:
 		_fail("SignalFish: " + reason.left(256))
 
 
+func _on_mesh_departure() -> void:
+	_fail("Room membership or transport lifetime changed.")
+
+
 func _fail(reason: String) -> void:
 	if state == "failed":
 		return
+	var keep_mesh: bool = state == "playing" and game_match.adapter.has_retained_mesh()
 	state = "failed"
 	message = reason + " Leave, then create or join a fresh room."
 	_cleanup_pending = true
-	game_match.detach()
-	if client != null:
+	game_match.detach(keep_mesh)
+	# Let other survivors process the original departure before Leave closes their links.
+	if client != null and not keep_mesh:
 		client.call("close", 1000, "Online example failed")
 
 
 func _finish_cleanup() -> void:
 	if _cleanup_pending:
 		# Busy adapters fence callbacks immediately and release owned queues after unwind.
-		game_match.detach()
+		game_match.detach(game_match.adapter.has_retained_mesh())
 		_cleanup_pending = false
 
 

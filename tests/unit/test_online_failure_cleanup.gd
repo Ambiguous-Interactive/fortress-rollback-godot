@@ -9,6 +9,7 @@ class Client:
 	extends Fixture.Client
 	signal protocol_error(reason: String)
 	var closes: int = 0
+	var close_reasons: Array[String] = []
 	var attempts: int = 0
 	var incoming: PackedByteArray = PackedByteArray()
 	var relay_ref: WeakRef
@@ -16,12 +17,18 @@ class Client:
 	var fail_send: bool = true
 	var fail_poll: bool = false
 	var polls: int = 0
+	var departing_player: String = ""
 	func poll() -> void:
 		polls += 1
+		if not departing_player.is_empty():
+			var player: String = departing_player
+			departing_player = ""
+			player_left.emit(player)
 		if fail_poll:
 			protocol_error.emit("queued peer departure")
-	func close(_code: int, _reason: String) -> Error:
+	func close(_code: int, reason: String) -> Error:
 		closes += 1
+		close_reasons.append(reason)
 		return OK
 	func send_game_data_binary(_bytes: PackedByteArray) -> Error:
 		if not fail_send:
@@ -35,12 +42,16 @@ class Client:
 
 class BrowserMesh:
 	extends Fixture.DirectFixture.FakeMesh
+	var detach_calls: Array[bool] = []
 	func poll() -> void:
 		pass
+	func detach() -> void:
+		detach_calls.append(attached)
+		super.detach()
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["relay_send_failure", "sdk_failure_deadline"])
+	return PackedStringArray(["relay_send_failure", "sdk_failure_deadline", "mesh_departure"])
 
 
 func _build(context: RefCounted) -> Dictionary:
@@ -72,6 +83,10 @@ func _build(context: RefCounted) -> Dictionary:
 func run_case(name: String, context: RefCounted) -> void:
 	if name == "sdk_failure_deadline":
 		_clock_failure(context)
+		context.finish()
+		return
+	if name == "mesh_departure":
+		_mesh_departure(context)
 		context.finish()
 		return
 	var fixture: Dictionary = _build(context)
@@ -108,6 +123,37 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.equal(game.adapter.status().lifetime_revision, revision, "completed cleanup does not repeatedly replace lifetime")
 	lobby.disconnect_room()
 	context.finish()
+
+
+func _mesh_departure(context: RefCounted) -> void:
+	var fixture: Dictionary = _build(context)
+	var lobby: Lobby = fixture.lobby
+	var client: Client = fixture.client
+	var mesh: BrowserMesh = fixture.mesh
+	var game: Fixture.Match = fixture.driver
+	game.adapter.retain_mesh_on_player_departure = true
+	game.adapter.mesh_departed.connect(lobby._on_mesh_departure)
+	var outcomes: Array[Array] = []
+	client.player_left.connect(func(_player: String) -> void:
+		outcomes.append([lobby.state, game.has_started, game.adapter.status().route])
+	)
+	var detach_calls: Array[bool] = mesh.detach_calls
+	var close_reasons: Array[String] = client.close_reasons
+	client.departing_player = Fixture.V
+	lobby.tick(0, 0)
+	context.equal(outcomes, [["failed", false, "restart_required"]], "later SDK handlers see the stopped match")
+	context.equal(lobby.state, "failed", "departure stops the lobby")
+	context.equal(game.has_started, false, "departure stops gameplay immediately")
+	context.equal(game.adapter.status().route, "restart_required", "departure revokes byte routing")
+	context.equal(detach_calls.is_empty(), true, "departure keeps survivor mesh attached")
+	context.equal(client.closes, 0, "departure does not cascade into a new socket close")
+	lobby.tick(1, 0)
+	context.equal(client.polls, 1, "failed native mesh stops consuming new SDK plans")
+	context.equal(client.attempts, 0, "terminal mesh performs no gameplay sends")
+	lobby.disconnect_room()
+	context.equal(detach_calls, [true], "Leave detaches the retained mesh before disposal")
+	context.equal(close_reasons, ["Leaving example room"], "Leave closes the retained socket once")
+	context.equal(lobby.state, "offline", "Leave returns to the lobby")
 
 
 # Value: protects=elapsed liveness before SDK departures; fails_when=queued SDK failure skips overdue protocol polling; why_new=direct Match expiry has no SDK poll callback

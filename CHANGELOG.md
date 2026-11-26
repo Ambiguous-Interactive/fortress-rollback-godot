@@ -34,6 +34,8 @@
 
 ### Fixed
 
+- Stop native WebRTC matches when a player leaves. Surviving players keep their direct links until they press Leave.
+
 - Fix native online matches ending when an SDK receive burst fills the SignalFish relay queue.
 
 - Restore a closed direct link during native WebRTC matches. The affected pair uses relay while the pinned SignalFish SDK creates a replacement.

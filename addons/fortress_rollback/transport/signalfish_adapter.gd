@@ -1,6 +1,8 @@
 class_name FortressSignalFishAdapter
 extends RefCounted
 
+signal mesh_departed
+
 # gdlint: disable=max-returns
 const Membership = preload("res://addons/fortress_rollback/transport/signalfish_membership.gd")
 const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
@@ -11,12 +13,14 @@ const LIFETIME_SIGNALS: Array[String] = [
 	"connection_failed",
 	"reconnected",
 	"room_joined",
-	"player_left",
 	"player_joined",
 	"authentication_error",
 	"reconnection_failed",
 	"spectator_joined"
 ]
+
+## Opt in when the room owner will explicitly detach after a remote departure.
+var retain_mesh_on_player_departure: bool = false
 
 var _client: WeakRef = null
 var _mesh: WeakRef = null
@@ -59,6 +63,8 @@ func _attach(client: Object, mesh: Object, membership: Membership) -> Error:
 	for signal_name: String in LIFETIME_SIGNALS:
 		if client.has_signal(signal_name):
 			client.connect(signal_name, _on_transport_ended)
+	if client.has_signal("player_left"):
+		client.connect("player_left", _on_player_left)
 	if client.has_signal("player_reconnected"):
 		client.connect("player_reconnected", _on_player_reconnected)
 	var player: String = client.call("get_player_id")
@@ -100,6 +106,8 @@ func detach() -> void:
 			client.disconnect("new_peer", _on_new_peer)
 		if client.has_signal("player_reconnected") and client.is_connected("player_reconnected", _on_player_reconnected):
 			client.disconnect("player_reconnected", _on_player_reconnected)
+		if client.has_signal("player_left") and client.is_connected("player_left", _on_player_left):
+			client.disconnect("player_left", _on_player_left)
 		for signal_name: String in LIFETIME_SIGNALS:
 			if client.has_signal(signal_name) and client.is_connected(signal_name, _on_transport_ended):
 				client.disconnect(signal_name, _on_transport_ended)
@@ -217,6 +225,10 @@ func status() -> Dictionary:
 	return result
 
 
+func has_retained_mesh() -> bool:
+	return _restart_required and _mesh_attached
+
+
 ## Caller owns byte consumption; unknown and local Godot IDs fail before decoding.
 func receive_mesh(peer: Peer, packet: PackedByteArray, attributed_peer_id: int, now_us: int, next_token: Variant = null) -> int:
 	# next_token carries the core protocol's nullable handshake token.
@@ -267,11 +279,12 @@ func _stop_mesh() -> void:
 		_is_stopping_mesh = false
 
 
-func _refuse(code: Error) -> Error:
+func _refuse(code: Error, retain_mesh: bool = false) -> Error:
 	_lifetime_revision += 1
 	_addressed_peers.clear()
 	_state = {"route": "restart_required" if _restart_required else "blocked", "generation": "", "offerers": {}, "error": code, "byte_delivery_implemented": false}
-	_stop_mesh()
+	if not retain_mesh:
+		_stop_mesh()
 	return code
 
 
@@ -281,6 +294,17 @@ func _on_transport_ended(_first: Variant = null, _second: Variant = null) -> voi
 		return
 	_restart_required = true
 	_refuse(ERR_UNAVAILABLE)
+
+
+func _on_player_left(uuid: String = "") -> void:
+	if _restart_required:
+		return
+	var retain_mesh: bool = retain_mesh_on_player_departure and _state.route == "mesh" and _membership != null \
+		and uuid != _membership.local_uuid() and _membership.slot(uuid) >= 0
+	_restart_required = true
+	_refuse(ERR_UNAVAILABLE, retain_mesh)
+	if retain_mesh:
+		mesh_departed.emit()
 
 
 func _on_player_reconnected(uuid: String) -> void:

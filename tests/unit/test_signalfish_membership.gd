@@ -207,7 +207,10 @@ func _lifecycle(context: RefCounted) -> void:
 		var adapter: A = A.new()
 		context.equal(adapter.attach(client, mesh, membership), OK, "lifecycle attachment")
 		client.session_plan.emit(Plan.new())
-		client.emit_signal(signal_name)
+		if signal_name == "player_left":
+			client.player_left.emit(V)
+		else:
+			client.emit_signal(signal_name)
 		context.equal(adapter.status().route, "restart_required", "SDK lifetime change blocks ingress")
 		client.session_plan.emit(Plan.new())
 		context.equal(adapter.status().route, "restart_required", "late plan cannot resume old lifetime")
@@ -277,7 +280,7 @@ class FakeClient:
 	signal connection_failed
 	signal reconnected
 	signal room_joined
-	signal player_left
+	signal player_left(uuid: String)
 	signal player_joined
 
 	func get_player_id() -> String:
