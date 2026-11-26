@@ -18,12 +18,19 @@ class Client:
 	var fail_poll: bool = false
 	var polls: int = 0
 	var departing_player: String = ""
+	var queued_plan: RefCounted
+	var plan_attempts: int = 0
 	func poll() -> void:
 		polls += 1
 		if not departing_player.is_empty():
 			var player: String = departing_player
 			departing_player = ""
 			player_left.emit(player)
+		if queued_plan != null:
+			var plan: RefCounted = queued_plan
+			queued_plan = null
+			plan_attempts += 1
+			session_plan.emit(plan)
 		if fail_poll:
 			protocol_error.emit("queued peer departure")
 	func close(_code: int, reason: String) -> Error:
@@ -152,8 +159,13 @@ func _mesh_departure(context: RefCounted, initial_state: String) -> void:
 	context.equal(game.adapter.status().route, "restart_required", "departure revokes byte routing")
 	context.equal(detach_calls.is_empty(), true, "departure keeps survivor mesh attached")
 	context.equal(client.closes, 0, "departure does not cascade into a new socket close")
+	var mesh_events: Array[Object] = []
+	client.session_plan.connect(func(plan: Object) -> void: mesh_events.append(plan))
+	client.queued_plan = Fixture.MembershipFixture.Plan.new()
 	lobby.tick(1, 0)
-	context.equal(client.polls, 1, "failed native mesh stops consuming new SDK plans")
+	context.equal(client.polls, 2, "failed native mesh services the signaling socket")
+	context.equal(client.plan_attempts, 1, "a later SDK plan reaches the polled client")
+	context.equal(mesh_events.is_empty(), true, "the held mesh ignores later SDK plans")
 	context.equal(client.attempts, 0, "terminal mesh performs no gameplay sends")
 	lobby.disconnect_room()
 	context.equal(detach_calls, [true], "Leave detaches the retained mesh before disposal")

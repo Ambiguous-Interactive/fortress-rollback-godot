@@ -246,10 +246,9 @@ func _tick(now_us: int, buttons: int) -> void:
 	if client == null:
 		return
 	if state == "failed":
-		# The SDK needs polling to finish its WebSocket close handshake.
+		# Service WebSocket control traffic and let any close handshake finish.
 		_finish_cleanup()
-		if not game_match.adapter.has_retained_mesh():
-			client.call("poll")
+		client.call("poll")
 		return
 	if now_us < _last_now:
 		_fail("Host clock moved backwards.")
@@ -462,8 +461,12 @@ func _fail(reason: String) -> void:
 	message = reason + " Leave, then create or join a fresh room."
 	_cleanup_pending = true
 	game_match.detach(keep_mesh)
-	# Let other survivors process the original departure before Leave closes their links.
-	if client != null and not keep_mesh:
+	if client == null:
+		return
+	if keep_mesh:
+		# The current departure reaches the SDK mesh. Mute later callbacks while polling the socket.
+		client.set_block_signals(true)
+	else:
 		client.call("close", 1000, "Online example failed")
 
 
