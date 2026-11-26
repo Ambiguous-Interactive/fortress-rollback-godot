@@ -97,6 +97,9 @@ The traced run builds the pinned server with receipt hooks on each Godot pin.
 The job artifact includes the build receipt and log, the browser log, and any
 published server scope and packet snapshot. Pair each traced run with a stock
 run at the same revision, browser profile, and room size to measure overhead.
+The browser receipt counts valid native room broadcasts separately from
+addressed packets. Validate the native header before filtering and decode
+sender identity only for the recipient's own traffic.
 
 Ordinary receipts include up to 128 records per directed link and stage.
 When a native expiry identifies links to diagnose, the browser and server

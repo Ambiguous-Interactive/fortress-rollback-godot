@@ -1350,7 +1350,7 @@ class Socket {
   static OPEN = 1;
   readyState = Socket.OPEN;
   bufferedAmount = 0;
-  addEventListener() {}
+  addEventListener(kind, callback) { this[kind] = callback; }
   send(bytes) {
     released.push(bytes.at(-1));
     releasedPackets.push(Array.from(bytes));
@@ -1373,6 +1373,18 @@ const relay = (kind, value) => {
   return bytes;
 };
 async function run() {
+  const otherRecipient = relay(2, 100);
+  otherRecipient.fill(3, 21, 37);
+  socket.message({ data: otherRecipient });
+  const addressed = otherRecipient.slice();
+  addressed.fill(1, 37, 53);
+  socket.message({ data: addressed });
+  assert.equal(wire.status().relay_trace.broadcasts, 2);
+  assert.equal(wire.status().relaySenders['03'.repeat(16)], 1);
+  assert.equal(wire.status().relayInputSenders['03'.repeat(16)], 1);
+  otherRecipient[73] = 0;
+  assert.throws(() => socket.message({ data: otherRecipient }), /native gameplay wire header/);
+  assert.equal(wire.status().relay_trace.broadcasts, 2);
   wire.arm();
   for (let i = 0; i < 33; i++) {
     const bytes = relay(2, i);

@@ -373,7 +373,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   const active = [];
   const resources = { rtc: [], sockets: [] };
   const ice = new Map();
-  let session, localUuid;
+  let session, localUuid, localUuidBytes;
+  const otherRelayRecipient = {};
   let observingDeparture = false;
   const departureSendLimit = 4096;
   const departureSendHistory = [];
@@ -575,7 +576,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     link.last_replied_report = { payload, raw_observed_ms: packet.raw.first_ms, native_enqueued_ms: packet.native.accepted_after_raw_ms, reply_observed_ms: at };
     scheduleWarmupCheckpoint(at);
   }
-  function relayAddresses(data) {
+  function relayAddresses(data, addressedOnly = false) {
     const view = nativeBytes(data);
     if (!session || !view) return null;
     // The SDK binary envelope precedes FSR1, followed by the tagged native payload.
@@ -586,8 +587,10 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
         const size = new DataView(view.buffer, view.byteOffset + index + 53, 4).getUint32(0, true);
         if (size > view.length - payload) throw new Error('native relay payload exceeds its envelope');
         const bytes = view.subarray(payload, payload + size);
-        return { sender: hex(view.subarray(index + 21, index + 37)), recipient: hex(view.subarray(index + 37, index + 53)),
-          ...nativePacket(bytes), bytes };
+        const packet = nativePacket(bytes);
+        if (addressedOnly && !localUuidBytes?.every((byte, offset) => view[index + 37 + offset] === byte)) return otherRelayRecipient;
+        return { sender: hex(view.subarray(index + 21, index + 37)),
+          recipient: addressedOnly ? localUuid : hex(view.subarray(index + 37, index + 53)), ...packet, bytes };
       }
     }
     return null;
@@ -789,18 +792,17 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       const incoming = readRecovery(data, 'receive');
       if (isFirstRecoveryOfferTraffic(incoming)) recovery.receivedKinds[incoming.kind]++;
       if (incoming?.kind === 'Offer') recovery.delivered.push({ ...incoming, at_ms: performance.now() });
-      const packet = relayAddresses(data);
+      const packet = relayAddresses(data, true);
       if (!packet) return;
       relayBroadcasts++;
-      if (packet.recipient === localUuid) {
-        increment(relaySenders, packet.sender);
-        if (!warmupCutoff && warmupLinks.has(packet.sender) && packet.kind === 4 && packet.bytes.length === 46 && (packet.bytes[30] & 3) === 0) {
-          recordWarmup('raw', packet.sender, hex(packet.bytes), null);
-        }
-        if (packet.kind === inputKind) increment(relayInputSenders, packet.sender);
-        traceRelayQuality('receive', packet.sender, packet);
-        receive('relay', reports, packet.sender, packet);
+      if (packet === otherRelayRecipient) return;
+      increment(relaySenders, packet.sender);
+      if (!warmupCutoff && warmupLinks.has(packet.sender) && packet.kind === 4 && packet.bytes.length === 46 && (packet.bytes[30] & 3) === 0) {
+        recordWarmup('raw', packet.sender, hex(packet.bytes), null);
       }
+      if (packet.kind === inputKind) increment(relayInputSenders, packet.sender);
+      traceRelayQuality('receive', packet.sender, packet);
+      receive('relay', reports, packet.sender, packet);
     });
     return socket;
   } });
@@ -881,6 +883,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     bind(hash, uuid, roster = []) {
       if (session || !/^[0-9a-f]{32}$/.test(hash)) throw new Error('invalid native room session');
       localUuid = uuid.replaceAll('-', '');
+      localUuidBytes = /^[0-9a-f]{32}$/.test(localUuid) ? localUuid.match(/../g).map(value => parseInt(value, 16)) : null;
       session = hash.match(/../g).map(value => parseInt(value, 16));
       roomRoster = roster.slice(0, 8).map(member => member.replaceAll('-', ''));
       relayWireTrace?.bind(hash, localUuid, roomRoster);

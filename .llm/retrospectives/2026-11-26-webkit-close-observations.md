@@ -12,3 +12,24 @@ clock samples applies to both passing and failing rooms. A later complete
 proof round still owns the room verdict.
 
 State `findings-acted`.
+
+The replay download controls run at the launcher boundary. The real descendant
+test verifies the cleanup log, the child's terminal state and the absence of
+stale success. The interpreter test runs a disposable Python copy and replaces
+its executable after the launcher freezes its digest. The old interpreter
+completes the fixture. The changed executable prevents receipt publication.
+The two-control command reported `Ran 2 tests` and `OK`. The
+[ownership guide](../../docs/experiments/buffer-ownership.md#received-browser-replay-downloads)
+now records these controls and replaces the stale open-control note.
+
+A stock Firefox room on Godot 4.7.2 reached the release boundary with
+983–1,006 held inputs per page. All eight pages then reached 1,024.
+The [stock run](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45725387847)
+measured 8.874–8.881 seconds from controller dispatch to page entry.
+The receive listener used to decode two UUID strings per valid foreign
+broadcast. Eight alternating Node samples exercised 73,500 receives and
+10,500 addressed packets each. The upper median fell from 218.25 ms to
+87.65 ms. The test still rejects a malformed foreign native header and
+counts both valid broadcasts. The
+[migration guide](../../docs/native-backend-migration.md#session-boundary)
+records that distinction. Hosted hold qualification remains open.
