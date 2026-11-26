@@ -2787,6 +2787,16 @@ class KernelClassProbeTests(unittest.TestCase):
                         alive = owned_process._probe_member_alive(pid, 5, recorded, proc=root)
                     self.assertEqual(alive, expected)
 
+    def test_member_reaped_during_stat_read_is_dead(self):
+        # Value: proves the post-sig-0 stat race cannot hide a measured delivery.
+        with mock.patch.object(owned_process.signal, 'pidfd_send_signal') as probe:
+            with mock.patch.object(Path, 'read_text', side_effect=ProcessLookupError(errno.ESRCH, 'reaped after open')):
+                self.assertFalse(owned_process._probe_member_alive(100, 5, 3))
+            probe.assert_called_once_with(5, 0)
+            with mock.patch.object(Path, 'read_text', side_effect=PermissionError(errno.EACCES, 'unreadable')):
+                with self.assertRaises(PermissionError):
+                    owned_process._probe_member_alive(100, 5, 3)
+
     # Value: protects=the per-class verdicts the tail returns (#408);
     # fails_when=an 'empty' outcome reads clean on a spares kernel, carries
     # an error on an unclassified kernel, or drops the probe's named note;
@@ -3075,28 +3085,32 @@ class CgroupContainmentTests(unittest.TestCase):
                 owned_process.cgroup_members(crowded, proc)
 
     def test_a_vanished_member_is_skipped_only_when_the_record_confirms_it(self):
-        """The stat ENOENT skip re-reads the record: listed-but-unreadable fails closed."""
+        """After stat ENOENT or ESRCH, a listed member still fails the sweep."""
         with tempfile.TemporaryDirectory() as folder:
             proc = self.fake_proc(folder, [(90, 'member', 'S', 5, False)])
-            (proc / '90' / 'stat').unlink()
             leaf = self.fake_leaf(folder, [90])
             real_read = Path.read_text
-            reads = {'count': 0}
+            for error in (FileNotFoundError(errno.ENOENT, 'absent before open'), ProcessLookupError(errno.ESRCH, 'reaped after open')):
+                for still_listed in (False, True):
+                    reads = 0
 
-            def counting_read(path_self, *args, **kwargs):
-                text = real_read(path_self, *args, **kwargs)
-                if path_self.name == 'cgroup.procs':
-                    reads['count'] += 1
-                    if reads['count'] > 1:
-                        return ''  # the kernel stopped listing it between the reads
-                return text
+                    def read(path, *args, **kwargs):
+                        nonlocal reads
+                        if path.name == 'stat':
+                            raise error
+                        if path.name == 'cgroup.procs':
+                            reads += 1
+                            if reads > 1 and not still_listed:
+                                return ''
+                        return real_read(path, *args, **kwargs)
 
-            with mock.patch.object(Path, 'read_text', counting_read):
-                self.assertEqual(owned_process.cgroup_members(leaf, proc), [],
-                                 'a member the record no longer lists is gone, not failed')
-            with self.assertRaises(ValueError):
-                # The re-read still lists it here: a failed observation fails the sweep.
-                owned_process.cgroup_members(leaf, proc)
+                    with self.subTest(error=error, still_listed=still_listed), mock.patch.object(Path, 'read_text', read):
+                        if still_listed:
+                            with self.assertRaisesRegex(ValueError, 'record still lists it'):
+                                owned_process.cgroup_members(leaf, proc)
+                        else:
+                            self.assertEqual(owned_process.cgroup_members(leaf, proc), [])
+                        self.assertEqual(reads, 2)
 
     def test_the_claim_places_the_child_in_its_own_leaf(self):
         with tempfile.TemporaryDirectory() as folder:

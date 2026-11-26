@@ -475,7 +475,7 @@ def cgroup_members(leaf, proc=None):
         entry = root / str(pid)
         try:
             fields = (entry / 'stat').read_text().rsplit(') ', 1)[-1].split()
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             # Gone between the record read and the stat read: confirm against the
             # kernel's record before skipping. A listed-but-unreadable member is
             # a failed observation, never an empty answer (#411 review).
@@ -1009,16 +1009,12 @@ def _probe_member_alive(member_pid, member_pin, member_start, proc=None):
 
     The sig-0 send through the member's own pin is recycle-proof: ESRCH
     names a fully terminated task even though the held pin still references
-    its struct pid, and a missing stat entry is the other observation read
-    as termination — those two are the only errors that report a death,
-    because a success can still hide a stop: a zombie cannot run and come
-    back, and a recycled pid reads a different starttime, so the /proc
-    state decides (zombie, exit state or a missing entry is dead, a changed
-    starttime is a recycled pid, dead, and an unreadable starttime biases
-    toward alive, which can only keep the probe waiting, never fake a
-    death). Every other read error propagates: a failed observation is
-    never evidence of a death. The sig-0 success also proves the pid cannot
-    be recycled while it is read: the original task still holds it.
+    its struct pid. A successful send establishes liveness at that instant.
+    The task can exit before procfs opens stat (ENOENT) or before it reads
+    an open descriptor (ESRCH). A zombie or exit state is also dead, and a
+    changed starttime identifies a recycled pid. An unreadable starttime
+    biases toward alive. Other read errors propagate because a failed
+    observation cannot establish death.
     """
     try:
         signal.pidfd_send_signal(member_pin, 0)
@@ -1027,8 +1023,8 @@ def _probe_member_alive(member_pid, member_pin, member_start, proc=None):
     root = proc if proc is not None else Path('/proc')
     try:
         fields = (root / str(member_pid) / 'stat').read_text().rsplit(') ', 1)[-1].split()
-    except FileNotFoundError:
-        return False  # Gone between the sig-0 probe and the read: it was dying.
+    except (FileNotFoundError, ProcessLookupError):
+        return False  # The task disappeared before open or during the read.
     if not fields or fields[0] in ('Z', 'X'):
         return False
     try:
