@@ -2098,8 +2098,11 @@ let now = 10;
 const observed = [new Map(), new Map()];
 class Connection {
   signalingState = 'stable';
-  localDescription = { sdp: 'a=ice-ufrag:closer' };
   remoteDescription = { sdp: 'a=ice-ufrag:sender' };
+  get localDescription() {
+    if (this.signalingState === 'closed') throw new Error('Peer connection is closed');
+    return { sdp: 'a=ice-ufrag:closer' };
+  }
   addEventListener() {}
   createDataChannel() {
     return { id: 3, send() {}, addEventListener(kind, callback) { this[kind + 'Event'] = callback; }, close() { now += 2; } };
@@ -2115,11 +2118,11 @@ runInNewContext(`(${instrumentNativeWire})(false, '', undefined, 'close ')`, {
 const connection = new Connection();
 const channel = connection.createDataChannel('gameplay', {});
 channel.close();
-now = 20;
-channel.closeEvent();
 now = 30;
 connection.close();
 now = 40;
+channel.closeEvent();
+now = 45;
 channel.closeEvent();
 const before = [[{ index: 0, local: 'closer', remote: 'sender' }], [{ index: 17, local: 'sender', remote: 'closer' }]];
 const error = { index: 1, channel: 17, attempt: 279, received_ms: 600 };
@@ -2133,11 +2136,11 @@ assert.equal(receipt.sentAt, 47199);
 assert.equal(receipt.received_ms, 600);
 assert.deepEqual(receipt.observations.map(({ owner, kind, page_us, received_ms }) => [owner, kind, page_us, received_ms]), [
   [0, 'channel_close_called', 10000, 512],
-  [0, 'channel_close_event', 20000, 520],
+  [0, 'channel_close_event', 40000, 540],
   [0, 'connection_close_called', 30000, 532],
 ]);
 assert.deepEqual(receipt.observations.map(({ minimumGapUs, maximumGapUs }) => [minimumGapUs, maximumGapUs]),
-  [[21999, 22399], [11999, 12399], [1999, 2399]]);
+  [[21999, 22399], [-8001, -7601], [1999, 2399]]);
 const [wrong] = matchCloseObservations([error], [[{ ...before[0][0], index: 2 }], before[1]], observed);
 assert.deepEqual(wrong.observations, []);
 const [ambiguous] = matchCloseObservations([error], [...before, before[0]], [...observed, new Map()]);

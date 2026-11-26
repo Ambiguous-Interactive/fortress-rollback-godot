@@ -658,6 +658,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   }
   const instant = () => Math.round(performance.now() * 1000);
   function rememberRoute(record) {
+    // Firefox rejects SDP reads after the connection closes.
+    if (record.connection.signalingState === 'closed') return;
     record.local = ufrag(record.connection.localDescription) ?? record.local;
     record.remote = ufrag(record.connection.remoteDescription) ?? record.remote;
   }
@@ -868,7 +870,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   };
   function sctpStatus() {
     return resources.rtc.filter(({channel}) => channel.id === 3).map(record => {
-      if ((closePrefix || !record.local || !record.remote) && record.connection.signalingState !== 'closed') rememberRoute(record);
+      if (closePrefix || !record.local || !record.remote) rememberRoute(record);
       return { index: record.index, local: record.local, remote: record.remote, closeAborts: record.closeAborts, closeEvents: record.closeEvents,
         open: record.channel.readyState === 'open' && record.connection.connectionState === 'connected',
         ordered: record.channel.ordered, maxRetransmits: record.channel.maxRetransmits, maxPacketLifeTime: record.channel.maxPacketLifeTime,

@@ -39,3 +39,10 @@ The ownership receipt named the escaped child and the launch rejected it,
 but its original PID still appeared live in `/proc` on that scheduler turn.
 Poll the same PID and start time through a bounded deadline before requiring
 a terminal state. Keep the exact rejection and absent receipt checks.
+
+The mixed-browser startup comparison caught a Firefox-specific regression.
+Firefox 157.0 threw `InvalidStateError: Peer connection is closed` when a
+local control read either SDP description after close. The exact startup
+baseline passed. The source fixture reproduced the exception inside the
+channel close event. Keep the live ICE credentials and read no SDP
+description once signaling is closed.
