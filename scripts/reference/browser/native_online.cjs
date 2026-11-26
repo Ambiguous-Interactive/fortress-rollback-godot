@@ -1380,7 +1380,7 @@ function armAndWaitForInput(page, route) {
 function createReleaseSignal(players) {
   const paths = Array.from({ length: players }, () => '/native-release/' + randomUUID());
   const timing = new Map(paths.map(path => [path, {
-    path, request_received_ms: null, first_write_ms: null, finished_ms: null, continuation: null, resource: null,
+    path, request_dispatched_ms: null, request_received_ms: null, first_write_ms: null, finished_ms: null, continuation: null, resource: null,
   }]));
   const responses = new Map();
   const { promise: ready, resolve } = Promise.withResolvers();
@@ -1423,7 +1423,7 @@ function createReleaseSignal(players) {
 
 function recordReleaseTiming(receipt, text, controller_ms) {
   try {
-    const { path, requested_ms, continued_ms, status, response_start_ms, response_end_ms } = JSON.parse(text);
+    const { path, requested_ms, continued_ms, status, fetch_start_ms, response_start_ms, response_end_ms } = JSON.parse(text);
     if (path !== receipt.path) return false;
     const time = value => Number.isFinite(value) && value >= 0;
     if (!receipt.continuation && time(requested_ms) && time(continued_ms) && requested_ms <= continued_ms
@@ -1431,15 +1431,34 @@ function recordReleaseTiming(receipt, text, controller_ms) {
       receipt.continuation = { requested_ms, continued_ms, status, controller_ms };
       return true;
     }
-    if (!receipt.resource && [response_start_ms, response_end_ms].every(value => value === null || time(value))
+    if (!receipt.resource && [fetch_start_ms, response_start_ms, response_end_ms].every(value => value === null || time(value))
+      && (fetch_start_ms === null || [response_start_ms, response_end_ms].every(value => value === null || fetch_start_ms <= value))
       && (response_start_ms === null || response_end_ms === null || response_start_ms <= response_end_ms)) {
-      receipt.resource = { response_start_ms, response_end_ms, controller_ms };
+      receipt.resource = { fetch_start_ms, response_start_ms, response_end_ms, controller_ms };
       return true;
     }
   } catch {
     return false;
   }
   return false;
+}
+
+function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, first_write_ms, resource }) {
+  const timing = { offset_ms: null, write_to_response_end_ms: null };
+  const { fetch_start_ms, response_end_ms } = resource ?? {};
+  if (![request_dispatched_ms, request_received_ms, fetch_start_ms].every(Number.isFinite)
+    || request_dispatched_ms > request_received_ms) return timing;
+  // The fetch starts after evaluation dispatch and before the HTTP request arrives.
+  const precisionMs = 2;
+  const minOffset = request_dispatched_ms - fetch_start_ms - precisionMs;
+  const maxOffset = request_received_ms - fetch_start_ms + precisionMs;
+  timing.offset_ms = { min: minOffset, max: maxOffset };
+  if (!Number.isFinite(first_write_ms) || first_write_ms < request_received_ms || !Number.isFinite(response_end_ms)) return timing;
+  const latest = response_end_ms + maxOffset + precisionMs - first_write_ms;
+  if (latest >= 0) {
+    timing.write_to_response_end_ms = { min: Math.max(0, response_end_ms + minOffset - precisionMs - first_write_ms), max: latest };
+  }
+  return timing;
 }
 
 function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = null) {
@@ -1453,7 +1472,7 @@ function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = n
           const entry = list.getEntries().find(entry => entry.name === url && entry.initiatorType === 'fetch');
           if (!entry) return;
           observer.disconnect();
-          publish({ response_start_ms: entry.responseStart || null, response_end_ms: entry.responseEnd || null });
+          publish({ fetch_start_ms: entry.fetchStart ?? null, response_start_ms: entry.responseStart || null, response_end_ms: entry.responseEnd || null });
         });
         observer.observe({ type: 'resource' });
       }
@@ -1789,6 +1808,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         phase = 'relay release preparation';
         // Prepare the browser requests before the hold so release avoids another debugger evaluation.
         relayRelease = Promise.all(pages.map(async (page, index) => {
+          releaseTiming[index].request_dispatched_ms = performance.now();
           stalled[index] = await captureAndReleaseInput(page, index, releaseSignal.paths[index], RELEASE_TIMING_CHECKPOINT);
         }));
         await boundedRoom(() => Promise.race([releaseSignal.ready, relayRelease]), PAGE_WAIT_MS, 'native relay release preparation');
@@ -1992,7 +2012,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
       holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns, relayWire, relayControl,
       relayServer, relayJoined, relayRetention, sameLinkRetention,
-      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), releaseTiming, departureCommands, roomIdentities,
+      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
+      releaseTiming: releaseTiming?.map(receipt => ({ ...receipt, ...releaseDeliveryTiming(receipt) })),
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
@@ -2041,7 +2062,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
-      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached), releaseTiming,
+      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
+      releaseTiming: releaseTiming?.map(receipt => ({ ...receipt, ...releaseDeliveryTiming(receipt) })),
     }));
   } finally {
     releaseSignal?.cancel();
@@ -2082,6 +2104,6 @@ if (require.main === module) {
 
 module.exports = { armAndWaitForInput, bindDepartureCheckpoints, calibrateDepartureClocks, captureAndReleaseInput, closeEvidence, compareHistory, createReleaseSignal,
   createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt, missedCorrectionDeadline,
-  matchCloseObservations, postReleaseCheckpoint, readConfirmedHistory, recordCloseObservation, recordReleaseTiming, relayReleaseEvidence, reportedChannel,
-  waitForCloseProofs,
+  matchCloseObservations, postReleaseCheckpoint, readConfirmedHistory, recordCloseObservation, recordReleaseTiming, releaseDeliveryTiming, relayReleaseEvidence,
+  reportedChannel, waitForCloseProofs,
   waitForCorrectedHistory, WARMUP_CHECKPOINT };

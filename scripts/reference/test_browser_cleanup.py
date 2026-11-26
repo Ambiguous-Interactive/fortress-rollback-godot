@@ -1257,7 +1257,7 @@ async function run() {
   const origin = 'http://127.0.0.1:' + server.address().port;
   const path = index => origin + signal.paths[index];
   assert.deepEqual(signal.timings(), signal.paths.map(path => ({
-    path, request_received_ms: null, first_write_ms: null, finished_ms: null, continuation: null, resource: null,
+    path, request_dispatched_ms: null, request_received_ms: null, first_write_ms: null, finished_ms: null, continuation: null, resource: null,
   })));
   let evaluations = 0, releases = 0;
   global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: {
@@ -1285,13 +1285,13 @@ async function run() {
   assert.equal(receipt.continuation, null);
   assert.equal(receipt.resource, null);
   const entered = { path: signal.paths[0], requested_ms: 10, continued_ms: 510, status: 204 };
-  const resource = { path: signal.paths[0], response_start_ms: null, response_end_ms: 25 };
+  const resource = { path: signal.paths[0], fetch_start_ms: 10, response_start_ms: null, response_end_ms: 25 };
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, path: signal.paths[1] }), 700), false);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, response_start_ms: 26 }), 700), false);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(resource), 700), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(entered), 701), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...entered, continued_ms: 615 }), 800), false);
-  assert.deepEqual(receipt.resource, { response_start_ms: null, response_end_ms: 25, controller_ms: 700 });
+  assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: null, response_end_ms: 25, controller_ms: 700 });
   assert.deepEqual(receipt.continuation, { requested_ms: 10, continued_ms: 510, status: 204, controller_ms: 701 });
   assert.equal(releases, 2);
   assert.equal((await fetch(path(0))).status, 409);
@@ -1310,7 +1310,7 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
         # Value: protects=independent release clocks and exact resource identity; fails_when=timing needs the other event or matches a foreign fetch
         script = r"""
 const assert = require('node:assert/strict');
-const { captureAndReleaseInput, recordReleaseTiming } = require(process.argv[1]);
+const { captureAndReleaseInput, recordReleaseTiming, releaseDeliveryTiming } = require(process.argv[1]);
 const path = '/native-release/control';
 const prefix = 'timing ';
 global.location = { href: 'http://localhost/test' };
@@ -1318,7 +1318,8 @@ global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: { st
 const page = { evaluate(callback, argument) { return callback(argument); } };
 
 async function run(responseDelay, continuationDelay, { unavailable = false, status = 204, nearDeadline = false } = {}) {
-  const receipt = { path, continuation: null, resource: null };
+  const receipt = { path, request_dispatched_ms: 3000, request_received_ms: 3004, first_write_ms: 3010,
+    continuation: null, resource: null };
   let now = 10;
   let controller = 3000;
   let observe;
@@ -1339,7 +1340,7 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
   global.fetch = () => new Promise(resolve => { resume = resolve; });
   const released = captureAndReleaseInput(page, 0, path, prefix);
   const resource = { name: new URL(path, location.href).href, initiatorType: 'fetch',
-    responseStart: 11 + responseDelay, responseEnd: 12 + responseDelay };
+    fetchStart: 10, responseStart: 21 + responseDelay, responseEnd: 22 + responseDelay };
   if (!unavailable) {
     observe([{ ...resource, name: resource.name + '?other' }, { ...resource, initiatorType: 'xmlhttprequest' }]);
     assert.equal(disconnected, false);
@@ -1364,10 +1365,16 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
       observe([{ ...resource, responseStart: 0 }]);
     }
     assert.equal(disconnected, true);
-    assert.deepEqual(receipt.resource, { response_start_ms: continuationDelay ? 11 : null, response_end_ms: 12 + responseDelay,
+    assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: continuationDelay ? 21 : null, response_end_ms: 22 + responseDelay,
       controller_ms: continuationDelay ? 3001 : 3002 });
     assert.equal(receipt.continuation.continued_ms - receipt.resource.response_end_ms, continuationDelay);
+    assert.deepEqual(releaseDeliveryTiming(receipt), {
+      offset_ms: { min: 2988, max: 2996 },
+      write_to_response_end_ms: { min: Math.max(0, responseDelay - 2), max: responseDelay + 10 },
+    });
+    assert.equal(releaseDeliveryTiming({ ...receipt, first_write_ms: 5000 }).write_to_response_end_ms, null);
   }
+  assert.equal(releaseDeliveryTiming({ ...receipt, resource: null }).write_to_response_end_ms, null);
 }
 
 let completed = false;
@@ -1379,7 +1386,7 @@ process.once('beforeExit', code => {
   await run(0, 450);
   await run(0, 0, { unavailable: true });
   await run(0, 0, { status: 409 });
-  await run(993, 0, { nearDeadline: true });
+  await run(983, 0, { nearDeadline: true });
   completed = true;
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
@@ -1910,6 +1917,7 @@ global.setTimeout = (callback, ms, ...args) => timeout(callback, [5000, 30000].i
 let releaseRequest;
 global.fetch = path => new Promise(resolve => {
   const owner = window;
+  const requested = performance.now();
   const response = { socket: { destroyed: false }, once(event, callback) { assert.equal(event, 'finish'); this.finish = callback; },
     writeHead(status, headers) { this.status = status; this.headers = new Headers(headers); return this; },
     end() {
@@ -1918,7 +1926,7 @@ global.fetch = path => new Promise(resolve => {
       const at = performance.now();
       resolve({ status: this.status, headers: this.headers });
       setImmediate(() => realm.run(owner, () => owner.resourceObserver([{
-        name: new URL(path, location.href).href, initiatorType: 'fetch', responseStart: at, responseEnd: at,
+        name: new URL(path, location.href).href, initiatorType: 'fetch', fetchStart: requested, responseStart: at, responseEnd: at,
       }])));
     } };
   if (!releaseRequest({ url: path, method: 'GET' }, response)) throw new Error('fixture release request was not handled');
@@ -2025,6 +2033,8 @@ runMain();
                 for timing in report['releaseTiming']:
                     self.assertEqual(timing['continuation']['status'], 204)
                     self.assertIsNotNone(timing['finished_ms'])
+                    self.assertLessEqual(timing['request_dispatched_ms'], timing['request_received_ms'])
+                    self.assertIsNotNone(timing['write_to_response_end_ms'])
                     self.assertGreater(timing['resource']['controller_ms'], timing['continuation']['controller_ms'])
                 self.assertIn('native peer 0 diagnostics deadline', run.stderr)
                 self.assertIn('native peer 1 diagnostics deadline', run.stderr)
