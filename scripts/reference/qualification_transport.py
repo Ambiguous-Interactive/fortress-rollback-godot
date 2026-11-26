@@ -17,7 +17,7 @@ from web_templates import web_template_archive
 TRANSPORT = {
     'clean': ('clean', 'peer-drop-process-missing', 'peer-drop-room-after-drop'),
     'faults': ('faults', 'peer-drop-foreign', 'peer-drop-room-before-drop'),
-    'mixed': ('mixed', 'corrupt', 'peer-drop-missing', 'peer-drop-second'),
+    'mixed': ('mixed', 'corrupt', 'peer-drop-missing', 'peer-drop-second', 'peer-drop-overlap'),
     'mixed-default': ('mixed-default', 'mixed-disabled', 'peer-drop-missing-lost', 'peer-drop-commit'),
     'mixed-close': ('mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-room-continue'),
     'departures': ('default', 'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay', 'peer-drop-rollback',

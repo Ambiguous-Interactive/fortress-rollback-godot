@@ -170,6 +170,8 @@ func run(host: Node, count: int) -> bool:
 		if not host._service_batch():
 			return false
 		await host.get_tree().create_timer(0.002).timeout
+	if host.drop_overlap:
+		return await host.transports[0].run_overlap(host, departing_uuid)
 	JavaScriptBridge.eval("document.body.dataset.fortressDropReady = 'true'")
 	if JavaScriptBridge.eval("window.fortressDropClose || false"):
 		host.stage = "peer_drop_readiness"

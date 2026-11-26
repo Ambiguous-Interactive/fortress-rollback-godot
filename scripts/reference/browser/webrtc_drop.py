@@ -34,7 +34,8 @@ def _departing_row(row, sequence, frames):
             and isinstance(roster, list) and len(roster) == 3 and roster[slot] == row['uuid'])
 
 
-def _room_physical(peer):
+def _room_physical(peer, players=3):
+    links = players - 1
     rtc = peer.get('rtc')
     if not isinstance(rtc, dict) or any(type(rtc.get(field)) is not int or rtc[field] < 1 for field in ('sent', 'received')):
         raise ValueError('room-departure physical packet evidence missing')
@@ -42,11 +43,11 @@ def _room_physical(peer):
     if not isinstance(witness, dict):
         raise ValueError('room-departure gameplay result missing')
     channels = rtc.get('channels')
-    if not isinstance(channels, list) or len(channels) != 6:
+    if not isinstance(channels, list) or len(channels) != 3 * links:
         raise ValueError('room-departure channel inventory incomplete')
     if any(type(channel.get('id')) is not int for channel in channels):
         raise ValueError('room-departure channel identity is not an integer')
-    if any(sum(channel.get('id') == channel_id for channel in channels) != 2 for channel_id in (1, 2, 3)):
+    if any(sum(channel.get('id') == channel_id for channel in channels) != links for channel_id in (1, 2, 3)):
         raise ValueError('room-departure channel IDs incomplete')
     for channel in channels:
         if channel.get('id') != 3: continue
@@ -56,8 +57,8 @@ def _room_physical(peer):
                 or any(type(channel.get(field)) is not int or channel[field] < 1 for field in ('sent', 'received'))):
             raise ValueError('room-departure unreliable physical delivery missing')
     teardown = rtc.get('teardown', {})
-    if (type(teardown.get('channels')) is not int or teardown['channels'] != 6 or type(teardown.get('connections_created')) is not int
-            or teardown['connections_created'] < 2 or type(teardown.get('connections')) is not int
+    if (type(teardown.get('channels')) is not int or teardown['channels'] != 3 * links or type(teardown.get('connections_created')) is not int
+            or teardown['connections_created'] < links or type(teardown.get('connections')) is not int
             or teardown['connections'] != teardown['connections_created']
             or type(teardown.get('websockets_created')) is not int or teardown['websockets_created'] < 1
             or type(teardown.get('websockets')) is not int or teardown['websockets'] != teardown['websockets_created']):

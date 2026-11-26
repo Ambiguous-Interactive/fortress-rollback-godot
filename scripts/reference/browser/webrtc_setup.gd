@@ -19,6 +19,7 @@ const H = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const Game = preload("res://webrtc_game.gd")
+const Overlap = preload("res://webrtc_drop_overlap.gd")
 const Drop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
 
 
@@ -181,6 +182,8 @@ func run(host: Node, count: int) -> bool:
 		var control_drop: bool = bool(JavaScriptBridge.eval("window.fortressDropMissing || false")) \
 			or bool(JavaScriptBridge.eval("window.fortressDropCommit || false"))
 		var direct: Direct = DropDirect.new() if control_drop else Direct.new()
+		if host.drop_overlap:
+			direct = Overlap.new()
 		host.transports.append(direct)
 		var options: Direct.Options = host._direct_options()
 		var connected_code: int = direct.configure(host.meshes[index], host.memberships[index], host.adapters[index], peer, options)

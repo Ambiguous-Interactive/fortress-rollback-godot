@@ -59,6 +59,7 @@ var pressure_service_turn: int = 0
 var mixed: Mixed = Mixed.new()
 var drop_enabled: bool = false
 var history_lost: bool = false
+var drop_overlap: bool = false
 var room_departure: bool = false
 var room_player_left: Array[String] = []
 var room_left_seen: bool = false
@@ -75,6 +76,7 @@ func _ready() -> void:
 	recording_pressure = JavaScriptBridge.eval("window.fortressRecordingPressure || false")
 	frame_count = 257 if recording_pressure else 40
 	drop_enabled = JavaScriptBridge.eval("window.fortressPeerDrop || false")
+	drop_overlap = JavaScriptBridge.eval("window.fortressDropOverlap || false")
 	history_lost = JavaScriptBridge.eval("window.fortressDropHistoryLost || false")
 	room_departure = JavaScriptBridge.eval("window.fortressDropRoom || false")
 	process_missing = JavaScriptBridge.eval("window.fortressDropProcessMissing || false")
@@ -93,10 +95,10 @@ func _run() -> void:
 	if not clients.is_empty():
 		local_uuid = clients[0].get_player_id()
 	if ok: ok = await _play(player_count)
-	if not room_departure and not history_lost:
+	if not room_departure and not history_lost and not drop_overlap:
 		ok = ok and _healthy(true)
 	var control: bool = JavaScriptBridge.eval("window.fortressCorrupt || window.fortressDefaultFactory || window.fortressDropCorrupt || window.fortressDropRoomContinue || false")
-	if room_departure or history_lost:
+	if room_departure or history_lost or drop_overlap:
 		if ok or control:
 			JavaScriptBridge.eval("document.body.dataset.fortressGameplayDone = 'true'")
 			# The fence and the lost-history expiry are terminal states; the
@@ -105,7 +107,7 @@ func _run() -> void:
 			# the terminal witness has already published its own rows.
 			if history_lost:
 				tearing_down = true
-			if ok and not await _wait_room_teardown():
+			if ok and (not await _wait_room_teardown() or (drop_overlap and not _healthy())):
 				ok = false
 	elif ok or control:
 		JavaScriptBridge.eval("document.body.dataset.fortressGameplayDone = 'true'")
