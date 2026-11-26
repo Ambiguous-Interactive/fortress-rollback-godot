@@ -2594,7 +2594,7 @@ function makePage() {
     events.console({ text: () => 'fortress native post-release ' + JSON.stringify(sample) });
   }
   function expire() {
-    mark('native_expiry', { endpoint: 2, uuid: roster[1],
+    mark('native_expiry', { endpoint: 2 - index, uuid: roster[1 - index],
       expiry: { observed_us: 3000000, sdk_queued: 0, sdk_peak: 51, sdk_before_poll: 2,
         service_started_us: 2999900, service_gap_us: 100, service_gap_peak_us: 500, last_accepted: null } });
   }
@@ -2620,7 +2620,10 @@ function makePage() {
       arm() { state.stalls++; return hold(); },
       holdProgress: hold, recordHoldReadiness: hold, status: () => ({}),
       holdConditions: () => [true, true],
-      relayWireTrace: selected => ({ selected }),
+      relayWireTrace(selected) {
+        if (lateExpiry && index === 1) expire();
+        return { selected };
+      },
       holdObservation: () => ({ ...hold(), control_round_trips: 1, buffered_bytes: 0, traffic: [] }),
       async release() {
         Object.assign(state, { frame: 40, confirmed: 40, turns: 21, restores: 3 });
@@ -2681,8 +2684,9 @@ require('node:module')._load = function (name, ...args) {
     return { ...load.call(this, name, ...args), async bindRelayServer() {},
       createRelayServerReader: () => async (_select, _timeout, links) => {
         assert.deepEqual(links, [expiryLink], 'the delayed console expiry must focus the server trace');
-        return null;
-      } };
+        return {};
+      },
+      joinRelayReceipts: (_server, _pages, expiries) => ({ rows: [], joined: expiries.map(expiry => expiry.uuid) }) };
   }
   if (name === './online_host.cjs') {
     return { createHost: async (_root, _endpoint, _cert, _key, _port, handler) => {
@@ -2761,6 +2765,8 @@ runMain();
                             self.assertEqual(report['expiryLinks'], [link])
                             self.assertEqual(report['relayWire'], [{'selected': [link]}] * 2)
                             self.assertNotIn('relayJoinError', report)
+                            self.assertEqual(report['relayJoined']['joined'], ['00000000-0000-0000-0000-000000000002'])
+                            self.assertEqual(report['postRelease'][1]['native_expiry']['uuid'], '00000000-0000-0000-0000-000000000001')
                         if control == 'history staggered':
                             self.assertLess(reporter['native_expiry']['controller_order'],
                                             report['postRelease'][1]['history_published']['controller_order'])

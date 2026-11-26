@@ -2520,6 +2520,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       stalled: window.fortressNativeStalled,
     })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
     // Console expiry may arrive while the bounded status reads are still settling.
+    const observedExpiries = () => postRelease?.flatMap(peer => peer.native_expiry ? [peer.native_expiry] : []) ?? [];
+    const scopedExpiries = observedExpiries();
     const expiryLinks = roomIdentities?.uuids.flatMap((uuid, index) => {
       const sender = postRelease?.[index].native_expiry?.uuid ?? warmupBarrier?.checkpoints[index]?.cutoff?.terminal_uuid;
       return sender ? [`${sender.replaceAll('-', '')}/${uuid.replaceAll('-', '')}`] : [];
@@ -2537,13 +2539,12 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       status === 'fulfilled' ? value ?? null : { error: String(reason) });
     const [serverReceipt] = relayServerFailure ? await relayServerFailure : [];
     const holdReceipt = relayHold && await relayHoldReceipt();
-    const expiries = postRelease?.flatMap(peer => peer.native_expiry ? [peer.native_expiry] : []) ?? [];
     let relayJoined;
     let relayJoinError;
     if (serverReceipt) {
       try {
         if (serverReceipt.status === 'rejected') throw serverReceipt.reason;
-        relayJoined = joinRelayReceipts(serverReceipt.value, relayWire, expiries);
+        relayJoined = joinRelayReceipts(serverReceipt.value, relayWire, scopedExpiries);
       } catch (joinError) {
         relayJoinError = String(joinError);
       }
@@ -2563,7 +2564,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       warmupInputErrors: warmupBarrier?.inputErrors, warmupAckErrors: warmupBarrier?.ackErrors, warmupNativeErrors: warmupBarrier?.nativeErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
-      relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined, expiryLinks) : undefined,
+      relayExpiryRows: traceRelayWire ? relayExpiryRows(observedExpiries(), relayJoined, expiryLinks) : undefined,
       relayHold: holdReceipt,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
