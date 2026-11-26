@@ -235,9 +235,9 @@ bytes can earn distinct stamps. Link an echoed quality token to all retained
 accepted candidates when their bytes match. Partition retention by directed
 link, stage and packet family so unrelated traffic cannot evict the quiet
 link. Report omitted records and preserve ambiguous stages. Capture the
-exact accepted stamps before a pressure control, then require those same
-stamps after it. Count healthy traffic separately at the browser and server.
-For same-link pressure, join new sends through raw and check SDK and native absence. Publish only selected links with original ordinals and full-stream omissions.
+same acceptance across quiet-link pressure. For same-link pressure, freeze the
+accepted stamp in the gate-resume turn and require raw arrival before gate entry.
+Join new sends through raw, check SDK and native absence, and keep original ordinals and full-stream omissions for the selected link.
 Release a diagnostic delivery gate on its exact blocked stamps within the page deadline.
 Keep one server receipt request outstanding through timeout. Match both the returned generation and link selection.
 Prove ordering between clocks by holding the original socket's FIFO until
@@ -247,8 +247,8 @@ Reuse digests within a freeze only for byte-equal copies of the same stamp.
 Keep every occurrence and hash conflicting variants separately.
 Transfer complete large receipts as one JSON string through Playwright.
 Compare the decoded receipt with the original fixture, including exact stamps.
-For an optional hosted trace, validate the selected cell before setup. Keep
-the stock and traced runs on the same checkout and room configuration.
+Validate an optional hosted trace cell before setup. Pair stock and trace on the same checkout and room configuration.
+Bound OS dependency and browser installs separately. Run generic exported controls before installing additional room-only packages.
 Publish the trace build receipt and raw failure logs with the browser artifact.
 Export the requested confirmed prefix once per browser. Keep recurring status
 snapshots small. When a page can publish data before its evaluation reply
