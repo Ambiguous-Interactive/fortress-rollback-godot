@@ -117,7 +117,8 @@ Each packet row names its directional endpoints, token and any known delivery
 stamp. Join a browser send to ingress by its single socket's ordinal and exact
 envelope. Join ingress, addressed writes and raw arrivals by stamp and exact
 envelope. The reply's recorded native acceptance candidates identify matching
-report stamps on the reverse link. Multiple candidates stay visible. Empty
+report stamps on the reverse link. All observed candidates stay visible,
+including when a candidate has no joined report row during the hold. Empty
 stages can reflect an observation gap or eviction. Compare ingress and write
 on the server clock. Compare sends and arrivals from the same page on its
 page clock. The receipt preserves each clock and includes no cross-clock

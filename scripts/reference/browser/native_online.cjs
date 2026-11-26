@@ -2108,9 +2108,9 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       return sender ? [`${sender.replaceAll('-', '')}/${uuid.replaceAll('-', '')}`] : [];
     }) ?? [];
     const relayWireFailure = traceRelayWire ? collectRelayWire(expiryLinks) : null;
-    const holdEvidence = relayHoldReceipt();
+    const holdServerRead = collectHoldServer();
     const relayServerFailure = readRelayServer && roomIdentities
-      ? Promise.allSettled([holdEvidence.then(() => readRelayServer(undefined, DIAGNOSTIC_MS, expiryLinks))]) : null;
+      ? Promise.allSettled([(holdServerRead ?? Promise.resolve()).then(() => readRelayServer(undefined, DIAGNOSTIC_MS, expiryLinks))]) : null;
     const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
       ...window.fortressNative, wire: window.fortressNativeWire?.status(), warmup: window.fortressNativeWire?.warmupStatus(),
       stalled: window.fortressNativeStalled,
@@ -2145,7 +2145,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
-      relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError, relayHold: await holdEvidence,
+      relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
+      relayHold: relayHold && await relayHoldReceipt(),
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
       releaseTiming: releaseTiming?.map(receipt => ({ ...receipt, ...releaseDeliveryTiming(receipt) })),
     }));

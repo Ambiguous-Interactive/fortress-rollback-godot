@@ -74,7 +74,8 @@ function createRelayHold(room, uuids, cap = RELAY_HOLD_CAP) {
         const next = events.map(event => parsePacket(stage, event, page, through_ms));
         let last = history?.events.at(-1);
         for (const event of next) {
-          if (!event || (last && (event.ordinal <= last.ordinal || event.at_ms < last.at_ms)))
+          if (!event || (last && (event.ordinal <= last.ordinal || event.at_ms < last.at_ms
+              || (stage === 'send' && sockets === 1 && event.socket_ordinal <= last.socket_ordinal))))
             throw new Error('invalid relay hold checkpoint packet');
           last = event;
         }
@@ -148,9 +149,11 @@ function joinPackets(pages, ingress, write) {
     packet => `${direction(packet)}/${packet.epoch}/${packet.seq}/${packet.token}`);
   for (const packet of packets.values()) {
     if (packet.kind === 4) delete packet.report_candidates;
-    else packet.report_candidates = [...new Map((packet.report_candidates ?? []).filter(({ epoch, seq }) =>
-      reports.get(`${packet.recipient}/${packet.sender}/${epoch}/${seq}/${packet.token}`)?.length === 1)
-      .map(candidate => [`${candidate.epoch}/${candidate.seq}`, candidate])).values()];
+    else {
+      packet.report_candidates = [...new Map((packet.report_candidates ?? []).map(candidate => [`${candidate.epoch}/${candidate.seq}`, candidate])).values()];
+      packet.joined_report_candidates = packet.report_candidates.filter(({ epoch, seq }) =>
+        reports.get(`${packet.recipient}/${packet.sender}/${epoch}/${seq}/${packet.token}`)?.length === 1);
+    }
   }
   return [...packets.values()];
 }

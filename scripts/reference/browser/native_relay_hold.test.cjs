@@ -63,6 +63,7 @@ test('hold console batches survive unavailable final reads and join both stamped
   const reply = envelope(second, first, 5);
 
   local.record('send', report, 1);
+  remote.recordEngine('native', first, report.subarray(57).toString('hex'), 6, '18', 0);
   local.beginHold(() => 1, now);
   index = 2;
   remote.beginHold(() => 1, now);
@@ -85,6 +86,15 @@ test('hold console batches survive unavailable final reads and join both stamped
   const afterFirstBatch = receipt.snapshot();
   assert.equal(afterFirstBatch.pages[0].streams.send.events.length, 1);
   assert.equal(afterFirstBatch.pages[1].streams.raw.events.length, 1);
+
+  let finalReadStarted = false;
+  const page = { evaluate() {
+    finalReadStarted = true;
+    return new Promise(() => {});
+  } };
+  const finalRead = assert.rejects(boundedRoom(() => readRelayWireReceipt(page), 5, 'final page receipt'), /final page receipt deadline/);
+  await Promise.resolve();
+  assert.equal(finalReadStarted, true);
 
   now = 1020;
   local.record('send', report, 4);
@@ -109,8 +119,7 @@ test('hold console batches survive unavailable final reads and join both stamped
   writes.push({ ...ingress[1], actual_recipient: other });
   const server = { room, roster: [first, second, other], clock: 'server.monotonic',
     streams: { ingress: { quality: { events: ingress } }, write: { quality: { events: writes } } } };
-  const page = { evaluate: () => new Promise(() => {}) };
-  await assert.rejects(boundedRoom(() => readRelayWireReceipt(page), 5, 'final page receipt'), /final page receipt deadline/);
+  await finalRead;
 
   const retained = receipt.snapshot(server);
   assert.deepEqual(retained.links, [first + '/' + second, second + '/' + first]);
@@ -123,8 +132,11 @@ test('hold console batches survive unavailable final reads and join both stamped
   assert.deepEqual(joins['31'].stages.ingress, []);
   assert.deepEqual(joins['31'].stages.write, []);
   assert.deepEqual(joins['31'].report_candidates, []);
-  assert.deepEqual(joins['30'].report_candidates, [{ epoch: 7, seq: '20' }]);
-  assert.deepEqual(joins['32'].report_candidates, [{ epoch: 7, seq: '20' }, { epoch: 7, seq: '21' }]);
+  const preHold = { epoch: 6, seq: '18' };
+  assert.deepEqual(joins['30'].report_candidates, [preHold, { epoch: 7, seq: '20' }]);
+  assert.deepEqual(joins['30'].joined_report_candidates, [{ epoch: 7, seq: '20' }]);
+  assert.deepEqual(joins['32'].report_candidates, [preHold, { epoch: 7, seq: '20' }, { epoch: 7, seq: '21' }]);
+  assert.deepEqual(joins['32'].joined_report_candidates, [{ epoch: 7, seq: '20' }, { epoch: 7, seq: '21' }]);
   assert.equal(retained.pages[0].streams.raw.events[0].hold_gate_match, true);
   assert.ok(messages.every(({ index }) => index !== 0));
   const staleStamp = serverEvent(report, 6, 19, 6, 2);
@@ -141,6 +153,16 @@ test('hold console batches survive unavailable final reads and join both stamped
   receipt.record(2, stale.text, controllerNow++);
   assert.match(receipt.snapshot().errors[2], /invalid relay hold checkpoint/);
   assert.equal(receipt.snapshot(server).packets.length, withReusedOrdinal.length);
+
+  const malformed = createRelayHold(room, uuids);
+  const [start, batch, end] = messages.filter(({ index }) => index === 1).map(({ text }) => text);
+  malformed.record(1, start, 1);
+  malformed.record(1, batch, 2);
+  const duplicate = JSON.parse(end.slice(RELAY_HOLD_PREFIX.length));
+  duplicate.streams.send.events[0].socket_ordinal = 2;
+  malformed.record(1, RELAY_HOLD_PREFIX + JSON.stringify(duplicate), 3);
+  assert.match(malformed.snapshot().errors[1], /invalid relay hold checkpoint packet/);
+  assert.equal(malformed.snapshot(server).packets.length, 3, 'a duplicate socket ordinal cannot replace a retained send');
 });
 
 
