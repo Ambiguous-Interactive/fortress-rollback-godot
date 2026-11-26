@@ -365,16 +365,20 @@ function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTa
 }
 
 function validateExpiry(value) {
-  const { observed_us, sdk_queued, sdk_peak, last_accepted } = value ?? {};
+  const { observed_us, sdk_queued, sdk_peak, sdk_before_poll, service_started_us, service_gap_us, service_gap_peak_us, last_accepted } = value ?? {};
   const integer = (number, min, max) => Number.isSafeInteger(number) && number >= min && number <= max;
   const maximum = Number.MAX_SAFE_INTEGER;
-  if (!integer(observed_us, 0, maximum) || !integer(sdk_peak, 0, maximum) || !integer(sdk_queued, -1, sdk_peak))
+  if (!integer(observed_us, 0, maximum) || !integer(sdk_peak, 0, maximum)
+    || !integer(sdk_queued, -1, sdk_peak) || !integer(sdk_before_poll, -1, sdk_peak)
+    || !integer(service_started_us, 0, observed_us) || !integer(service_gap_peak_us, 0, service_started_us)
+    || !integer(service_gap_us, -1, service_gap_peak_us))
     throw new Error('invalid native expiry evidence');
-  if (last_accepted === null) return { observed_us, sdk_queued, sdk_peak, last_accepted };
+  const receipt = { observed_us, sdk_queued, sdk_peak, sdk_before_poll, service_started_us, service_gap_us, service_gap_peak_us };
+  if (last_accepted === null) return { ...receipt, last_accepted };
   const { accepted_us, kind, bytes } = last_accepted ?? {};
   if (!integer(accepted_us, 0, observed_us) || !integer(bytes, 17, 1200)
     || (bytes < 28 ? kind !== null : !integer(kind, 0, 0xffffffff))) throw new Error('invalid native expiry evidence');
-  return { observed_us, sdk_queued, sdk_peak, last_accepted: { accepted_us, kind, bytes } };
+  return { ...receipt, last_accepted: { accepted_us, kind, bytes } };
 }
 
 function missedCorrectionDeadline(phase, error, deadline, failedAt) {

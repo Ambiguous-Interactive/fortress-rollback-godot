@@ -585,7 +585,8 @@ globalThis.window = { fortressNativeWire: { relayExpiryFrontier: sender => trace
 instrumentPostRelease(prefix, 40);
 window.fortressNativePostRelease.bindDeparture(format(local), frozen);
 window.fortressNativePostRelease.recordDeparture('native_expiry', 1, JSON.stringify({
-  observed_us: 4000, sdk_queued: 0, sdk_peak: 1, last_accepted: null,
+  observed_us: 4000, sdk_queued: 0, sdk_peak: 1, sdk_before_poll: 1,
+  service_started_us: 3900, service_gap_us: 800, service_gap_peak_us: 900, last_accepted: null,
 }));
 window.fortressNativePostRelease.recordDeparture('native_expiry', 3);
 console.debug = savedDebug;
@@ -2246,7 +2247,8 @@ global.window = {};
 console.debug = text => postReleaseCheckpoint(peers[2], text, incoming(controller), roster, uuids[2]);
 instrumentPostRelease(prefix, 40);
 window.fortressNativePostRelease.bindDeparture(uuids[2], roster);
-const evidence = (depth, accepted) => ({observed_us: 6000, sdk_queued: depth, sdk_peak: 710,
+const evidence = (depth, accepted) => ({observed_us: 6000, sdk_queued: depth, sdk_peak: 710, sdk_before_poll: 708,
+  service_started_us: 5800, service_gap_us: 1200, service_gap_peak_us: 2500,
   last_accepted: accepted === null ? null : {accepted_us: accepted, kind: 4, bytes: 46}});
 const hold = (kind, released) => ({kind, page_ms: 500 + released, state: 'playing', turns: 28, frame: 30, confirmed: 12, restores: 0,
   held: {mesh: 0, relay: 33}, bytes: 2838, queued: 33 - released, released});
@@ -2282,6 +2284,17 @@ assert.deepEqual(report.expiries.map(({reporter_page, expired_page, last_release
 assert.match(peers[3].checkpoint_error, /invalid native expiry evidence/);
 assert.equal(peers[2].native_expiry.expiry.last_accepted.kind, 4);
 assert.equal(peers[2].native_expiry.expiry.last_accepted.bytes, 46);
+const {observed_us, sdk_before_poll, service_started_us, service_gap_us, service_gap_peak_us} = peers[2].native_expiry.expiry;
+assert.deepEqual([observed_us, sdk_before_poll, service_started_us, service_gap_us, service_gap_peak_us], [6000, 708, 5800, 1200, 2500]);
+for (const invalid of [
+  {sdk_before_poll: 711}, {service_started_us: 6001}, {service_gap_us: 2501}, {service_gap_us: 5801, service_gap_peak_us: 6000},
+]) {
+  const malformed = {};
+  postReleaseCheckpoint(malformed, prefix + JSON.stringify({kind: 'native_expiry', endpoint: 8, uuid: uuids[6], page_ms: 6,
+    expiry: {...evidence(0, null), ...invalid}}), incoming(150), roster, uuids[2]);
+  assert.match(malformed.checkpoint_error, /invalid native expiry evidence/);
+  assert.equal(malformed.native_expiry, undefined);
+}
 assert.equal(peers[2].release_socket_closed.socket_state, 3);
 assert.equal(peers[2].release_socket_closed.socket_stage, 'before_send');
 assert.equal(peers[2].release_socket_closed.held_send, true);
@@ -2409,7 +2422,8 @@ async function run() {
   trace.setTarget(45);
   assert.deepEqual(Object.keys(checkpoints.frontiers), ['40', '44'], 'only the default and compared targets are published');
   trace.bindDeparture(local, roster);
-  const expiry = {observed_us: 6000, sdk_queued: -1, sdk_peak: 0, last_accepted: null};
+  const expiry = {observed_us: 6000, sdk_queued: -1, sdk_peak: 0, sdk_before_poll: -1,
+    service_started_us: 6000, service_gap_us: -1, service_gap_peak_us: 0, last_accepted: null};
   trace.recordDeparture('native_expiry', 2, JSON.stringify(expiry));
   now++;
   trace.recordDeparture('sdk_departure', departing);
@@ -2579,7 +2593,8 @@ function makePage() {
   }
   function expire() {
     mark('native_expiry', { endpoint: 2, uuid: roster[1],
-      expiry: { observed_us: 3000000, sdk_queued: 0, sdk_peak: 51, last_accepted: null } });
+      expiry: { observed_us: 3000000, sdk_queued: 0, sdk_peak: 51, sdk_before_poll: 2,
+        service_started_us: 2999900, service_gap_us: 100, service_gap_peak_us: 500, last_accepted: null } });
   }
   const pageWindow = { index, fortressNative: state, fortressNativeReady: true, publishTiming: text => events.console({ text: () => text }),
     set fortressNativeCapture({ id, frames }) {

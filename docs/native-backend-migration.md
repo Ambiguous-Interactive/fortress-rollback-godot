@@ -121,7 +121,11 @@ The reporter pins the latest natively accepted input and quality report
 on each directed link. The expiry checkpoint publishes those original
 stamps and any earlier raw arrival and SDK observations. The failure
 receipt joins them to retained sender and server evidence and lists
-each missing stage. A later expiry can fall outside the upstream link
+each missing stage. The expiry checkpoint also preserves the SDK queue
+depth and the current and peak intervals between Godot service starts.
+These timings use the reporting page's Godot clock. A pre-poll depth of
+`-1` means this service turn did not sample the queue before expiry.
+A later expiry can fall outside the upstream link
 selection. Its receipt identifies that scope, and its original browser
 observations remain available independently of the general relay trace.
 
