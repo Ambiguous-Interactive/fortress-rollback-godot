@@ -103,7 +103,7 @@ class WorkflowTierTests(unittest.TestCase):
     def test_native_browser_dispatch_selects_traced_server(self):
         workflow = active_lines(read(WORKFLOWS / 'gdextension-experiment.yml'))
         steps = workflow.split('    steps:\n', 1)[1]
-        self.assertTrue(steps.startswith('      - name: Validate relay trace cell\n'))
+        self.assertTrue(steps.startswith('      - name: Validate native relay inputs\n'))
         validation = steps.split('      - uses:', 1)[0]
         self.assertIn('if: inputs.relay_trace', validation)
         guard = validation.split('        run: |\n', 1)[1]
@@ -161,6 +161,45 @@ xvfb-run() { printf '%s\n' "$@"; }
                     receipt = calls[calls.index('--relay-trace-server') + 1]
                     self.assertEqual(receipt, f'.cache/native-experiment/{version}/web/native-online-trace/build-receipt.json')
                     self.assertEqual(calls[calls.index('--cell') + 1], cell)
+
+    def test_native_release_controls_keep_all_attempts_after_a_room_failure(self):
+        workflow = active_lines(read(WORKFLOWS / 'gdextension-experiment.yml'))
+        self.assertRegex(workflow, r'release_controls:\n +description: .+\n +type: boolean\n +default: false')
+        guard = workflow.split('    steps:\n', 1)[1].split('        run: |\n', 1)[1].split('      - uses:', 1)[0]
+        step = workflow.split('          cell_args=()', 1)[1].split('      - uses:', 1)[0].replace('${{ matrix.version }}', '4.7.2')
+        mock = r"""
+xvfb-run() {
+    printf '%s\n' "$*"
+    [[ "$*" != *'--output test-output/native-online' ]]
+}
+"""
+        for pair, cell, trace, allowed in (
+            ('firefox', 'relay:8', 'false', True),
+            ('chromium', 'relay:8', 'false', False),
+            ('firefox', 'relay:4', 'false', False),
+            ('firefox', 'relay:8', 'true', False),
+        ):
+            with self.subTest(pair=pair, cell=cell, trace=trace):
+                env = {'NATIVE_BROWSER_PROFILE': pair, 'NATIVE_BROWSER_CELL': cell, 'BROWSER_PAIR': pair,
+                       'NATIVE_RELAY_TRACE': trace, 'NATIVE_RELEASE_CONTROLS': 'true', 'output': 'test-output'}
+                result = subprocess.run(['bash', '-eu', '-c', mock + guard + '\ntrace_args=(); cell_args=()' + step],
+                                        env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1)
+                calls = result.stdout.splitlines()
+                if not allowed:
+                    self.assertEqual(calls, [])
+                    self.assertIn('Release controls require an untraced Firefox relay:8 cell.', result.stderr)
+                    continue
+                self.assertEqual(len(calls), 5)
+                for call, arguments in zip(calls, (
+                    'firefox --cell relay:8 --output test-output/native-online',
+                    'firefox --cell relay:4 --output test-output/native-release-controls/firefox-4',
+                    'chromium --cell relay:8 --output test-output/native-release-controls/chromium-8',
+                    'firefox --cell relay:8 --release-delay delivery --output test-output/native-release-controls/delivery',
+                    'firefox --cell relay:8 --release-delay continuation --output test-output/native-release-controls/continuation',
+                ), strict=True):
+                    self.assertTrue(call.endswith('--browser-pair ' + arguments), call)
+                    self.assertIn('--version 4.7.2 --addon test-output/addon.zip', call)
 
     def test_reference_tiers_have_no_pull_request_trigger(self):
         # The Gate workflow owns per-push and pull-request runs and the merge

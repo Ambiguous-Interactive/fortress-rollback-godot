@@ -2,7 +2,8 @@ name: Qualify Fortress GDExtension
 run-name: >-
   Qualify Fortress GDExtension
   (${{ inputs.qualification == 'platforms' && inputs.cell && inputs.cell != 'all' && 'chromium' || inputs.qualification || 'platforms'
-  }}${{ inputs.cell && inputs.cell != 'all' && format(' / {0}', inputs.cell) || '' }}${{ inputs.relay_trace && ' / trace' || '' }})
+  }}${{ inputs.cell && inputs.cell != 'all' && format(' / {0}', inputs.cell) || '' }}${{ inputs.relay_trace && ' / trace' || ''
+  }}${{ inputs.release_controls && ' / release controls' || '' }})
 on:
   workflow_dispatch:
     inputs:
@@ -18,6 +19,10 @@ on:
         options: [all, 'mesh:2', 'mesh:4', 'mesh:8', 'mesh-startup:4', 'mesh-close:4', 'mesh-recovery:4', 'mesh-recovery-overlap:4', 'relay:2', 'relay:4', 'relay:8']
       relay_trace:
         description: Collect exact packet receipts for a selected relay room
+        type: boolean
+        default: false
+      release_controls:
+        description: Compare stock and delayed releases on one runner (Firefox relay:8)
         type: boolean
         default: false
   push:
@@ -46,14 +51,24 @@ jobs:
     env:
       NATIVE_BROWSER_CELL: ${{ inputs.cell }}
       NATIVE_RELAY_TRACE: ${{ inputs.relay_trace }}
+      NATIVE_RELEASE_CONTROLS: ${{ inputs.release_controls }}
     steps:
-      - name: Validate relay trace cell
-        if: inputs.relay_trace
+      - name: Validate native relay inputs
+        if: inputs.relay_trace || inputs.release_controls
+        env:
+          NATIVE_BROWSER_PROFILE: ${{ inputs.qualification }}
         run: |
-          case "$NATIVE_BROWSER_CELL" in
-            relay:2|relay:4|relay:8) ;;
-            *) echo 'Relay tracing requires an explicit relay cell.' >&2; exit 1 ;;
-          esac
+          if [[ "${NATIVE_RELEASE_CONTROLS:-false}" == true ]]; then
+            if [[ "$NATIVE_BROWSER_PROFILE" != firefox || "$NATIVE_BROWSER_CELL" != relay:8 || "$NATIVE_RELAY_TRACE" == true ]]; then
+              echo 'Release controls require an untraced Firefox relay:8 cell.' >&2
+              exit 1
+            fi
+          elif [[ "$NATIVE_RELAY_TRACE" == true ]]; then
+            case "$NATIVE_BROWSER_CELL" in
+              relay:2|relay:4|relay:8) ;;
+              *) echo 'Relay tracing requires an explicit relay cell.' >&2; exit 1 ;;
+            esac
+          fi
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
@@ -195,8 +210,21 @@ jobs:
           if [[ "${NATIVE_BROWSER_CELL:-all}" != all ]]; then
             cell_args=(--cell "$NATIVE_BROWSER_CELL")
           fi
-          xvfb-run -a -s '-screen 0 1920x1080x24' python scripts/reference/native_online_probe.py --version "${{ matrix.version }}" \
-            --browser-pair "$BROWSER_PAIR" --addon "$output/addon.zip" --output "$output/native-online" "${cell_args[@]}" "${trace_args[@]}"
+          run_room() {
+            xvfb-run -a -s '-screen 0 1920x1080x24' python scripts/reference/native_online_probe.py --version "${{ matrix.version }}" \
+              --addon "$output/addon.zip" "$@"
+          }
+          if [[ "${NATIVE_RELEASE_CONTROLS:-false}" == true ]]; then
+            result=0
+            run_room --browser-pair firefox --cell relay:8 --output "$output/native-online" || result=1
+            run_room --browser-pair firefox --cell relay:4 --output "$output/native-release-controls/firefox-4" || result=1
+            run_room --browser-pair chromium --cell relay:8 --output "$output/native-release-controls/chromium-8" || result=1
+            for delay in delivery continuation; do
+              run_room --browser-pair firefox --cell relay:8 --release-delay "$delay" --output "$output/native-release-controls/$delay" || result=1
+            done
+            exit "$result"
+          fi
+          run_room --browser-pair "$BROWSER_PAIR" --output "$output/native-online" "${cell_args[@]}" "${trace_args[@]}"
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -209,5 +237,7 @@ jobs:
             .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/prediction-stall.json
             .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-online/*.json
             .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-online/*.log
+            .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-release-controls/*/*.json
+            .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-release-controls/*/*.log
             .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-online-trace/build-receipt.json
             .cache/native-experiment/${{ matrix.version }}/${{ matrix.target }}/native-online-trace/build.log

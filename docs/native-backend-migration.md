@@ -141,6 +141,25 @@ The controller's finish marks handoff to the OS. The browser's response end
 marks the end of its fetch, and the continuation marks when the page resumes.
 Compare the hold cap, response end and continuation on the same page clock.
 
+The native browser workflow accepts `qualification=firefox`, `cell=relay:8`,
+and `release_controls=true`. On each Godot pin, one runner executes the stock
+eight-player room, Firefox relay:4, Chromium relay:8, and both delay controls.
+Each attempt writes to its own directory and a failing room leaves the workflow
+red. The delivery control waits 450 ms between preparing the response and
+ending it. The continuation control waits 450 ms after Fetch resolves and
+before the page starts releasing packets. Both require a measured interval
+at the selected boundary and use the regular packet cap and correction deadline.
+
+Run one control locally with the normal pinned browser setup.
+
+```sh
+python3 scripts/reference/native_online_probe.py --version "$GODOT_PIN" --browser-pair firefox --cell relay:8 \
+  --release-delay "$DELAY" --addon "$WEB_ADDON" --output "$OUTPUT"
+```
+
+Set `DELAY` to `delivery` or `continuation`. A room that stops during warmup
+or prediction stall has yet to apply either delay.
+
 Relay receipts separate the first corrected confirmation, the next advancing
 physics turn, and history publication. The normal 40-frame target is observed
 immediately. If the comparison expands to cover later samples, the page uses

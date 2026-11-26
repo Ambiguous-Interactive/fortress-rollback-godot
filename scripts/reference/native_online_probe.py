@@ -268,6 +268,7 @@ def main():
     parser.add_argument('--omit-second-replacement', action='store_true', help='negative control for the overlapping recovery cell')
     parser.add_argument('--trace-relay-wire', action='store_true', help='capture bounded browser, SDK and native inbox packet receipts in relay cells')
     parser.add_argument('--relay-trace-server', type=Path, help='build receipt for the optional instrumented local relay server')
+    parser.add_argument('--release-delay', choices=('delivery', 'continuation'), help='delay one boundary in a Firefox relay:8 room')
     retention = parser.add_mutually_exclusive_group()
     retention.add_argument('--relay-retention-control', action='store_const', dest='relay_control', const='--relay-retention-control',
                            help='mute one link while a traced eight-player room continues traffic')
@@ -311,7 +312,11 @@ def main():
         parser.error('relay tracing requires explicit relay cells')
     if args.relay_control and (not args.relay_trace_server or cells != ('relay:8',)):
         parser.error(f'{args.relay_control} requires --relay-trace-server and --cell relay:8')
+    if args.release_delay and (args.browser_pair != 'firefox' or cells != ('relay:8',) or trace_wire):
+        parser.error('--release-delay requires an untraced Firefox relay:8 cell')
     control = args.relay_control or ('--trace-relay-wire' if trace_wire else '--omit-second-replacement' if args.omit_second_replacement else None)
+    if args.release_delay:
+        control = f'--delay-release-{args.release_delay}'
     stun_tool = None
     if browser_pair != ('chromium',) and any(cell.startswith('mesh') for cell in cells):
         stun = environment.get('FORTRESS_STUN_EXECUTABLE') or shutil.which('turnserver')
@@ -374,6 +379,8 @@ def main():
             raise ValueError('native browser witness inputs changed during execution')
     if args.omit_second_replacement:
         raise ValueError('overlapping recovery passed with the second replacement omitted')
+    if args.release_delay and any(room.get('releaseDelay') != args.release_delay for room in results):
+        raise ValueError('missing release delay control evidence')
     receipt.write_text(json.dumps({'passed': True, 'engine': actual, 'cells': cells, 'browser_pair': args.browser_pair,
                                    'stun_server': stun_server, 'inputs': frozen,
                                    'staged': staged, 'export': exported, 'results': results}, indent=2) + '\n', encoding='utf-8')

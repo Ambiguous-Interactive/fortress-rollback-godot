@@ -1306,6 +1306,77 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
+    def test_native_relay_release_controls_delay_only_the_selected_boundary(self):
+        # Value: protects=independent host and page delays; fails_when=either delay is skipped or survives cancellation
+        script = r"""
+const assert = require('node:assert/strict');
+const { assertReleaseDelay, captureAndReleaseInput, createReleaseSignal } = require(process.argv[1]);
+let timer;
+let now = 100;
+global.performance = { now: () => now };
+global.setTimeout = (callback, delay) => {
+  assert.equal(delay, 450);
+  assert.equal(timer, undefined);
+  timer = callback;
+  return callback;
+};
+global.clearTimeout = callback => {
+  assert.equal(callback, timer);
+  timer = undefined;
+};
+const advance = () => {
+  const callback = timer;
+  assert.ok(callback);
+  timer = undefined;
+  now += 450;
+  callback();
+};
+
+for (const cancelled of [false, true]) {
+  const host = createReleaseSignal(1, 450);
+  let finish;
+  const response = {
+    socket: {}, writeHead(code) { assert.equal(code, 204); return this; },
+    once(event, callback) { assert.equal(event, 'finish'); finish = callback; },
+    end() { assert.equal(this.destroyed, undefined); finish(); },
+    destroy() { this.destroyed = true; },
+  };
+  assert.equal(host.handle({ url: host.paths[0], method: 'GET' }, response), true);
+  host.release(2000);
+  const [receipt] = host.timings();
+  assert.equal(receipt.finished_ms, null);
+  if (cancelled) {
+    host.cancel();
+    assert.equal(timer, undefined);
+    assert.equal(response.destroyed, true);
+  } else {
+    advance();
+    assert.equal(receipt.finished_ms - receipt.first_write_ms, 450);
+  }
+}
+
+(async () => {
+  const receipt = { request_dispatched_ms: 2000, request_received_ms: 2700, first_write_ms: 2701, finished_ms: 2702,
+    resource: { fetch_start_ms: 550, response_end_ms: 1250, response_status: 204, controller_ms: 3600 } };
+  assert.throws(() => assertReleaseDelay([receipt], 'delivery'), /lacks the delivery delay/);
+  assertReleaseDelay([{ ...receipt, finished_ms: 3151 }], 'delivery');
+  assert.throws(() => assertReleaseDelay([receipt], 'continuation'), /lacks the continuation delay/);
+  const continuation = { status: 204, controller_ms: 3900, fetch_resolved_ms: 1252, continued_ms: 1702 };
+  assertReleaseDelay([{ ...receipt, continuation }], 'continuation');
+  assert.throws(() => assertReleaseDelay([{ ...receipt, resource: null, finished_ms: 3151 }], 'delivery'), /lacks release delivery timing/);
+  console.debug = () => {};
+  global.fetch = async () => ({ status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '1000000' }) });
+  global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: { status: () => ({}), release: () => 'released' } };
+  const page = { evaluate(callback, argument) { return callback(argument); } };
+  const release = captureAndReleaseInput(page, 0, '/native-release/control', '', 450);
+  await Promise.resolve();
+  assert.equal(window.fortressNativeStalled, undefined);
+  advance();
+  assert.equal((await release).release, 'released');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
     def test_native_relay_release_matches_its_resource_before_or_after_continuation(self):
         # Value: protects=independent release clocks and exact resource identity; fails_when=timing needs the other event or matches a foreign fetch
         script = r"""

@@ -28,6 +28,8 @@ const CLOSE_STAGES = ['channel_close_called', 'channel_close_event', 'connection
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
 const RELEASE_TIMING_CHECKPOINT = 'fortress native release timing ';
+const RELEASE_DELAY_MS = 450;
+const RELEASE_DELAYS = new Map([['--delay-release-delivery', 'delivery'], ['--delay-release-continuation', 'continuation']]);
 const DEPARTURE_CHECKPOINT = 'fortress native departure ';
 const HISTORY_CHECKPOINT = 'fortress native history ';
 const POST_RELEASE_MARKS = new Set(['release_entered', 'correction', 'history_requested', 'history_published']);
@@ -1391,7 +1393,7 @@ function armAndWaitForInput(page, route) {
   }, { route, gate: GATE_FRAME, conditions: HOLD_CONDITIONS });
 }
 
-function createReleaseSignal(players) {
+function createReleaseSignal(players, delayMs = 0) {
   const paths = Array.from({ length: players }, () => '/native-release/' + randomUUID());
   const timing = new Map(paths.map(path => [path, {
     path, request_dispatched_ms: null, request_received_ms: null, first_write_ms: null, finished_ms: null, continuation: null, resource: null,
@@ -1399,6 +1401,13 @@ function createReleaseSignal(players) {
   const responses = new Map();
   const { promise: ready, resolve } = Promise.withResolvers();
   let finished = false;
+  let deliveryTimer;
+  const cancel = () => {
+    finished = true;
+    if (deliveryTimer !== undefined) clearTimeout(deliveryTimer);
+    deliveryTimer = undefined;
+    for (const { response } of responses.values()) if (!response.writableEnded && !response.destroyed) response.destroy();
+  };
   return {
     paths,
     ready,
@@ -1425,24 +1434,29 @@ function createReleaseSignal(players) {
       for (const { response, receipt } of responses.values()) {
         const budgetUs = Math.floor((deadline - receipt.request_received_ms) * 1000);
         receipt.first_write_ms = performance.now();
-        response.writeHead(204, { 'Cache-Control': 'no-store', 'X-Fortress-Release-Budget-Us': String(budgetUs) }).end();
+        response.writeHead(204, { 'Cache-Control': 'no-store', 'X-Fortress-Release-Budget-Us': String(budgetUs) });
+        if (delayMs === 0) response.end();
       }
+      if (delayMs !== 0) deliveryTimer = setTimeout(() => {
+        deliveryTimer = undefined;
+        if (performance.now() >= deadline) return cancel();
+        for (const { response } of responses.values()) if (!response.destroyed) response.end();
+      }, delayMs);
     },
-    cancel() {
-      finished = true;
-      for (const { response } of responses.values()) if (!response.writableEnded && !response.destroyed) response.destroy();
-    },
+    cancel,
   };
 }
 
 function recordReleaseTiming(receipt, text, controller_ms) {
   try {
-    const { path, requested_ms, continued_ms, status, fetch_start_ms, response_start_ms, response_end_ms, response_status } = JSON.parse(text);
+    const { path, requested_ms, fetch_resolved_ms, continued_ms, status, fetch_start_ms, response_start_ms, response_end_ms, response_status } = JSON.parse(text);
     if (path !== receipt.path) return false;
     const time = value => Number.isFinite(value) && value >= 0;
     if (!receipt.continuation && time(requested_ms) && time(continued_ms) && requested_ms <= continued_ms
+      && (fetch_resolved_ms === undefined || time(fetch_resolved_ms) && requested_ms <= fetch_resolved_ms && fetch_resolved_ms <= continued_ms)
       && Number.isInteger(status) && status >= 200 && status <= 599) {
       receipt.continuation = { requested_ms, continued_ms, status, controller_ms };
+      if (fetch_resolved_ms !== undefined) receipt.continuation.fetch_resolved_ms = fetch_resolved_ms;
       return true;
     }
     if (!receipt.resource && [fetch_start_ms, response_start_ms, response_end_ms].every(value => value === null || time(value))
@@ -1476,8 +1490,21 @@ function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, fir
   return timing;
 }
 
-function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = null) {
-  return page.evaluate(async ({ index, signalPath, timingPrefix }) => {
+function assertReleaseDelay(timings, kind) {
+  for (const [index, receipt] of timings.entries()) {
+    assert.ok(releaseDeliveryTiming(receipt).write_to_response_end_ms, `native peer ${index} lacks release delivery timing`);
+    const { continuation } = receipt;
+    const elapsed = kind === 'delivery'
+      ? (receipt.finished_ms ?? NaN) - receipt.first_write_ms
+      : continuation?.continued_ms - continuation?.fetch_resolved_ms;
+    // Controller timers can round by 1 ms. A pair of page reads can coarsen by 4 ms.
+    const tolerance = kind === 'delivery' ? 1 : 4;
+    assert.ok(elapsed >= RELEASE_DELAY_MS - tolerance, `native peer ${index} lacks the ${kind} delay: ${elapsed} ms`);
+  }
+}
+
+function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = null, delayMs = 0) {
+  return page.evaluate(async ({ index, signalPath, timingPrefix, delayMs }) => {
     let cutoffUs = null;
     if (signalPath !== null) {
       const publish = fields => console.debug(timingPrefix + JSON.stringify({ path: signalPath, ...fields }));
@@ -1494,9 +1521,11 @@ function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = n
       }
       const requested_ms = performance.now();
       const signal = await fetch(signalPath, { cache: 'no-store' });
-      const continued_ms = performance.now();
+      const fetchResolved = performance.now();
       const status = signal.status;
-      if (timingPrefix) queueMicrotask(() => publish({ requested_ms, continued_ms, status }));
+      if (delayMs && status === 204) await new Promise(resolve => setTimeout(resolve, delayMs));
+      const continued_ms = delayMs ? performance.now() : fetchResolved;
+      if (timingPrefix) queueMicrotask(() => publish({ requested_ms, fetch_resolved_ms: delayMs ? fetchResolved : undefined, continued_ms, status }));
       if (status !== 204) throw new Error(`native relay release signal returned HTTP ${status}`);
       const budget = signal.headers.get('X-Fortress-Release-Budget-Us');
       if (!/^\d+$/.test(budget) || !Number.isSafeInteger(Number(budget))) throw new Error('invalid native relay release budget');
@@ -1513,7 +1542,7 @@ function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = n
     stalled.release = await wire.release(cutoffUs);
     window.fortressNativePostRelease?.mark('release_completed', undefined, wire.holdProgress());
     return stalled;
-  }, { index, signalPath, timingPrefix });
+  }, { index, signalPath, timingPrefix, delayMs });
 }
 
 function waitForCorrectedHistory(pages, frame, readiness, wait, timeout) {
@@ -1615,7 +1644,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const traceWarmup = route === 'relay' && players === 8;
   const warmupBarrier = traceWarmup ? createWarmupBarrier(players) : undefined;
   const postRelease = route === 'relay' ? Array.from({ length: players }, () => ({})) : undefined;
-  const releaseSignal = route === 'relay' ? createReleaseSignal(players) : undefined;
+  const releaseDelay = RELEASE_DELAYS.get(control);
+  const releaseSignal = route === 'relay' ? createReleaseSignal(players, releaseDelay === 'delivery' ? RELEASE_DELAY_MS : 0) : undefined;
   const releaseTiming = releaseSignal?.timings();
   const playwright = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY, 0, releaseSignal?.handle);
@@ -1825,7 +1855,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         // Prepare the browser requests before the hold so release avoids another debugger evaluation.
         relayRelease = Promise.all(pages.map(async (page, index) => {
           releaseTiming[index].request_dispatched_ms = performance.now();
-          stalled[index] = await captureAndReleaseInput(page, index, releaseSignal.paths[index], RELEASE_TIMING_CHECKPOINT);
+          stalled[index] = await captureAndReleaseInput(page, index, releaseSignal.paths[index], RELEASE_TIMING_CHECKPOINT,
+            releaseDelay === 'continuation' ? RELEASE_DELAY_MS : 0);
         }));
         await boundedRoom(() => Promise.race([releaseSignal.ready, relayRelease]), PAGE_WAIT_MS, 'native relay release preparation');
       }
@@ -2025,7 +2056,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         if (relayControl) assertJoinedRelayControl(relayJoined);
       }
     }
-    result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled,
+    if (releaseDelay) assertReleaseDelay(releaseTiming, releaseDelay);
+    result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled, releaseDelay,
       holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns, relayWire, relayControl,
       relayServer, relayJoined, relayRetention, sameLinkRetention,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
@@ -2068,7 +2100,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       }
     }
     console.error(JSON.stringify({
-      phase, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, errors, closeErrors: [...physicalCloseErrors, ...departureErrors],
+      phase, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, errors, releaseDelay, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks, departureCommands, roomIdentities, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       lastCompleteCloseProofs: [...(physicalCloseReport.lastCompleteProofs ?? []), ...(closeReport.lastCompleteProofs ?? [])],
@@ -2108,7 +2140,8 @@ if (require.main === module) {
   const validOverlap = overlap && ['chromium', 'chromium-firefox'].includes(profile) && (!control || control === '--omit-second-replacement');
   const validFault = size === '4' && (validOverlap || (!control && ['mesh-startup', 'mesh-close', 'mesh-recovery'].includes(route)));
   const relayControl = !control || control === '--trace-relay-wire'
-    || (size === '8' && ['--relay-retention-control', '--relay-same-link-control'].includes(control));
+    || (size === '8' && (['--relay-retention-control', '--relay-same-link-control'].includes(control)
+      || profile === 'firefox' && RELEASE_DELAYS.has(control)));
   const validPlain = ['2', '4', '8'].includes(size) && (route === 'relay' ? relayControl : route === 'mesh' && !control);
   if (!(validFault || validPlain) || !validPair) {
     console.error('usage: native_online.cjs EXPORT ENDPOINT MODE SIZE [BROWSER_PROFILE] [CONTROL]');
@@ -2119,7 +2152,8 @@ if (require.main === module) {
   });
 }
 
-module.exports = { armAndWaitForInput, bindDepartureCheckpoints, calibrateDepartureClocks, captureAndReleaseInput, closeEvidence, compareHistory, createReleaseSignal,
+module.exports = { armAndWaitForInput, assertReleaseDelay, bindDepartureCheckpoints, calibrateDepartureClocks, captureAndReleaseInput, closeEvidence, compareHistory,
+  createReleaseSignal,
   createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt, missedCorrectionDeadline,
   matchCloseObservations, postReleaseCheckpoint, readConfirmedHistory, recordCloseObservation, recordReleaseTiming, releaseDeliveryTiming, relayReleaseEvidence,
   reportedChannel, waitForCloseProofs,
