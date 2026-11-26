@@ -77,11 +77,11 @@ Close the editor/game before adding files. Download and verify the optional SDK,
 then install only its addon directory, including its license:
 
 ```sh
-curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/2b66860cc4778d649af3e0c845edce3980985c1b -o "$TOOLS_DIR/sdk.tar.gz"
+curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/a634bf7ee3c19fd81eb66eec56e089f963670d86 -o "$TOOLS_DIR/sdk.tar.gz"
 echo "85fc96daf806f69cc4d0d560a052c39923e064c8072f20ad64166d33515ef34f  $TOOLS_DIR/sdk.tar.gz" | sha256sum -c -
 tar -xzf "$TOOLS_DIR/sdk.tar.gz" -C "$TOOLS_DIR"
 python3 scripts/reference/online_install.py --project "$EXAMPLE_DIR" \
-  --sdk "$TOOLS_DIR/signal-fish-client-godot-2b66860cc4778d649af3e0c845edce3980985c1b"
+  --sdk "$TOOLS_DIR/signal-fish-client-godot-a634bf7ee3c19fd81eb66eec56e089f963670d86"
 "$GODOT" --headless --path "$EXAMPLE_DIR" --editor --quit
 ```
 
