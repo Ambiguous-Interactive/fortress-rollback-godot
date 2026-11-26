@@ -2788,6 +2788,84 @@ assert.equal(receipts[latest.tag + 1] ?? null, null, 'an unobserved attempt has 
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
+    def test_native_webkit_joins_exact_engine_send_to_first_tagged_boundary(self):
+        # Value: protects=exact engine-to-DOM send attribution; fails_when=wrong bytes/peer or another attempt joins; seam=browser wire and controller
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire, matchCloseObservations } = require(process.argv[1]);
+const window = { crossOriginIsolated: true };
+let now = 10;
+class Connection {
+  close() {}
+  addEventListener() {}
+  createDataChannel() {
+    return { id: 3, readyState: 'open', bufferedAmount: 12, send() {}, addEventListener() {} };
+  }
+}
+runInNewContext(`(${instrumentNativeWire})(true, '', undefined, 'close ')`, {
+  window, WebSocket: class {}, RTCPeerConnection: Connection, ArrayBuffer, Uint8Array, DataView,
+  performance: { now: () => now },
+});
+const wire = window.fortressNativeWire;
+const channel = new Connection().createDataChannel('gameplay', {});
+const uuids = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333'];
+const [sender, recipient, bystander] = uuids;
+const session = Buffer.alloc(16, 42);
+const bytes = Buffer.concat([session, Buffer.from([0xf5, 0x52, 2, 0, 0, 0, 0, 0, 5, 0, 0, 0, 6])]);
+const other = Buffer.from(bytes);
+other[other.length - 1]++;
+wire.bind(session.toString('hex'), sender, uuids);
+assert.equal(wire.meshSendTracing(), false);
+assert.equal(wire.beginMeshSend(recipient, bytes.toString('hex')), 0);
+wire.observeDeparture();
+assert.equal(wire.meshSendTracing(), true);
+assert.equal(wire.beginMeshSend(sender, bytes.toString('hex')), 0);
+assert.equal(wire.beginMeshSend(recipient, 'X'.repeat(58)), 0);
+const send = wire.beginMeshSend(recipient, bytes.toString('hex'));
+now = 11;
+channel.send(other);
+now = 12;
+channel.send(bytes);
+channel.send(bytes);  // Only the first matching DOM call belongs to this one addressed send.
+now = 13;
+wire.endMeshSend(send + 1, 13);
+wire.endMeshSend(send, 9);
+channel.send(bytes);  // An identical later payload cannot inherit the previous engine attempt.
+const wrongPeer = wire.beginMeshSend(bystander, bytes.toString('hex'));
+channel.send(bytes);
+wire.endMeshSend(wrongPeer, 0);
+const nested = wire.beginMeshSend(recipient, bytes.toString('hex'));
+assert.equal(wire.beginMeshSend(recipient, bytes.toString('hex')), 0);
+channel.send(bytes);
+wire.endMeshSend(nested, 0);
+const sends = wire.departureSends([1, 2, 3, 4, 5, 6]);
+const errors = Object.keys(sends).map(attempt => ({ index: 0, channel: 0, attempt: Number(attempt) }));
+const before = [[{ index: 0, local: 'a', remote: 'b' }], [{ index: 19, local: 'b', remote: 'a' }], []];
+const observations = [new Map(), new Map(), new Map()];
+const report = { partialSnapshots: [{ sends }], clocks: [] };
+const identities = { uuids, roster: uuids };
+const records = matchCloseObservations(errors, before, observations, report, identities);
+assert.deepEqual(records.map(record => record.engineSend), [
+  null, { id: send, player: recipient, bytes: bytes.length, enteredAt: 10000, returnedAt: 13000, code: 9 },
+  null, null, null, null,
+]);
+for (const change of [{ enteredAt: 12001 }, { returnedAt: 11999 }, { code: -1 }, { id: '1' }, { bytes: 1201 }]) {
+  const original = sends[2].engineSend;
+  sends[2].engineSend = { ...original, ...change };
+  const [invalid] = matchCloseObservations([errors[1]], before, observations, report, identities);
+  assert.equal(invalid.engineSend, null, 'malformed boundary must not be attributed');
+  assert.equal(invalid.sentAt, 12000, 'tagged send evidence remains available without the engine receipt');
+  sends[2].engineSend = original;
+}
+const [withoutRoster] = matchCloseObservations([errors[1]], before, observations, report);
+assert.equal(withoutRoster.engineSend, null);
+wire.stopObservingDeparture();
+assert.equal(wire.meshSendTracing(), false);
+"""
+        command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
+        subprocess.run(command, check=True, timeout=10)
+
     def test_native_webkit_close_observations_survive_delayed_snapshot(self):
         # Value: protects=independent exact close receipts; fails_when=stages collapse or a different route joins; seam=browser wire and controller
         script = r"""

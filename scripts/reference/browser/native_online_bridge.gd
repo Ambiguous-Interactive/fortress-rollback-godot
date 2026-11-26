@@ -117,10 +117,28 @@ class ObservedMultiplayer:
 
 	var _wire: JavaScriptObject
 	var _remote_uuids: Dictionary
+	var _target_peer: int = 0
 
 	func _init(wire: JavaScriptObject, remote_uuids: Dictionary) -> void:
 		_wire = wire
 		_remote_uuids = remote_uuids
+
+	@warning_ignore("native_method_override")
+	func set_target_peer(peer_id: int) -> void:
+		super.set_target_peer(peer_id)
+		_target_peer = peer_id
+
+	@warning_ignore("native_method_override")
+	func put_packet(bytes: PackedByteArray) -> Error:
+		var boundary: int = 0
+		if _wire.meshSendTracing():
+			var player: String = _remote_uuids.get(_target_peer, "")
+			if not player.is_empty():
+				boundary = _wire.beginMeshSend(player, bytes.hex_encode())
+		var code: Error = super.put_packet(bytes)
+		if boundary > 0:
+			_wire.endMeshSend(boundary, code)
+		return code
 
 	@warning_ignore("native_method_override")
 	func remove_peer(peer_id: int) -> void:

@@ -456,6 +456,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   const departureSendHistory = [];
   const meshDepartureKeys = new Set();
   let departureSendCount = 0;
+  let meshSendCount = 0;
+  let meshSend;
+  const meshSendTracing = () => tagWebKitSends && Boolean(closePrefix) && observingDeparture;
   let holding = false;
   let releasingRelay = false;
   let releaseInFlight = 0;
@@ -862,6 +865,11 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
         if (tagWebKitSends && observingDeparture) {
           const attempt = ++departureSendCount;
           const receipt = { attempt, channel: index, sentAt: null };
+          // A delayed or unrelated send has no matching packet on the active engine call stack.
+          if (packet && meshSend?.payload && meshSend.payload === hex(nativeBytes(bytes))) {
+            receipt.engineSend = meshSend.boundary;
+            meshSend.payload = null;
+          }
           departureSendHistory[attempt % departureSendLimit] = receipt;
           tagged(`fortressNativeSend_${index}_${attempt}`, receipt)(bytes);
         } else emit(bytes);
@@ -1140,6 +1148,28 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     },
     observeDeparture() { observingDeparture = true; return window.crossOriginIsolated ? instant() : null; },
     stopObservingDeparture() { observingDeparture = false; },
+    meshSendTracing,
+    beginMeshSend(player, payload) {
+      if (!meshSendTracing()) return 0;
+      if (meshSend) {
+        // A recursive engine call makes attribution ambiguous even for byte-identical copies.
+        meshSend.payload = null;
+        meshSend.ambiguous = true;
+        return 0;
+      }
+      if (typeof player !== 'string' || typeof payload !== 'string' || payload.length < 56 || payload.length > 2400
+          || !/^(?:[0-9a-f]{2})+$/.test(payload)) return 0;
+      const peer = player.replaceAll('-', '');
+      if (peer === localUuid || !roomRoster.includes(peer)) return 0;
+      const boundary = { id: ++meshSendCount, player, bytes: payload.length / 2, enteredAt: instant() };
+      meshSend = { boundary, payload };
+      return boundary.id;
+    },
+    endMeshSend(id, code) {
+      if (meshSend?.boundary.id !== id) return;
+      if (!meshSend.ambiguous) Object.assign(meshSend.boundary, { returnedAt: instant(), code });
+      meshSend = undefined;
+    },
     recordMeshDeparture(kind, player, had_peer) {
       if (!closePrefix || !observingDeparture || typeof player !== 'string') return;
       const validStage = kind === 'sdk_player_left' ? had_peer === undefined : kind === 'mesh_remove_peer' && typeof had_peer === 'boolean';
@@ -1281,12 +1311,14 @@ function matchCloseObservations(errors, before, observations, report = {}, ident
     const prior = latest === null ? report.proofs?.find(proof => proof.index === index && proof.channel === channel && proof.attempt === attempt) : null;
     const sentAt = latest ?? prior?.sentAt ?? null;
     const sendState = prior?.sendState ?? exactSendState(latest, send);
-    const receipt = { index, channel, attempt, sentAt, sendState, received_ms, observations: [], lifecycle: [] };
+    const receipt = { index, channel, attempt, sentAt, sendState, engineSend: null, received_ms, observations: [], lifecycle: [] };
     const sender = before[index].find(link => link.index === channel);
     if (!sender?.local || !sender.remote || sender.closed) return receipt;
     const counterparts = reciprocalLinks(before, index, sender);
     if (counterparts.length !== 1) return receipt;
     const counterpart = counterparts[0];
+    const engineSend = prior?.engineSend ?? exactEngineSend(latest, send?.engineSend);
+    if (engineSend && engineSend.player === identities?.uuids[counterpart.owner]) receipt.engineSend = engineSend;
     for (const { owner, index: channelIndex, local, remote } of [{ ...sender, owner: index }, counterpart]) {
       for (const kind of CLOSE_STAGES) {
         const event = observations[owner].get(`${channelIndex}:${kind}`);
@@ -1333,6 +1365,16 @@ function exactSendState(sentAt, receipt) {
   return { readyState: receipt.readyState, bufferedAmount: receipt.bufferedAmount };
 }
 
+function exactEngineSend(sentAt, boundary) {
+  if (!boundary || sentAt === null) return null;
+  const { id, player, bytes, enteredAt, returnedAt, code } = boundary;
+  if (!Number.isSafeInteger(id) || id < 1 || typeof player !== 'string' || !FROZEN_UUID.test(player)
+      || !Number.isSafeInteger(bytes) || bytes < 28 || bytes > 1200
+      || !Number.isSafeInteger(enteredAt) || enteredAt < 0 || enteredAt > sentAt
+      || !Number.isSafeInteger(returnedAt) || returnedAt < sentAt || !Number.isSafeInteger(code) || code < 0) return null;
+  return { id, player, bytes, enteredAt, returnedAt, code };
+}
+
 function closeGap(sentAt, closedAt, senderClock, closerClock) {
   if (!senderClock || !closerClock || !Number.isSafeInteger(sentAt) || !Number.isSafeInteger(closedAt)) return { minimumGapUs: null, maximumGapUs: null };
   // Compare the earliest possible send with the latest possible close.
@@ -1347,6 +1389,8 @@ function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, c
   const before = linksBefore.find(peer => peer.index === channel) ?? null;
   const evidence = { index, channel, attempt, sentAt, sendState: exactSendState(sentAt, receipt), closer, before, sender: null,
     counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
+  const engineSend = exactEngineSend(sentAt, receipt?.engineSend);
+  if (engineSend) evidence.engineSend = engineSend;
   if (!before?.local || !before.remote || before.closed) return evidence;
   evidence.sender = closedByPage[index].find(peer => peer.index === channel && peer.local === before.local && peer.remote === before.remote) ?? null;
   evidence.counterparts = reciprocalLinks(closedByPage, index, before);
