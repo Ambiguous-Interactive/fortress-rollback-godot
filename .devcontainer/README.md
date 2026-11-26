@@ -159,8 +159,8 @@ Makefile Tools, Code Spell Checker, Error Lens, Even Better TOML.
 
 Formatter note: the Godot Format extension bundles **GDQuest's** GDScript
 formatter for format-on-save. The CLI `gdformat`/`gdlint` tools (used by
-agents) come from the pinned **gdtoolkit** — a different engine; don't expect
-byte-identical output between them.
+agents) come from the pinned **gdtoolkit**. Both set a 180-character line limit.
+The two engines can format the same code differently.
 
 ## Secrets (`.devcontainer/devcontainer.env`)
 
@@ -290,12 +290,13 @@ CI runs it inside a freshly built container.
 
 ### Native CLI install timeouts
 
-The global npm install reports the last observed phase and prints a bounded
-tail of its evidence journal on failure. A registry HTTP record confirms
-registry activity. A postinstall start with no recorded completion points to
-the wrapper lifecycle. That lifecycle includes the native version probe and
-fallback npm. A completion record leaves later work unclassified. An install
-can also time out before either marker appears.
+The global npm install prints each observed phase as it happens. These
+lines reach the build log before the layer can be discarded by an outer
+deadline. The installer also prints a bounded journal tail on failure.
+A registry HTTP record confirms registry activity. A postinstall start with
+no recorded completion points to the wrapper lifecycle, which includes the
+native version probe and fallback npm. A completion record leaves later work
+unclassified. An install can also time out before either marker appears.
 
 The journal records HTTP status and wrapper lifecycle markers at
 `install-native-cli-<package-slug>-evidence-v1.log` in the system temporary

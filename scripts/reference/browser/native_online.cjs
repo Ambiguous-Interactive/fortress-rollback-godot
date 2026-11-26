@@ -1,5 +1,5 @@
 const { createDepartureClock, CLOSE_HTTPS_PRE_SAMPLES } = require('./native_departure_clock.cjs');
-const { assertRecoveredRoom, recoverPairs } = require('./native_recovery.cjs');
+const { assertRecoveredRoom, OmittedReplacement, PHYSICAL_PAIRS, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace } = require('./native_relay_trace.cjs');
 const { createRelayHold, RELAY_HOLD_CAP, RELAY_HOLD_PREFIX, RELAY_HOLD_WINDOW_MS } = require('./native_relay_hold.cjs');
 const { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, exerciseSameLinkRetention,
@@ -1501,7 +1501,7 @@ async function calibrateDepartureClocks(pages, report, clock = () => performance
 }
 
 async function waitForCloseProofs(pages, before, errors, report,
-  { closer = null, clocks = report.clocks, clock = () => performance.now(), delay = pause, httpsClock, identities } = {}) {
+  { closers, clocks = report.clocks, clock = () => performance.now(), delay = pause, httpsClock, identities } = {}) {
   if (!errors.length) return undefined;
   report.proofs = [];
   report.clocks = clocks?.slice();
@@ -1550,6 +1550,7 @@ async function waitForCloseProofs(pages, before, errors, report,
     const links = latestSnapshots.map(snapshot => snapshot?.links ?? []);
     report.proofs = roundErrors.map(error => {
       const sends = complete ? latestSnapshots[error.index].sends : observedSends[error.index];
+      const closer = closers?.get(error.index) ?? null;
       const evidence = closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks, sends?.[error.attempt], identities);
       if (!complete) evidence.proof = null;
       return evidence;
@@ -2008,6 +2009,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const liveClose = mode === 'mesh-close';
   const overlap = mode === 'mesh-recovery-overlap';
   const recovery = mode === 'mesh-recovery' || overlap;
+  const physicalPairs = overlap ? PHYSICAL_PAIRS : liveClose || recovery ? PHYSICAL_PAIRS.slice(0, 1) : [];
+  const physicalClosers = new Map(physicalPairs.map(([closer, sender]) => [sender, closer]));
   const omitSecond = control === '--omit-second-replacement';
   const traceRetention = control === '--relay-retention-control';
   const traceSameLink = control === '--relay-same-link-control';
@@ -2042,6 +2045,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const browsers = [];
   const browserPeers = [];
   let result;
+  let omittedReplacement;
   let roomIdentities;
   let relayHold;
   let relayHoldServer;
@@ -2122,7 +2126,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       const display = name === 'firefox' ? await placeFirefox(page, index) : null;
       browserPeers.push({ index, name, version: browser.version(), display });
       page.on('pageerror', error => {
-        const physicalClose = (liveClose || mode === 'mesh-recovery') && phase === 'physical channel close' && index === 1;
+        const physicalClose = phase === 'physical channel close' && physicalClosers.has(index);
         const departure = route === 'mesh' && phase === 'departure' && index < players - 1;
         const webkitSend = name === 'webkit' && error.name === '' && error.message === WEBKIT_CLOSED_STREAM;
         const errorList = !webkitSend ? errors : physicalClose ? physicalCloseErrors : departure ? departureErrors : errors;
@@ -2224,7 +2228,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       sameLinkRetention = await exerciseSameLinkRetention(pages, ready, readRelayServer);
     }
     let atClose, afterClose, restored, recoveryEvidence, closeLinks;
-    const physicalCloseSender = (liveClose || (recovery && !overlap)) && browserPeers[1].name === 'webkit' ? pages[1] : null;
+    const physicalCloseSenders = pages.filter((_, index) => physicalClosers.has(index) && browserPeers[index].name === 'webkit');
     if (liveClose || recovery) {
       direct = await observe();
       for (const peer of direct) {
@@ -2233,15 +2237,15 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         assert.equal(peer.wire.rtc.filter(([id, state]) => id === 3 && state === 'open').length, players - 1);
       }
     }
-    if (physicalCloseSender) await boundedRoom(() => physicalCloseSender.evaluate(() => window.fortressNativeWire.observeDeparture()),
-      DIAGNOSTIC_MS, 'native physical close send observation');
+    await Promise.all(physicalCloseSenders.map(page => boundedRoom(() => page.evaluate(() => window.fortressNativeWire.observeDeparture()),
+      DIAGNOSTIC_MS, 'native physical close send observation')));
     if (recovery) {
       ({ atClose, afterClose, restored, recoveryEvidence } = await recoverPairs(direct, {
         pages, observe: () => boundedRoom(observe, 3000, 'native recovery snapshot'), command, pause, overlap, omitSecond,
         setPhase: value => { phase = value; },
       }));
       comparedFrames = historyThrough(restored);
-      if (!overlap) closeLinks = await waitForCloseProofs(pages, direct, physicalCloseErrors, physicalCloseReport, { closer: 0 });
+      closeLinks = await waitForCloseProofs(pages, direct, physicalCloseErrors, physicalCloseReport, { closers: physicalClosers });
     }
     if (liveClose) {
       // Keep the fault on both routes for the independent native-expiry cell.
@@ -2253,10 +2257,10 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       afterClose = await observe();
       comparedFrames = historyThrough(afterClose);
       phase = 'mixed confirmed history';
-      closeLinks = await waitForCloseProofs(pages, direct, physicalCloseErrors, physicalCloseReport, { closer: 0 });
+      closeLinks = await waitForCloseProofs(pages, direct, physicalCloseErrors, physicalCloseReport, { closers: physicalClosers });
     }
-    if (physicalCloseSender) await boundedRoom(() => physicalCloseSender.evaluate(() => window.fortressNativeWire.stopObservingDeparture()),
-      DIAGNOSTIC_MS, 'native physical close observation stop');
+    await Promise.all(physicalCloseSenders.map(page => boundedRoom(() => page.evaluate(() => window.fortressNativeWire.stopObservingDeparture()),
+      DIAGNOSTIC_MS, 'native physical close observation stop')));
     if (!mixed) {
       let relayRelease;
       stalled = Array(players).fill(null);
@@ -2501,20 +2505,30 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       warmupInputErrors: warmupBarrier?.inputErrors, warmupAckErrors: warmupBarrier?.ackErrors, warmupNativeErrors: warmupBarrier?.nativeErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier() };
   } catch (error) {
-    failures.push(error);
+    if (error instanceof OmittedReplacement) {
+      try {
+        await waitForCloseProofs(pages, direct, physicalCloseErrors, physicalCloseReport, { closers: physicalClosers });
+        omittedReplacement = error.slots;
+      } catch (proofError) {
+        failures.push(proofError);
+      }
+    } else failures.push(error);
     const correctionDeadlineReached = missedCorrectionDeadline(phase, error, correctionDeadline, performance.now());
+    const holdServerRead = collectHoldServer();
+    const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
+      ...window.fortressNative, wire: window.fortressNativeWire?.status(), warmup: window.fortressNativeWire?.warmupStatus(),
+      stalled: window.fortressNativeStalled,
+    })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
+    // Console expiry may arrive while the bounded status reads are still settling.
+    const observedExpiries = () => postRelease?.flatMap(peer => peer.native_expiry ? [peer.native_expiry] : []) ?? [];
+    const scopedExpiries = observedExpiries();
     const expiryLinks = roomIdentities?.uuids.flatMap((uuid, index) => {
       const sender = postRelease?.[index].native_expiry?.uuid ?? warmupBarrier?.checkpoints[index]?.cutoff?.terminal_uuid;
       return sender ? [`${sender.replaceAll('-', '')}/${uuid.replaceAll('-', '')}`] : [];
     }) ?? [];
     const relayWireFailure = traceRelayWire ? collectRelayWire(expiryLinks) : null;
-    const holdServerRead = collectHoldServer();
     const relayServerFailure = readRelayServer && roomIdentities
       ? Promise.allSettled([(holdServerRead ?? Promise.resolve()).then(() => readRelayServer(undefined, DIAGNOSTIC_MS, expiryLinks))]) : null;
-    const states = await Promise.allSettled(pages.map((page, index) => boundedRoom(() => page.evaluate(() => ({
-      ...window.fortressNative, wire: window.fortressNativeWire?.status(), warmup: window.fortressNativeWire?.warmupStatus(),
-      stalled: window.fortressNativeStalled,
-    })), DIAGNOSTIC_MS, `native peer ${index} diagnostics`)));
     const diagnostics = states.map((state, index) => {
       if (state.status === 'rejected') return { status: state.status, reason: String(state.reason) };
       const { stalled: saved, ...current } = state.value;
@@ -2525,13 +2539,12 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       status === 'fulfilled' ? value ?? null : { error: String(reason) });
     const [serverReceipt] = relayServerFailure ? await relayServerFailure : [];
     const holdReceipt = relayHold && await relayHoldReceipt();
-    const expiries = postRelease?.flatMap(peer => peer.native_expiry ? [peer.native_expiry] : []) ?? [];
     let relayJoined;
     let relayJoinError;
     if (serverReceipt) {
       try {
         if (serverReceipt.status === 'rejected') throw serverReceipt.reason;
-        relayJoined = joinRelayReceipts(serverReceipt.value, relayWire, expiries);
+        relayJoined = joinRelayReceipts(serverReceipt.value, relayWire, scopedExpiries);
       } catch (joinError) {
         relayJoinError = String(joinError);
       }
@@ -2551,7 +2564,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       warmupInputErrors: warmupBarrier?.inputErrors, warmupAckErrors: warmupBarrier?.ackErrors, warmupNativeErrors: warmupBarrier?.nativeErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
-      relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined, expiryLinks) : undefined,
+      relayExpiryRows: traceRelayWire ? relayExpiryRows(observedExpiries(), relayJoined, expiryLinks) : undefined,
       relayHold: holdReceipt,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
@@ -2570,6 +2583,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   await flush();
   if (errors.length) failures.push(new Error(JSON.stringify(errors)));
   if (failures.length) throw new AggregateError(failures, `native online witness failed in ${phase}`);
+  if (omittedReplacement) throw new Error(`missing replacement for pair ${omittedReplacement.join('-')}`);
   return result;
 }
 
@@ -2579,7 +2593,7 @@ if (require.main === module) {
   const validPair = browserPair.length <= 2 && new Set(browserPair).size === browserPair.length
     && browserPair.every(name => ['chromium', 'firefox', 'webkit'].includes(name));
   const overlap = route === 'mesh-recovery-overlap';
-  const validOverlap = overlap && ['chromium', 'chromium-firefox'].includes(profile) && (!control || control === '--omit-second-replacement');
+  const validOverlap = overlap && (!control || control === '--omit-second-replacement');
   const validFault = size === '4' && (validOverlap || (!control && ['mesh-startup', 'mesh-close', 'mesh-recovery'].includes(route)));
   const relayControl = !control || control === '--trace-relay-wire'
     || (size === '8' && (['--relay-retention-control', '--relay-same-link-control'].includes(control)

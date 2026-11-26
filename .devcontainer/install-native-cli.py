@@ -257,8 +257,15 @@ class Installer:
 
         def record(line, complete=True):
             nonlocal written, reserve, general_full
+            last_phase = evidence.summary()
             safe = evidence.observe(line, complete)
-            if safe is None or journal is None or written < 0:
+            if safe is None:
+                return
+            phase = evidence.summary()
+            if phase != last_phase:
+                # An outer build kill can discard the layer before we print its journal tail.
+                print(f'install phase observed: {phase}', file=sys.stderr, flush=True)
+            if journal is None or written < 0:
                 return
             data = (safe + '\n').encode('ascii')
             if safe in LIFECYCLE_RECORDS:

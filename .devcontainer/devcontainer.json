@@ -32,6 +32,8 @@
             "settings": {
                 "godotTools.editorPath.godot4": "/usr/local/bin/godot",
                 "godotTools.lsp.serverPort": 6005,
+                "godotFormatter.maxLineLength": 180,
+                "godotFormatter.linterMaxLineLength": 180,
                 "[gdscript]": {
                     "editor.defaultFormatter": "DoHe.godot-format",
                     "editor.formatOnSave": true

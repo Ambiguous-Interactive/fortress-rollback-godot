@@ -2538,6 +2538,8 @@ const control = process.argv[2];
 const rejecting = control.startsWith('rejection');
 const stuck = control === 'same frame' || control === 'rejection and timeout';
 const historyControl = control.startsWith('history ');
+const lateExpiry = control === 'history late trace';
+const expiryLink = '00000000000000000000000000000002/00000000000000000000000000000001';
 const realm = new AsyncLocalStorage();
 const windows = [];
 const roster = [1, 2].map(value => '00000000-0000-0000-0000-00000000000' + value);
@@ -2585,14 +2587,26 @@ function makePage() {
   const events = {};
   let lateBaseline;
   let publishHistory;
-  const hold = () => ({ at_ms: performance.now(), held: { mesh: 0, relay: 1 }, bytes: 1, queued: 1, released: 0 });
+  let released = 0;
+  const hold = () => ({ at_ms: performance.now(), held: { mesh: 0, relay: 1 }, bytes: 1, queued: 1 - released, released });
   function mark(kind, fields = {}) {
     const { state: status, frame, confirmed, turns, restores } = state;
     const sample = { kind, page_ms: performance.now(), state: status, frame, confirmed, turns, restores, ...fields };
     events.console({ text: () => 'fortress native post-release ' + JSON.stringify(sample) });
   }
   function expire() {
-    mark('native_expiry', { endpoint: 2, uuid: roster[1],
+    const uuid = roster[1 - index];
+    const sender = uuid.replaceAll('-', ''), recipient = state.uuid.replaceAll('-', '');
+    const envelope = Buffer.alloc(103);
+    Buffer.from('4653523101' + state.session_id + sender + recipient, 'hex').copy(envelope);
+    envelope.writeUInt32LE(46, 53);
+    Buffer.from(state.session_id, 'hex').copy(envelope, 57);
+    envelope.writeUInt32LE(0x000252f5, 73);
+    envelope.writeUInt16LE(1, 77);
+    envelope.writeUInt32LE(4, 81);
+    mark('native_expiry', { endpoint: 2 - index, uuid,
+      frontier: { room: state.session_id, sender, recipient, packets: [{ kind: 4, epoch: 1, seq: '1',
+        envelope: envelope.toString('hex'), stages: { native: { ordinal: 1, at_ms: performance.now() } } }] },
       expiry: { observed_us: 3000000, sdk_queued: 0, sdk_peak: 51, sdk_before_poll: 2,
         service_started_us: 2999900, service_gap_us: 100, service_gap_peak_us: 500, last_accepted: null } });
   }
@@ -2618,8 +2632,13 @@ function makePage() {
       arm() { state.stalls++; return hold(); },
       holdProgress: hold, recordHoldReadiness: hold, status: () => ({}),
       holdConditions: () => [true, true],
+      relayWireTrace(selected) {
+        if (lateExpiry && index === 1) expire();
+        return { selected };
+      },
       holdObservation: () => ({ ...hold(), control_round_trips: 1, buffered_bytes: 0, traffic: [] }),
       async release() {
+        released = 1;
         Object.assign(state, { frame: 40, confirmed: 40, turns: 21, restores: 3 });
         mark('corrected_frontier', { frames: 40, emitted_ms: now + 1 });
         Object.assign(state, { frame: 41, turns: 22 });
@@ -2640,10 +2659,11 @@ function makePage() {
     async addInitScript() {}, async goto() {}, keyboard: { async down() {} },
     async evaluate(operation, argument) {
       if (historyControl && operation.toString().includes('wire: window.fortressNativeWire.status()')) {
-        if (index === 0 && control !== 'history staggered') expire();
+        if (index === 0 && control !== 'history staggered' && !lateExpiry) expire();
         throw new Error('fixture post-history expiry');
       }
       if (operation.toString().includes('warmupStatus()')) {
+        if (lateExpiry && index === 0) setImmediate(expire);
         if (control === 'history rejected first') throw new Error('fixture diagnostic RPC failed');
         lateBaseline?.(state.frame);
         return unavailable();
@@ -2673,6 +2693,14 @@ function makePage() {
   };
 }
 require('node:module')._load = function (name, ...args) {
+  if (lateExpiry && name === './native_relay_control.cjs') {
+    return { ...load.call(this, name, ...args), async bindRelayServer() {},
+      createRelayServerReader: () => async (_select, _timeout, links) => {
+        assert.deepEqual(links, [expiryLink], 'the delayed console expiry must focus the server trace');
+        return {};
+      },
+      joinRelayReceipts: (_server, _pages, expiries) => ({ rows: [], joined: expiries.map(expiry => expiry.uuid) }) };
+  }
   if (name === './online_host.cjs') {
     return { createHost: async (_root, _endpoint, _cert, _key, _port, handler) => {
       releaseRequest = handler;
@@ -2689,18 +2717,23 @@ require('node:module')._load = function (name, ...args) {
 process.env.FORTRESS_PLAYWRIGHT_PACKAGE = 'fixture-playwright';
 process.env.FORTRESS_CHROMIUM_EXECUTABLE = '/fixture';
 process.argv = [process.execPath, entrypoint, '.', 'ws://127.0.0.1/v3/ws', 'relay', '2', 'chromium'];
+if (lateExpiry) {
+  process.env.FORTRESS_RELAY_TRACE_SCOPE = 'fixture-trace-scope';
+  process.env.FORTRESS_RELAY_TRACE_OUTPUT = 'fixture-trace-output';
+  process.argv.push('--trace-relay-wire');
+}
 runMain();
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         for control in ('baseline timeout', 'same frame', 'higher frame', 'rejection', 'rejection and timeout',
-                        'history complete', 'history missing', 'history divergent', 'history staggered', 'history rejected first'):
+                        'history complete', 'history missing', 'history divergent', 'history staggered', 'history rejected first', 'history late trace'):
             with self.subTest(control=control):
                 run = subprocess.run([*command, control], capture_output=True, encoding='utf-8', timeout=10)
                 self.assertEqual(run.returncode, 1, run.stderr)
                 self.assertEqual(run.stdout, '')
                 report_line, _, failure = run.stderr.partition('\n')
                 report = json.loads(report_line)
-                if control in ('history complete', 'history divergent', 'history staggered'):
+                if control in ('history complete', 'history divergent', 'history staggered', 'history late trace'):
                     expected_phase = 'post-capture status'
                 elif control in ('higher frame', 'history missing', 'history rejected first'):
                     expected_phase = 'confirmed history capture'
@@ -2740,6 +2773,16 @@ runMain();
                             self.assertIn('canonical state at frame 40', evidence['comparison_error'])
                         else:
                             self.assertEqual(evidence['compared_frames'], 40)
+                        if control == 'history late trace':
+                            link = '00000000000000000000000000000002/00000000000000000000000000000001'
+                            self.assertEqual(report['expiryLinks'], [link])
+                            self.assertEqual(report['relayWire'], [{'selected': [link]}] * 2)
+                            self.assertNotIn('relayJoinError', report)
+                            self.assertEqual(report['relayJoined']['joined'], ['00000000-0000-0000-0000-000000000002'])
+                            self.assertEqual(report['postRelease'][1]['native_expiry']['uuid'], '00000000-0000-0000-0000-000000000001')
+                            self.assertEqual([peer.get('checkpoint_error') for peer in report['postRelease']], [None, None])
+                            self.assertEqual([(f"{row['sender']}/{row['recipient']}", row['upstream_scope']) for row in report['relayExpiryRows']],
+                                             [(link, 'focused'), ('/'.join(reversed(link.split('/'))), 'outside-focus')])
                         if control == 'history staggered':
                             self.assertLess(reporter['native_expiry']['controller_order'],
                                             report['postRelease'][1]['history_published']['controller_order'])

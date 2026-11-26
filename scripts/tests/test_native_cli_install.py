@@ -57,6 +57,8 @@ elif args[:2] == ['cache', 'add']:
         sys.exit(1)
     (root / 'archive_ready').touch()
 elif args[:1] == ['install']:
+    if scenario.get('stall'):
+        (root / 'npm.pid').write_text(str(os.getpid()))
     if '--loglevel=info' in args:
         print('npm http fetch GET 200 https://user:USERINFO-SECRET@registry.example/PRIVATE-PATH?token=SIGNED-QUERY-CREDENTIAL', file=sys.stderr, flush=True)
         if scenario.get('stall') == 'acquisition':
@@ -71,9 +73,6 @@ elif args[:1] == ['install']:
         print('npm info run ' + package + '@' + version + ' postinstall { code: 0, signal: null }', file=sys.stderr, flush=True)
         if scenario.get('stall') == 'after-lifecycle':
             time.sleep(60)
-    if scenario.get('install_hang'):
-        (root / 'npm.pid').write_text(str(os.getpid()))
-        time.sleep(60)
     if scenario.get('install_delay'):
         counter = root / 'installs'
         attempt = int(counter.read_text()) + 1 if counter.exists() else 1
@@ -93,6 +92,9 @@ elif args[:2] == ['root', '-g']:
 else:
     sys.exit(9)
 '''
+
+
+STALLED_NATIVE = '#!/bin/sh\nprintf "%s" "$1" > "$FAKE_ROOT/native-args"\nexec sleep 60\n'
 
 
 class NativeCliInstallTests(unittest.TestCase):
@@ -230,55 +232,60 @@ class NativeCliInstallTests(unittest.TestCase):
                     self.fail('the grandchild pipe holder survived the group kill')
 
     def test_outer_deadline_kill_mid_install_retains_the_streamed_evidence(self):
-        # Value: the recurring #249 failure mode is an outer build deadline that
-        # kills the installer while npm hangs, and the failed Docker layer retained
-        # no partial output; the journal must already hold the redacted acquisition
-        # evidence when the installer dies without running its own timeout path.
-        helper = self.load_helper()
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / 'scenario.json').write_text(json.dumps({'package': '@opencode/cli', 'install_hang': True}))
-            npm = root / 'npm'
-            npm.write_text(FAKE_NPM)
-            npm.chmod(0o755)
-            for name in ('opencode', 'codex'):
-                cli = root / name
-                cli.write_text('#!/bin/sh\nexit 0\n')
-                cli.chmod(0o755)
-            # The isolated temporary directory holds the journal, so suites and
-            # concurrent installs neither share nor clean each other's evidence.
-            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
-                       FAKE_ROOT=str(root), TMPDIR=str(root))
-            command = [sys.executable, str(HELPER), '@opencode/cli', 'arm64',
-                       '--attempts', '1', '--interval', '0', '--timeout', '60']
-            evidence = root / 'install-native-cli-opencode-cli-evidence-v1.log'
-            process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            try:
-                # The journal appears as soon as the install command starts streaming;
-                # the generous budget only absorbs a loaded runner's process start.
-                for _ in range(400):
-                    if evidence.exists() and evidence.stat().st_size > 0:
-                        break
-                    time.sleep(0.05)
-                self.assertTrue(evidence.exists() and evidence.stat().st_size > 0,
-                                'the streaming install must journal its first evidence line')
-                process.kill()
-                process.wait(timeout=15)
-                text = evidence.read_text(encoding='utf-8')
-                self.assertIn('npm HTTP GET 200', text,
-                              'the registry acquisition evidence reached the journal before the kill')
-                self.assertNotIn('SIGNED-QUERY-CREDENTIAL', text, 'the journal never holds query credentials')
-            finally:
-                process.kill()
-                process.wait(timeout=15)
-                # The hung fake npm survives its killed parent; end it by the pid it
-                # recorded, so the test leaves no sleeping process behind.
+        # Value: protects=CI log phase after an outer kill discards the Docker layer;
+        # fails_when=evidence reaches disk only; why_new=inner timeout prints a tail; seam=real process kill.
+        cases = (
+            ('acquisition', 'registry activity observed; wrapper postinstall start unobserved'),
+            ('native', 'wrapper postinstall started; completion unobserved'),
+        )
+        for stall, phase in cases:
+            with self.subTest(stall=stall), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'scenario.json').write_text(json.dumps({'package': '@opencode/cli', 'stall': stall}))
+                npm = root / 'npm'
+                npm.write_text(FAKE_NPM)
+                npm.chmod(0o755)
+                native = root / 'fake-native'
+                native.write_text(STALLED_NATIVE)
+                native.chmod(0o755)
+                env = dict(os.environ, PATH=directory + os.pathsep + os.environ['PATH'], FAKE_ROOT=directory, TMPDIR=directory)
+                command = [sys.executable, str(HELPER), '@opencode/cli', 'arm64',
+                           '--attempts', '1', '--interval', '0', '--timeout', '60']
+                journal = root / 'install-native-cli-opencode-cli-evidence-v1.log'
+                log = root / 'build.log'
                 pid_file = root / 'npm.pid'
-                if pid_file.exists():
+                native_invocation = root / 'native-args'
+                with log.open('wb') as output:
+                    process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=output)
                     try:
-                        os.kill(int(pid_file.read_text()), signal.SIGKILL)
-                    except (ProcessLookupError, ValueError):
-                        pass
+                        for _ in range(400):
+                            disk_recorded = journal.exists() and phase in journal.read_text(encoding='utf-8')
+                            probe_started = stall == 'acquisition' or (
+                                native_invocation.exists() and native_invocation.read_text() == '--version')
+                            if disk_recorded and probe_started:
+                                break
+                            time.sleep(0.05)
+                        else:
+                            self.fail('npm never reached the controlled stall')
+                        process.kill()
+                        self.assertEqual(process.wait(timeout=15), -signal.SIGKILL)
+                    finally:
+                        process.kill()
+                        process.wait(timeout=15)
+                        # The outer kill bypasses the installer's process-group cleanup.
+                        if pid_file.exists():
+                            try:
+                                os.killpg(int(pid_file.read_text()), signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                journal_text = journal.read_text(encoding='utf-8')
+                build_log = log.read_text(encoding='utf-8')
+                self.assertIn('npm HTTP GET 200', journal_text)
+                self.assertIn(f'install phase observed: {phase}', build_log)
+                self.assertNotIn('timed out during global installation', build_log)
+                for secret in ('USERINFO-SECRET', 'PRIVATE-PATH', 'SIGNED-QUERY-CREDENTIAL'):
+                    self.assertNotIn(secret, journal_text)
+                    self.assertNotIn(secret, build_log)
 
     def test_pre_launch_deadline_expiry_prints_the_journal_tail(self):
         # Value: the total deadline can expire between commands, and the
@@ -487,7 +494,7 @@ class NativeCliInstallTests(unittest.TestCase):
                 cli.write_text('#!/bin/sh\n' + archive_check + 'echo "' + name + ' final runtime version"\nexit ' + str(scenario.get('runtime_exit', 0)) + '\n')
                 cli.chmod(0o755)
             native = root / 'fake-native'
-            native.write_text('#!/bin/sh\nprintf "%s" "$1" > "$FAKE_ROOT/native-args"\nexec sleep 60\n')
+            native.write_text(STALLED_NATIVE)
             native.chmod(0o755)
             # The journal follows TMPDIR, so each invocation owns its evidence file
             # and suites and concurrent installs never share or clean each other's.
@@ -585,6 +592,8 @@ class NativeCliInstallTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn('opencode final runtime version', result.stdout)
                     self.assertFalse(evidence.exists())
+                    self.assertEqual([line for line in result.stderr.splitlines() if line.startswith('install phase observed:')],
+                                     [f'install phase observed: {phase}' for _, phase in cases if phase is not None])
                     continue
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('timed out during global installation', result.stderr)
@@ -629,6 +638,7 @@ class NativeCliInstallTests(unittest.TestCase):
             self.assertNotIn('hide-me', stderr.getvalue())
             self.assertNotIn('hide-me', evidence.read_text())
             self.assertLess(len(stderr.getvalue().encode()), helper.JOURNAL_TAIL_BYTES)
+            self.assertEqual(stderr.getvalue().count('install phase observed: '), 3)
 
     def test_journal_replay_accepts_only_safe_records(self):
         helper = self.load_helper()
@@ -686,11 +696,12 @@ class NativeCliInstallTests(unittest.TestCase):
         self.assertIn('--loglevel=info', installs[0])
         fetch = 'npm HTTP GET 200; registry activity observed; wrapper postinstall start unobserved'
         lifecycle = 'wrapper postinstall started; completion unobserved'
-        self.assertIn(fetch, result.stderr)
-        self.assertIn(lifecycle, result.stderr)
+        _, _, tail = result.stderr.partition('retained install journal tail:')
+        self.assertIn(fetch, tail)
+        self.assertIn(lifecycle, tail)
         self.assertNotIn('SIGNED-QUERY-CREDENTIAL', result.stderr)
-        self.assertLess(result.stderr.index(fetch), result.stderr.index(lifecycle),
-                        'registry and lifecycle evidence keep their original order')
+        self.assertLess(tail.index(fetch), tail.index(lifecycle),
+                        'registry and lifecycle evidence keep their original order in the journal')
         views = [call for call in calls if call[0] == 'view']
         self.assertTrue(views)
         for view in views:
