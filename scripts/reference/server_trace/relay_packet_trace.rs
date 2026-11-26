@@ -17,6 +17,7 @@ const MAX_SCOPE_BYTES: u64 = 1024;
 const MAX_REQUEST_DIGITS: u64 = 20;
 const MAX_REQUEST_LINKS: usize = 8;
 const MAX_REQUEST_BYTES: u64 = MAX_REQUEST_DIGITS + MAX_REQUEST_LINKS as u64 * (1 + 32 + 1 + 32);
+const RECEIPT_WRITE_BUFFER_BYTES: usize = 128 * 1024;
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(20);
 
 static TRACE: OnceLock<Option<Arc<Trace>>> = OnceLock::new();
@@ -209,10 +210,8 @@ impl Trace {
         }
 
         let streams = self.state.lock().map_err(|_| anyhow::anyhow!("relay trace lock poisoned"))?.snapshot(&request.links);
-        let file = File::create(&paths.scratch)?;
-        let mut writer = BufWriter::new(file);
-        serde_json::to_writer(
-            &mut writer,
+        write_receipt(
+            File::create(&paths.scratch)?,
             &Snapshot {
                 version: 2,
                 request: request.generation,
@@ -222,10 +221,15 @@ impl Trace {
                 streams,
             },
         )?;
-        writer.flush()?;
-        drop(writer);
         Ok(paths.commit(scope, &request)?.then_some(request.generation))
     }
+}
+
+fn write_receipt(destination: impl Write, receipt: &impl Serialize) -> anyhow::Result<()> {
+    let mut writer = BufWriter::with_capacity(RECEIPT_WRITE_BUFFER_BYTES, destination);
+    serde_json::to_writer(&mut writer, receipt)?;
+    writer.flush()?;
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -578,6 +582,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    // Value: protects=the final eight-player receipt's I/O budget; fails_when=JSON is emitted in small writes; why_new=receipt equality does not bound writes; seam=Write
+    #[test]
+    fn full_room_receipt_batches_file_writes() {
+        #[derive(Default)]
+        struct WriteCount {
+            bytes: usize,
+            writes: usize,
+        }
+
+        impl Write for WriteCount {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.bytes += bytes.len();
+                self.writes += 1;
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let room_id = RoomId::from_u128(1);
+        let roster = [2, 3, 4, 5, 6, 7, 8, 9].map(PlayerId::from_u128);
+        let trace = trace_for(room_id, &roster);
+        for &sender in &roster {
+            for &recipient in roster.iter().filter(|&&recipient| recipient != sender) {
+                for seq in 1..=CAPACITY as u64 {
+                    for tag in [2, 4] {
+                        record_pair(&trace, room_id, sender, recipient, tag, seq);
+                    }
+                }
+            }
+        }
+        let streams = trace.state.lock().unwrap().snapshot(&[]);
+        let mut count = WriteCount::default();
+        write_receipt(&mut count, &streams).unwrap();
+        assert!((10 * 1024 * 1024..=14 * 1024 * 1024).contains(&count.bytes), "wrong receipt size: {}", count.bytes);
+        assert!(count.writes <= 128, "{} writes for {} bytes", count.writes, count.bytes);
     }
 
     // Value: protects=one atomic receipt per generation; fails_when=idle or superseded requests publish; why_new=packet joins do not exercise the publisher; seam=none
