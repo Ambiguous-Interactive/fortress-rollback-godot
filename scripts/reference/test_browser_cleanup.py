@@ -2709,18 +2709,27 @@ const { runInNewContext } = require('node:vm');
 const { instrumentNativeWire } = require(process.argv[1]);
 let now = 0;
 let sent;
+let plannedState = 'connecting';
+let plannedBuffer = 0;
 class Connection {
   close() {}
   addEventListener() {}
   createDataChannel() {
-    return { id: 3, addEventListener() {}, send() { sent = { at: now * 1000, stack: new Error().stack }; } };
+    return {
+      id: 3, get readyState() { return plannedState; }, get bufferedAmount() { return plannedBuffer; }, addEventListener() {},
+      send() {
+        sent = { at: now * 1000, readyState: plannedState, bufferedAmount: plannedBuffer, stack: new Error().stack };
+        plannedState = 'closed';
+        plannedBuffer = 0;
+      },
+    };
   }
 }
 const window = { crossOriginIsolated: true };
 runInNewContext(`(${instrumentNativeWire})(true, '')`, {
   window, WebSocket: class {}, RTCPeerConnection: Connection,
   performance: { now: () => now },
-  Function: function(...args) { now += 5; return Function(...args); },
+  Function: function(...args) { now += 5; plannedState = now === 15 ? 'open' : 'closing'; plannedBuffer = now; return Function(...args); },
 });
 const first = new Connection().createDataChannel('first', {});
 const second = new Connection().createDataChannel('second', {});
@@ -2729,16 +2738,23 @@ wire.observeDeparture();
 const send = channel => {
   channel.send(new ArrayBuffer(1));
   const [, index, tag] = sent.stack.match(/fortressNativeSend_(\d+)_(\d+)/).map(Number);
-  return { index, tag, at: sent.at };
+  return { index, tag, at: sent.at, readyState: sent.readyState, bufferedAmount: sent.bufferedAmount };
 };
 const a = send(first);
 // Older witnesses encoded preparation time in the name itself.
 const recorded = wire.departureSends ? wire.departureSends([a.tag])[a.tag]?.sentAt : a.tag;
 assert.equal(recorded, a.at, 'timestamp must be taken at the native send');
+assert.equal(a.readyState, 'open');
+assert.equal(plannedState, 'closed');
+const actual = wire.departureSends([a.tag])[a.tag];
+assert.equal(actual?.readyState, a.readyState, 'channel readiness must be owned at the native send');
+assert.equal(actual?.bufferedAmount, a.bufferedAmount, 'queue size must be owned at the native send');
 const b = send(second);
 assert.equal(b.tag, a.tag + 1);
 assert.equal(b.index, a.index + 1);
 assert.equal(wire.departureSends([b.tag])[b.tag]?.channel, b.index);
+assert.equal(wire.departureSends([b.tag])[b.tag]?.readyState, 'closing');
+assert.equal(wire.departureSends([b.tag])[b.tag]?.bufferedAmount, b.bufferedAmount);
 for (let i = 0; i < 4096; ++i) first.send(new ArrayBuffer(1));
 const latest = send(second);
 const receipts = wire.departureSends([a.tag, b.tag, latest.tag, latest.tag + 1]);
@@ -2789,12 +2805,13 @@ channel.closeEvent();
 const before = [[{ index: 0, local: 'closer', remote: 'sender' }], [{ index: 17, local: 'sender', remote: 'closer' }]];
 const error = { index: 1, channel: 17, attempt: 279, received_ms: 600 };
 const report = {
-  partialSnapshots: [null, { sends: { 279: { channel: 17, attempt: 279, sentAt: 47199 } } }],
+  partialSnapshots: [null, { sends: { 279: { channel: 17, attempt: 279, sentAt: 47199, readyState: 'open', bufferedAmount: 49 } } }],
   clocks: [{ offsetMin: 9900, offsetMax: 10100 }, { offsetMin: -5100, offsetMax: -4900 }],
 };
 const [receipt] = matchCloseObservations([error], before, observed, report);
 assert.equal(receipt.attempt, 279);
 assert.equal(receipt.sentAt, 47199);
+assert.deepEqual(receipt.sendState, { readyState: 'open', bufferedAmount: 49 });
 assert.equal(receipt.received_ms, 600);
 assert.deepEqual(receipt.observations.map(({ owner, kind, page_us, received_ms }) => [owner, kind, page_us, received_ms]), [
   [0, 'channel_close_called', 10000, 512],
@@ -2837,10 +2854,11 @@ const sender = {...before, closed:true, connectionClosed:true, closedAt:50000};
 const closer = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
 const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
 const tagged = {index:1, channel:17, attempt:3};
-const receipt = {channel:17, attempt:3, sentAt:47199};
+const receipt = {channel:17, attempt:3, sentAt:47199, readyState:'open', bufferedAmount:256};
 const fail = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, receipt);
 assert.deepEqual(JSON.parse(JSON.stringify(fail)), {
-  ...tagged, sentAt:47199, closer:null, before, sender, counterparts:[{...closer, owner:0}], minimumGapUs:1999, maximumGapUs:2399, proof:null,
+  ...tagged, sentAt:47199, sendState:{readyState:'open', bufferedAmount:256}, closer:null, before, sender,
+  counterparts:[{...closer, owner:0}], minimumGapUs:1999, maximumGapUs:2399, proof:null,
 });
 const timed = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, sentAt:47200});
 assert.equal(timed.minimumGapUs, 2000);
@@ -2850,8 +2868,18 @@ for (const invalid of [null, {...receipt, sentAt:'47200'}, {...receipt, sentAt:-
   {...receipt, attempt:4, sentAt:47200}, {...receipt, channel:18, sentAt:47200}]) {
   const rejected = closeEvidence({...tagged, sentAt:999999}, [before], [[closer], [sender]], null, clocks, invalid);
   assert.equal(rejected.sentAt, null);
+  assert.equal(rejected.sendState, null);
   assert.equal(rejected.minimumGapUs, null);
   assert.equal(rejected.proof, null);
+}
+for (const malformed of [undefined, 'connected', 'OPEN']) {
+  const sample = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, sentAt:47200, readyState:malformed});
+  assert.equal(sample.sendState, null);
+  assert.equal(sample.proof, 'clock-order', 'optional sender state cannot alter close proof');
+}
+for (const malformed of [-1, Infinity, 0.5, '256']) {
+  const sample = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, bufferedAmount:malformed});
+  assert.equal(sample.sendState, null);
 }
 const early = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, sentAt:46799});
 assert.equal(early.maximumGapUs, 1999);
@@ -2883,7 +2911,7 @@ const { waitForCloseProofs } = require(process.argv[1]);
 const before = {index:17, local:'survivor', remote:'leaver', closeAborts:0, closed:false};
 const reciprocal = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
 const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
-const receipt = {channel:17, attempt:3, sentAt:47200};
+const receipt = {channel:17, attempt:3, sentAt:47200, readyState:'open', bufferedAmount:128};
 const sample = (links, offset, sends = {}) => ({
   evaluate: async (_read, { attempts }) => {
     const start = now;
@@ -2950,7 +2978,7 @@ let now = 25;
   assert.deepEqual(crashReport.snapshotErrors, [{index:1, reason:'Error: Page crashed'}]);
   assert.deepEqual(crashReport.partialSnapshots, [{received_ms:26, links:[reciprocal], sends:{}}, null]);
   assert.deepEqual(crashReport.clockSamples, [{before:[], after:[{offsetMin:9459, offsetMax:10541}]}, {before:[], after:[]}]);
-  assert.deepEqual(crashReport.proofs, [{...warning[0], sentAt:null, closer:null, before, sender:null,
+  assert.deepEqual(crashReport.proofs, [{...warning[0], sentAt:null, sendState:null, closer:null, before, sender:null,
     counterparts:[{...reciprocal, owner:0}], minimumGapUs:null, maximumGapUs:null, proof:null}]);
 
   now = 25;
@@ -2963,6 +2991,7 @@ let now = 25;
     {received_ms:52, links:[{...reciprocal, closedAt:30001}], sends:{}}, {received_ms:26, links:[before], sends:{3:receipt}},
   ]);
   assert.equal(interruptedReport.proofs[0].proof, null);
+  assert.deepEqual(interruptedReport.proofs[0].sendState, { readyState: 'open', bufferedAmount: 128 });
 
   const lateReply = sample(() => { now = 5025; return [before]; }, -5000);
   now = 25;
@@ -2971,7 +3000,7 @@ let now = 25;
     /WebKit close evidence deadline/);
   assert.deepEqual(lateReport.partialSnapshots, [null, null]);
   assert.deepEqual(lateReport.clockSamples.map(page => page.after), [[], []]);
-  assert.deepEqual(lateReport.proofs, [{...warning[0], sentAt:null, closer:null, before, sender:null,
+  assert.deepEqual(lateReport.proofs, [{...warning[0], sentAt:null, sendState:null, closer:null, before, sender:null,
     counterparts:[], minimumGapUs:null, maximumGapUs:null, proof:null}]);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """

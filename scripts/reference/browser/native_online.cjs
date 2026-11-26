@@ -841,8 +841,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     resources.rtc.push(record);
     const nativeSend = channel.send;
     // WebKit reports a native send rejection on the calling stack without throwing.
+    const sampleSend = 'receipt.readyState = channel.readyState; receipt.bufferedAmount = channel.bufferedAmount; receipt.sentAt = instant(); ';
     const tagged = (name, receipt) => new Function('send', 'channel', 'receipt', 'instant',
-      `return function ${name}(bytes) { ${receipt ? 'receipt.sentAt = instant(); ' : ''}send.call(channel, bytes); }`)(nativeSend, channel, receipt, instant);
+      `return function ${name}(bytes) { ${receipt ? sampleSend : ''}send.call(channel, bytes); }`)(nativeSend, channel, receipt, instant);
     const emit = tagWebKitSends ? tagged(`fortressNativeSend_${index}`) : bytes => nativeSend.call(channel, bytes);
     channel.send = data => {
       const view = nativeBytes(data);
@@ -1250,8 +1251,10 @@ function matchCloseObservations(errors, before, observations, report = {}) {
   return errors.filter(({ attempt }) => Number.isSafeInteger(attempt) && attempt > 0).map(({ index, channel, attempt, received_ms }) => {
     const send = report.partialSnapshots?.[index]?.sends?.[attempt];
     const latest = exactSendTime(channel, attempt, send);
-    const sentAt = latest ?? report.proofs?.find(proof => proof.index === index && proof.channel === channel && proof.attempt === attempt)?.sentAt ?? null;
-    const receipt = { index, channel, attempt, sentAt, received_ms, observations: [] };
+    const prior = latest === null ? report.proofs?.find(proof => proof.index === index && proof.channel === channel && proof.attempt === attempt) : null;
+    const sentAt = latest ?? prior?.sentAt ?? null;
+    const sendState = prior?.sendState ?? exactSendState(latest, send);
+    const receipt = { index, channel, attempt, sentAt, sendState, received_ms, observations: [] };
     const sender = before[index].find(link => link.index === channel);
     if (!sender?.local || !sender.remote || sender.closed) return receipt;
     const counterparts = reciprocalLinks(before, index, sender);
@@ -1287,6 +1290,12 @@ function exactSendTime(channel, attempt, receipt) {
     && Number.isSafeInteger(receipt.sentAt) && receipt.sentAt >= 0 ? receipt.sentAt : null;
 }
 
+function exactSendState(sentAt, receipt) {
+  if (sentAt === null || !['connecting', 'open', 'closing', 'closed'].includes(receipt.readyState)
+    || !Number.isSafeInteger(receipt.bufferedAmount) || receipt.bufferedAmount < 0) return null;
+  return { readyState: receipt.readyState, bufferedAmount: receipt.bufferedAmount };
+}
+
 function closeGap(sentAt, closedAt, senderClock, closerClock) {
   if (!senderClock || !closerClock || !Number.isSafeInteger(sentAt) || !Number.isSafeInteger(closedAt)) return { minimumGapUs: null, maximumGapUs: null };
   // Compare the earliest possible send with the latest possible close.
@@ -1299,7 +1308,8 @@ function closeGap(sentAt, closedAt, senderClock, closerClock) {
 function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, closer = null, clocks, receipt) {
   const sentAt = exactSendTime(channel, attempt, receipt);
   const before = linksBefore.find(peer => peer.index === channel) ?? null;
-  const evidence = { index, channel, attempt, sentAt, closer, before, sender: null, counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
+  const evidence = { index, channel, attempt, sentAt, sendState: exactSendState(sentAt, receipt), closer, before, sender: null,
+    counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
   if (!before?.local || !before.remote || before.closed) return evidence;
   evidence.sender = closedByPage[index].find(peer => peer.index === channel && peer.local === before.local && peer.remote === before.remote) ?? null;
   evidence.counterparts = reciprocalLinks(closedByPage, index, before);

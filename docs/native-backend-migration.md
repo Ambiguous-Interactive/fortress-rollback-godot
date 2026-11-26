@@ -71,7 +71,10 @@ WebKit receipts distinguish application channel close calls, channel close
 events and peer connection close calls. Each observation keeps its browser
 timestamp and controller receipt, even when the final page read times out.
 Tagged send diagnostics list the matching reciprocal route and the possible
-gap to each observed stage when the page clocks are bounded. Nonce-matched
+gap to each observed stage when the page clocks are bounded. The exact send
+attempt also carries the channel's readiness and queued bytes sampled immediately
+before calling the browser send. Missing samples leave this evidence empty.
+Nonce-matched
 same-origin HTTPS exchanges bracket each page clock with controller receipt
 and response timestamps. The receipt keeps the HTTPS and debugger samples so
 an ambiguous interval can be reproduced. Acceptance requires a fresh SCTP
