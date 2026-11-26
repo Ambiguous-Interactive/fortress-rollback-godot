@@ -90,7 +90,8 @@ class OwnershipRejectionFixture(unittest.TestCase):
 
     def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None,
                  version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False, runtime_before=None, tool_fault=None,
-                 phase=None, suite_part='all', download_fault=None, control_output=None, balance_chromium=False):
+                 phase=None, suite_part='all', download_fault=None, control_output=None, balance_chromium=False, before_download=None,
+                 expected_diagnostic=''):
         """Run the ownership launcher against mocked tools and return its results."""
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
@@ -116,6 +117,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
             (installed / 'index.js').write_text('fake installed package')
         results = cache / 'results'
         results.mkdir(parents=True)
+        (results / 'ownership.json').write_text('{"status":"passed","stale":true}\n')
 
         browser_calls = []
         changed_project = []
@@ -179,6 +181,8 @@ class OwnershipRejectionFixture(unittest.TestCase):
                     changed_tool.append(True)
                 mutate_project(Path(command[command.index('--path') + 1]), 'export')
             if str(command[1]).endswith('ownership.cjs') and command[3] == '--replay-downloads':
+                if before_download:
+                    before_download(environment, log)
                 if download_fault == 'run':
                     raise RuntimeError('download command failure ' + 'x' * 600)
                 if download_fault == 'json':
@@ -373,7 +377,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
                 helpers.assert_called_once_with(probes.source_inventory())
             else:
                 # The rejected run still fails: the diagnosis is kept, not swallowed.
-                with self.assertRaises(expected):
+                with self.assertRaisesRegex(expected, expected_diagnostic):
                     probes.main()
                 self.assertEqual(helpers.call_count, 1, 'bytecode verification runs before any witness')
         if tool_fault:

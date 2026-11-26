@@ -1,19 +1,110 @@
 """Rejected ownership-run gates split from the original single suite for bounded parallel files."""
 
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
+import tempfile
 from unittest import mock
 
+from godot_smoke import run as run_owned
+from owned_process import EscapedDescendants, _identity_check, _send_kill
 import ownership_probes as probes
 from ownership_rejection_fixture import BROWSER_DETAIL, BROWSER_LOG, OwnershipRejectionFixture, assert_rejection_observed
+from test_owned_process import terminated
+
+DOWNLOAD_PART = next(part for part in ('1', '2', '3', '4') if probes.DOWNLOAD_SUITE in probes.select_suites(part))
 
 
 class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
+    # Value: protects=download success waits for owned process exit; fails_when=an escaped child survives or the launcher accepts success; seam=download command
+    def test_download_rejects_and_reaps_a_child_after_parent_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / 'escaped.pid'
+            code = '''
+import os
+from pathlib import Path
+import sys
+import time
+marker = Path(sys.argv[1])
+if os.fork() == 0:
+    os.setsid()
+    start = Path('/proc/self/stat').read_text().rsplit(') ', 1)[1].split()[19]
+    pending = marker.with_suffix('.next')
+    pending.write_text(f'{os.getpid()} {start}')
+    pending.replace(marker)
+    time.sleep(60)
+else:
+    while not marker.exists():
+        time.sleep(0.01)
+'''
+
+            def escape(environment, log):
+                run_owned([sys.executable, '-c', code, str(marker)], environment, log, timeout=10)
+
+            try:
+                results = self.scenario(expected=EscapedDescendants, expected_diagnostic=r'^owned descendant survived the command: pid \d+ \(.+\)$',
+                                        version='4.3', phase='positive', suite_part=DOWNLOAD_PART, before_download=escape)
+                pid, start = map(int, marker.read_text().split())
+                self.assertTrue(terminated(pid) or not _identity_check(start)(pid),
+                                f'escaped child {pid} must be terminal before the launcher rejects it')
+            finally:
+                if marker.is_file():
+                    owned_pid, owned_start = map(int, marker.read_text().split())
+                    if not terminated(owned_pid):
+                        _send_kill(owned_pid, belongs=_identity_check(owned_start))
+            entry = self.rounds(results)[0]
+            self.assertEqual(entry['outcome'], 'failed')
+            self.assertIs(entry['alive'], False)
+            self.assertTrue(entry['errors'][0].startswith(f'owned descendant survived the command: pid {pid} ('))
+            self.assertIn(f"OWNED_PROCESSES: terminated [{{'pid': {pid}", (results / 'ownership-4.3-positive-downloads.log').read_text())
+            self.assertFalse((results / 'ownership.json').exists())
+
+    # Value: protects=interpreter identity at publication; fails_when=changed executable publishes a fresh or stale success; seam=disposable running Python
+    def test_download_rejects_interpreter_replacement_before_publishing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory)
+            interpreter = prefix / 'bin/python'
+            interpreter.parent.mkdir()
+            (prefix / sys.platlibdir).symlink_to(Path(sys.base_prefix) / sys.platlibdir, target_is_directory=True)
+            shutil.copy2(Path(sys.executable).resolve(), interpreter)
+            code = '''
+from pathlib import Path
+import sys
+from test_ownership_rejection_diagnosis import OwnershipRejectionDiagnosisTests
+case = OwnershipRejectionDiagnosisTests()
+try:
+    case.check_interpreter_replacement(Path(sys.argv[1]))
+finally:
+    case.doCleanups()
+'''
+            child = subprocess.run([str(interpreter), '-c', code, str(interpreter)], cwd=Path(__file__).parent,
+                                   env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}, capture_output=True, text=True, timeout=30)
+            self.assertEqual(child.returncode, 0, child.stderr)
+            self.assertIn('ownership interpreter changed during execution', child.stdout)
+
+    def check_interpreter_replacement(self, interpreter):
+        self.assertEqual(Path(sys.executable), interpreter)
+        before = probes.digest(interpreter)
+
+        def replace(_environment, _log):
+            replacement = interpreter.with_name('replaced-python')
+            replacement.write_bytes(interpreter.read_bytes() + b'changed interpreter')
+            replacement.chmod(interpreter.stat().st_mode & 0o777)
+            replacement.replace(interpreter)
+
+        diagnostic = 'ownership interpreter changed during execution'
+        results = self.scenario(expected=ValueError, expected_diagnostic='^' + diagnostic + '$',
+                                version='4.3', phase='positive', suite_part=DOWNLOAD_PART, before_download=replace)
+        self.assertNotEqual(probes.digest(interpreter), before)
+        self.assertFalse((results / 'ownership.json').exists())
+        print(diagnostic)
+
     # Value: protects=download failures leave a terminal diagnosis; fails_when=any gate error leaves a running round;
     # why_new=ordinary browser-batch rejection does not cover downloads; seam=mocked tool outputs and real source inventories
     def test_download_gate_failures_keep_bounded_failed_rounds(self):
-        part = next(part for part in ('1', '2', '3', '4') if 'res://tests/unit/test_replay_viewer_prefix.gd' in probes.select_suites(part))
         diagnostics = {
             'run': 'download command failure ', 'json': 'Expecting property name enclosed in double quotes',
             'browser': 'browser reported errors', 'download': 'replay download boundary differs',
@@ -23,7 +114,7 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
         }
         for fault, diagnostic in diagnostics.items():
             with self.subTest(fault=fault):
-                results = self.scenario(expected=Exception, version='4.3', phase='positive', suite_part=part, download_fault=fault)
+                results = self.scenario(expected=Exception, version='4.3', phase='positive', suite_part=DOWNLOAD_PART, download_fault=fault)
                 self.assertFalse((results / 'ownership.json').exists())
                 entry = self.rounds(results)[0]
                 self.assertEqual(entry['outcome'], 'failed')
@@ -35,7 +126,6 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
 
     # Value: protects=negative controls reject cleanup failure; fails_when=expected text inside AggregateError passes; seam=mocked owned-child output
     def test_download_controls_reject_expected_error_with_cleanup_failure(self):
-        part = next(part for part in ('1', '2', '3', '4') if 'res://tests/unit/test_replay_viewer_prefix.gd' in probes.select_suites(part))
         for name, diagnostic in probes.CONTROL_DIAGNOSTICS.items():
             with self.subTest(control=name):
                 output = ('AggregateError: ownership and cleanup failed\n'
@@ -46,7 +136,7 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
                           '    Error: browser cleanup failed\n'
                           '        at cleanup (/fixture/ownership.cjs:90:3)\n'
                           '  ]\n')
-                results = self.scenario(expected=ValueError, version='4.3', phase='positive', suite_part=part,
+                results = self.scenario(expected=ValueError, version='4.3', phase='positive', suite_part=DOWNLOAD_PART,
                                         control_output={name: output})
                 self.assertFalse((results / 'ownership.json').exists())
                 entry = self.rounds(results)[0]
