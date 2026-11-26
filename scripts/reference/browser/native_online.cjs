@@ -580,7 +580,6 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     const deliveredBytes = delivery?.bytes.subarray(57);
     const stamp = delivery?.sender === remote && delivery.recipient === localUuid && delivery.kind === kind
       && deliveredBytes.length === bytes.length && deliveredBytes.every((byte, index) => byte === bytes[index]) ? delivery : null;
-    if (stage === 'raw' && relayWireTrace && !stamp) return;
     const payload = hex(bytes);
     const at_ms = performance.now();
     const sample = { at_ms, payload, start_frame, ack_frame, code,
