@@ -85,7 +85,12 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
           || !Number.isSafeInteger(sample.tick_count) || sample.tick_count < sample.ticks.length) throw new Error('invalid warmup checkpoint');
         const roster = [sample.recipient, ...sample.links.map(link => link.sender)];
         if (new Set(roster).size !== players) throw new Error('invalid warmup roster');
-        const { cutoff } = sample;
+        const { cutoff, input_link: input } = sample;
+        if (input != null) {
+          const [sender, recipient] = [...roster].sort();
+          if (players !== 8 || input.sender !== sender || input.recipient !== recipient || sample.recipient !== recipient)
+            throw new Error('invalid warmup input link');
+        }
         if (cutoff !== null && (!isFrontier(cutoff) || cutoff.at_ms !== sample.through_ms
           || !(cutoff.reason === 'failed' && cutoff.state === 'failed'
             || cutoff.reason === 'gate' && cutoff.state === 'playing' && cutoff.confirmed >= GATE_FRAME)))
@@ -473,6 +478,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   const replayedRelayEvents = relayWireTrace && new WeakSet();
   let expiredRelayDelay;
   const warmupLinks = new Map();
+  let warmupInput;
   let roomRoster = [];
   const warmupTicks = [];
   let warmupTickCount = 0;
@@ -502,7 +508,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   function warmupStatus() {
     if (!warmupLinks.size) return null;
     return { recipient: localUuid, started_ms: warmupStarted, through_ms: warmupCutoff?.at_ms ?? performance.now(), cutoff: warmupCutoff,
-      tick_count: warmupTickCount, ticks: warmupTicks.slice(),
+      tick_count: warmupTickCount, ticks: warmupTicks.slice(), input_link: warmupInput,
       links: Array.from(warmupLinks, ([sender, { packets, evicted, unretained, last_replied_report }]) => ({
         sender, evicted, unretained, last_replied_report, packets: Array.from(packets, ([payload, stages]) => ({ payload, ...stages })),
       })) };
@@ -519,6 +525,37 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       warmupCheckpointPending = false;
       if (!warmupCutoff) checkpointWarmup(performance.now());
     }, 0);
+  }
+  function recordWarmupInput(stage, remote, bytes, code = null, delivery = null) {
+    const stream = !warmupCutoff && warmupInput?.[stage];
+    if (!stream || remote !== warmupInput.sender || bytes.length > 1200 || bytes.length < 32 || !matches(bytes, 0)) return;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (view.getUint32(16, true) !== 0x000252f5) return;
+    const kind = view.getUint32(24, true);
+    let start_frame = null;
+    let ack_frame;
+    if (stage === 'ack') {
+      if (kind !== 3 || bytes.length !== 32) return;
+      ack_frame = view.getInt32(28, true);
+    } else {
+      // Eight seven-byte connection statuses precede start, ACK and encoded-byte length.
+      if (kind !== inputKind || bytes.length <= 108 || view.getBigUint64(28, true) !== 8n
+          || view.getBigUint64(100, true) !== BigInt(bytes.length - 108)) return;
+      start_frame = view.getInt32(92, true);
+      ack_frame = view.getInt32(96, true);
+      if (start_frame < 0 || ![36, 43, 50, 57, 64, 71, 78, 85].every(offset => bytes[offset] <= 1)) return;
+    }
+    if (ack_frame < -1) return;
+    // Keep a stamp only when the delivery decoder identifies this same packet.
+    const stamp = delivery?.sender === remote && delivery.recipient === localUuid && delivery.kind === kind ? delivery : null;
+    const payload = hex(bytes);
+    const at_ms = performance.now();
+    const sample = { at_ms, payload, start_frame, ack_frame, code,
+      epoch: stamp?.epoch ?? null, seq: stamp?.seq ?? null };
+    stream.count++;
+    if (!stream.first) stream.first = sample;
+    else if (stream.first.payload !== payload || stream.first.code !== code) stream.recent = sample;
+    scheduleWarmupCheckpoint(at_ms);
   }
   const orderedWarmupToken = token => token.match(/../g).reverse().join('');
   function forgetWarmupReport(link, payload) {
@@ -814,7 +851,10 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       if (!warmupCutoff && warmupLinks.has(packet.sender) && packet.kind === 4 && packet.bytes.length === 46 && (packet.bytes[30] & 3) === 0) {
         recordWarmup('raw', packet.sender, hex(packet.bytes), null);
       }
-      if (packet.kind === inputKind) increment(relayInputSenders, packet.sender);
+      if (packet.kind === inputKind) {
+        increment(relayInputSenders, packet.sender);
+        if (warmupInput?.sender === packet.sender) recordWarmupInput('raw', packet.sender, packet.bytes, null, relayPacket);
+      }
       traceRelayQuality('receive', packet.sender, packet);
       if (receive('relay', reports, packet.sender, packet) && relayPacket) relayPacket.hold_gate_match = true;
     });
@@ -876,6 +916,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
         if (packet.kind === inputKind) increment(relayInputRecipients, packet.recipient);
         bufferedBytesPeak = Math.max(bufferedBytesPeak, this.bufferedAmount);
         if (packet.kind === 5) recordWarmupReply(packet);
+        if (packet.kind === 3 && this.readyState === nativeSocket.OPEN && warmupInput?.sender === packet.recipient)
+          recordWarmupInput('ack', packet.recipient, packet.bytes);
         traceRelayQuality('send', packet.recipient, packet);
       }
     }, data, packet?.sender === localUuid ? packet : null);
@@ -908,9 +950,23 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
           });
         }
       }
-      if (warmupLinks.size) warmupStarted = performance.now();
+      if (warmupLinks.size) {
+        warmupStarted = performance.now();
+        const [sender, recipient] = [...roomRoster].sort();
+        if (roomRoster.length === 8 && localUuid === recipient) {
+          warmupInput = { sender, recipient, ...Object.fromEntries(['raw', 'sdk', 'native', 'ack'].map(stage => [stage,
+            { count: 0, first: null, recent: null }])) };
+        }
+      }
     },
     recordWarmup,
+    observeWarmupInput(stage, source, payload, code) {
+      if (warmupCutoff || !warmupInput || (stage !== 'sdk' && stage !== 'native') || typeof source !== 'string' || source.replaceAll('-', '') !== warmupInput.sender
+          || typeof payload !== 'string' || payload.length > 2400 || !/^(?:[0-9a-f]{2})+$/.test(payload)
+          || (stage === 'native' ? !Number.isInteger(code) : code !== -1)) return;
+      const bytes = Uint8Array.from(payload.match(/../g), value => parseInt(value, 16));
+      recordWarmupInput(stage, warmupInput.sender, bytes, stage === 'native' ? code : null);
+    },
     async relayWireTrace(links) {
       const sockets = resources.sockets.length;
       return relayWireTrace && { ...await relayWireTrace.freeze(links), sockets };

@@ -1014,6 +1014,131 @@ assert.equal(after.relaySenders[remote], wireBeforeCutoff.relaySenders[remote] +
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
+    def test_native_warmup_keeps_exact_input_stages_without_a_final_read(self):
+        # Value: protects=bounded exact input evidence; fails_when=unavailable stages are inferred or physical input is overwritten; seam=warmup console
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire, createWarmupBarrier, WARMUP_CHECKPOINT } = require(process.argv[1]);
+const { createRelayWireTrace } = require(process.argv[2]);
+const roster = Array.from({length: 8}, (_, i) => (i + 16).toString(16).repeat(16));
+const [sender, receiver, other] = roster;
+const room = '01'.repeat(16);
+const payload = (kind, start, ack) => {
+  const result = Buffer.alloc(kind === 2 ? 109 : 32);
+  result.set(Buffer.from(room, 'hex'));
+  result.set([0xf5, 0x52, 2, 0, 1], 16);
+  result.writeUInt32LE(kind, 24);
+  if (kind === 2) {
+    result.writeBigUInt64LE(8n, 28);
+    result.writeInt32LE(start, 92);
+    result.writeInt32LE(ack, 96);
+    result.writeBigUInt64LE(1n, 100);
+    result[108] = 17;
+  } else {
+    result.writeInt32LE(ack, 28);
+  }
+  return result;
+};
+const relayFrame = (payload, from, to) => {
+  const frame = Buffer.alloc(57 + payload.length);
+  frame.set([70, 83, 82, 49, 1]);
+  frame.set(Buffer.from(room + from + to, 'hex'), 5);
+  frame.writeUInt32LE(payload.length, 53);
+  frame.set(payload, 57);
+  return frame;
+};
+const name = text => Buffer.concat([Buffer.from([0xa0 + text.length]), Buffer.from(text)]);
+const delivery = (frame, from, seq) => Buffer.concat([Buffer.from([0x85]), name('from_player'),
+  Buffer.from([0xc4, 16]), Buffer.from(from, 'hex'), name('encoding'), name('message_pack'),
+  name('payload'), Buffer.from([0xc4, frame.length]), frame, name('seq'), Buffer.from([seq]), name('epoch'), Buffer.from([1])]);
+class Socket {
+  static OPEN = 1;
+  readyState = Socket.OPEN;
+  addEventListener(name, listener) { this[name] = listener; }
+  send() { if (this.reject) throw new Error('socket send failed'); }
+}
+let time = 1;
+const window = {}, tasks = [];
+const barrier = createWarmupBarrier(8, () => time);
+const realm = {
+  window, performance: {now: () => time}, console: {debug: value => barrier.record(1, value)},
+  setTimeout: callback => tasks.push(callback),
+  Uint8Array, ArrayBuffer, DataView, WebSocket: Socket, RTCPeerConnection: class {},
+};
+runInNewContext(`(${instrumentNativeWire})(false, ${JSON.stringify(WARMUP_CHECKPOINT)}, (${createRelayWireTrace})())`, realm);
+const socket = new window.WebSocket();
+const wire = window.fortressNativeWire;
+wire.bind(room, receiver, roster);
+const input9 = payload(2, 9, 8);
+socket.message({data: delivery(relayFrame(input9, sender, receiver), sender, 11)});
+tasks.shift()?.();
+const early = barrier.checkpoints[1]?.input_link;
+assert.ok(early, 'warmup checkpoint must carry the addressed raw input');
+assert.equal(early.sender, sender);
+assert.equal(early.recipient, receiver);
+assert.equal(early.raw.first.payload, input9.toString('hex'));
+assert.equal(early.raw.first.start_frame, 9);
+assert.equal(early.raw.first.ack_frame, 8);
+assert.equal(early.raw.first.seq, '11');
+assert.equal(early.raw.first.epoch, 1);
+assert.equal(early.sdk.first, null);
+assert.equal(early.native.first, null);
+assert.equal(early.ack.first, null);
+const input10 = payload(2, 10, 9);
+wire.observeWarmupInput('sdk', sender, input9.toString('hex'), -1);
+wire.observeWarmupInput('native', sender, input9.toString('hex'), 6);
+wire.observeWarmupInput('native', sender, input9.toString('hex'), 0);
+wire.observeWarmupInput('sdk', other, input10.toString('hex'), -1);
+wire.observeWarmupInput('sdk', sender, input10.toString('hex'), 0);
+wire.observeWarmupInput('native', sender, 'g'.repeat(12), 0);
+const malformed = Buffer.from(input10);
+malformed.writeBigUInt64LE(2n, 100);
+socket.message({data: relayFrame(malformed, sender, receiver)});
+socket.message({data: relayFrame(input10, other, receiver)});
+socket.message({data: relayFrame(input10, sender, other)});
+socket.message({data: delivery(relayFrame(input10, sender, receiver), sender, 12)});
+socket.message({data: delivery(relayFrame(input9, sender, receiver), sender, 13)});
+const ack = payload(3, null, 10);
+socket.send(relayFrame(ack, receiver, other));
+socket.send(relayFrame(ack, other, sender));
+socket.reject = true;
+assert.throws(() => socket.send(relayFrame(ack, receiver, sender)), /socket send failed/);
+assert.equal(wire.warmupStatus().input_link.ack.count, 0);
+socket.reject = false;
+socket.send(relayFrame(ack, receiver, sender));
+time = 1050;
+wire.finishWarmup('playing', 20, 12);
+assert.deepEqual(barrier.errors, Array(8).fill(null));
+const sample = barrier.checkpoints[1].input_link;
+assert.equal(sample.raw.count, 3);
+assert.equal(sample.raw.first.seq, '11', 'duplicates cannot change the earliest exact delivery');
+assert.equal(sample.raw.recent.seq, '12', 'return to initial bytes cannot overwrite their most recent distinct replacement');
+assert.equal(sample.raw.recent.payload, input10.toString('hex'));
+assert.equal(sample.sdk.count, 1);
+assert.equal(sample.sdk.recent, null);
+assert.equal(sample.native.count, 2);
+assert.equal(sample.native.first.code, 6);
+assert.equal(sample.native.recent.code, 0);
+assert.equal(sample.native.recent.payload, input9.toString('hex'));
+assert.equal(sample.ack.count, 1);
+assert.equal(sample.ack.first.ack_frame, 10);
+assert.equal(sample.ack.first.payload, ack.toString('hex'));
+wire.observeWarmupInput('native', sender, input10.toString('hex'), 0);
+socket.message({data: relayFrame(input10, sender, receiver)});
+socket.send(relayFrame(ack, receiver, sender));
+assert.equal(wire.warmupStatus().input_link.native.count, 2);
+assert.equal(wire.warmupStatus().input_link.raw.count, 3);
+assert.equal(wire.warmupStatus().input_link.ack.count, 1);
+const wrong = JSON.parse(JSON.stringify(barrier.checkpoints[1]));
+wrong.input_link.sender = other;
+barrier.record(2, WARMUP_CHECKPOINT + JSON.stringify(wrong));
+assert.match(barrier.errors[2], /invalid warmup input link/);
+assert.equal(barrier.checkpoints[2], null);
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs'),
+                        str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs')], check=True, timeout=10)
+
     def test_native_input_and_terminal_holds_have_distinct_liveness(self):
         # Value: protects=physical input/control hold; fails_when=control blocked in recovery or leaks during expiry; seam=browser send and receive
         script = r"""
