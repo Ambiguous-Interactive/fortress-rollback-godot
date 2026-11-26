@@ -62,10 +62,12 @@ Unaffected links stay direct throughout.
 
 The overlapping close cell closes two pairs in one match, discards the first
 replacement Offer for one pair, and requires gameplay on both fresh links.
-It runs with Chromium and alternating Chromium–Firefox on both Godot pins.
+It runs in the full room suite for each selected profile on both Godot pins.
 The receipt identifies each replacement by its exact signaling envelope and
 reciprocal ICE credentials. A local control withholds all replacement Offers
-for the second pair and reports which pair is still missing.
+for the second pair. It reports the missing pair after proving traffic on the
+first replacement and checking any WebKit send failures against the exact
+reciprocal channels that closed.
 
 WebKit receipts distinguish application channel close calls, channel close
 events and peer connection close calls. Each observation keeps its browser

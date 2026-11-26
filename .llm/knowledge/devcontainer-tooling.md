@@ -25,6 +25,7 @@ Operational facts learned while building this repo's devcontainer
 | --- | --- | --- |
 | npm latest wrappers can precede their exact native dependencies; Codex uses npm aliases and npm can resolve foreign optional dependencies before platform filtering. | `.devcontainer/install-native-cli.py`; `python3 -m unittest discover -s scripts/tests -p test_native_cli_install.py` covers delayed metadata and install-time ETARGET/E404 with frozen latest. | 2026-10-16 |
 | Retry matching requires a complete package/version token; version-prefix substring matching accepts unrelated releases. | `test_native_cli_install.py` rejects numeric, prerelease, build and path suffix lookalikes for both CLIs. | 2026-10-16 |
+| A build watchdog can discard the install journal before the helper prints its tail. Flush allowlisted phase transitions as they happen and keep the journal for finer diagnosis. | [Installer regression](../../scripts/tests/test_native_cli_install.py) kills the helper during acquisition and during the wrapper's native version check, then reads the phase from stderr. | 2026-11-26 |
 
 ## Environment drift
 
