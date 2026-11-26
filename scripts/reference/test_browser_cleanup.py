@@ -1287,7 +1287,7 @@ async function run() {
   const entered = { path: signal.paths[0], requested_ms: 10, continued_ms: 510, status: 204 };
   const resource = { path: signal.paths[0], fetch_start_ms: 10, response_start_ms: null, response_end_ms: 25, response_status: null };
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, path: signal.paths[1] }), 700), false);
-  assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, response_start_ms: 26 }), 700), false);
+  assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, fetch_start_ms: 26 }), 700), false);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(resource), 700), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(entered), 701), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...entered, continued_ms: 615 }), 800), false);
@@ -1341,7 +1341,7 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
   global.fetch = () => new Promise(resolve => { resume = resolve; });
   const released = captureAndReleaseInput(page, 0, path, prefix);
   const resource = { name: new URL(path, location.href).href, initiatorType: 'fetch',
-    fetchStart: 10, responseStart: 11, responseEnd: 22 + responseDelay, responseStatus: status };
+    fetchStart: 10, responseStart: 9, responseEnd: 22 + responseDelay, responseStatus: status };
   if (!unavailable) {
     observe([{ ...resource, name: resource.name + '?other' }, { ...resource, initiatorType: 'xmlhttprequest' }]);
     assert.equal(disconnected, false);
@@ -1366,7 +1366,7 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
       observe([{ ...resource, responseStart: 0 }]);
     }
     assert.equal(disconnected, true);
-    assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: continuationDelay ? 11 : null, response_end_ms: 22 + responseDelay,
+    assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: continuationDelay ? 9 : null, response_end_ms: 22 + responseDelay,
       response_status: status, controller_ms: received + (continuationDelay ? 1 : 2) });
     assert.equal(receipt.continuation.continued_ms - receipt.resource.response_end_ms, continuationDelay);
     assert.deepEqual(releaseDeliveryTiming(receipt), {
@@ -1381,6 +1381,9 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
     }
     const unknown = { ...receipt.resource, response_status: null };
     assert.equal(releaseDeliveryTiming({ ...resourceOnly, resource: unknown }).write_to_response_end_ms, null);
+    assert.deepEqual(releaseDeliveryTiming({ ...receipt, resource: unknown }), releaseDeliveryTiming(receipt));
+    const earlyContinuation = { ...receipt.continuation, controller_ms: 3009 };
+    assert.equal(releaseDeliveryTiming({ ...receipt, resource: unknown, continuation: earlyContinuation }).write_to_response_end_ms, null);
     const failed = { ...receipt.resource, response_status: 0 };
     assert.equal(releaseDeliveryTiming({ ...receipt, resource: failed }).write_to_response_end_ms, null);
     assert.equal(releaseDeliveryTiming({ ...receipt, first_write_ms: 5000 }).write_to_response_end_ms, null);
