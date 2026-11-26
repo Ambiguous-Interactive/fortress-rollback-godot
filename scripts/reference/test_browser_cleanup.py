@@ -1401,9 +1401,11 @@ const receipt = { request_dispatched_ms: 2000, request_received_ms: 2700, first_
   resource: { fetch_start_ms: 550, request_start_ms: 1200, response_start_ms: 1660, response_end_ms: 1670, response_status: 204, controller_ms: 3200 } };
 const cap = { page_ms: 1650 };
 assert.deepEqual(releaseDeliveryTiming(receipt, cap), {
-  offset_ms: { min: 1489, max: 1502 }, write_to_response_end_ms: { min: 456, max: 473 },
-  handoff_to_response_end_ms: { min: 6, max: 23 }, hold_cap_to_response_end_ms: 20,
+  offset_ms: { min: 1479, max: 1502 }, write_to_response_end_ms: { min: 450, max: 473 },
+  handoff_to_response_end_ms: { min: 0, max: 23 }, hold_cap_to_response_end_ms: 20,
 });
+const earlyResponseStart = { ...receipt, resource: { ...receipt.resource, response_start_ms: 1200.02 } };
+assert.deepEqual(releaseDeliveryTiming(earlyResponseStart, cap), releaseDeliveryTiming(receipt, cap));
 const absent = { ...receipt, resource: { ...receipt.resource, request_start_ms: null, response_start_ms: null } };
 assert.deepEqual(releaseDeliveryTiming(absent, cap), {
   offset_ms: { min: 1479, max: 2152 }, write_to_response_end_ms: { min: 450, max: 499 },

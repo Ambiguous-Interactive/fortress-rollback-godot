@@ -1519,7 +1519,7 @@ function recordReleaseTiming(receipt, text, controller_ms) {
 
 function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, first_write_ms, handoff_ms, finished_ms, resource, continuation }, holdCap) {
   const timing = { offset_ms: null, write_to_response_end_ms: null, handoff_to_response_end_ms: null, hold_cap_to_response_end_ms: null };
-  const { fetch_start_ms, request_start_ms, response_start_ms, response_end_ms, response_status, controller_ms } = resource ?? {};
+  const { fetch_start_ms, request_start_ms, response_end_ms, response_status, controller_ms } = resource ?? {};
   const delivered = (response_status ?? continuation?.status) === 204 && (!continuation || continuation.status === 204);
   if (delivered && Number.isFinite(response_end_ms) && Number.isFinite(holdCap?.page_ms))
     timing.hold_cap_to_response_end_ms = response_end_ms - holdCap.page_ms;
@@ -1534,10 +1534,8 @@ function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, fir
   const validHandoff = [first_write_ms, handoff_ms, response_end_ms, controller_ms].every(Number.isFinite)
     && handoff_ms >= first_write_ms && handoff_ms <= controller_ms && (!Number.isFinite(finished_ms) || handoff_ms <= finished_ms);
   if (delivered && validHandoff) {
-    // The host never flushes headers before calling end(). The matched response follows that handoff.
-    const started = Number.isFinite(response_start_ms) && response_start_ms >= (requestStarted ? request_start_ms : fetch_start_ms)
-      && response_start_ms <= response_end_ms;
-    minOffset = Math.max(minOffset, handoff_ms - (started ? response_start_ms : response_end_ms) - precisionMs);
+    // Firefox can report response start next to request start even when the host withheld the headers.
+    minOffset = Math.max(minOffset, handoff_ms - response_end_ms - precisionMs);
   }
   if (maxOffset < minOffset) return timing;
   timing.offset_ms = { min: minOffset, max: maxOffset };
