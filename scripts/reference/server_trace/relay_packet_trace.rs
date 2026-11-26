@@ -3,6 +3,7 @@ use crate::protocol::{PlayerId, RoomId};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, VecDeque};
+use std::convert::identity;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -184,14 +185,14 @@ impl Trace {
 
         let mut published = 0;
         loop {
-            if let Some(request) = self.publish_request(paths, published)? {
+            if let Some(request) = self.publish_request(paths, published, identity)? {
                 published = request;
             }
             std::thread::sleep(PUBLISH_INTERVAL);
         }
     }
 
-    fn publish_request(&self, paths: &ReceiptPaths, published: u64) -> anyhow::Result<Option<u64>> {
+    fn publish_request<W: Write>(&self, paths: &ReceiptPaths, published: u64, wrap_output: impl FnOnce(File) -> W) -> anyhow::Result<Option<u64>> {
         let scope = self.scope.get().ok_or_else(|| anyhow::anyhow!("missing relay trace scope"))?;
         let Some(request) = paths.read_request(scope) else { return Ok(None) };
         if request.generation <= published || (published == 0 && request.generation != 1) {
@@ -210,8 +211,9 @@ impl Trace {
         }
 
         let streams = self.state.lock().map_err(|_| anyhow::anyhow!("relay trace lock poisoned"))?.snapshot(&request.links);
-        write_receipt(
-            File::create(&paths.scratch)?,
+        let mut writer = BufWriter::with_capacity(RECEIPT_WRITE_BUFFER_BYTES, wrap_output(File::create(&paths.scratch)?));
+        serde_json::to_writer(
+            &mut writer,
             &Snapshot {
                 version: 2,
                 request: request.generation,
@@ -221,15 +223,10 @@ impl Trace {
                 streams,
             },
         )?;
+        writer.flush()?;
+        drop(writer);
         Ok(paths.commit(scope, &request)?.then_some(request.generation))
     }
-}
-
-fn write_receipt(destination: impl Write, receipt: &impl Serialize) -> anyhow::Result<()> {
-    let mut writer = BufWriter::with_capacity(RECEIPT_WRITE_BUFFER_BYTES, destination);
-    serde_json::to_writer(&mut writer, receipt)?;
-    writer.flush()?;
-    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -501,7 +498,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let paths = ReceiptPaths::new(directory.path().join("receipt.json"));
         fs::write(&paths.request, "1").unwrap();
-        assert_eq!(trace.publish_request(&paths, 0).unwrap(), Some(1));
+        assert_eq!(trace.publish_request(&paths, 0, identity).unwrap(), Some(1));
         let snapshot: serde_json::Value = serde_json::from_slice(&fs::read(&paths.output).unwrap()).unwrap();
         let streams = &snapshot["streams"];
         assert_eq!(streams["unaddressed_writes"], 2 * (2 * CAPACITY + 8));
@@ -556,7 +553,7 @@ mod tests {
             let generation = published + 1;
             let request = if selected { format!("{generation}\n{}/{}", sender.simple(), recipient.simple()) } else { generation.to_string() };
             fs::write(&paths.request, &request).unwrap();
-            assert_eq!(trace.publish_request(&paths, published).unwrap(), Some(generation), "{request:?}");
+            assert_eq!(trace.publish_request(&paths, published, identity).unwrap(), Some(generation), "{request:?}");
             published = generation;
             let snapshot: serde_json::Value = serde_json::from_slice(&fs::read(&paths.output).unwrap()).unwrap();
             assert_eq!(snapshot["request"], published);
@@ -587,21 +584,21 @@ mod tests {
     // Value: protects=the final eight-player receipt's I/O budget; fails_when=JSON is emitted in small writes; why_new=receipt equality does not bound writes; seam=Write
     #[test]
     fn full_room_receipt_batches_file_writes() {
-        #[derive(Default)]
-        struct WriteCount {
-            bytes: usize,
-            writes: usize,
+        use std::cell::Cell;
+
+        struct CountedFile<'a> {
+            file: File,
+            writes: &'a Cell<usize>,
         }
 
-        impl Write for WriteCount {
+        impl Write for CountedFile<'_> {
             fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-                self.bytes += bytes.len();
-                self.writes += 1;
-                Ok(bytes.len())
+                self.writes.set(self.writes.get() + 1);
+                self.file.write(bytes)
             }
 
             fn flush(&mut self) -> io::Result<()> {
-                Ok(())
+                self.file.flush()
             }
         }
 
@@ -617,11 +614,16 @@ mod tests {
                 }
             }
         }
-        let streams = trace.state.lock().unwrap().snapshot(&[]);
-        let mut count = WriteCount::default();
-        write_receipt(&mut count, &streams).unwrap();
-        assert!((10 * 1024 * 1024..=14 * 1024 * 1024).contains(&count.bytes), "wrong receipt size: {}", count.bytes);
-        assert!(count.writes <= 128, "{} writes for {} bytes", count.writes, count.bytes);
+        let directory = tempfile::tempdir().unwrap();
+        let paths = ReceiptPaths::new(directory.path().join("receipt.json"));
+        fs::write(&paths.request, "3").unwrap();
+        let writes = Cell::new(0);
+        let generation = trace.publish_request(&paths, 2, |file| CountedFile { file, writes: &writes }).unwrap();
+        assert_eq!(generation, Some(3));
+        assert!(!paths.scratch.exists());
+        let bytes = paths.output.metadata().unwrap().len();
+        assert!((10 * 1024 * 1024..=14 * 1024 * 1024).contains(&bytes), "wrong receipt size: {bytes}");
+        assert!((1..=128).contains(&writes.get()), "{} writes for {bytes} bytes", writes.get());
     }
 
     // Value: protects=one atomic receipt per generation; fails_when=idle or superseded requests publish; why_new=packet joins do not exercise the publisher; seam=none
@@ -635,7 +637,7 @@ mod tests {
         let [sender, recipient, _, _] = roster;
         let trace = trace_for(room_id, &roster);
         let scope = trace.scope.get().unwrap();
-        let publish = |published| trace.publish_request(&paths, published).unwrap();
+        let publish = |published| trace.publish_request(&paths, published, identity).unwrap();
         assert_eq!(publish(0), None);
         for invalid in ["", "0", "01", "+1", "1\n", "２", "2", "18446744073709551616", "999999999999999999999"] {
             fs::write(&paths.request, invalid).unwrap();
