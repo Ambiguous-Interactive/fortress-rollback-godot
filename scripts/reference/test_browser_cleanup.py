@@ -1370,12 +1370,17 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
   }
 }
 
+let completed = false;
+process.once('beforeExit', code => {
+  if (code === 0 && !completed) throw new Error('relay release timing control did not finish');
+});
 (async () => {
   await run(450, 0);
   await run(0, 450);
   await run(0, 0, { unavailable: true });
   await run(0, 0, { status: 409 });
   await run(993, 0, { nearDeadline: true });
+  completed = true;
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
