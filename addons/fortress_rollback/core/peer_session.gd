@@ -840,7 +840,7 @@ func _valid_tokens(tokens: Variant, optional: bool) -> bool:
 
 func _receive(packet: Variant, attributed_sender: PackedByteArray, now_us: int, next_token: Variant) -> int:
 	var sender_index: int = _ids.find(attributed_sender)
-	if sender_index != -1 and _is_dropped(sender_index):
+	if sender_index != -1 and _is_gone(sender_index):
 		# A departed peer's late packets no longer change the match.
 		return I.Code.OK
 	var endpoint: Endpoint = _peers[attributed_sender.hex_encode()]
