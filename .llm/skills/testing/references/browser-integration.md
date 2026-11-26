@@ -160,7 +160,7 @@ predicate, one timely receipt per page, and the original deadline.
 Pair each bounded warmup tick's queue counts with the state and frame frontier
 from that physics turn. Preserve the first valid cutoff and its controller
 receipt even if later diagnostic reads fail. A last sample below the gate
-describes the observation, and a late receipt describes controller delivery.
+describes the observation, and a late receipt describes controller delivery. Keep optional packet diagnostics independent of the gate.
 Start readiness sampling in the same page call that arms a hold. Keep page
 clock marks and controller receipt times on their own clocks.
 Publish the arm, first readiness and first cap hit while the page runs. Keep
@@ -262,10 +262,10 @@ Apply each page observation at its completion time before waiting for sibling
 pages. Check that peer's existing deadline first, then rearm the earliest live
 deadline. Exercise asymmetric timely completions and exact expired boundaries;
 an all-pages barrier can otherwise discard valid progress against stale clocks.
-Retain timely peer receipts, clock brackets, and prior complete proofs on read
-failure. Require a complete round for close proof. Ignore reads past the shared deadline.
+Retain timely peer receipts, clock brackets, and prior complete proofs on read failure.
+Require a complete round for close proof within the shared deadline, with optional calibration off the snapshot retry path.
 Publish [close stages and release timing](../../../../docs/native-backend-migration.md#session-boundary) independently of the final page read.
-Bracket fetch start with controller dispatch and request receipt. Require HTTP 204 and bound response end by controller receipt.
+Bracket fetch start, network request start, and response end with controller dispatch, receipt, and handoff. Require the exact HTTP 204.
 Firefox can report response start before host write. Keep it for diagnosis. Run stock and each delay on the same runner, preserving every failed attempt.
 An interval spanning the required gap is ambiguous. An upper bound below
 the threshold proves that the observed send fell short of it.

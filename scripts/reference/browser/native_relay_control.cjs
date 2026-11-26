@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
+const { createHash } = require('node:crypto');
 const { setTimeout: pause } = require('node:timers/promises');
 
 function events(trace, stage, family) {
@@ -272,7 +273,61 @@ function checkSameLinkRetention(server, browsers, before, resumed, ordinals) {
   return { request: server.request, before, resumed, pressure, frontier };
 }
 
-function joinRelayReceipts(server, pages) {
+function validateRelayExpiryFrontier(frontier, uuid, local, at_ms) {
+  const { room, sender, recipient, packets } = frontier ?? {};
+  const requireValid = (condition, field) => assert.ok(condition, `invalid native expiry frontier ${field}`);
+  requireValid(typeof room === 'string' && /^[0-9a-f]{32}$/.test(room)
+    && local && sender === uuid.replaceAll('-', '') && recipient === local.replaceAll('-', '')
+    && Array.isArray(packets) && packets.length <= 2, 'scope');
+  const uint = (value, max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value > 0 && value <= max;
+  const mark = (value, ceiling, stage) => {
+    requireValid(uint(value?.ordinal) && Number.isFinite(value.at_ms) && value.at_ms >= 0 && value.at_ms <= ceiling, stage);
+    return { ordinal: value.ordinal, at_ms: value.at_ms };
+  };
+  const seen = new Set();
+  return { room, sender, recipient, packets: packets.map(packet => {
+    const { kind, epoch, seq, envelope, stages } = packet ?? {};
+    requireValid((kind === 2 || kind === 4) && !seen.has(kind) && uint(epoch, 0xffffffff)
+      && typeof seq === 'string' && /^[1-9][0-9]{0,19}$/.test(seq) && BigInt(seq) <= 0xffffffffffffffffn
+      && typeof envelope === 'string' && /^(?:[0-9a-f]{2}){85,1257}$/.test(envelope)
+      && envelope.startsWith('4653523101' + room + sender + recipient), 'stamp and envelope');
+    seen.add(kind);
+    const bytes = Buffer.from(envelope, 'hex');
+    const payload = bytes.subarray(57);
+    requireValid(bytes.readUInt32LE(53) === payload.length && payload.subarray(0, 16).toString('hex') === room
+      && payload.readUInt32LE(16) === 0x000252f5 && payload.readUInt16LE(20) !== 0 && payload.readUInt32LE(24) === kind, 'native header');
+    if (kind === 4) requireValid(bytes.length === 103, 'quality report length');
+    else {
+      requireValid(bytes.length >= 109, 'input length');
+      const count = bytes.readBigUInt64LE(85);
+      requireValid(count <= BigInt(Math.floor((bytes.length - 109) / 7)), 'input status count');
+      const statusesEnd = 93 + Number(count) * 7;
+      requireValid(bytes.readBigUInt64LE(statusesEnd + 8) === BigInt(bytes.length - statusesEnd - 16), 'input body size');
+      for (let offset = 93; offset < statusesEnd; offset += 7) requireValid(bytes[offset] <= 1, 'input status value');
+    }
+    const native = mark(stages?.native, at_ms, 'native stage');
+    const sdk = stages.sdk === undefined ? null : mark(stages.sdk, native.at_ms, 'SDK stage');
+    const raw = stages.raw === undefined ? null : mark(stages.raw, sdk?.at_ms ?? native.at_ms, 'raw stage');
+    const hash = data => createHash('sha256').update(data).digest('hex');
+    return { sender, recipient, kind, epoch, seq, envelope_bytes: bytes.length,
+      envelope_sha256: hash(bytes), payload_sha256: hash(payload), stages: { raw, sdk, native } };
+  }) };
+}
+
+function relayExpiryRows(expiries, joined, selectedLinks) {
+  const byStamp = new Map((joined?.rows ?? []).map(row => [stampKey(row), row]));
+  return expiries.flatMap(({ frontier }) => (frontier?.packets ?? []).map(({ stages, ...packet }) => {
+    const link = `${packet.sender}/${packet.recipient}`;
+    const upstream_scope = !selectedLinks.length ? 'room' : selectedLinks.includes(link) ? 'focused' : 'outside-focus';
+    const candidate = byStamp.get(stampKey(packet));
+    const row = candidate && sameEnvelope(packet, candidate) ? candidate : null;
+    const missing = ['send', 'ingress', 'write'].filter(stage => stage === 'send' ? row?.send == null : !row?.[stage].length);
+    for (const stage of ['raw', 'sdk']) if (!stages[stage]) missing.push(stage);
+    return { ...packet, upstream_scope, missing };
+  }));
+}
+
+function joinRelayReceipts(server, pages, expiries = []) {
   if (!server?.streams) return null;
   const rows = new Map();
   const sends = new Map();
@@ -285,8 +340,8 @@ function joinRelayReceipts(server, pages) {
       send: null, ingress: [], write: [], raw: [], sdk: [], native: [], native_accepted: [] });
     const row = rows.get(key);
     assert.ok(sameEnvelope(row, packet) && row.kind === packet.kind && row.family === family, `relay receipt disagrees for ${key}`);
-    row[stage].push(packet.ordinal);
-    if (stage === 'native' && packet.code === 0) row.native_accepted.push(packet.ordinal);
+    if (!row[stage].includes(packet.ordinal)) row[stage].push(packet.ordinal);
+    if (stage === 'native' && packet.code === 0 && !row.native_accepted.includes(packet.ordinal)) row.native_accepted.push(packet.ordinal);
     return row;
   }
   for (const page of pages) {
@@ -301,6 +356,17 @@ function joinRelayReceipts(server, pages) {
         const key = sendKey(packet);
         if (!sends.has(key)) sends.set(key, []);
         sends.get(key).push({ family, packet, sockets: page.sockets });
+      }
+    }
+  }
+  for (const { frontier } of expiries) {
+    if (!frontier) continue;
+    assert.ok(frontier.room === server.room && server.roster.includes(frontier.sender) && server.roster.includes(frontier.recipient),
+      'native expiry frontier changed the relay scope');
+    for (const { stages, ...packet } of frontier.packets) {
+      const family = packet.kind === 2 ? 'input' : 'quality';
+      for (const [stage, observation] of Object.entries(stages)) {
+        if (observation) attach(family, stage, { ...packet, ...observation, code: stage === 'native' ? 0 : null });
       }
     }
   }
@@ -336,4 +402,4 @@ function completeRelayRow(row) {
 }
 
 module.exports = { assertJoinedRelayControl, bindRelayServer, checkSameLinkRetention, createRelayServerReader, exerciseRelayDelivery,
-  exerciseRelayRetention, exerciseSameLinkRetention, joinRelayReceipts, readRelayWireReceipt };
+  exerciseRelayRetention, exerciseSameLinkRetention, joinRelayReceipts, readRelayWireReceipt, relayExpiryRows, validateRelayExpiryFrontier };

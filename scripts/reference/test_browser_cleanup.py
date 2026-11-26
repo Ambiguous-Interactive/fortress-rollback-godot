@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(shutil.which('node'), 'Node is required for actual browser entrypoint controls')
 class BrowserCleanupTests(unittest.TestCase):
+    def test_native_webkit_https_departure_clock_requires_exact_ordered_exchange(self):
+        subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_departure_clock.test.cjs')], check=True, timeout=10)
+
     def test_native_relay_hold_keeps_exact_receipt_when_final_read_times_out(self):
         subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_relay_hold.test.cjs')], check=True, timeout=10)
 
@@ -431,6 +434,129 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs')], check=True, timeout=10)
+
+    def test_native_expiry_keeps_the_last_accepted_stamps_beyond_ring_pressure(self):
+        # Value: protects=expiry-time packet evidence; fails_when=newer raw or refused packets evict the native acceptance; seam=browser trace and departure receipt
+        script = r"""
+const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
+const { createRelayWireTrace } = require(process.argv[1]);
+const { instrumentPostRelease, postReleaseCheckpoint } = require(process.argv[2]);
+const { joinRelayReceipts, relayExpiryRows } = require(process.argv[3]);
+const [room, source, local, other] = ['11', '22', '33', '44'].map(value => value.repeat(16));
+const roster = [source, local, other];
+const hex = value => Buffer.from(value, 'hex');
+const trace = createRelayWireTrace();
+trace.bind(room, local, roster);
+const bytes = (sender, kind, mutation = 0) => {
+  const body = Buffer.alloc({2: 31, 4: 18, 5: 16}[kind]);
+  if (kind === 2) {
+    body.writeBigUInt64LE(1n, 0);
+    body.writeInt32LE(420, 9);
+  }
+  body[body.length - 1] = mutation;
+  const payload = Buffer.concat([hex(room), hex('f552020001000000'), Buffer.from([kind, 0, 0, 0]), body]);
+  return Buffer.concat([hex('4653523101'), hex(room), hex(sender), hex(local), Buffer.from([payload.length, 0, 0, 0]), payload]);
+};
+const name = value => Buffer.concat([Buffer.from([0xa0 + value.length]), Buffer.from(value)]);
+function arrive(sender, buffer, seq) {
+  const stamp = Buffer.alloc(9);
+  stamp[0] = 0xcf;
+  stamp.writeBigUInt64BE(BigInt(seq), 1);
+  return trace.record('raw', Buffer.concat([hex('85'), name('from_player'), hex('c410'), hex(sender),
+    name('encoding'), name('message_pack'), name('payload'), Buffer.from([0xc4, buffer.length]), buffer,
+    name('seq'), stamp, name('epoch'), hex('01')]));
+}
+const inBytes = bytes(source, 2);
+const report = bytes(source, 4);
+for (const [packet, seq] of [[inBytes, '3'], [report, '4']]) {
+  arrive(source, packet, seq);
+  trace.recordEngine('sdk', source, packet.toString('hex'), 1, seq, null);
+  trace.recordEngine('native', source, packet.subarray(57).toString('hex'), 1, seq, 0);
+}
+for (let i = 5; i <= 528; i++) {
+  for (const [sender, kind] of [[source, 2], [source, 4], [other, 4]]) {
+    const packet = bytes(sender, kind);
+    arrive(sender, packet, i);
+    trace.recordEngine('sdk', sender, packet.toString('hex'), 1, String(i), null);
+    trace.recordEngine('native', sender, packet.subarray(57).toString('hex'), 1, String(i), sender === source ? 1 : 0);
+  }
+}
+const reply = bytes(source, 5);
+arrive(source, reply, 529);
+trace.recordEngine('sdk', source, reply.toString('hex'), 1, '529', null);
+trace.recordEngine('native', source, reply.subarray(57).toString('hex'), 1, '529', 0);
+const consoleLines = [];
+const savedDebug = console.debug;
+console.debug = line => consoleLines.push(line);
+const format = uuid => uuid.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+const frozen = roster.map(format);
+const prefix = 'fortress native post-release ';
+globalThis.window = { fortressNativeWire: { relayExpiryFrontier: sender => trace.expiryFrontier(sender) } };
+instrumentPostRelease(prefix, 40);
+window.fortressNativePostRelease.bindDeparture(format(local), frozen);
+window.fortressNativePostRelease.recordDeparture('native_expiry', 1, JSON.stringify({
+  observed_us: 4000, sdk_queued: 0, sdk_peak: 1, last_accepted: null,
+}));
+window.fortressNativePostRelease.recordDeparture('native_expiry', 3);
+console.debug = savedDebug;
+assert.equal(consoleLines.length, 1);
+const latched = {};
+postReleaseCheckpoint(latched, consoleLines[0], {controller_ms: 100, controller_order: 1}, frozen, format(local));
+assert.ok(latched.native_expiry?.frontier);
+assert.deepEqual(latched.native_expiry.frontier.packets.map(packet => packet.seq), ['3', '4']);
+assert.deepEqual(latched.native_expiry.frontier.packets.map(packet => Object.keys(packet.stages)), [
+  ['raw', 'sdk', 'native'], ['raw', 'sdk', 'native'],
+]);
+const altered = JSON.parse(consoleLines[0].slice(prefix.length));
+altered.frontier.packets[1].envelope = bytes(other, 4).toString('hex');
+const rejected = {};
+postReleaseCheckpoint(rejected, prefix + JSON.stringify(altered), {controller_ms: 100, controller_order: 2}, frozen, format(local));
+assert.ok(rejected.native_expiry, 'retain the expiry independently of diagnostic validation');
+assert.equal(rejected.native_expiry.frontier, undefined);
+assert.match(rejected.checkpoint_error, /invalid native expiry frontier/);
+const expiry = [latched.native_expiry];
+const stage = (input = [], quality = []) => ({ sync: { events: [] }, input: { events: input }, quality: { events: quality } });
+const digest = value => createHash('sha256').update(value).digest('hex');
+const ingress = { sender: source, recipient: local, epoch: 1, seq: '3', kind: 2, envelope_bytes: inBytes.length,
+  envelope_sha256: digest(inBytes), ordinal: 10, socket_ordinal: 20 };
+const server = { room, roster, streams: { ingress: stage([ingress]), write: stage([{ ...ingress, actual_recipient: local }]) } };
+const sourcePage = { room, local: source, sockets: 1, streams: { raw: stage(), sdk: stage(), native: stage(),
+  send: stage([{ ...ingress, ordinal: 30 }]) } };
+const joined = joinRelayReceipts(server, [sourcePage, { error: 'final read timed out' }], expiry);
+const [inputRow, reportRow] = relayExpiryRows(expiry, joined, [source + '/' + local]);
+assert.deepEqual(inputRow.missing, []);
+assert.equal(inputRow.upstream_scope, 'focused');
+assert.deepEqual(reportRow.missing, ['send', 'ingress', 'write']);
+const withoutServer = relayExpiryRows(expiry, null, []);
+assert.deepEqual(withoutServer.map(row => row.missing), [['send', 'ingress', 'write'], ['send', 'ingress', 'write']]);
+assert.equal(withoutServer[0].upstream_scope, 'room');
+assert.equal(relayExpiryRows(expiry, null, [other + '/' + local])[0].upstream_scope, 'outside-focus');
+const afterRead = structuredClone(expiry);
+afterRead[0].frontier.packets[0].stages.raw = null;
+assert.deepEqual(relayExpiryRows(afterRead, joined, [source + '/' + local])[0].missing, ['raw'], 'later page data cannot fill a missing pre-acceptance stage');
+assert.equal(trace.expiryFrontier(other).packets.find(packet => packet.kind === 2), undefined);
+const nativeOnly = bytes(other, 2);
+trace.recordEngine('native', other, nativeOnly.subarray(57).toString('hex'), 1, '530', 0);
+const frontier = trace.expiryFrontier(other);
+const nativeOnlyPin = frontier.packets.find(packet => packet.kind === 2);
+assert.equal(nativeOnlyPin.stages.raw, undefined);
+assert.equal(nativeOnlyPin.stages.sdk, undefined);
+const nativeOnlyReceipt = {};
+const original = JSON.parse(consoleLines[0].slice(prefix.length));
+postReleaseCheckpoint(nativeOnlyReceipt, prefix + JSON.stringify({
+  ...original, frontier, uuid: format(other), endpoint: frozen.indexOf(format(other)) + 1, page_ms: performance.now(),
+}), {controller_ms: 101, controller_order: 3}, frozen, format(local));
+assert.equal(nativeOnlyReceipt.checkpoint_error, undefined);
+const nativeOnlyInput = nativeOnlyReceipt.native_expiry.frontier.packets.find(packet => packet.kind === 2);
+assert.equal(nativeOnlyInput.seq, '530');
+assert.ok(nativeOnlyInput.stages.native.ordinal > 0);
+assert.equal(nativeOnlyInput.stages.sdk, null);
+assert.equal(nativeOnlyInput.stages.raw, null);
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs'),
+                        str(ROOT / 'scripts/reference/browser/native_online.cjs'), str(ROOT / 'scripts/reference/browser/native_relay_control.cjs')],
+                       check=True, timeout=10)
 
     def test_same_link_pressure_requires_original_and_exact_blocked_packets(self):
         # Value: protects=pressure confined to the raw boundary; fails_when=missing originals or leaked stamped packets pass; seam=control receipt
@@ -1011,6 +1137,160 @@ assert.equal(after.relaySenders[remote], wireBeforeCutoff.relaySenders[remote] +
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]
         subprocess.run(command, check=True, timeout=10)
 
+    def test_native_warmup_keeps_exact_input_stages_without_a_final_read(self):
+        # Value: protects=bounded exact input evidence; fails_when=unavailable stages are inferred or physical input is overwritten; seam=warmup console
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { instrumentNativeWire, createWarmupBarrier, WARMUP_CHECKPOINT } = require(process.argv[1]);
+const { createRelayWireTrace } = require(process.argv[2]);
+const roster = Array.from({length: 8}, (_, i) => (i + 16).toString(16).repeat(16));
+const [sender, receiver, other] = roster;
+const room = '01'.repeat(16);
+const payload = (kind, start, ack) => {
+  const result = Buffer.alloc(kind === 2 ? 109 : 32);
+  result.set(Buffer.from(room, 'hex'));
+  result.set([0xf5, 0x52, 2, 0, 1], 16);
+  result.writeUInt32LE(kind, 24);
+  if (kind === 2) {
+    result.writeBigUInt64LE(8n, 28);
+    result.writeInt32LE(start, 92);
+    result.writeInt32LE(ack, 96);
+    result.writeBigUInt64LE(1n, 100);
+    result[108] = 17;
+  } else {
+    result.writeInt32LE(ack, 28);
+  }
+  return result;
+};
+const relayFrame = (payload, from, to) => {
+  const frame = Buffer.alloc(57 + payload.length);
+  frame.set([70, 83, 82, 49, 1]);
+  frame.set(Buffer.from(room + from + to, 'hex'), 5);
+  frame.writeUInt32LE(payload.length, 53);
+  frame.set(payload, 57);
+  return frame;
+};
+const name = text => Buffer.concat([Buffer.from([0xa0 + text.length]), Buffer.from(text)]);
+const delivery = (frame, from, seq) => Buffer.concat([Buffer.from([0x85]), name('from_player'),
+  Buffer.from([0xc4, 16]), Buffer.from(from, 'hex'), name('encoding'), name('message_pack'),
+  name('payload'), Buffer.from([0xc4, frame.length]), frame, name('seq'), Buffer.from([seq]), name('epoch'), Buffer.from([1])]);
+class Socket {
+  static OPEN = 1;
+  readyState = Socket.OPEN;
+  addEventListener(name, listener) { this[name] = listener; }
+  send() { if (this.reject) throw new Error('socket send failed'); }
+}
+let time = 1;
+const window = {}, tasks = [];
+const barrier = createWarmupBarrier(8, () => time);
+const realm = {
+  window, performance: {now: () => time}, console: {debug: value => barrier.record(1, value)},
+  setTimeout: callback => tasks.push(callback),
+  Uint8Array, ArrayBuffer, DataView, WebSocket: Socket, RTCPeerConnection: class {},
+};
+runInNewContext(`(${instrumentNativeWire})(false, ${JSON.stringify(WARMUP_CHECKPOINT)}, (${createRelayWireTrace})())`, realm);
+const socket = new window.WebSocket();
+const wire = window.fortressNativeWire;
+wire.bind(room, receiver, roster);
+const input9 = payload(2, 9, 8);
+socket.message({data: delivery(relayFrame(input9, sender, receiver), sender, 11)});
+tasks.shift()?.();
+const early = barrier.checkpoints[1]?.input_link;
+assert.ok(early, 'warmup checkpoint must carry the addressed raw input');
+assert.equal(early.sender, sender);
+assert.equal(early.recipient, receiver);
+assert.equal(early.raw.first.payload, input9.toString('hex'));
+assert.equal(early.raw.first.start_frame, 9);
+assert.equal(early.raw.first.ack_frame, 8);
+assert.equal(early.raw.first.seq, '11');
+assert.equal(early.raw.first.epoch, 1);
+assert.equal(early.sdk.first, null);
+assert.equal(early.native.first, null);
+assert.equal(early.ack.first, null);
+const input10 = payload(2, 10, 9);
+wire.observeWarmupInput('sdk', sender, input9.toString('hex'), -1);
+wire.observeWarmupInput('native', sender, input9.toString('hex'), 6);
+wire.observeWarmupInput('native', sender, input9.toString('hex'), 0);
+wire.observeWarmupInput('sdk', other, input10.toString('hex'), -1);
+wire.observeWarmupInput('sdk', sender, input10.toString('hex'), 0);
+wire.observeWarmupInput('native', sender, 'g'.repeat(12), 0);
+const malformed = Buffer.from(input10);
+malformed.writeBigUInt64LE(2n, 100);
+socket.message({data: delivery(relayFrame(malformed, sender, receiver), sender, 14)});
+const input11 = payload(2, 11, 9);
+socket.message({data: relayFrame(input11, sender, receiver)});
+const unstamped = wire.warmupStatus().input_link.raw.recent;
+assert.ok(unstamped, 'addressed bytes survive without a physical stamp');
+assert.equal(unstamped.payload, input11.toString('hex'));
+assert.equal(unstamped.epoch, null);
+assert.equal(unstamped.seq, null);
+socket.message({data: delivery(relayFrame(input10, sender, receiver), other, 15)});
+const mismatched = wire.warmupStatus().input_link.raw.recent;
+assert.equal(mismatched.payload, input10.toString('hex'));
+assert.equal(mismatched.epoch, null);
+assert.equal(mismatched.seq, null);
+socket.message({data: relayFrame(input10, other, receiver)});
+socket.message({data: relayFrame(input10, sender, other)});
+socket.message({data: delivery(relayFrame(input10, sender, receiver), sender, 12)});
+socket.message({data: delivery(relayFrame(input9, sender, receiver), sender, 13)});
+const ack = payload(3, null, 10);
+socket.send(relayFrame(ack, receiver, other));
+socket.send(relayFrame(ack, other, sender));
+socket.reject = true;
+assert.throws(() => socket.send(relayFrame(ack, receiver, sender)), /socket send failed/);
+assert.equal(wire.warmupStatus().input_link.ack.count, 0);
+socket.reject = false;
+socket.send(relayFrame(ack, receiver, sender));
+time = 1050;
+wire.finishWarmup('playing', 20, 12);
+assert.deepEqual(barrier.errors, Array(8).fill(null));
+const sample = barrier.checkpoints[1].input_link;
+assert.equal(sample.raw.count, 5);
+assert.equal(sample.raw.first.seq, '11', 'duplicates cannot change the earliest exact delivery');
+assert.equal(sample.raw.recent.seq, '12', 'return to initial bytes cannot overwrite their most recent distinct replacement');
+assert.equal(sample.raw.recent.payload, input10.toString('hex'));
+assert.equal(sample.sdk.count, 1);
+assert.equal(sample.sdk.recent, null);
+assert.equal(sample.native.count, 2);
+assert.equal(sample.native.first.code, 6);
+assert.equal(sample.native.recent.code, 0);
+assert.equal(sample.native.recent.payload, input9.toString('hex'));
+assert.equal(sample.ack.count, 1);
+assert.equal(sample.ack.first.ack_frame, 10);
+assert.equal(sample.ack.first.payload, ack.toString('hex'));
+wire.observeWarmupInput('native', sender, input10.toString('hex'), 0);
+socket.message({data: relayFrame(input10, sender, receiver)});
+socket.send(relayFrame(ack, receiver, sender));
+assert.equal(wire.warmupStatus().input_link.native.count, 2);
+assert.equal(wire.warmupStatus().input_link.raw.count, 5);
+assert.equal(wire.warmupStatus().input_link.ack.count, 1);
+const wrong = JSON.parse(JSON.stringify(barrier.checkpoints[1]));
+wrong.input_link.sender = other;
+const brokenStream = JSON.parse(JSON.stringify(barrier.checkpoints[1]));
+brokenStream.input_link.raw.count = 0;
+barrier.record(2, WARMUP_CHECKPOINT + JSON.stringify(brokenStream));
+assert.match(barrier.inputErrors[2], /invalid warmup input link/);
+assert.equal(barrier.errors[2], null);
+assert.equal(barrier.checkpoints[2].input_link, undefined);
+(async () => {
+  const gate = createWarmupBarrier(8, () => time);
+  await gate.wait(async () => {
+    for (const [index, recipient] of roster.entries()) {
+      const page = { ...wrong, recipient, links: roster.filter(sender => sender !== recipient).map(sender => ({sender})),
+        input_link: index === 1 ? wrong.input_link : undefined };
+      gate.record(index, WARMUP_CHECKPOINT + JSON.stringify(page));
+    }
+  }, 50);
+  assert.equal(gate.received.filter(value => value !== null).length, 8, 'invalid optional evidence cannot block the warmup gate');
+  assert.match(gate.inputErrors[1], /invalid warmup input link/);
+  assert.equal(gate.errors[1], null);
+  assert.equal(gate.checkpoints[1].input_link, undefined);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs'),
+                        str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs')], check=True, timeout=10)
+
     def test_native_input_and_terminal_holds_have_distinct_liveness(self):
         # Value: protects=physical input/control hold; fails_when=control blocked in recovery or leaks during expiry; seam=browser send and receive
         script = r"""
@@ -1252,15 +1532,21 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
         script = r"""
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { captureAndReleaseInput, createReleaseSignal, recordReleaseTiming } = require(process.argv[1]);
+const { captureAndReleaseInput, createReleaseSignal, recordReleaseTiming, releaseDeliveryTiming } = require(process.argv[1]);
 const signal = createReleaseSignal(2);
-const server = http.createServer((req, res) => { if (!signal.handle(req, res)) res.writeHead(404).end(); });
+let redirectsFollowed = 0;
+const server = http.createServer((req, res) => {
+  if (req.url === '/redirect') res.writeHead(302, { Location: '/unexpected' }).end();
+  else if (req.url === '/unexpected') { redirectsFollowed++; res.writeHead(204).end(); }
+  else if (!signal.handle(req, res)) res.writeHead(404).end();
+});
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = 'http://127.0.0.1:' + server.address().port;
   const path = index => origin + signal.paths[index];
   assert.deepEqual(signal.timings(), signal.paths.map(path => ({
-    path, request_dispatched_ms: null, request_received_ms: null, first_write_ms: null, finished_ms: null, continuation: null, resource: null,
+    path, request_dispatched_ms: null, request_received_ms: null, first_write_ms: null, handoff_ms: null, finished_ms: null,
+    continuation: null, resource: null,
   })));
   let evaluations = 0, releases = 0;
   global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: {
@@ -1284,7 +1570,7 @@ async function run() {
   assert.deepEqual(receipts.map(receipt => receipt.index), [0, 1]);
   assert.equal(evaluations, 2);
   const receipt = signal.timings()[0];
-  assert.ok(receipt.request_received_ms <= receipt.first_write_ms && receipt.first_write_ms <= receipt.finished_ms);
+  assert.ok(receipt.request_received_ms <= receipt.first_write_ms && receipt.first_write_ms <= receipt.handoff_ms && receipt.handoff_ms <= receipt.finished_ms);
   assert.equal(receipt.continuation, null);
   assert.equal(receipt.resource, null);
   const entered = { path: signal.paths[0], requested_ms: 10, continued_ms: 510, status: 204 };
@@ -1294,11 +1580,25 @@ async function run() {
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(resource), 700), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(entered), 701), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...entered, continued_ms: 615 }), 800), false);
-  assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: null, response_end_ms: 25, response_status: null, controller_ms: 700 });
+  assert.deepEqual(receipt.resource, { fetch_start_ms: 10, request_start_ms: null, response_start_ms: null, response_end_ms: 25,
+    response_status: null, controller_ms: 700 });
   assert.deepEqual(receipt.continuation, { requested_ms: 10, continued_ms: 510, status: 204, controller_ms: 701 });
   assert.equal(releases, 2);
   assert.equal((await fetch(path(0))).status, 409);
   assert.throws(() => signal.release(performance.now() + 500), /relay release requests unavailable/);
+  const redirect = { path: origin + '/redirect', request_dispatched_ms: 1, request_received_ms: 3,
+    resource: { fetch_start_ms: 2, response_end_ms: 4, response_status: 302, controller_ms: 10 } };
+  assert.ok(releaseDeliveryTiming(redirect).offset_ms, 'a resource timing entry alone can otherwise supply an offset');
+  console.debug = text => {
+    assert.ok(text.startsWith('timing '));
+    recordReleaseTiming(redirect, text.slice('timing '.length), 11);
+  };
+  await assert.rejects(captureAndReleaseInput(page, 0, redirect.path, 'timing '), /fetch failed/);
+  assert.equal(redirectsFollowed, 0);
+  assert.equal(redirect.fetch_failed, true);
+  assert.equal(redirect.response_mismatch, undefined);
+  assert.equal(releaseDeliveryTiming(redirect).offset_ms, null);
+  assert.equal(releases, 2);
 }
 const deadline = setTimeout(() => { throw new Error('relay release signal test did not settle'); }, 3000);
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
@@ -1347,31 +1647,37 @@ for (const outcome of ['delivered', 'cancelled', 'expired']) {
   assert.equal(host.handle({ url: host.paths[0], method: 'GET' }, response), true);
   host.release(now + (outcome === 'expired' ? 449 : 500));
   const [receipt] = host.timings();
+  assert.equal(receipt.handoff_ms, null);
   assert.equal(receipt.finished_ms, null);
   if (outcome === 'cancelled') host.cancel();
   else advance();
   assert.equal(timer, undefined);
   assert.equal(response.destroyed, outcome === 'delivered' ? undefined : true);
+  assert.equal(receipt.handoff_ms, outcome === 'delivered' ? receipt.first_write_ms + 450 : null);
   assert.equal(receipt.finished_ms, outcome === 'delivered' ? receipt.first_write_ms + 450 : null);
 }
 
 (async () => {
-  const receipt = { request_dispatched_ms: 2000, request_received_ms: 2700, first_write_ms: 2701, finished_ms: 2702,
+  const receipt = { request_dispatched_ms: 2000, request_received_ms: 2700, first_write_ms: 2701, handoff_ms: 2702, finished_ms: 3151,
     resource: { fetch_start_ms: 550, response_end_ms: 1250, response_status: 204, controller_ms: 3600 } };
   assert.throws(() => assertReleaseDelay([receipt], 'delivery'), /lacks the delivery delay/);
-  assertReleaseDelay([{ ...receipt, finished_ms: 3151 }], 'delivery');
+  assertReleaseDelay([{ ...receipt, handoff_ms: 3151 }], 'delivery');
+  assert.throws(() => assertReleaseDelay([{ ...receipt, handoff_ms: 3160 }], 'delivery'), /lacks release delivery timing/);
   assert.throws(() => assertReleaseDelay([receipt], 'continuation'), /lacks the continuation delay/);
   const continuation = { status: 204, controller_ms: 3900, fetch_resolved_ms: 1252, continued_ms: 1702 };
   assertReleaseDelay([{ ...receipt, continuation }], 'continuation');
   assert.throws(() => assertReleaseDelay([{ ...receipt, continuation: { ...continuation, status: 500 } }], 'continuation'),
     /lacks release delivery timing/);
-  assert.throws(() => assertReleaseDelay([{ ...receipt, resource: null, finished_ms: 3151 }], 'delivery'), /lacks release delivery timing/);
+  assert.throws(() => assertReleaseDelay([{ ...receipt, resource: null, handoff_ms: 3151 }], 'delivery'), /lacks release delivery timing/);
   console.debug = () => {};
   const page = { evaluate(callback, argument) { return callback(argument); } };
   for (const budget of ['1000000', '400000']) {
-    global.fetch = async () => ({ status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': budget }) });
+    global.fetch = async (url, options) => {
+      assert.equal(options.redirect, 'error');
+      return { url, status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': budget }) };
+    };
     global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: { status: () => ({}), release: () => 'released' } };
-    const release = captureAndReleaseInput(page, 0, '/native-release/control', '', 450);
+    const release = captureAndReleaseInput(page, 0, 'https://localhost/native-release/control', '', 450);
     await Promise.resolve();
     assert.equal(window.fortressNativeStalled, undefined);
     advance();
@@ -1382,6 +1688,40 @@ for (const outcome of ['delivered', 'cancelled', 'expired']) {
     }
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
+    def test_native_relay_release_uses_network_landmarks_to_bound_handoff(self):
+        # Value: protects=causal release bounds; fails_when=fetch dispatch jitter hides host handoff or a contradictory landmark supplies a bound
+        script = r"""
+const assert = require('node:assert/strict');
+const { releaseDeliveryTiming } = require(process.argv[1]);
+const receipt = { request_dispatched_ms: 2000, request_received_ms: 2700, first_write_ms: 2701, handoff_ms: 3151, finished_ms: 3152,
+  resource: { fetch_start_ms: 550, request_start_ms: 1200, response_start_ms: 1660, response_end_ms: 1670, response_status: 204, controller_ms: 3200 } };
+const cap = { page_ms: 1650 };
+assert.deepEqual(releaseDeliveryTiming(receipt, cap), {
+  offset_ms: { min: 1479, max: 1502 }, write_to_response_end_ms: { min: 450, max: 473 },
+  handoff_to_response_end_ms: { min: 0, max: 23 }, hold_cap_to_response_end_ms: 20,
+});
+const earlyResponseStart = { ...receipt, resource: { ...receipt.resource, response_start_ms: 1200.02 } };
+assert.deepEqual(releaseDeliveryTiming(earlyResponseStart, cap), releaseDeliveryTiming(receipt, cap));
+for (const request_start_ms of [549, 1671]) {
+  const outOfOrder = { ...receipt, resource: { ...receipt.resource, request_start_ms } };
+  assert.deepEqual(releaseDeliveryTiming(outOfOrder, cap), {
+    offset_ms: null, write_to_response_end_ms: null, handoff_to_response_end_ms: null, hold_cap_to_response_end_ms: null,
+  });
+}
+const absent = { ...receipt, resource: { ...receipt.resource, request_start_ms: null, response_start_ms: null } };
+assert.deepEqual(releaseDeliveryTiming(absent, cap), {
+  offset_ms: { min: 1479, max: 2152 }, write_to_response_end_ms: { min: 450, max: 499 },
+  handoff_to_response_end_ms: { min: 0, max: 49 }, hold_cap_to_response_end_ms: 20,
+});
+const contradictory = { ...receipt, resource: { ...receipt.resource, request_start_ms: 1600 } };
+assert.equal(releaseDeliveryTiming(contradictory, cap).offset_ms, null);
+assert.equal(releaseDeliveryTiming(contradictory, cap).handoff_to_response_end_ms, null);
+assert.equal(releaseDeliveryTiming(contradictory, cap).hold_cap_to_response_end_ms, 20);
+assert.equal(releaseDeliveryTiming({ ...receipt, handoff_ms: 3199 }).handoff_to_response_end_ms, null);
+assert.equal(releaseDeliveryTiming({ ...receipt, resource: { ...receipt.resource, response_status: 500 } }, cap).hold_cap_to_response_end_ms, null);
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
@@ -1420,7 +1760,7 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
   global.fetch = () => new Promise(resolve => { resume = resolve; });
   const released = captureAndReleaseInput(page, 0, path, prefix);
   const resource = { name: new URL(path, location.href).href, initiatorType: 'fetch',
-    fetchStart: 10, responseStart: 9, responseEnd: 22 + responseDelay, responseStatus: status };
+    fetchStart: 10, requestStart: 11, responseStart: 9, responseEnd: 22 + responseDelay, responseStatus: status };
   if (!unavailable) {
     observe([{ ...resource, name: resource.name + '?other' }, { ...resource, initiatorType: 'xmlhttprequest' }]);
     assert.equal(disconnected, false);
@@ -1432,7 +1772,7 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
     }
   }
   const continued = now = resource.responseEnd + continuationDelay;
-  resume({ status, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '1000000' }) });
+  resume({ url: resource.name, status, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '1000000' }) });
   if (status === 204) assert.equal((await released).release, 'released');
   else await assert.rejects(released, /native relay release signal returned HTTP 409/);
   assert.deepEqual(receipt.continuation,
@@ -1445,12 +1785,15 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
       observe([{ ...resource, responseStart: 0 }]);
     }
     assert.equal(disconnected, true);
-    assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: continuationDelay ? 9 : null, response_end_ms: 22 + responseDelay,
+    assert.deepEqual(receipt.resource, { fetch_start_ms: 10, request_start_ms: 11,
+      response_start_ms: continuationDelay ? 9 : null, response_end_ms: 22 + responseDelay,
       response_status: status, controller_ms: received + (continuationDelay ? 1 : 2) });
     assert.equal(receipt.continuation.continued_ms - receipt.resource.response_end_ms, continuationDelay);
     assert.deepEqual(releaseDeliveryTiming(receipt), {
-      offset_ms: { min: 2988, max: 2996 },
-      write_to_response_end_ms: status === 204 ? { min: Math.max(0, responseDelay - 2), max: responseDelay + 10 } : null,
+      offset_ms: { min: 2988, max: 2995 },
+      write_to_response_end_ms: status === 204 ? { min: Math.max(0, responseDelay - 2), max: responseDelay + 9 } : null,
+      handoff_to_response_end_ms: null,
+      hold_cap_to_response_end_ms: null,
     });
     const resourceOnly = { ...receipt, continuation: null };
     assert.deepEqual(releaseDeliveryTiming(resourceOnly), releaseDeliveryTiming(receipt));
@@ -1490,7 +1833,7 @@ process.once('beforeExit', code => {
         script = r"""
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { captureAndReleaseInput, createReleaseSignal } = require(process.argv[1]);
+const { captureAndReleaseInput, createReleaseSignal, recordReleaseTiming, releaseDeliveryTiming } = require(process.argv[1]);
 let now = 300;
 global.performance = { now: () => now };
 function request(signal, index) {
@@ -1524,12 +1867,23 @@ async function run() {
   const page = { evaluate(callback, argument) { return callback(argument); } };
   let deliver;
   global.fetch = () => new Promise(resolve => { deliver = resolve; });
-  const delayed = captureAndReleaseInput(page, 0, '/prepared');
+  const delayed = captureAndReleaseInput(page, 0, 'https://localhost/prepared');
   const checked = assert.rejects(delayed, /native relay release deadline/);
   now = 900;
-  deliver({ status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '600000' }) });
+  deliver({ url: 'https://localhost/prepared', status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '600000' }) });
   await checked;
   assert.equal(window.fortressNativeStalled, undefined, 'a late response cannot publish even its stalled snapshot');
+  for (const response of [{ url: 'https://localhost/another-nonce' }, { url: 'https://localhost/prepared', redirected: true }]) {
+    const receipt = { path: 'https://localhost/prepared', request_dispatched_ms: 300, request_received_ms: 302, first_write_ms: 320,
+      handoff_ms: 320, finished_ms: 321,
+      resource: { fetch_start_ms: 10, request_start_ms: 11, response_end_ms: 30, response_status: 204, controller_ms: 330 } };
+    assert.ok(releaseDeliveryTiming(receipt).handoff_to_response_end_ms);
+    console.debug = text => assert.ok(recordReleaseTiming(receipt, text.slice('timing '.length), 331));
+    global.fetch = async () => ({ ...response, status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '600000' }) });
+    await assert.rejects(captureAndReleaseInput(page, 0, receipt.path, 'timing '), /does not match the release request/);
+    assert.equal(releaseDeliveryTiming(receipt).handoff_to_response_end_ms, null);
+    assert.equal(window.fortressNativeStalled, undefined);
+  }
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });
 """
@@ -2017,12 +2371,12 @@ global.fetch = path => new Promise(resolve => {
       this.writableEnded = true;
       this.finish();
       const at = performance.now();
-      resolve({ status: this.status, headers: this.headers });
+      resolve({ url: path, status: this.status, headers: this.headers });
       setImmediate(() => realm.run(owner, () => owner.resourceObserver([{
         name: new URL(path, location.href).href, initiatorType: 'fetch', fetchStart: requested, responseStart: at, responseEnd: at, responseStatus: this.status,
       }])));
     } };
-  if (!releaseRequest({ url: path, method: 'GET' }, response)) throw new Error('fixture release request was not handled');
+  if (!releaseRequest({ url: new URL(path).pathname, method: 'GET' }, response)) throw new Error('fixture release request was not handled');
 });
 global.requestAnimationFrame = callback => {
   if (window.index === 1 && stuck) return;

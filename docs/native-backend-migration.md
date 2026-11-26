@@ -71,9 +71,12 @@ WebKit receipts distinguish application channel close calls, channel close
 events and peer connection close calls. Each observation keeps its browser
 timestamp and controller receipt, even when the final page read times out.
 Tagged send diagnostics list the matching reciprocal route and the possible
-gap to each observed stage when the page clocks are bounded. Acceptance
-still requires the SCTP abort or the existing causal proof of completed
-connection close.
+gap to each observed stage when the page clocks are bounded. Nonce-matched
+same-origin HTTPS exchanges bracket each page clock with controller receipt
+and response timestamps. The receipt keeps the HTTPS and debugger samples so
+an ambiguous interval can be reproduced. Acceptance requires a fresh SCTP
+abort or completed connection close followed by the tagged send, with at least
+2 ms between the latest possible close and earliest possible send.
 
 To isolate a hosted browser failure on both Godot pins, select the room in the
 manual workflow dispatch.
@@ -105,6 +108,13 @@ Ordinary receipts include up to 128 records per directed link and stage.
 When a native expiry identifies links to diagnose, the browser and server
 publish only those links. Their input and quality histories expand to at most
 512 records per stage. Count and omitted fields still describe the full stream.
+The reporter pins the latest natively accepted input and quality report
+on each directed link. The expiry checkpoint publishes those original
+stamps and any earlier raw arrival and SDK observations. The failure
+receipt joins them to retained sender and server evidence and lists
+each missing stage. A later expiry can fall outside the upstream link
+selection. Its receipt identifies that scope, and its original browser
+observations remain available independently of the general relay trace.
 
 During the traced gameplay hold, the `relayHold` receipt covers both directions
 between the first two UUIDs in the sorted frozen roster. Each page publishes its
@@ -143,21 +153,30 @@ observation interval, queue samples, and cutoff remain available if the final
 renderer read times out. A missing observation can reflect sampling, eviction,
 or the end of observation. Identical repeated bytes can obscure per-packet
 latency. Native enqueue represents accepted input to the native socket queue.
+For the first two UUIDs in the sorted frozen roster, the second page also
+retains the first and latest distinct gameplay input at raw arrival, SDK
+delivery, and native admission, plus the corresponding direction's outgoing
+ACK observations. Each stage keeps exact bytes. Joining a raw observation to
+the addressed write requires both a matching decoded transport stamp and the
+payload digest. When delivery decoding cannot match the packet, the collector
+keeps its browser bytes with `epoch` and `seq` set to `null`. An ACK describes
+the receiver's protocol frontier across all prior inputs on that link.
 
 The `releaseTiming` receipt follows each prepared request by its unique path.
-The controller records request dispatch, receipt, first write, and HTTP finish.
-The page records the fetch continuation and the matching Resource Timing
-fetch start and response timestamps. The fetch start falls between controller
-dispatch and request receipt. This gives an `offset_ms` bracket with 2 ms
-allowed for page clock precision. The `write_to_response_end_ms` interval
-includes that uncertainty and the response timestamp's precision. The
-controller receipt of the Resource Timing record limits the latest possible
-response end. The interval requires a recorded HTTP 204 from Resource Timing
-or the continuation. A failed request can still have an end timestamp.
-Missing or inconsistent observations leave the delivery interval `null`.
-The controller's finish marks handoff to the OS. The browser's response end
-marks the end of its fetch, and the continuation marks when the page resumes.
-Compare the hold cap, response end and continuation on the same page clock.
+The controller records request dispatch, receipt, header preparation,
+handoff to `end()`, and HTTP finish. The page records the fetch continuation
+and the matching Resource Timing entry. Fetch start follows controller
+dispatch. Network request start precedes controller receipt, and response
+end follows host handoff. The `offset_ms` bracket uses these causal edges
+with 2 ms allowed for page clock precision. A missing network request start
+falls back to fetch start. The receipt retains response start for diagnosis.
+
+`write_to_response_end_ms` starts at header preparation.
+`handoff_to_response_end_ms` starts at the call to `end()`. Both include the
+clock uncertainty and cap the latest possible response end at controller
+receipt of its record. They require the matching HTTP 204. Missing or
+inconsistent evidence leaves a delivery interval `null`. The hold-cap,
+response-end and continuation observations share the same page clock.
 
 The native browser workflow accepts `qualification=firefox`, `cell=relay:8`,
 and `release_controls=true`. On each Godot pin, one runner executes the stock

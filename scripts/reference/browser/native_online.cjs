@@ -1,8 +1,9 @@
+const { createDepartureClock, CLOSE_HTTPS_PRE_SAMPLES } = require('./native_departure_clock.cjs');
 const { assertRecoveredRoom, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace } = require('./native_relay_trace.cjs');
 const { createRelayHold, RELAY_HOLD_CAP, RELAY_HOLD_PREFIX, RELAY_HOLD_WINDOW_MS } = require('./native_relay_hold.cjs');
 const { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, exerciseSameLinkRetention,
-  joinRelayReceipts, readRelayWireReceipt } = require('./native_relay_control.cjs');
+  joinRelayReceipts, readRelayWireReceipt, relayExpiryRows, validateRelayExpiryFrontier } = require('./native_relay_control.cjs');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
@@ -23,6 +24,7 @@ const CANONICAL_SNAPSHOT = /^(?:[0-9a-f]{2})+$/;
 const FROZEN_UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const CLOSE_CLOCK_PRE_SAMPLES = 3;
 const CLOSE_CLOCK_POST_SAMPLES = 4;
+const CLOSE_HTTPS_SAMPLE_MS = 500;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const CLOSE_CHECKPOINT = 'fortress native close ';
 const CLOSE_STAGES = ['channel_close_called', 'channel_close_event', 'connection_close_called'];
@@ -43,6 +45,7 @@ const HOLD_CONDITIONS = ['stall', 'prediction', 'frontier', 'held_input', 'quali
 function createWarmupBarrier(players, clock = () => performance.now()) {
   const latest = Array(players).fill(null);
   const errors = Array(players).fill(null);
+  const inputErrors = Array(players).fill(null);
   const received = Array(players).fill(null);
   let startedAt = Infinity;
   let deadline = Infinity;
@@ -51,9 +54,28 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
   const ready = new Promise(resolve => { complete = resolve; });
   const states = new Set(['offline', 'connecting', 'joining', 'lobby', 'starting', 'playing', 'failed']);
   const isFrontier = value => states.has(value?.state) && Number.isSafeInteger(value.frame) && Number.isSafeInteger(value.confirmed);
+  function validInputLink(input, sample, roster) {
+    const [sender, recipient] = [...roster].sort();
+    if (players !== 8 || input.sender !== sender || input.recipient !== recipient || sample.recipient !== recipient) return false;
+    return ['raw', 'sdk', 'native', 'ack'].every(stage => {
+      const stream = input[stage];
+      if (!Number.isSafeInteger(stream?.count) || stream.count < 0) return false;
+      if (!stream.count) return stream.first === null && stream.recent === null;
+      const valid = row => row && Number.isFinite(row.at_ms) && row.at_ms >= sample.started_ms && row.at_ms <= sample.through_ms
+        && typeof row.payload === 'string' && row.payload.length <= 2400 && /^(?:[0-9a-f]{2})+$/.test(row.payload)
+        && (stage === 'ack' ? row.payload.length === 64 : row.payload.length >= 218)
+        && Number.isSafeInteger(row.ack_frame) && row.ack_frame >= -1
+        && (stage === 'ack' ? row.start_frame === null : Number.isSafeInteger(row.start_frame) && row.start_frame >= 0)
+        && (stage === 'native' ? Number.isInteger(row.code) : row.code === null)
+        && (row.epoch === null && row.seq === null || stage === 'raw' && Number.isInteger(row.epoch) && row.epoch > 0 && row.epoch <= 0xffffffff
+          && typeof row.seq === 'string' && /^[1-9][0-9]{0,19}$/.test(row.seq) && BigInt(row.seq) <= 0xffffffffffffffffn);
+      return valid(stream.first) && (stream.recent === null || stream.count > 1 && valid(stream.recent)
+        && stream.recent.at_ms >= stream.first.at_ms && (stream.recent.payload !== stream.first.payload || stream.recent.code !== stream.first.code));
+    });
+  }
   return {
     get checkpoints() { return latest.map(record => record?.sample ?? null); },
-    errors, received,
+    errors, inputErrors, received,
     frontier() {
       const peers = latest.map((record, index) => {
         const { sample, received_ms } = record ?? { sample: null, received_ms: null };
@@ -82,7 +104,11 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
           || !Number.isSafeInteger(sample.tick_count) || sample.tick_count < sample.ticks.length) throw new Error('invalid warmup checkpoint');
         const roster = [sample.recipient, ...sample.links.map(link => link.sender)];
         if (new Set(roster).size !== players) throw new Error('invalid warmup roster');
-        const { cutoff } = sample;
+        const { cutoff, input_link: input } = sample;
+        if (input != null && !validInputLink(input, sample, roster)) {
+          inputErrors[index] ??= 'invalid warmup input link';
+          delete sample.input_link;
+        }
         if (cutoff !== null && (!isFrontier(cutoff) || cutoff.at_ms !== sample.through_ms
           || !(cutoff.reason === 'failed' && cutoff.state === 'failed'
             || cutoff.reason === 'gate' && cutoff.state === 'playing' && cutoff.confirmed >= GATE_FRAME)))
@@ -197,13 +223,15 @@ function instrumentPostRelease(prefix, minimumFrames) {
       const endpoint = sdk ? roster.indexOf(remote) + 1 : remote;
       const uuid = roster[endpoint - 1];
       if (!uuid || uuid === local || (sdk ? departed.has(uuid) : expired)) return;
+      let frontier;
       if (sdk) departed.add(uuid);
       else {
         expired = true;
         window.fortressNativeWire?.endRelayHold?.('terminal');
+        frontier = window.fortressNativeWire?.relayExpiryFrontier?.(uuid.replaceAll('-', ''));
       }
       console.debug(prefix + JSON.stringify({ kind, endpoint, uuid, page_ms: performance.now(),
-        expiry: evidence === undefined ? undefined : JSON.parse(evidence) }));
+        expiry: evidence === undefined ? undefined : JSON.parse(evidence), frontier }));
     },
     mark,
     observe,
@@ -214,12 +242,21 @@ function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTa
   if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
   try {
     const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes, queued, released, emitted_ms, endpoint, uuid,
-      expiry, socket_state, socket_stage, held_send, pending, control_round_trips, buffered_bytes, traffic } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
+      expiry, frontier, socket_state, socket_stage, held_send, pending, control_round_trips, buffered_bytes, traffic } = JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
     if (LIFETIME_MARKS.has(kind)) {
       if (!Number.isFinite(page_ms) || page_ms < 0 || !Number.isSafeInteger(endpoint) || endpoint < 1
         || endpoint > INPUTS.length || typeof uuid !== 'string' || !FROZEN_UUID.test(uuid)) throw new Error('invalid room departure sample');
       const receipt = { kind, endpoint, uuid, page_ms, ...controller };
-      if (kind === 'native_expiry') receipt.expiry = validateExpiry(expiry);
+      if (kind === 'native_expiry') {
+        receipt.expiry = validateExpiry(expiry);
+        if (frontier !== undefined) {
+          try {
+            receipt.frontier = validateRelayExpiryFrontier(frontier, uuid, local, page_ms);
+          } catch (error) {
+            peer.checkpoint_error ??= String(error);
+          }
+        }
+      }
       retainDepartureCheckpoint(peer, receipt, roster, local);
       return;
     }
@@ -470,6 +507,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   const replayedRelayEvents = relayWireTrace && new WeakSet();
   let expiredRelayDelay;
   const warmupLinks = new Map();
+  let warmupInput;
   let roomRoster = [];
   const warmupTicks = [];
   let warmupTickCount = 0;
@@ -499,7 +537,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   function warmupStatus() {
     if (!warmupLinks.size) return null;
     return { recipient: localUuid, started_ms: warmupStarted, through_ms: warmupCutoff?.at_ms ?? performance.now(), cutoff: warmupCutoff,
-      tick_count: warmupTickCount, ticks: warmupTicks.slice(),
+      tick_count: warmupTickCount, ticks: warmupTicks.slice(), input_link: warmupInput,
       links: Array.from(warmupLinks, ([sender, { packets, evicted, unretained, last_replied_report }]) => ({
         sender, evicted, unretained, last_replied_report, packets: Array.from(packets, ([payload, stages]) => ({ payload, ...stages })),
       })) };
@@ -516,6 +554,39 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       warmupCheckpointPending = false;
       if (!warmupCutoff) checkpointWarmup(performance.now());
     }, 0);
+  }
+  function recordWarmupInput(stage, remote, bytes, code = null, delivery = null) {
+    const stream = !warmupCutoff && warmupInput?.[stage];
+    if (!stream || remote !== warmupInput.sender || bytes.length > 1200 || bytes.length < 32 || !matches(bytes, 0)) return;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (view.getUint32(16, true) !== 0x000252f5) return;
+    const kind = view.getUint32(24, true);
+    let start_frame = null;
+    let ack_frame;
+    if (stage === 'ack') {
+      if (kind !== 3 || bytes.length !== 32) return;
+      ack_frame = view.getInt32(28, true);
+    } else {
+      // Eight seven-byte connection statuses precede start, ACK and encoded-byte length.
+      if (kind !== inputKind || bytes.length <= 108 || view.getBigUint64(28, true) !== 8n
+          || view.getBigUint64(100, true) !== BigInt(bytes.length - 108)) return;
+      start_frame = view.getInt32(92, true);
+      ack_frame = view.getInt32(96, true);
+      if (start_frame < 0 || ![36, 43, 50, 57, 64, 71, 78, 85].every(offset => bytes[offset] <= 1)) return;
+    }
+    if (ack_frame < -1) return;
+    // Keep a stamp only when the delivery decoder identifies this same packet.
+    const deliveredBytes = delivery?.bytes.subarray(57);
+    const stamp = delivery?.sender === remote && delivery.recipient === localUuid && delivery.kind === kind
+      && deliveredBytes.length === bytes.length && deliveredBytes.every((byte, index) => byte === bytes[index]) ? delivery : null;
+    const payload = hex(bytes);
+    const at_ms = performance.now();
+    const sample = { at_ms, payload, start_frame, ack_frame, code,
+      epoch: stamp?.epoch ?? null, seq: stamp?.seq ?? null };
+    stream.count++;
+    if (!stream.first) stream.first = sample;
+    else if (stream.first.payload !== payload || stream.first.code !== code) stream.recent = sample;
+    scheduleWarmupCheckpoint(at_ms);
   }
   const orderedWarmupToken = token => token.match(/../g).reverse().join('');
   function forgetWarmupReport(link, payload) {
@@ -811,7 +882,10 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       if (!warmupCutoff && warmupLinks.has(packet.sender) && packet.kind === 4 && packet.bytes.length === 46 && (packet.bytes[30] & 3) === 0) {
         recordWarmup('raw', packet.sender, hex(packet.bytes), null);
       }
-      if (packet.kind === inputKind) increment(relayInputSenders, packet.sender);
+      if (packet.kind === inputKind) {
+        increment(relayInputSenders, packet.sender);
+        if (warmupInput?.sender === packet.sender) recordWarmupInput('raw', packet.sender, packet.bytes, null, relayPacket);
+      }
       traceRelayQuality('receive', packet.sender, packet);
       if (receive('relay', reports, packet.sender, packet) && relayPacket) relayPacket.hold_gate_match = true;
     });
@@ -873,6 +947,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
         if (packet.kind === inputKind) increment(relayInputRecipients, packet.recipient);
         bufferedBytesPeak = Math.max(bufferedBytesPeak, this.bufferedAmount);
         if (packet.kind === 5) recordWarmupReply(packet);
+        if (packet.kind === 3 && this.readyState === nativeSocket.OPEN && warmupInput?.sender === packet.recipient)
+          recordWarmupInput('ack', packet.recipient, packet.bytes);
         traceRelayQuality('send', packet.recipient, packet);
       }
     }, data, packet?.sender === localUuid ? packet : null);
@@ -905,13 +981,28 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
           });
         }
       }
-      if (warmupLinks.size) warmupStarted = performance.now();
+      if (warmupLinks.size) {
+        warmupStarted = performance.now();
+        const [sender, recipient] = [...roomRoster].sort();
+        if (roomRoster.length === 8 && localUuid === recipient) {
+          warmupInput = { sender, recipient, ...Object.fromEntries(['raw', 'sdk', 'native', 'ack'].map(stage => [stage,
+            { count: 0, first: null, recent: null }])) };
+        }
+      }
     },
     recordWarmup,
+    observeWarmupInput(stage, source, payload, code) {
+      if (warmupCutoff || !warmupInput || (stage !== 'sdk' && stage !== 'native') || typeof source !== 'string' || source.replaceAll('-', '') !== warmupInput.sender
+          || typeof payload !== 'string' || payload.length > 2400 || !/^(?:[0-9a-f]{2})+$/.test(payload)
+          || (stage === 'native' ? !Number.isInteger(code) : code !== -1)) return;
+      const bytes = Uint8Array.from(payload.match(/../g), value => parseInt(value, 16));
+      recordWarmupInput(stage, warmupInput.sender, bytes, stage === 'native' ? code : null);
+    },
     async relayWireTrace(links) {
       const sockets = resources.sockets.length;
       return relayWireTrace && { ...await relayWireTrace.freeze(links), sockets };
     },
+    relayExpiryFrontier: sender => relayWireTrace?.expiryFrontier(sender),
     holdRelayControl: delayRelayDelivery,
     releaseRelayControl: stamps => relayDelay?.releaseWhenHeld(stamps) ?? expiredRelayDelay,
     muteRelayLink(recipient) {
@@ -1189,7 +1280,31 @@ function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, c
   return evidence;
 }
 
-async function calibrateDepartureClocks(pages, report, clock = () => performance.now(), timeout = PAGE_WAIT_MS) {
+async function departureHttpsSamples(pages, httpsClock, timeout, onSample) {
+  return Promise.all(pages.map(async (page, index) => {
+    let sample;
+    try {
+      sample = await httpsClock.sample(page, timeout);
+    } catch (error) {
+      sample = { bound: null, error: String(error) };
+    }
+    onSample?.(sample, index);
+    return sample;
+  }));
+}
+
+function recordDepartureHttps(samples, report, stage, useBounds) {
+  report.httpsClockSamples ??= samples.map(() => ({ before: [], after: [] }));
+  samples.forEach((sample, index) => {
+    if (!sample) return;
+    report.httpsClockSamples[index][stage].push(sample);
+    if (!sample.bound || !useBounds || !report.clocks?.[index]) return;
+    report.clocks[index] = intersectClock(report.clocks[index], sample.bound);
+    if (!report.clocks[index]) sample.error = 'HTTPS and debugger clock bounds disagree';
+  });
+}
+
+async function calibrateDepartureClocks(pages, report, clock = () => performance.now(), timeout = PAGE_WAIT_MS, httpsClock) {
   const clockSamples = pages.map(() => ({ before: [], after: [] }));
   report.clockSamples = clockSamples;
   const deadline = clock() + timeout;
@@ -1213,9 +1328,17 @@ async function calibrateDepartureClocks(pages, report, clock = () => performance
     throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} departure clock failed`, { cause: reason })),
       'WebKit departure clock calibration failed');
   }
+  if (httpsClock) {
+    for (let i = 0; i < CLOSE_HTTPS_PRE_SAMPLES; i++) {
+      const remaining = Math.floor(deadline - clock());
+      if (remaining <= 0) break;
+      const samples = await departureHttpsSamples(pages, httpsClock, Math.min(CLOSE_HTTPS_SAMPLE_MS, remaining));
+      recordDepartureHttps(samples, report, 'before', clock() < deadline);
+    }
+  }
 }
 
-async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks = report.clocks, clock = () => performance.now(), delay = pause } = {}) {
+async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks = report.clocks, clock = () => performance.now(), delay = pause, httpsClock } = {}) {
   if (!errors.length) return undefined;
   report.proofs = [];
   report.clocks = clocks?.slice();
@@ -1225,6 +1348,13 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
   const completeProofs = new Map();
   report.partialSnapshots = latestSnapshots;
   let rounds = 0;
+  let sampledHttps = false;
+  const httpsSamples = pages.map(() => null);
+  const recordSettledHttps = useBounds => {
+    if (!httpsSamples.some(Boolean)) return;
+    recordDepartureHttps(httpsSamples, report, 'after', useBounds);
+    httpsSamples.fill(null);
+  };
   const deadline = clock() + DIAGNOSTIC_MS;
   while (clock() < deadline) {
     const roundErrors = errors.slice();
@@ -1253,6 +1383,7 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
       }
     });
     const complete = !failed.length && clock() < deadline;
+    recordSettledHttps(complete);
     const links = latestSnapshots.map(snapshot => snapshot?.links ?? []);
     report.proofs = roundErrors.map(error => {
       const sends = complete ? latestSnapshots[error.index].sends : observedSends[error.index];
@@ -1267,6 +1398,15 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
         'WebKit close snapshots failed');
     }
     if (!complete) break;
+    const httpsBudget = httpsClock ? Math.min(CLOSE_HTTPS_SAMPLE_MS, Math.floor(deadline - clock())) : 0;
+    if (!sampledHttps && httpsBudget > 0 && report.proofs.some(evidence => !evidence.proof)) {
+      sampledHttps = true;
+      // Keep snapshot retries active while the optional exchange is pending.
+      void departureHttpsSamples(pages, httpsClock, httpsBudget, (sample, index) => {
+        // Only the snapshot owner publishes to the report, even if this settles after teardown.
+        if (clock() < deadline) httpsSamples[index] = sample;
+      });
+    }
     for (const evidence of report.proofs) {
       const { index, channel, attempt, proof } = evidence;
       assert.ok(evidence.before, `WebKit send failure for peer ${index} lacked a sending channel`);
@@ -1277,6 +1417,7 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
     if (roundErrors.length === errors.length && report.proofs.every(proof => proof.proof)) return links;
     await delay(Math.min(25, remaining));
   }
+  recordSettledHttps(false);
   report.lastCompleteProofs = [...completeProofs.values()];
   const pending = [...new Set(report.proofs.filter(proof => !proof.proof).map(proof => `peer ${proof.index} channel ${proof.channel}`))];
   throw new Error(`WebKit close evidence deadline${pending.length ? ` for ${pending.join(', ')}` : ''}`);
@@ -1408,12 +1549,17 @@ function armAndWaitForInput(page, route) {
 function createReleaseSignal(players, delayMs = 0) {
   const paths = Array.from({ length: players }, () => '/native-release/' + randomUUID());
   const timing = new Map(paths.map(path => [path, {
-    path, request_dispatched_ms: null, request_received_ms: null, first_write_ms: null, finished_ms: null, continuation: null, resource: null,
+    path, request_dispatched_ms: null, request_received_ms: null, first_write_ms: null, handoff_ms: null, finished_ms: null,
+    continuation: null, resource: null,
   }]));
   const responses = new Map();
   const { promise: ready, resolve } = Promise.withResolvers();
   let finished = false;
   let deliveryTimer;
+  const handoff = ({ response, receipt }) => {
+    receipt.handoff_ms = performance.now();
+    response.end();
+  };
   const cancel = () => {
     finished = true;
     if (deliveryTimer !== undefined) clearTimeout(deliveryTimer);
@@ -1443,16 +1589,17 @@ function createReleaseSignal(players, delayMs = 0) {
       'native relay release requests unavailable');
       assert.ok(Number.isFinite(deadline) && performance.now() < deadline, 'absolute native relay input release deadline');
       finished = true;
-      for (const { response, receipt } of responses.values()) {
+      for (const entry of responses.values()) {
+        const { response, receipt } = entry;
         const budgetUs = Math.floor((deadline - receipt.request_received_ms) * 1000);
         receipt.first_write_ms = performance.now();
         response.writeHead(204, { 'Cache-Control': 'no-store', 'X-Fortress-Release-Budget-Us': String(budgetUs) });
-        if (delayMs === 0) response.end();
+        if (delayMs === 0) handoff(entry);
       }
       if (delayMs !== 0) deliveryTimer = setTimeout(() => {
         deliveryTimer = undefined;
         if (performance.now() >= deadline) return cancel();
-        for (const { response } of responses.values()) if (!response.destroyed) response.end();
+        for (const entry of responses.values()) if (!entry.response.destroyed) handoff(entry);
       }, delayMs);
     },
     cancel,
@@ -1461,8 +1608,17 @@ function createReleaseSignal(players, delayMs = 0) {
 
 function recordReleaseTiming(receipt, text, controller_ms) {
   try {
-    const { path, requested_ms, fetch_resolved_ms, continued_ms, status, fetch_start_ms, response_start_ms, response_end_ms, response_status } = JSON.parse(text);
+    const { path, fetch_failed, response_mismatch, requested_ms, fetch_resolved_ms, continued_ms, status, fetch_start_ms, request_start_ms = null,
+      response_start_ms, response_end_ms, response_status } = JSON.parse(text);
     if (path !== receipt.path) return false;
+    if (fetch_failed === true) {
+      receipt.fetch_failed = true;
+      return true;
+    }
+    if (response_mismatch === true) {
+      receipt.response_mismatch = true;
+      return true;
+    }
     const time = value => Number.isFinite(value) && value >= 0;
     if (!receipt.continuation && time(requested_ms) && time(continued_ms) && requested_ms <= continued_ms
       && (fetch_resolved_ms === undefined || time(fetch_resolved_ms) && requested_ms <= fetch_resolved_ms && fetch_resolved_ms <= continued_ms)
@@ -1471,10 +1627,10 @@ function recordReleaseTiming(receipt, text, controller_ms) {
       if (fetch_resolved_ms !== undefined) receipt.continuation.fetch_resolved_ms = fetch_resolved_ms;
       return true;
     }
-    if (!receipt.resource && [fetch_start_ms, response_start_ms, response_end_ms].every(value => value === null || time(value))
+    if (!receipt.resource && [fetch_start_ms, request_start_ms, response_start_ms, response_end_ms].every(value => value === null || time(value))
       && (response_status === null || response_status === 0 || Number.isInteger(response_status) && response_status >= 100 && response_status <= 599)
       && (fetch_start_ms === null || response_end_ms === null || fetch_start_ms <= response_end_ms)) {
-      receipt.resource = { fetch_start_ms, response_start_ms, response_end_ms, response_status, controller_ms };
+      receipt.resource = { fetch_start_ms, request_start_ms, response_start_ms, response_end_ms, response_status, controller_ms };
       return true;
     }
   } catch {
@@ -1483,31 +1639,49 @@ function recordReleaseTiming(receipt, text, controller_ms) {
   return false;
 }
 
-function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, first_write_ms, resource, continuation }) {
-  const timing = { offset_ms: null, write_to_response_end_ms: null };
-  const { fetch_start_ms, response_end_ms, response_status, controller_ms } = resource ?? {};
+function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, first_write_ms, handoff_ms, finished_ms, resource, continuation,
+  fetch_failed, response_mismatch }, holdCap) {
+  const timing = { offset_ms: null, write_to_response_end_ms: null, handoff_to_response_end_ms: null, hold_cap_to_response_end_ms: null };
+  if (fetch_failed || response_mismatch) return timing;
+  const { fetch_start_ms, request_start_ms, response_end_ms, response_status, controller_ms } = resource ?? {};
+  if (Number.isFinite(request_start_ms) && (Number.isFinite(fetch_start_ms) && request_start_ms < fetch_start_ms
+    || Number.isFinite(response_end_ms) && request_start_ms > response_end_ms)) return timing;
+  const delivered = (response_status ?? continuation?.status) === 204 && (!continuation || continuation.status === 204);
+  if (delivered && Number.isFinite(response_end_ms) && Number.isFinite(holdCap?.page_ms))
+    timing.hold_cap_to_response_end_ms = response_end_ms - holdCap.page_ms;
   if (![request_dispatched_ms, request_received_ms, fetch_start_ms].every(Number.isFinite)
     || request_dispatched_ms > request_received_ms) return timing;
-  // The fetch starts after evaluation dispatch and before the HTTP request arrives.
+  // The fetch starts after evaluation dispatch. The request starts before it arrives at the host.
   const precisionMs = 2;
-  const minOffset = request_dispatched_ms - fetch_start_ms - precisionMs;
-  const maxOffset = request_received_ms - fetch_start_ms + precisionMs;
+  const maxOffset = request_received_ms - (request_start_ms ?? fetch_start_ms) + precisionMs;
+  let minOffset = request_dispatched_ms - fetch_start_ms - precisionMs;
+  const validHandoff = [first_write_ms, handoff_ms, response_end_ms, controller_ms].every(Number.isFinite)
+    && handoff_ms >= first_write_ms && handoff_ms <= controller_ms && (!Number.isFinite(finished_ms) || handoff_ms <= finished_ms);
+  if (delivered && validHandoff) {
+    // Firefox can report response start next to request start even when the host withheld the headers.
+    minOffset = Math.max(minOffset, handoff_ms - response_end_ms - precisionMs);
+  }
+  if (maxOffset < minOffset) return timing;
   timing.offset_ms = { min: minOffset, max: maxOffset };
   if (![first_write_ms, response_end_ms, controller_ms].every(Number.isFinite) || first_write_ms < request_received_ms
-    || (response_status ?? continuation?.status) !== 204
-    || (continuation && (continuation.status !== 204 || continuation.controller_ms < first_write_ms))) return timing;
-  const min = Math.max(0, response_end_ms + minOffset - precisionMs - first_write_ms);
-  const max = Math.min(response_end_ms + maxOffset + precisionMs, controller_ms) - first_write_ms;
-  if (max >= min) timing.write_to_response_end_ms = { min, max };
+    || !delivered || (continuation && continuation.controller_ms < first_write_ms)) return timing;
+  const anchor = validHandoff ? handoff_ms : first_write_ms;
+  const min = Math.max(anchor, response_end_ms + minOffset - precisionMs);
+  const max = Math.min(response_end_ms + maxOffset + precisionMs, controller_ms);
+  if (max >= min) {
+    timing.write_to_response_end_ms = { min: min - first_write_ms, max: max - first_write_ms };
+    if (validHandoff) timing.handoff_to_response_end_ms = { min: min - handoff_ms, max: max - handoff_ms };
+  }
   return timing;
 }
 
 function assertReleaseDelay(timings, kind) {
   for (const [index, receipt] of timings.entries()) {
-    assert.ok(releaseDeliveryTiming(receipt).write_to_response_end_ms, `native peer ${index} lacks release delivery timing`);
+    const timing = releaseDeliveryTiming(receipt);
+    assert.ok(timing.handoff_to_response_end_ms, `native peer ${index} lacks release delivery timing`);
     const { continuation } = receipt;
     const elapsed = kind === 'delivery'
-      ? (receipt.finished_ms ?? NaN) - receipt.first_write_ms
+      ? (receipt.handoff_ms ?? NaN) - receipt.first_write_ms
       : continuation?.continued_ms - continuation?.fetch_resolved_ms;
     // Controller timers can round by 1 ms. A pair of page reads can coarsen by 4 ms.
     const tolerance = kind === 'delivery' ? 1 : 4;
@@ -1519,21 +1693,32 @@ function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = n
   return page.evaluate(async ({ index, signalPath, timingPrefix, delayMs }) => {
     let cutoffUs = null;
     if (signalPath !== null) {
+      const url = new URL(signalPath, globalThis.location?.href).href;
       const publish = fields => console.debug(timingPrefix + JSON.stringify({ path: signalPath, ...fields }));
       if (timingPrefix && globalThis.PerformanceObserver?.supportedEntryTypes?.includes('resource')) {
-        const url = new URL(signalPath, location.href).href;
         const observer = new PerformanceObserver(list => {
           const entry = list.getEntries().find(entry => entry.name === url && entry.initiatorType === 'fetch');
           if (!entry) return;
           observer.disconnect();
-          publish({ fetch_start_ms: entry.fetchStart ?? null, response_start_ms: entry.responseStart || null,
+          publish({ fetch_start_ms: entry.fetchStart ?? null, request_start_ms: entry.requestStart || null,
+            response_start_ms: entry.finalResponseHeadersStart || entry.responseStart || null,
             response_end_ms: entry.responseEnd || null, response_status: entry.responseStatus ?? null });
         });
         observer.observe({ type: 'resource' });
       }
       const requested_ms = performance.now();
-      const signal = await fetch(signalPath, { cache: 'no-store' });
+      let signal;
+      try {
+        signal = await fetch(url, { cache: 'no-store', redirect: 'error' });
+      } catch (error) {
+        if (timingPrefix) publish({ fetch_failed: true });
+        throw error;
+      }
       const fetchResolved = performance.now();
+      if (signal.url !== url || signal.redirected) {
+        if (timingPrefix) publish({ response_mismatch: true });
+        throw new Error('native relay response does not match the release request');
+      }
       const status = signal.status;
       if (delayMs && status === 204) await new Promise(resolve => setTimeout(resolve, delayMs));
       const continued_ms = delayMs ? performance.now() : fetchResolved;
@@ -1660,7 +1845,10 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const releaseSignal = route === 'relay' ? createReleaseSignal(players, releaseDelay === 'delivery' ? RELEASE_DELAY_MS : 0) : undefined;
   const releaseTiming = releaseSignal?.timings();
   const playwright = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
-  const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY, 0, releaseSignal?.handle);
+  const webkitMesh = route === 'mesh' && browserPair.includes('webkit');
+  const departureClock = webkitMesh && !liveClose ? createDepartureClock() : null;
+  const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY, 0,
+    departureClock?.handle ?? releaseSignal?.handle);
   const origin = `https://127.0.0.1:${server.address().port}`;
   const socketEndpoint = `wss://127.0.0.1:${server.address().port}/v3/ws`;
   const pages = [];
@@ -1704,7 +1892,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const engineTurns = [];
   const physicalCloseReport = {};
   const closeReport = {};
-  const closeObservations = route === 'mesh' && browserPair.includes('webkit') ? Array.from({ length: players }, () => new Map()) : null;
+  const closeObservations = webkitMesh ? Array.from({ length: players }, () => new Map()) : null;
   let direct, peers;
   const closeReceipts = () => closeObservations ? {
     closeObservations: closeObservations.map(events => [...events.values()]),
@@ -1775,6 +1963,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push({ index, phase, text });
       });
       page.on('requestfailed', request => {
+        if (departureClock?.ownsRequest(page, origin, request)) return;
         const url = new URL(request.url());
         errors.push({ index, phase, host: url.host, path: url.pathname, method: request.method(), resource: request.resourceType(),
           code: request.failure()?.errorText });
@@ -2025,9 +2214,9 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         assert.equal(peer.wire.held.relay > 0, peer.index < 2, 'relay gameplay for the closed pair must also be held');
       }
     } else {
-      if (route === 'mesh' && browserPair.includes('webkit')) {
+      if (departureClock) {
         phase = 'departure clock calibration';
-        await calibrateDepartureClocks(pages, closeReport);
+        await calibrateDepartureClocks(pages, closeReport, undefined, undefined, departureClock);
       }
       phase = 'departure';
       await leave(pages.at(-1), players - 1);
@@ -2058,7 +2247,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         assert.equal(peer[key], before[key], `terminal ${key} changed for survivor ${index}`);
     }
     phase = 'teardown';
-    if (!liveClose) closeLinks = await waitForCloseProofs(pages, peers, departureErrors, closeReport) ?? closeLinks;
+    if (!liveClose) closeLinks = await waitForCloseProofs(pages, peers, departureErrors, closeReport, { httpsClock: departureClock }) ?? closeLinks;
     if (liveClose) await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.releaseTerminal())));
     const teardown = await Promise.allSettled(survivors.map(leave));
     const leaveErrors = teardown.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
@@ -2094,11 +2283,11 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns, relayWire, relayControl,
       relayServer, relayJoined, relayRetention, sameLinkRetention, relayHold: relayHold && await relayHoldReceipt(),
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
-      releaseTiming: releaseTiming?.map(receipt => ({ ...receipt, ...releaseDeliveryTiming(receipt) })),
+      releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
-      departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples, ...closeReceipts(),
+      departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples, departureHttpsClockSamples: closeReport.httpsClockSamples, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
-      warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
+      warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupInputErrors: warmupBarrier?.inputErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier() };
   } catch (error) {
     failures.push(error);
@@ -2123,13 +2312,15 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     });
     const relayWire = relayWireFailure && (await relayWireFailure).map(({ status, value, reason }) =>
       status === 'fulfilled' ? value ?? null : { error: String(reason) });
+    const [serverReceipt] = relayServerFailure ? await relayServerFailure : [];
+    const holdReceipt = relayHold && await relayHoldReceipt();
+    const expiries = postRelease?.flatMap(peer => peer.native_expiry ? [peer.native_expiry] : []) ?? [];
     let relayJoined;
     let relayJoinError;
-    if (relayServerFailure) {
+    if (serverReceipt) {
       try {
-        const [serverReceipt] = await relayServerFailure;
         if (serverReceipt.status === 'rejected') throw serverReceipt.reason;
-        relayJoined = joinRelayReceipts(serverReceipt.value, relayWire);
+        relayJoined = joinRelayReceipts(serverReceipt.value, relayWire, expiries);
       } catch (joinError) {
         relayJoinError = String(joinError);
       }
@@ -2139,16 +2330,18 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       departureClocks: closeReport.clocks, departureCommands, roomIdentities, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       lastCompleteCloseProofs: [...(physicalCloseReport.lastCompleteProofs ?? []), ...(closeReport.lastCompleteProofs ?? [])],
-      departureClockSamples: closeReport.clockSamples, departureClockErrors: closeReport.calibrationErrors,
+      departureClockSamples: closeReport.clockSamples, departureHttpsClockSamples: closeReport.httpsClockSamples,
+      departureClockErrors: closeReport.calibrationErrors,
       physicalClosePartialSnapshots: physicalCloseReport.partialSnapshots,
       closePartialSnapshots: closeReport.partialSnapshots, physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
-      states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
+      states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupInputErrors: warmupBarrier?.inputErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
-      relayHold: relayHold && await relayHoldReceipt(),
+      relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined, expiryLinks) : undefined,
+      relayHold: holdReceipt,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
-      releaseTiming: releaseTiming?.map(receipt => ({ ...receipt, ...releaseDeliveryTiming(receipt) })),
+      releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
     }));
   } finally {
     releaseSignal?.cancel();
