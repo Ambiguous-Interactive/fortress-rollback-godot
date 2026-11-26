@@ -1705,6 +1705,12 @@ assert.deepEqual(releaseDeliveryTiming(receipt, cap), {
 });
 const earlyResponseStart = { ...receipt, resource: { ...receipt.resource, response_start_ms: 1200.02 } };
 assert.deepEqual(releaseDeliveryTiming(earlyResponseStart, cap), releaseDeliveryTiming(receipt, cap));
+for (const request_start_ms of [549, 1671]) {
+  const outOfOrder = { ...receipt, resource: { ...receipt.resource, request_start_ms } };
+  assert.deepEqual(releaseDeliveryTiming(outOfOrder, cap), {
+    offset_ms: null, write_to_response_end_ms: null, handoff_to_response_end_ms: null, hold_cap_to_response_end_ms: null,
+  });
+}
 const absent = { ...receipt, resource: { ...receipt.resource, request_start_ms: null, response_start_ms: null } };
 assert.deepEqual(releaseDeliveryTiming(absent, cap), {
   offset_ms: { min: 1479, max: 2152 }, write_to_response_end_ms: { min: 450, max: 499 },
