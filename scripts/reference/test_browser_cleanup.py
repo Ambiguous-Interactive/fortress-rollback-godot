@@ -1303,8 +1303,13 @@ reverse.wire.observeWarmupInput('native', receiver, ack.toString('hex'), 0);
 reverse.wire.observeWarmupInput('sdk', other, ack11.toString('hex'), -1);
 reverse.wire.observeWarmupInput('sdk', receiver, input9.toString('hex'), -1);
 time = 1050;
+const nativeSlots = roster.slice(1).map((_, i) => ({
+  slot: i + 1, receipt_frame: 16, pending_output: i, gossip_bound: i === 0 ? 8 : 16,
+}));
+reverse.wire.recordWarmupTick(0, 0, 8, 20, 'playing', 16, 8, JSON.stringify(nativeSlots));
 reverse.wire.finishWarmup('playing', 16, 12);
 const ackSample = barrier.checkpoints[0].ack_link;
+assert.deepEqual(barrier.checkpoints[0].native_frontier, { at_ms: 1050, frame: 16, confirmed: 8, slots: nativeSlots });
 assert.equal(ackSample.raw.count, 2);
 assert.equal(ackSample.raw.recent.ack_frame, 11);
 assert.equal(ackSample.raw.recent.seq, null);
@@ -1353,7 +1358,8 @@ assert.equal(barrier.checkpoints[2].input_link, undefined);
   await gate.wait(async () => {
     for (const [index, recipient] of roster.entries()) {
       const page = { ...wrong, recipient, links: roster.filter(sender => sender !== recipient).map(sender => ({sender})),
-        input_link: index === 1 ? wrong.input_link : undefined, ack_link: index === 0 ? wrongAck : undefined };
+        input_link: index === 1 ? wrong.input_link : undefined, ack_link: index === 0 ? wrongAck : undefined,
+        native_frontier: index === 0 ? { at_ms: 1050, frame: 16, confirmed: 8, slots: nativeSlots.slice(1) } : undefined };
       gate.record(index, WARMUP_CHECKPOINT + JSON.stringify(page));
     }
   }, 50);
@@ -1363,6 +1369,8 @@ assert.equal(barrier.checkpoints[2].input_link, undefined);
   assert.equal(gate.checkpoints[1].input_link, undefined);
   assert.match(gate.ackErrors[0], /invalid warmup ACK link/);
   assert.equal(gate.checkpoints[0].ack_link, undefined);
+  assert.match(gate.nativeErrors[0], /invalid warmup native frontier/);
+  assert.equal(gate.checkpoints[0].native_frontier, undefined);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs'),

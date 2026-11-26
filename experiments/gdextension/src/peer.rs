@@ -50,6 +50,13 @@ impl NonBlockingSocket<u16> for Socket {
     }
 }
 
+pub(crate) struct ConfirmationSlot {
+    pub(crate) slot: usize,
+    pub(crate) receipt_frame: i32,
+    pub(crate) pending_output: Option<u64>,
+    pub(crate) gossip_bound: Option<i32>,
+}
+
 pub(crate) struct Peer {
     session: P2PSession<Game>,
     socket: Socket,
@@ -152,6 +159,34 @@ impl Peer {
 
     pub(crate) fn confirmed_frame(&self) -> i32 {
         self.confirmed_frame
+    }
+
+    pub(crate) fn confirmation_diagnostics(&self) -> Vec<ConfirmationSlot> {
+        if !self.is_running() {
+            return Vec::new();
+        }
+        let slots = (0..self.session.num_players()).map(PlayerHandle::new);
+        let Some(remote) = slots.clone().find(|handle| !self.local_slots.contains(handle)) else {
+            return Vec::new();
+        };
+        slots
+            .filter_map(|handle| {
+                let receipt_frame = self.session.diagnostic_player_receipt_frame(handle)?.as_i32();
+                let pending_output = self.session.peer_metrics(handle).ok().map(|stats| stats.pending_output_len);
+                // The target bound folds every remote view, regardless of the queried endpoint.
+                let gossip_bound = self
+                    .session
+                    .diagnostic_hostile_gossip(remote, handle)
+                    .and_then(|diagnostic| diagnostic.target_confirmed_bound)
+                    .map(|bound| bound.as_i32());
+                Some(ConfirmationSlot {
+                    slot: handle.as_usize(),
+                    receipt_frame,
+                    pending_output,
+                    gossip_bound,
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn terminal_reason(&self) -> &'static str {

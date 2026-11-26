@@ -47,6 +47,7 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
   const errors = Array(players).fill(null);
   const inputErrors = Array(players).fill(null);
   const ackErrors = Array(players).fill(null);
+  const nativeErrors = Array(players).fill(null);
   const received = Array(players).fill(null);
   let startedAt = Infinity;
   let deadline = Infinity;
@@ -77,9 +78,19 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
         && stream.recent.at_ms >= stream.first.at_ms && (stream.recent.payload !== stream.first.payload || stream.recent.code !== stream.first.code));
     });
   }
+  function validNativeFrontier(frontier, sample, roster) {
+    const localSlot = [...roster].sort().indexOf(sample.recipient);
+    const frame = value => Number.isSafeInteger(value) && value >= -1 && value <= 0x7fffffff;
+    return Number.isFinite(frontier.at_ms) && frontier.at_ms >= sample.started_ms && frontier.at_ms <= sample.through_ms
+      && frame(frontier.frame) && frame(frontier.confirmed) && frontier.frame - frontier.confirmed >= 2
+      && Array.isArray(frontier.slots) && frontier.slots.length === players - 1
+      && frontier.slots.every((row, index) => row?.slot === index + Number(index >= localSlot)
+        && frame(row.receipt_frame) && (row.gossip_bound === null || frame(row.gossip_bound))
+        && (row.pending_output === null || Number.isSafeInteger(row.pending_output) && row.pending_output >= 0));
+  }
   return {
     get checkpoints() { return latest.map(record => record?.sample ?? null); },
-    errors, inputErrors, ackErrors, received,
+    errors, inputErrors, ackErrors, nativeErrors, received,
     frontier() {
       const peers = latest.map((record, index) => {
         const { sample, received_ms } = record ?? { sample: null, received_ms: null };
@@ -116,6 +127,10 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
         if (ack != null && !validWarmupLink(ack, sample, roster, true)) {
           ackErrors[index] ??= 'invalid warmup ACK link';
           delete sample.ack_link;
+        }
+        if (sample.native_frontier != null && !validNativeFrontier(sample.native_frontier, sample, roster)) {
+          nativeErrors[index] ??= 'invalid warmup native frontier';
+          delete sample.native_frontier;
         }
         if (cutoff !== null && (!isFrontier(cutoff) || cutoff.at_ms !== sample.through_ms
           || !(cutoff.reason === 'failed' && cutoff.state === 'failed'
@@ -515,7 +530,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   const replayedRelayEvents = relayWireTrace && new WeakSet();
   let expiredRelayDelay;
   const warmupLinks = new Map();
-  let warmupInput, warmupAck;
+  let warmupInput, warmupAck, warmupNativeFrontier;
   let roomRoster = [];
   const warmupTicks = [];
   let warmupTickCount = 0;
@@ -545,7 +560,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   function warmupStatus() {
     if (!warmupLinks.size) return null;
     return { recipient: localUuid, started_ms: warmupStarted, through_ms: warmupCutoff?.at_ms ?? performance.now(), cutoff: warmupCutoff,
-      tick_count: warmupTickCount, ticks: warmupTicks.slice(), input_link: warmupInput, ack_link: warmupAck,
+      tick_count: warmupTickCount, ticks: warmupTicks.slice(), input_link: warmupInput, ack_link: warmupAck, native_frontier: warmupNativeFrontier,
       links: Array.from(warmupLinks, ([sender, { packets, evicted, unretained, last_replied_report }]) => ({
         sender, evicted, unretained, last_replied_report, packets: Array.from(packets, ([payload, stages]) => ({ payload, ...stages })),
       })) };
@@ -1069,11 +1084,16 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       });
     },
     warmupStatus,
-    recordWarmupTick(before, after, budget, elapsed_us, state, frame, confirmed) {
+    recordWarmupTick(before, after, budget, elapsed_us, state, frame, confirmed, nativeSlots) {
       if (!warmupLinks.size || warmupCutoff) return;
       const at = performance.now();
       if (warmupTicks.length === 24) warmupTicks.shift();
       warmupTicks.push({ at_ms: at, before, after, budget, elapsed_us, state, frame, confirmed });
+      if (typeof nativeSlots === 'string' && nativeSlots.length > 0 && nativeSlots.length <= 2048) {
+        let slots = null;
+        try { slots = JSON.parse(nativeSlots); } catch {}
+        warmupNativeFrontier = { at_ms: at, frame, confirmed, slots };
+      }
       warmupTickCount++;
       scheduleWarmupCheckpoint(at);
     },
@@ -2302,7 +2322,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples, departureHttpsClockSamples: closeReport.httpsClockSamples, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
-      warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupInputErrors: warmupBarrier?.inputErrors, warmupAckErrors: warmupBarrier?.ackErrors,
+      warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
+      warmupInputErrors: warmupBarrier?.inputErrors, warmupAckErrors: warmupBarrier?.ackErrors, warmupNativeErrors: warmupBarrier?.nativeErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier() };
   } catch (error) {
     failures.push(error);
@@ -2351,7 +2372,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       closePartialSnapshots: closeReport.partialSnapshots, physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
       states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
-      warmupInputErrors: warmupBarrier?.inputErrors, warmupAckErrors: warmupBarrier?.ackErrors,
+      warmupInputErrors: warmupBarrier?.inputErrors, warmupAckErrors: warmupBarrier?.ackErrors, warmupNativeErrors: warmupBarrier?.nativeErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
       relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined, expiryLinks) : undefined,

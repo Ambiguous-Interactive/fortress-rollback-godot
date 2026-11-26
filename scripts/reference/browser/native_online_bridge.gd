@@ -139,6 +139,7 @@ class ObservedLobby:
 	var _engine_mesh_open: bool = false
 	var _last_play_tick_us: int = -1
 	var _next_warmup_tick_us: int = 0
+	var _next_native_frontier_us: int = 0
 	var _sdk_before_poll: int = -1
 	var _sdk_poll_budget: int = -1
 
@@ -239,8 +240,22 @@ class ObservedLobby:
 		if warmup_wire != null and (sdk_backlog or now_us >= _next_warmup_tick_us or state == "failed"):
 			var remaining: int = _sdk_packets() if state == "playing" else -1
 			var status: Types.Status = game_match.status()
-			warmup_wire.recordWarmupTick(_sdk_before_poll, remaining, _sdk_poll_budget, Time.get_ticks_usec() - now_us, state, status.current_frame, status.confirmed_frame)
+			var elapsed_us: int = Time.get_ticks_usec() - now_us
+			var native_frontier: String = _sample_native_frontier(now_us, status)
+			warmup_wire.recordWarmupTick(_sdk_before_poll, remaining, _sdk_poll_budget, elapsed_us,
+				state, status.current_frame, status.confirmed_frame, native_frontier)
 			_next_warmup_tick_us = now_us + 250000
+
+	func _sample_native_frontier(now_us: int, status: Types.Status) -> String:
+		if state != "playing" or status.current_frame - status.confirmed_frame < 2 or now_us < _next_native_frontier_us:
+			return ""
+		_next_native_frontier_us = now_us + 250000
+		var backend: Driver.Native = game_match.driver._native_backend
+		var native: RefCounted = backend._native if backend != null else null
+		if native == null or not native.has_method(&"confirmation_diagnostics"):
+			return ""
+		var slots: Array = native.call(&"confirmation_diagnostics")
+		return JSON.stringify(slots) if not slots.is_empty() else ""
 
 	func _sdk_packets() -> int:
 		# The pinned SDK transport owns the socket adapter and exposes no receive queue getter.

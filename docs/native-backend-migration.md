@@ -172,6 +172,13 @@ the receiver's protocol frontier across all prior inputs on that link. Inbox
 acceptance alone does not establish application to the sender's native
 confirmation state.
 
+When the addon exposes the optional confirmation diagnostics, each page keeps
+one recent post-service native frontier while prediction is ahead. It records
+direct receipt frames, pending native output counts, and the remote gossip
+fold bound by frozen slot. A low direct receipt identifies local input progress;
+a lower gossip bound identifies a separate confirmation constraint. Both may
+occur in one room. Older addons omit the sample and still run the same gates.
+
 The `releaseTiming` receipt follows each prepared request by its unique path.
 The controller records request dispatch, receipt, header preparation,
 handoff to `end()`, and HTTP finish. The page records the fetch continuation

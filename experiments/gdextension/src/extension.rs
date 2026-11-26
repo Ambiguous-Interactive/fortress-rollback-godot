@@ -106,6 +106,22 @@ impl FortressNativeSession {
     }
 
     #[func]
+    fn confirmation_diagnostics(&self) -> Array<VarDictionary> {
+        self.peer
+            .iter()
+            .flat_map(Peer::confirmation_diagnostics)
+            .map(|slot| {
+                let mut row = VarDictionary::new();
+                row.set("slot", slot.slot as i64);
+                row.set("receipt_frame", slot.receipt_frame);
+                row.set("pending_output", &slot.pending_output.map_or_else(Variant::nil, |count| (count as i64).to_variant()));
+                row.set("gossip_bound", &slot.gossip_bound.map_or_else(Variant::nil, |frame| frame.to_variant()));
+                row
+            })
+            .collect()
+    }
+
+    #[func]
     fn confirmed_frame(&self) -> i32 {
         self.peer.as_ref().map_or(-1, Peer::confirmed_frame)
     }
