@@ -2840,6 +2840,7 @@ now = 11;
 channel.send(other);
 wrongChannel.send(bytes);
 now = 12;
+connection.signalingState = 'closed';  // Keep the frozen SDP. The DOM wrapper still attempts the send.
 channel.send(bytes);
 channel.send(bytes);  // Only the first matching DOM call belongs to this one addressed send.
 now = 13;

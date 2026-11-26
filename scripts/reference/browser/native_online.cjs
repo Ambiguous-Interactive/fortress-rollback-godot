@@ -868,7 +868,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
           const receipt = { attempt, channel: index, sentAt: null };
           // Select the frozen recipient before claiming byte-identical sends on the active call stack.
           const route = meshSend?.payload && meshSendRoutes.get(index);
-          if (packet && route && route.player === meshSend.boundary.player && record.connection.signalingState !== 'closed'
+          if (packet && route && route.player === meshSend.boundary.player
               && route.local === ufrag(record.connection.localDescription) && route.remote === ufrag(record.connection.remoteDescription)
               && meshSend.payload === hex(nativeBytes(bytes))) {
             receipt.engineSend = meshSend.boundary;
