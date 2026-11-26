@@ -1986,7 +1986,7 @@ async function leaveWithReceipt(page, trace) {
       if (sample.stage === 'entered') trace.entered ??= { page_ms: sample.page_ms, controller_ms };
       if (sample.stage !== 'published' || trace.published || !trace.entered || sample.page_ms < trace.entered.page_ms
         || !Number.isSafeInteger(sample.code) || typeof sample.state !== 'string') return false;
-      trace.published = { page_ms: sample.page_ms, controller_ms, code: sample.code, state: sample.state };
+      trace.published = { page_ms: sample.page_ms, controller_ms, code: sample.code, state: sample.state, unacknowledged: sample.unacknowledged };
       return true;
     },
   });
@@ -2095,6 +2095,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     const trace = { id: ++sequence, index, phase };
     departureCommands.push(trace);
     await leaveWithReceipt(page, trace);
+    if (phase === 'departure' && route === 'mesh')
+      assert.deepEqual(trace.published.unacknowledged, [], 'intentional mesh Leave must receive all survivor acknowledgments');
     if (errors.length) throw new Error(JSON.stringify(errors));
   };
   const observe = (group = pages) => Promise.all(group.map((page, index) => page.evaluate(index => ({
@@ -2436,6 +2438,10 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       } else {
         assert.equal(peer.terminal_endpoint, 0, 'SDK departure must not report a native expiry endpoint');
         if (route === 'mesh') {
+          const leaver = ready.at(-1).uuid;
+          assert.deepEqual(peer.mesh_quiesced_for, [leaver], 'each survivor must quiesce for the intended leaver');
+          assert.ok(!peer.sdk_mesh_peers.includes(leaver), 'the SDK mesh must retire the leaver link');
+          if (!mixed) assert.deepEqual(peer.sdk_mesh_peers.sort(), survivorRoster.filter(uuid => uuid !== peer.uuid), 'other direct links must stay attached');
           assert.deepEqual(peer.sdk_roster.sort(), survivorRoster,
             'the SDK must remove the intended leaver and keep every survivor until their own Leave');
           assert.deepEqual(peer.wire.sockets, [1], 'a survivor must keep its signaling socket open until Leave');

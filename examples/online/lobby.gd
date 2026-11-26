@@ -7,10 +7,13 @@ const Simulation = preload("res://examples/offline/simulation.gd")
 const Multiplayer = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_multiplayer_peer.gd")
 const NativeTransport = preload("res://examples/online/native_socket_transport.gd")
 const SDK_PATH: String = "res://addons/signal_fish/signal_fish_client.gd"
+const SDK_ERROR_CODES_PATH: String = "res://addons/signal_fish/protocol/sf_error_codes.gd"
 const CONFIG_PATH: String = "res://addons/signal_fish/signal_fish_config.gd"
 const MESH_PATH: String = "res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd"
 const START_TIMEOUT_US: int = 30_000_000
 const NATIVE_MESH_GRACE_US: int = 3_000_000
+const MESH_LEAVE_WAIT_US: int = 2_000_000
+const MESH_DEPARTURE_SIGNAL: String = "fortress_mesh_departure_v1"
 
 var game_match: Match = Match.new()
 var client: Node
@@ -27,6 +30,7 @@ var _requested_route: String = "mesh"
 var _config: RefCounted
 var _info: RefCounted
 var _sdk: Script
+var _sdk_error_codes: Script
 var _name: String = ""
 var _room: String = ""
 var _joined: bool = false
@@ -39,6 +43,11 @@ var _last_now: int = -1
 var _connection_revision: int = 0
 var _is_servicing: bool = false
 var _callbacks: Callbacks
+var _departure_generation: String = ""
+var _leave_started_us: int = -1
+var _leave_pending: PackedStringArray = []
+var _quiesced_for: PackedStringArray = []
+var _sending_departure_signal: bool = false
 
 
 func connect_room(endpoint: String, player_name: String, room: String, now_us: int) -> Error:
@@ -84,6 +93,8 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 			message = "The SignalFish SDK could not configure the native WebSocket transport."
 			return ERR_UNAVAILABLE
 	_sdk = load(SDK_PATH)
+	if backend_choice == "native" and route == "mesh" and ResourceLoader.exists(SDK_ERROR_CODES_PATH):
+		_sdk_error_codes = load(SDK_ERROR_CODES_PATH)
 	var config_script: Script = load(CONFIG_PATH)
 	var mesh_script: Script = load(MESH_PATH)
 	client = _sdk.new()
@@ -256,13 +267,21 @@ func _tick(now_us: int, buttons: int) -> void:
 	if state == "playing" and game_match._local_input_code(buttons) == Match.Types.Code.INPUT_ALREADY_SUBMITTED:
 		return
 	_last_now = now_us
+	if state in ["leaving", "quiesced"]:
+		if state == "leaving" and now_us - _leave_started_us >= MESH_LEAVE_WAIT_US:
+			disconnect_room()
+			return
+		client.call("poll")
+		if state == "leaving" and _leave_pending.is_empty():
+			disconnect_room()
+		return
 	if state == "playing" and not game_match.poll_protocol_time(now_us - _epoch):
 		_fail(game_match.failure)
 		_finish_cleanup()
 		return
 	var revision: int = _connection_revision
 	_poll_client()
-	if revision != _connection_revision or state == "failed":
+	if revision != _connection_revision or state in ["failed", "quiesced"]:
 		return
 	mesh.call("poll")
 	if revision != _connection_revision or state == "failed":
@@ -364,6 +383,70 @@ func _mesh_can_start(revision: int, allow_missing_links: bool) -> bool:
 	return true
 
 
+## Intentional native mesh Leave keeps the SDK mesh alive until peers stop sending.
+func leave(now_us: int) -> void:
+	if _is_busy() or state == "leaving":
+		return
+	var generation: String = _mesh_departure_generation()
+	if generation.is_empty():
+		disconnect_room()
+		return
+	var already_quiesced: bool = state == "quiesced"
+	state = "leaving"
+	message = "Leaving the room…"
+	_departure_generation = generation
+	_leave_started_us = maxi(now_us, _last_now)
+	_leave_pending = game_match.membership.roster()
+	_leave_pending.remove_at(_leave_pending.find(game_match.membership.local_uuid()))
+	if not already_quiesced:
+		game_match.detach(true)
+	for player: String in _leave_pending.duplicate():
+		_send_departure_signal(player, "prepare")
+		if state != "leaving":
+			return
+
+
+func _mesh_departure_generation() -> String:
+	if state in ["leaving", "quiesced"]:
+		return _departure_generation
+	if backend == "native" and client != null and state in ["lobby", "starting", "playing"] and client.has_method("send_signal"):
+		var plan: Dictionary = game_match.adapter.status()
+		if plan.route == "mesh":
+			return plan.generation
+	return ""
+
+
+func _on_mesh_departure_signal(player: String, generation: String, payload: Variant) -> void:
+	if not payload is Dictionary or payload.size() != 1 or not payload.get(MESH_DEPARTURE_SIGNAL) is String:
+		return
+	if generation.is_empty() or generation != _mesh_departure_generation() or player == game_match.membership.local_uuid() \
+		or game_match.membership.slot(player) < 0:
+		return
+	match payload[MESH_DEPARTURE_SIGNAL]:
+		"prepare":
+			if _quiesced_for.has(player):
+				return
+			if state != "leaving" and state != "quiesced":
+				state = "quiesced"
+				message = "A player is leaving. Gameplay has stopped."
+				_departure_generation = generation
+				game_match.detach(true)
+			_quiesced_for.append(player)
+			_send_departure_signal(player, "quiesced")
+		"quiesced":
+			if state == "leaving":
+				var pending: int = _leave_pending.find(player)
+				if pending >= 0:
+					_leave_pending.remove_at(pending)
+
+
+func _send_departure_signal(player: String, kind: String) -> void:
+	# An SDK refusal leaves that peer unacknowledged until the explicit Leave deadline.
+	_sending_departure_signal = true
+	client.call("send_signal", player, _departure_generation, {MESH_DEPARTURE_SIGNAL: kind})
+	_sending_departure_signal = false
+
+
 func disconnect_room() -> void:
 	if _closing:
 		return
@@ -376,11 +459,16 @@ func disconnect_room() -> void:
 	client = null
 	_config = null
 	_info = null
+	_sdk_error_codes = null
 	state = "offline"
 	message = "Left the room. Create a new room and share its new code to restart."
 	has_readied = false
 	all_ready = false
 	game_match.detach()
+	_departure_generation = ""
+	_leave_started_us = -1
+	_leave_pending.clear()
+	_quiesced_for.clear()
 	_cleanup_pending = false
 	_release_node(previous_mesh, defer_release)
 	if previous_client != null:
@@ -404,12 +492,15 @@ func _connect_callbacks() -> void:
 	if backend == "native":
 		game_match.adapter.retain_mesh_on_player_departure = true
 		game_match.adapter.mesh_departed.connect(_callbacks.on_mesh_departure)
+		if client.has_signal("signal_received"):
+			client.connect("signal_received", _callbacks.on_mesh_departure_signal)
 	client.connect("protocol_info", _callbacks.on_info)
 	client.connect("room_joined", _callbacks.on_room)
 	client.connect("lobby_state_changed", _callbacks.on_lobby)
 	client.connect("protocol_error", _callbacks.on_protocol_error)
+	client.connect("server_error", _callbacks.on_server_error)
 	for signal_name: String in [
-		"connection_failed", "authentication_error", "room_join_failed", "server_error", "reconnection_failed", "disconnected", "going_away", "room_left", "reconnected"
+		"connection_failed", "authentication_error", "room_join_failed", "reconnection_failed", "disconnected", "going_away", "room_left", "reconnected"
 	]:
 		client.connect(signal_name, _callbacks.on_failure)
 
@@ -445,8 +536,15 @@ func _on_failure(_first: Variant = null, _second: Variant = null, _third: Varian
 
 
 func _on_protocol_error(reason: String) -> void:
-	if not _closing:
+	if not _closing and not _sending_departure_signal:
 		_fail("SignalFish: " + reason.left(256))
+
+
+func _on_server_error(code: int) -> void:
+	# A refused ACK cannot close a quiesced survivor before the original PlayerLeft.
+	if state == "quiesced" and _sdk_error_codes != null and _sdk_error_codes.call("category", code) == "signaling":
+		return
+	_on_failure()
 
 
 func _on_mesh_departure() -> void:
@@ -454,7 +552,7 @@ func _on_mesh_departure() -> void:
 
 
 func _fail(reason: String) -> void:
-	if state == "failed":
+	if state in ["failed", "leaving"]:
 		return
 	var keep_mesh: bool = game_match.adapter.has_retained_mesh()
 	state = "failed"

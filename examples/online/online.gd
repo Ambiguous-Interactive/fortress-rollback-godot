@@ -232,13 +232,14 @@ func _start_game() -> void:
 
 func _leave() -> void:
 	_replay_notice = ""
-	controller.disconnect_room()
+	controller.leave(Time.get_ticks_usec())
 	room_code.text = ""
 	_update_status()
 
 
 func _update_status() -> void:
 	var connected: bool = controller.client != null
+	var leaving: bool = controller.state == "leaving"
 	var native: bool = controller.backend == "native" if connected else backend_choice.selected != 0
 	raise_delay_button.disabled = not _can_change_delay()
 	apply_delay_button.disabled = raise_delay_button.disabled or controller.game_match.suggested_delay < 0
@@ -248,7 +249,7 @@ func _update_status() -> void:
 	inspect_button.disabled = connected
 	create_button.disabled = connected
 	join_button.disabled = connected
-	leave_button.disabled = not connected
+	leave_button.disabled = not connected or leaving
 	diagnostics_button.disabled = controller.game_match.local_slot < 0
 	trace_checkbox.disabled = controller.has_readied or native
 	replay_checkbox.disabled = controller.has_readied or native
@@ -259,7 +260,7 @@ func _update_status() -> void:
 	room_code.editable = not connected
 	backend_choice.disabled = connected
 	room_size.editable = not connected and native
-	if connected and not controller.room_code().is_empty():
+	if connected and not leaving and not controller.room_code().is_empty():
 		room_code.text = controller.room_code()
 	var players: int = controller.client.call("get_players").size() if connected else 0
 	ready_button.disabled = controller.state != "lobby" or controller.has_readied or players != controller.player_count

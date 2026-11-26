@@ -8,6 +8,10 @@ const Lobby = preload("res://examples/online/lobby.gd")
 class Client:
 	extends Fixture.Client
 	signal protocol_error(reason: String)
+	signal server_error(message: String, code: int)
+	signal signal_received(player: String, generation: String, payload: Variant)
+	var control_inbox: Array[Array] = []
+	var control_outbox: Array[Array] = []
 	var closes: int = 0
 	var close_reasons: Array[String] = []
 	var attempts: int = 0
@@ -22,6 +26,10 @@ class Client:
 	var plan_attempts: int = 0
 	func poll() -> void:
 		polls += 1
+		var signals: Array[Array] = control_inbox.duplicate()
+		control_inbox.clear()
+		for packet: Array in signals:
+			signal_received.emit(packet[0], packet[1], packet[2])
 		if not departing_player.is_empty():
 			var player: String = departing_player
 			departing_player = ""
@@ -33,6 +41,13 @@ class Client:
 			session_plan.emit(plan)
 		if fail_poll:
 			protocol_error.emit("queued peer departure")
+	func get_room_code() -> String:
+		return "ROOM01"
+	func get_players() -> Array:
+		return []
+	func send_signal(player: String, generation: String, payload: Variant) -> Error:
+		control_outbox.append([player, generation, payload])
+		return OK
 	func close(_code: int, reason: String) -> Error:
 		closes += 1
 		close_reasons.append(reason)
@@ -58,21 +73,21 @@ class BrowserMesh:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["relay_send_failure", "sdk_failure_deadline", "mesh_departure"])
+	return PackedStringArray(["relay_send_failure", "sdk_failure_deadline", "mesh_departure", "explicit_mesh_leave", "simultaneous_mesh_leave"])
 
 
-func _build(context: RefCounted, start_game: bool = true) -> Dictionary:
+func _build(context: RefCounted, start_game: bool = true, local: String = Fixture.U, remote: String = Fixture.V) -> Dictionary:
 	var lobby: Lobby = Lobby.new()
 	var client: Client = Client.new()
-	client.local = Fixture.U
+	client.local = local
 	var mesh: BrowserMesh = BrowserMesh.new()
 	var transport: Fixture.MeshFixture.Transport = Fixture.MeshFixture.Transport.new()
-	transport.local = Fixture.U
+	transport.local = local
 	mesh.transport = transport
 	var game: Fixture.Match = lobby.game_match
-	context.equal(game.freeze(client, mesh, PackedStringArray([Fixture.V, Fixture.U]), PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8])), OK, "real frozen room")
+	context.equal(game.freeze(client, mesh, PackedStringArray([remote, local]), PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8])), OK, "real frozen room")
 	var plan: Fixture.MembershipFixture.Plan = Fixture.MembershipFixture.Plan.new()
-	plan.data.peers = [{"player_id": Fixture.V, "initiate": true}]
+	plan.data.peers = [{"player_id": remote, "initiate": true}]
 	client.session_plan.emit(plan)
 	var config: Fixture.RelayFixture.SDKConfig = Fixture.RelayFixture.SDKConfig.new()
 	config.max_buffered_bytes = 4096
@@ -91,6 +106,16 @@ func _build(context: RefCounted, start_game: bool = true) -> Dictionary:
 func run_case(name: String, context: RefCounted) -> void:
 	if name == "sdk_failure_deadline":
 		_clock_failure(context)
+		context.finish()
+		return
+	if name == "simultaneous_mesh_leave":
+		for first: int in 2:
+			_simultaneous_mesh_leave(context, first)
+		context.finish()
+		return
+	if name == "explicit_mesh_leave":
+		for unavailable: bool in [false, true]:
+			_explicit_mesh_leave(context, unavailable)
 		context.finish()
 		return
 	if name == "mesh_departure":
@@ -171,6 +196,121 @@ func _mesh_departure(context: RefCounted, initial_state: String) -> void:
 	context.equal(detach_calls, [true], "Leave detaches the retained mesh before disposal")
 	context.equal(close_reasons, ["Leaving example room"], "Leave closes the retained socket once")
 	context.equal(lobby.state, "offline", "Leave returns to the lobby")
+
+
+static func category(code: int) -> String:
+	return "signaling" if code == 1 else "room"
+
+
+func _leave_fixture(context: RefCounted, local: String, remote: String) -> Dictionary:
+	var fixture: Dictionary = _build(context, true, local, remote)
+	var lobby: Lobby = fixture.lobby
+	var client: Client = fixture.client
+	lobby.backend = "native"
+	lobby._sdk_error_codes = get_script()
+	fixture.driver.adapter.retain_mesh_on_player_departure = true
+	fixture.driver.adapter.mesh_departed.connect(lobby._on_mesh_departure)
+	# Production connects the SDK callbacks before freeze. Use the same dispatcher here.
+	lobby._callbacks = Lobby.Callbacks.new(lobby, lobby._connection_revision)
+	client.signal_received.connect(lobby._callbacks.on_mesh_departure_signal)
+	client.server_error.connect(lobby._callbacks.on_server_error)
+	return fixture
+
+
+# Delay the survivor's SDK poll past the initial Leave. A missing acknowledgment must time out once.
+func _explicit_mesh_leave(context: RefCounted, unavailable: bool) -> void:
+	var initiator: Dictionary = _leave_fixture(context, Fixture.U, Fixture.V)
+	var survivor: Dictionary = _leave_fixture(context, Fixture.V, Fixture.U)
+	var leaver: Lobby = initiator.lobby
+	var remaining: Lobby = survivor.lobby
+	var leaving_client: Client = initiator.client
+	var remaining_client: Client = survivor.client
+	var node: Node = Fixture.Scene.instantiate()
+	node.set("controller", leaver)
+	node.call("_ready")
+	var detach_calls: Array[bool] = initiator.mesh.detach_calls
+	var close_reasons: Array[String] = leaving_client.close_reasons
+	var controls: Array[Array] = leaving_client.control_outbox
+	node.call("_leave")
+	var room_code: LineEdit = node.get("room_code")
+	context.equal(room_code.text, "", "Leave clears the old room code while waiting for the SDK")
+	context.equal(leaver.game_match.has_started, false, "Leave stops the leaver's gameplay immediately")
+	context.equal(detach_calls, [], "Leave holds reciprocal RTC connections while the survivor can still send")
+	context.equal(close_reasons, [], "Leave holds the SDK socket during quiescence")
+	context.equal(controls.size(), 1, "Leave sends one addressed prepare to the frozen survivor")
+	if controls.size() != 1:
+		remaining.disconnect_room()
+		node.free()
+		return
+	var start: int = leaver.get("_leave_started_us")
+	var deadline: int = start + Lobby.MESH_LEAVE_WAIT_US
+	var prepare: Array = controls[0]
+	context.equal(prepare[0], Fixture.V, "prepare uses the remote UUID")
+	node.call("_leave")
+	context.equal(controls.size(), 1, "duplicate Leave neither closes nor resends")
+	leaving_client.control_inbox.append([Fixture.V, "stale", {"fortress_mesh_departure_v1": "quiesced"}])
+	leaving_client.control_inbox.append([Fixture.ROOM, prepare[1], {"fortress_mesh_departure_v1": "quiesced"}])
+	leaving_client.fail_poll = unavailable
+	leaver.tick(deadline - 1, 0)
+	context.equal(close_reasons, [], "stale or foreign ACKs and failed signaling cannot end the wait early")
+	context.equal(remaining.game_match.has_started, true, "delayed survivor is still sending until its prepare runs")
+	if unavailable:
+		leaver.tick(deadline, 0)
+		context.equal(remaining_client.control_outbox, [], "unavailable survivor produced no acknowledgment")
+	else:
+		remaining_client.control_inbox.append([Fixture.U, prepare[1], prepare[2]])
+		remaining.tick(deadline - 1, 0)
+		context.equal(remaining.game_match.has_started, false, "survivor stops gameplay before acknowledgment")
+		context.equal(survivor.mesh.detach_calls, [], "prepare retains survivor links for real SDK removal")
+		context.equal(remaining_client.close_reasons, [], "prepare retains survivor signaling")
+		context.equal(remaining_client.control_outbox.size(), 1, "survivor acknowledges the validated prepare")
+		remaining_client.server_error.emit("Signal rate limited", 1)
+		context.equal(remaining.state, "quiesced", "a signaling refusal leaves the mesh ready for the SDK PlayerLeft")
+		context.equal(remaining_client.close_reasons, [], "a refused acknowledgment cannot cascade socket closure")
+		if remaining_client.control_outbox.size() == 1:
+			var reply: Array = remaining_client.control_outbox[0]
+			leaving_client.control_inbox.append([Fixture.V, reply[1], reply[2]])
+			leaver.tick(deadline - 1, 0)
+		remaining_client.departing_player = Fixture.U
+		remaining.tick(deadline, 0)
+		context.equal(remaining.state, "failed", "real SDK departure completes the survivor's stop")
+		context.equal(survivor.mesh.detach_calls, [], "SDK departure retains unrelated survivor connections")
+	context.equal(leaver.state, "offline", "Leave completes after acknowledgment or timeout")
+	context.equal(detach_calls, [true], "Leave detaches once after quiescence settles")
+	context.equal(close_reasons, ["Leaving example room"], "Leave closes the original SDK socket once")
+	leaver.tick(deadline + 1, 0)
+	context.equal(close_reasons.size(), 1, "late service cannot close the disposed socket again")
+	remaining.disconnect_room()
+	node.free()
+
+
+func _simultaneous_mesh_leave(context: RefCounted, first: int) -> void:
+	var fixtures: Array[Dictionary] = [_leave_fixture(context, Fixture.U, Fixture.V), _leave_fixture(context, Fixture.V, Fixture.U)]
+	var ordered: Array[Dictionary] = [fixtures[first], fixtures[1 - first]]
+	var clients: Array[Client] = [ordered[0].client, ordered[1].client]
+	var lobbies: Array[Lobby] = [ordered[0].lobby, ordered[1].lobby]
+	var closes: Array[Array] = [clients[0].close_reasons, clients[1].close_reasons]
+	for lobby: Lobby in lobbies:
+		lobby.leave(10)
+	for index: int in 2:
+		var prepare: Array = clients[1 - index].control_outbox[0]
+		clients[index].control_inbox.append([clients[1 - index].local, prepare[1], prepare[2]])
+		lobbies[index].tick(11, 0)
+		context.equal(lobbies[index].game_match.has_started, false, "simultaneous Leave quiesces locally before acknowledging")
+		context.equal(closes[index], [], "sending an ACK cannot close before receiving the reciprocal ACK")
+		context.equal(clients[index].control_outbox.size(), 2, "a leaving player acknowledges the other leaver")
+	var first_uuid: String = clients[0].local
+	var reply_to_second: Array = clients[0].control_outbox[1]
+	var reply_to_first: Array = clients[1].control_outbox[1]
+	clients[0].control_inbox.append([clients[1].local, reply_to_first[1], reply_to_first[2]])
+	lobbies[0].tick(12, 0)
+	context.equal(lobbies[0].state, "offline", "first poll closes once the reciprocal ACK arrives")
+	clients[1].player_left.emit(first_uuid)
+	context.equal(lobbies[1].state, "leaving", "SDK removal of the first leaver keeps the second close pending")
+	clients[1].control_inbox.append([first_uuid, reply_to_second[1], reply_to_second[2]])
+	lobbies[1].tick(12, 0)
+	context.equal(lobbies[1].state, "offline", "second poll still services the reciprocal ACK after SDK removal")
+	context.equal(closes, [["Leaving example room"], ["Leaving example room"]], "both sockets close once in either poll order")
 
 
 # Value: protects=elapsed liveness before SDK departures; fails_when=queued SDK failure skips overdue protocol polling; why_new=direct Match expiry has no SDK poll callback

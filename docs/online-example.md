@@ -401,6 +401,11 @@ own initial state; see [replays](integration.md#record-and-replay-a-match).
 adapters, membership adapter and SDK objects. To restart, both players leave;
 the creator creates a fresh room and shares its new code. Join that fresh room,
 ready again and start again. The scene does not restart inside the old room.
+In a native WebRTC match, pressing Leave stops gameplay immediately. The client
+uses SignalFish to ask the other players to stop sending before it closes the
+WebRTC connections. It waits up to two seconds for their acknowledgments.
+After SignalFish removes the departing player, the other clients keep their
+signaling sockets and remaining WebRTC connections until their own Leave.
 
 A connection failure, membership change, reconnect or terminal rollback error
 stops the old game, detaches its transport queues and WebRTC mesh, and closes its
