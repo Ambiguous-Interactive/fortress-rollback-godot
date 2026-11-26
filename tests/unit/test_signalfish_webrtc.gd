@@ -233,7 +233,7 @@ func _activity(context: RefCounted, fixture: Dictionary) -> void:
 
 
 func _removed_receive_cursor(context: RefCounted) -> void:
-	for control: String in ["removed", "live", "other_error", "lifetime"]:
+	for control: String in ["removed", "removed_single", "live", "other_error", "packet_lifetime", "error_lifetime", "presence_lifetime"]:
 		var membership: M.M = M.new()._membership(context, U, PackedStringArray([U, V, M.W]))
 		var client: M.FakeClient = M.FakeClient.new()
 		var mesh: FakeMesh = FakeMesh.new()
@@ -245,7 +245,7 @@ func _removed_receive_cursor(context: RefCounted) -> void:
 		plan.data.peers.append({"player_id": M.W, "initiate": true})
 		client.session_plan.emit(plan)
 		var options: W.Options = W.Options.new()
-		options.max_receives_per_poll = 1
+		options.max_receives_per_poll = 1 if control == "removed_single" else 2
 		var direct: W = W.new()
 		var delivered: Array[PackedByteArray] = []
 		var receive: Callable = func(uuid: String, bytes: PackedByteArray) -> int:
@@ -254,20 +254,31 @@ func _removed_receive_cursor(context: RefCounted) -> void:
 			return M.I.Code.OK
 		context.equal(direct.configure_packet_receiver(mesh, membership, adapter, receive, options), W.Code.OK, "configure " + control)
 		var source: int = membership.uuid_to_peer_id(V)
-		transport.removed_peer = 0 if control == "live" else source
-		if control == "lifetime":
-			transport.on_absent = func() -> void: client.room_left.emit()
+		transport.selected_peer = source
+		transport.removed_peer = control != "live"
+		transport.read_error = ERR_BUG if control == "other_error" else ERR_UNAVAILABLE
+		var end_room: Callable = func() -> void: client.room_left.emit()
+		match control:
+			"packet_lifetime": transport.on_read = end_room
+			"error_lifetime": transport.on_error = end_room
+			"presence_lifetime": transport.on_absent = end_room
 		transport.incoming.assign([
-			{"source": source, "channel": 0, "mode": 0, "bytes": PackedByteArray(), "error": ERR_BUG if control == "other_error" else ERR_UNAVAILABLE},
 			{"source": membership.uuid_to_peer_id(M.W), "channel": 0, "mode": 0, "bytes": PackedByteArray([41, 42])}
 		])
 		var first: W.Result = direct.poll(0)
-		var expected: int = {"removed": W.Code.OK, "live": W.Code.SDK_FAILURE, "other_error": W.Code.SDK_FAILURE, "lifetime": W.Code.WRONG_STATE}[control]
+		var expected: int = W.Code.SDK_FAILURE
+		if control.begins_with("removed"):
+			expected = W.Code.OK
+		elif control.ends_with("_lifetime"):
+			expected = W.Code.WRONG_STATE
 		context.equal(first.code, expected, "classify the empty read for " + control)
-		context.equal(first.activity, 1, "the stale read consumes one work unit")
-		context.equal(delivered.is_empty(), true, "the receive limit leaves the live packet queued")
-		if control == "removed":
+		var immediate: bool = control == "removed"
+		context.equal(first.activity, 2 if immediate else 1, "the stale read consumes one work unit")
+		context.equal(first.received, int(immediate), "an available receive attempt delivers the survivor")
+		context.equal(transport.incoming.size(), 0 if immediate else 1, "only a successful read consumes the survivor packet")
+		if control == "removed_single":
 			context.equal(direct.poll(1).received, 1, "the surviving sender still delivers after cursor repair")
+		if control.begins_with("removed"):
 			context.equal(delivered, [PackedByteArray([41, 42])], "the survivor's exact bytes reach its receiver")
 		direct.detach()
 		adapter.detach()
@@ -377,20 +388,35 @@ class Transport:
 
 class CursorTransport:
 	extends Transport
-	var removed_peer: int = 0
+	var selected_peer: int = 0
+	var removed_peer: bool = true
+	var read_error: int = ERR_UNAVAILABLE
 	var last_error: int = OK
+	var on_read: Callable
+	var on_error: Callable
 	var on_absent: Callable
 
 	func has_peer(id: int) -> bool:
-		if id != removed_peer:
+		if not removed_peer or id != M.M.uuid_to_peer_id(V):
 			return true
 		if on_absent.is_valid():
 			on_absent.call()
 		return false
 
+	func get_packet_peer() -> int:
+		return selected_peer if selected_peer != 0 else super.get_packet_peer()
+
 	func get_packet() -> PackedByteArray:
-		last_error = incoming[0].get("error", OK)
+		if selected_peer != 0:
+			selected_peer = 0
+			last_error = read_error
+			if on_read.is_valid():
+				on_read.call()
+			return PackedByteArray()
+		last_error = OK
 		return super.get_packet()
 
 	func get_packet_error() -> int:
+		if on_error.is_valid():
+			on_error.call()
 		return last_error

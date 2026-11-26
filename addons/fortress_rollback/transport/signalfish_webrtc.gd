@@ -204,6 +204,9 @@ func _receive(transport: Object, now_us: int, factory: Callable, result: Types.R
 			_incoming = _incoming.duplicate()
 			_consumed += 1
 			var packet_error: int = transport.call("get_packet_error")
+			result.code = _gate()
+			if result.code != Code.OK:
+				return
 			var uuid: String = _membership.uuid_for_peer_id(_source)
 			if packet_error != OK:
 				if packet_error == ERR_UNAVAILABLE and _incoming.is_empty() and not uuid.is_empty() and uuid != _membership.local_uuid():
@@ -234,9 +237,6 @@ func _receive(transport: Object, now_us: int, factory: Callable, result: Types.R
 				return
 			_token = candidate.duplicate() if candidate is PackedByteArray else null
 			_token_ready = true
-		result.code = _gate()
-		if result.code != Code.OK:
-			return
 		if _peer != null:
 			result.peer_code = _adapter.receive_mesh(_peer, _incoming.duplicate(), _source, now_us, _token)
 		else:
