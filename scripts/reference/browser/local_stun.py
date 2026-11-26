@@ -66,7 +66,7 @@ def verify_stun_binding(address, port):
 def local_stun(tool, root, log):
     address = stun_address()
     port = local_port(address)
-    command = [str(tool), '-n', '--stun-only', '--no-auth', '--no-cli', '--no-tls', '--no-dtls',
+    command = [str(tool.resolve()), '-n', '--stun-only', '--no-auth', '--no-cli', '--no-tls', '--no-dtls',
                f'--listening-ip={address}', f'--relay-ip={address}', '--relay-threads=1', f'--listening-port={port}',
                f'--pidfile={root / "stun.pid"}', f'--userdb={root / "stun.sqlite"}', '--log-file=stdout', '--simple-log']
     with log.open('wb') as stream, subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT) as server:

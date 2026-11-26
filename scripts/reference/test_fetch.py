@@ -1,4 +1,5 @@
 """Value: corrupt/missing/hostile pins must not become trusted oracle sources."""
+from contextlib import chdir
 import copy
 import hashlib
 import io
@@ -430,12 +431,17 @@ with socket.create_server(address) as server, socket.socket(type=socket.SOCK_DGR
                         tool = root / name
                         tool.write_text(script, encoding='utf-8')
                         tool.chmod(0o700)
-                        stun = stun_fixture.local_stun(tool, root, root / 'stun.log')
                         if name == 'valid-mapping':
-                            with stun as endpoint:
+                            search = root / 'search'
+                            search.mkdir()
+                            wrong_tool = search / name
+                            wrong_tool.write_text('#!/bin/sh\necho WRONG_STUN_EXECUTABLE\nexit 1\n', encoding='utf-8')
+                            wrong_tool.chmod(0o700)
+                            with chdir(root), patch.dict(os.environ, {'PATH': str(search)}), \
+                                    stun_fixture.local_stun(Path(name), root, root / 'stun.log') as endpoint:
                                 self.assertRegex(endpoint, r'^stun:127\.0\.0\.1:[0-9]+$')
                         else:
-                            with self.assertRaisesRegex(ValueError, 'STUN Binding'), stun:
+                            with self.assertRaisesRegex(ValueError, 'STUN Binding'), stun_fixture.local_stun(tool, root, root / 'stun.log'):
                                 pass
 
     def test_native_online_invalidates_receipt_before_manifest_load(self):
