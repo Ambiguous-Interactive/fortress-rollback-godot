@@ -97,14 +97,7 @@ jobs:
           if-no-files-found: error
 
   signalfish:
-    # The Firefox pair is the #104 eight-player axis: it runs the same labels as
-    # the Chromium pair under `xvfb-run` with the pinned Firefox installation.
-    # The chromium-firefox pair stays out of every tier: its hosted 8-player
-    # rooms fail ICE setup deterministically (all peers report "ICE failed, add
-    # a STUN server" against the absolute setup deadline; Reference run
-    # 42763413592), the same session-025 mixed-job failure class. That
-    # cross-browser setup gap remains tracked in #104.
-    name: Nightly SignalFish Firefox WebRTC ${{ matrix.version }} ${{ matrix.part }}
+    name: Nightly SignalFish ${{ matrix.pair == 'firefox' && 'Firefox' || 'Chromium–Firefox' }} WebRTC ${{ matrix.version }} ${{ matrix.part }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
@@ -112,7 +105,9 @@ jobs:
       matrix:
         version: ["4.3", "4.7.2"]
         part: [direct, mixed]
-        pair: [firefox]
+        pair: [firefox, chromium-firefox]
+    env:
+      BROWSER_PAIR: ${{ matrix.pair }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
@@ -124,7 +119,7 @@ jobs:
           cache: npm
           cache-dependency-path: scripts/reference/browser/package-lock.json
       - name: Warm Chromium for merge candidates on main
-        if: matrix.version == '4.3' && matrix.part == 'direct'
+        if: matrix.version == '4.3' && matrix.part == 'direct' && matrix.pair == 'firefox'
         uses: actions/cache@v6.1.0
         with:
           path: .cache/reference/downloads/chromium-*-x86_64.zip
@@ -166,7 +161,9 @@ jobs:
           bash scripts/reference/retry_apt_fetch.sh .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
           bash scripts/reference/retry_apt_fetch.sh .cache/reference/browser/node_modules/.bin/playwright install-deps firefox
           sudo apt-get update
-          sudo bash scripts/reference/retry_apt_fetch.sh apt-get install -y xvfb xdotool
+          packages=(xvfb xdotool)
+          if [[ "$BROWSER_PAIR" == chromium-firefox ]]; then packages+=(coturn); fi
+          sudo bash scripts/reference/retry_apt_fetch.sh apt-get install -y "${packages[@]}"
       - name: Build the pinned local SignalFish server
         env:
           SERVER_SOURCE: ${{ steps.pinned.outputs.source }}
@@ -188,14 +185,21 @@ jobs:
           SERVER_SOURCE: ${{ steps.pinned.outputs.source }}
         run: |
           if [[ "${{ matrix.part }}" == direct ]]; then
-            labels=(clean faults corrupt default mixed-disabled peer-drop peer-drop-corrupt peer-drop-close peer-drop-answer
-                    peer-drop-relay peer-drop-missing peer-drop-missing-lost peer-drop-commit peer-drop-second peer-drop-overlap peer-drop-rollback peer-drop-foreign
-                    peer-drop-room peer-drop-room-continue peer-drop-process peer-drop-process-missing
-                    peer-drop-room-after-drop peer-drop-room-before-drop)
-          else labels=(mixed mixed-default mixed-close recording-pressure); fi
+            labels=(clean faults corrupt default mixed-disabled)
+            if [[ "$BROWSER_PAIR" == firefox ]]; then
+              labels+=(peer-drop peer-drop-corrupt peer-drop-close peer-drop-answer
+                       peer-drop-relay peer-drop-missing peer-drop-missing-lost peer-drop-commit
+                       peer-drop-second peer-drop-overlap peer-drop-rollback peer-drop-foreign
+                       peer-drop-room peer-drop-room-continue peer-drop-process peer-drop-process-missing
+                       peer-drop-room-after-drop peer-drop-room-before-drop)
+            fi
+          else
+            labels=(mixed mixed-default mixed-close)
+            if [[ "$BROWSER_PAIR" == firefox ]]; then labels+=(recording-pressure); fi
+          fi
           xvfb-run -a python3 scripts/reference/signalfish_webrtc_probe.py \
             --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \
-            --browser-pair firefox \
+            --browser-pair "$BROWSER_PAIR" \
             --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
             --server-source "$SERVER_SOURCE" \
             --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
@@ -203,7 +207,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
-          name: nightly-signalfish-firefox-results-${{ matrix.version }}-${{ matrix.part }}
+          name: nightly-signalfish-${{ matrix.pair }}-results-${{ matrix.version }}-${{ matrix.part }}
           # The build receipt keeps the server binary's digest and build log; the published copy is not evidence.
           path: |
             .cache/reference/results/

@@ -424,7 +424,10 @@ xvfb-run() {
         self.assertIn('workflow_dispatch:', text)
         self.assertNotIn('pull_request:', text)
         self.assertEqual(len(re.findall(r'^\s*- \{version: "[^"]+", browser: firefox,', text, re.MULTILINE)), NIGHTLY_FIREFOX_PARTS)
-        self.assertIn('pair: [firefox]', text)
+        transport = '\n'.join(job_blocks(text)['signalfish'])
+        self.assertIn('pair: [firefox, chromium-firefox]', transport)
+        self.assertIn('nightly-signalfish-${{ matrix.pair }}-results-${{ matrix.version }}-${{ matrix.part }}', transport)
+        self.assertIn('--browser-pair "$BROWSER_PAIR"', transport)
         self.assertIn('spectator_launch.py', text)
         self.assertIn('handshake_launch.py', text)
         # Nightly runs the formal model check (default on); the flag that skips it
