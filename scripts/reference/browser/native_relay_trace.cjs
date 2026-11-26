@@ -2,6 +2,7 @@
 function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000) {
   const cap = 128;
   const archiveCap = 512;
+  const wireArchiveCap = 1024;
   const families = ['sync', 'sync', 'input', 'input', 'quality', 'quality'];
   const streams = Object.fromEntries(['send', 'raw', 'sdk', 'native'].map(stage => [stage, Object.fromEntries(
     [...new Set(families)].map(family => [family, { count: 0, links: new Map() }]))]));
@@ -110,7 +111,8 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
     const peer = stage === 'send' ? identity.recipient : identity.sender;
     if (!stream.links.has(peer)) stream.links.set(peer, []);
     const events = stream.links.get(peer);
-    if (events.length === (identity.kind < 2 ? cap : archiveCap)) events.shift();
+    const capacity = identity.kind < 2 ? cap : stage === 'send' || stage === 'raw' ? wireArchiveCap : archiveCap;
+    if (events.length === capacity) events.shift();
     const packet = { ordinal, ...identity, ...metadata, bytes: Uint8Array.from(envelope) };
     events.push(packet);
     const holdStream = hold?.streams[stage];
@@ -216,7 +218,7 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
         streams.send[family].links.get(recipient)?.findLast(event => event.kind === kind));
       if (originals.some(packet => !packet)) throw new Error('missing same-link pressure packets');
       const ordinals = [];
-      for (let index = 0; index <= cap; index++) {
+      for (let index = 0; index < 520; index++) {
         for (const { bytes } of originals) ordinals.push(send(bytes));
       }
       return ordinals;

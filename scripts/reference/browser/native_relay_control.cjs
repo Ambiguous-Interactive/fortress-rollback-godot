@@ -235,28 +235,30 @@ function checkSameLinkRetention(server, browsers, before, resumed, ordinals) {
   const [sender, recipient] = [source.local, reporter.local];
   const expected = new Set(ordinals);
   assert.ok(expected.size === ordinals.length && ordinals.every(Number.isSafeInteger), 'invalid same-link send ordinals');
-  const joined = joinRelayReceipts(server, browsers);
+  const pinned = validateRelayExpiryFrontier(resumed.frontier, sender, recipient, resumed.resumed_ms);
+  const joined = joinRelayReceipts(server, browsers, [{ frontier: pinned }]);
   const rows = new Map(joined.rows.map(row => [stampKey(row), row]));
   const frontier = [];
   const pressure = {};
-  for (const [index, family, kind] of [[0, 'input', 2], [1, 'quality', 4]]) {
+  for (const [family, kind] of [['input', 2], ['quality', 4]]) {
+    const rawWatermark = before.raw_watermark?.[family];
+    assert.ok(Number.isSafeInteger(rawWatermark) && rawWatermark >= 0, `invalid raw ordinal watermark for ${family}`);
     const raw = new Map(events(reporter, 'raw', family).map(event => [stampKey(event), event]));
-    const stamp = before.frontier[index];
-    const originalKey = stampKey(stamp);
+    const packet = pinned.packets.find(packet => packet.kind === kind);
+    const originalKey = packet && stampKey(packet);
     const row = rows.get(originalKey);
-    assert.ok(row && row.sender === sender && row.recipient === recipient && row.kind === kind && completeRelayRow(row),
+    assert.ok(row && packet.stages.raw && packet.stages.raw.at_ms <= before.started_ms && packet.stages.raw.ordinal <= rawWatermark
+      && packet.stages.sdk && completeRelayRow(row),
       `same-link control lost the original ${family} packet stage`);
     const matches = event => stampKey(event) === originalKey;
     const ingress = events(server, 'ingress', family);
     const original = ingress.find(matches);
     frontier.push({ ...row, observations: {
       send: events(source, 'send', family).find(event => event.ordinal === row.send),
-      ingress: original, write: events(server, 'write', family).find(matches), raw: raw.get(originalKey),
-      sdk: events(reporter, 'sdk', family).find(matches),
-      native: events(reporter, 'native', family).find(event => matches(event) && event.code === 0),
+      ingress: original, write: events(server, 'write', family).find(matches), ...packet.stages,
     } });
     const injected = ingress.filter(event => event.sender === sender && event.recipient === recipient && expected.has(event.socket_ordinal));
-    assert.ok(injected.length > 128, `same-link control needs over 128 new ${family} arrivals`);
+    assert.ok(injected.length > 512, `same-link control needs over 512 new ${family} arrivals`);
     for (const event of injected) {
       const key = stampKey(event);
       const row = rows.get(key);

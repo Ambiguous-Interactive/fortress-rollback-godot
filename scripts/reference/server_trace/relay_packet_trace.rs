@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const CAPACITY: usize = 128;
-const EXPANDED_CAPACITY: usize = 512;
+const EXPANDED_CAPACITY: usize = 1024;
 const ENVELOPE_HEADER_BYTES: usize = 57;
 const NATIVE_HEADER_BYTES: usize = 81;
 const MAX_SCOPE_BYTES: u64 = 1024;
@@ -505,7 +505,7 @@ mod tests {
         }
         let mut last = 1;
         let mut published = 0;
-        for (through, selected) in [(128, false), (129, false), (129, true), (512, true), (513, true), (513, false)] {
+        for (through, selected) in [(128, false), (129, false), (129, true), (512, true), (521, true), (1024, true), (1025, true), (1025, false)] {
             for seq in (last + 1)..=through {
                 for tag in [0, 2, 4] {
                     record_pair(&trace, room_id, sender, recipient, tag, seq);
@@ -522,7 +522,7 @@ mod tests {
             assert_eq!(snapshot["request"], published);
             for (family, original) in &originals {
                 let extended = selected && *family != "sync";
-                let retained = through.min(if extended { 512 } else { 128 });
+                let retained = through.min(if extended { 1024 } else { 128 });
                 let first_forward = through - retained + 1;
                 let first_reverse = through - 128 + 1;
                 for stage in ["ingress", "write"] {

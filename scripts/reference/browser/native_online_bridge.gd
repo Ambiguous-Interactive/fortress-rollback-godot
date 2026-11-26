@@ -71,6 +71,7 @@ class ObservedMatch:
 	var warmup_session: PackedByteArray
 	var warmup_recipient: PackedByteArray
 	var warmup_input_sender: String
+	var warmup_ack_sender: String
 	var last_native_acceptances: Dictionary = {}
 
 	func observe_sdk(sender: String, encoding: int, bytes: PackedByteArray) -> void:
@@ -78,7 +79,8 @@ class ObservedMatch:
 			return
 		var quality: bool = bytes.size() == RelayEnvelope.HEADER_BYTES + 46 and (bytes[RelayEnvelope.HEADER_BYTES + 30] & 3) == 0
 		var watched_input: bool = sender == warmup_input_sender and bytes.size() > RelayEnvelope.HEADER_BYTES + 108
-		if not (watched_input or quality) or bytes.slice(37, 53) != warmup_recipient:
+		var watched_ack: bool = sender == warmup_ack_sender and bytes.size() == RelayEnvelope.HEADER_BYTES + 32
+		if not (watched_input or watched_ack or quality) or bytes.slice(37, 53) != warmup_recipient:
 			return
 		var envelope: RelayEnvelope.Decoded = RelayEnvelope.decode(bytes, NATIVE_PACKET_BYTES)
 		if envelope.code == RelayEnvelope.R.Code.OK and envelope.sender == sender and envelope.session == warmup_session:
@@ -100,13 +102,32 @@ class ObservedMatch:
 			return
 		var quality: bool = bytes.size() == 46 and (bytes[30] & 3) == 0
 		var watched_input: bool = sender == warmup_input_sender and bytes.size() > 108 and bytes.size() <= NATIVE_PACKET_BYTES
-		if not (watched_input or quality) or bytes.decode_u32(16) != 0x000252f5 or bytes.slice(0, 16) != warmup_session:
+		var watched_ack: bool = sender == warmup_ack_sender and bytes.size() == 32
+		if not (watched_input or watched_ack or quality) or bytes.decode_u32(16) != 0x000252f5 or bytes.slice(0, 16) != warmup_session:
 			return
 		var kind: int = bytes.decode_u32(24)
-		if watched_input and kind == 2:
+		if (watched_input and kind == 2) or (watched_ack and kind == 3):
 			warmup_wire.observeWarmupInput(stage, sender, bytes.hex_encode(), code)
 		elif quality and kind == 4:
 			warmup_wire.recordWarmup(stage, sender, bytes.hex_encode(), code)
+
+
+class ObservedMultiplayer:
+	extends "res://addons/fortress_rollback/transport/signalfish_webrtc_multiplayer_peer.gd"
+
+	var _wire: JavaScriptObject
+	var _remote_uuids: Dictionary
+
+	func _init(wire: JavaScriptObject, remote_uuids: Dictionary) -> void:
+		_wire = wire
+		_remote_uuids = remote_uuids
+
+	@warning_ignore("native_method_override")
+	func remove_peer(peer_id: int) -> void:
+		var player: String = _remote_uuids.get(peer_id, "")
+		if not player.is_empty():
+			_wire.recordMeshDeparture("mesh_remove_peer", player, has_peer(peer_id))
+		super.remove_peer(peer_id)
 
 
 class ObservedLobby:
@@ -133,9 +154,12 @@ class ObservedLobby:
 	var relay_overflow: Dictionary = {}
 	var warmup_wire: JavaScriptObject
 	var relay_trace: JavaScriptObject
+	var close_wire: JavaScriptObject
+	var _close_remote_uuids: Dictionary = {}
 	var _engine_mesh_open: bool = false
 	var _last_play_tick_us: int = -1
 	var _next_warmup_tick_us: int = 0
+	var _next_native_frontier_us: int = 0
 	var _sdk_before_poll: int = -1
 	var _sdk_poll_budget: int = -1
 
@@ -144,7 +168,29 @@ class ObservedLobby:
 			client.connect("session_plan", _record_plan)
 		if relay_trace != null:
 			client.connect("player_left", _record_departure)
+		if close_wire != null:
+			client.connect("player_left", _record_mesh_departure)
+			mesh.set("multiplayer_peer_factory", _observed_multiplayer)
 		super._connect_callbacks()
+
+	func bind_close_roster(roster: PackedStringArray, owner: String) -> void:
+		_close_remote_uuids.clear()
+		if close_wire == null or roster.size() > 8 or not roster.has(owner):
+			return
+		for player: String in roster:
+			if player == owner:
+				continue
+			var peer_id: int = Match.Membership.uuid_to_peer_id(player)
+			if peer_id <= 0 or _close_remote_uuids.has(peer_id):
+				_close_remote_uuids.clear()
+				return
+			_close_remote_uuids[peer_id] = player
+
+	func _observed_multiplayer() -> WebRTCMultiplayerPeer:
+		return ObservedMultiplayer.new(close_wire, _close_remote_uuids)
+
+	func _record_mesh_departure(player: String) -> void:
+		close_wire.recordMeshDeparture("sdk_player_left", player)
 
 	func _record_departure(player: String) -> void:
 		relay_trace.recordDeparture("sdk_departure", player)
@@ -236,8 +282,22 @@ class ObservedLobby:
 		if warmup_wire != null and (sdk_backlog or now_us >= _next_warmup_tick_us or state == "failed"):
 			var remaining: int = _sdk_packets() if state == "playing" else -1
 			var status: Types.Status = game_match.status()
-			warmup_wire.recordWarmupTick(_sdk_before_poll, remaining, _sdk_poll_budget, Time.get_ticks_usec() - now_us, state, status.current_frame, status.confirmed_frame)
+			var elapsed_us: int = Time.get_ticks_usec() - now_us
+			var native_frontier: String = _sample_native_frontier(now_us, status)
+			warmup_wire.recordWarmupTick(_sdk_before_poll, remaining, _sdk_poll_budget, elapsed_us,
+				state, status.current_frame, status.confirmed_frame, native_frontier)
 			_next_warmup_tick_us = now_us + 250000
+
+	func _sample_native_frontier(now_us: int, status: Types.Status) -> String:
+		if state != "playing" or status.current_frame - status.confirmed_frame < 2 or now_us < _next_native_frontier_us:
+			return ""
+		_next_native_frontier_us = now_us + 250000
+		var backend: Driver.Native = game_match.driver._native_backend
+		var native: RefCounted = backend._native if backend != null else null
+		if native == null or not native.has_method(&"confirmation_diagnostics"):
+			return ""
+		var slots: Array = native.call(&"confirmation_diagnostics")
+		return JSON.stringify(slots) if not slots.is_empty() else ""
 
 	func _sdk_packets() -> int:
 		# The pinned SDK transport owns the socket adapter and exposes no receive queue getter.
@@ -421,6 +481,7 @@ func _command(value: Dictionary) -> void:
 				return
 			lobby.wait_for_full_mesh = bool(value.get("wait_for_full_mesh", false))
 			lobby.observe_recovery = bool(value.get("observe_recovery", false))
+			lobby.close_wire = JavaScriptBridge.get_interface("fortressNativeWire") if bool(value.get("trace_close", false)) else null
 			lobby.relay_trace = JavaScriptBridge.get_interface("fortressNativePostRelease") if value.route == "relay" else null
 			scene.endpoint.text = str(value.endpoint)
 			scene.player_name.text = str(value.name)
@@ -456,7 +517,10 @@ func _command(value: Dictionary) -> void:
 				warmup_match.warmup_recipient = uuid.replace("-", "").hex_decode()
 				if roster.size() == 8 and uuid == roster[1]:
 					warmup_match.warmup_input_sender = roster[0]
+				elif roster.size() == 8 and uuid == roster[0]:
+					warmup_match.warmup_ack_sender = roster[1]
 			JavaScriptBridge.eval("window.fortressNativeWire.bind(...%s)" % JSON.stringify([session_id, uuid, roster]))
+			lobby.bind_close_roster(roster, uuid)
 			if lobby.relay_trace != null:
 				JavaScriptBridge.eval("window.fortressNativePostRelease.bindDeparture(...%s)" % JSON.stringify([uuid, roster]))
 		"block_startup":

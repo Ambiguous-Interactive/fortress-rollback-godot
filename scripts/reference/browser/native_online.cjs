@@ -28,6 +28,7 @@ const CLOSE_HTTPS_SAMPLE_MS = 500;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const CLOSE_CHECKPOINT = 'fortress native close ';
 const CLOSE_STAGES = ['channel_close_called', 'channel_close_event', 'connection_close_called'];
+const MESH_DEPARTURE_STAGES = ['sdk_player_left', 'mesh_remove_peer'];
 const WARMUP_CHECKPOINT = 'fortress native relay warmup ';
 const POST_RELEASE_CHECKPOINT = 'fortress native post-release ';
 const RELEASE_TIMING_CHECKPOINT = 'fortress native release timing ';
@@ -46,26 +47,37 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
   const latest = Array(players).fill(null);
   const errors = Array(players).fill(null);
   const inputErrors = Array(players).fill(null);
+  const ackErrors = Array(players).fill(null);
+  const nativeErrors = Array(players).fill(null);
   const received = Array(players).fill(null);
   let startedAt = Infinity;
   let deadline = Infinity;
   let waiting = false;
+  let session;
   let complete;
   const ready = new Promise(resolve => { complete = resolve; });
   const states = new Set(['offline', 'connecting', 'joining', 'lobby', 'starting', 'playing', 'failed']);
   const isFrontier = value => states.has(value?.state) && Number.isSafeInteger(value.frame) && Number.isSafeInteger(value.confirmed);
-  function validInputLink(input, sample, roster) {
-    const [sender, recipient] = [...roster].sort();
-    if (players !== 8 || input.sender !== sender || input.recipient !== recipient || sample.recipient !== recipient) return false;
-    return ['raw', 'sdk', 'native', 'ack'].every(stage => {
-      const stream = input[stage];
+  function validAckPayload(payload, frame) {
+    if (payload.length !== 64 || (session !== undefined && payload.slice(0, 32) !== session)) return false;
+    const bytes = Buffer.from(payload, 'hex');
+    return bytes.readUInt32LE(16) === 0x000252f5 && bytes.readUInt32LE(24) === 3 && bytes.readInt32LE(28) === frame;
+  }
+  function validWarmupLink(link, sample, roster, inboundAck) {
+    const [first, second] = [...roster].sort();
+    const [sender, recipient] = inboundAck ? [second, first] : [first, second];
+    if (players !== 8 || link.sender !== sender || link.recipient !== recipient || sample.recipient !== recipient) return false;
+    const stages = inboundAck ? ['raw', 'sdk', 'native'] : ['raw', 'sdk', 'native', 'ack'];
+    return stages.every(stage => {
+      const stream = link[stage];
+      const ack = inboundAck || stage === 'ack';
       if (!Number.isSafeInteger(stream?.count) || stream.count < 0) return false;
       if (!stream.count) return stream.first === null && stream.recent === null;
       const valid = row => row && Number.isFinite(row.at_ms) && row.at_ms >= sample.started_ms && row.at_ms <= sample.through_ms
         && typeof row.payload === 'string' && row.payload.length <= 2400 && /^(?:[0-9a-f]{2})+$/.test(row.payload)
-        && (stage === 'ack' ? row.payload.length === 64 : row.payload.length >= 218)
+        && (ack ? validAckPayload(row.payload, row.ack_frame) : row.payload.length >= 218)
         && Number.isSafeInteger(row.ack_frame) && row.ack_frame >= -1
-        && (stage === 'ack' ? row.start_frame === null : Number.isSafeInteger(row.start_frame) && row.start_frame >= 0)
+        && (ack ? row.start_frame === null : Number.isSafeInteger(row.start_frame) && row.start_frame >= 0)
         && (stage === 'native' ? Number.isInteger(row.code) : row.code === null)
         && (row.epoch === null && row.seq === null || stage === 'raw' && Number.isInteger(row.epoch) && row.epoch > 0 && row.epoch <= 0xffffffff
           && typeof row.seq === 'string' && /^[1-9][0-9]{0,19}$/.test(row.seq) && BigInt(row.seq) <= 0xffffffffffffffffn);
@@ -73,9 +85,21 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
         && stream.recent.at_ms >= stream.first.at_ms && (stream.recent.payload !== stream.first.payload || stream.recent.code !== stream.first.code));
     });
   }
+  function validNativeFrontier(frontier, sample, roster) {
+    const localSlot = [...roster].sort().indexOf(sample.recipient);
+    const frame = value => Number.isSafeInteger(value) && value >= -1 && value <= 0x7fffffff;
+    return Number.isFinite(frontier.at_ms) && frontier.at_ms >= sample.started_ms && frontier.at_ms <= sample.through_ms
+      && frame(frontier.frame) && frame(frontier.confirmed) && frontier.frame - frontier.confirmed >= 2
+      && Array.isArray(frontier.slots) && frontier.slots.length === players - 1
+      && frontier.slots.every((row, index) => row?.slot === index + Number(index >= localSlot)
+        && typeof row.connected === 'boolean' && frame(row.receipt_frame)
+        && (row.gossip_bound === null || frame(row.gossip_bound) && (!row.connected || row.gossip_bound <= row.receipt_frame))
+        && (row.pending_output === null || Number.isSafeInteger(row.pending_output) && row.pending_output >= 0));
+  }
   return {
     get checkpoints() { return latest.map(record => record?.sample ?? null); },
-    errors, inputErrors, received,
+    errors, inputErrors, ackErrors, nativeErrors, received,
+    bindSession(expected) { session = expected; },
     frontier() {
       const peers = latest.map((record, index) => {
         const { sample, received_ms } = record ?? { sample: null, received_ms: null };
@@ -104,10 +128,18 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
           || !Number.isSafeInteger(sample.tick_count) || sample.tick_count < sample.ticks.length) throw new Error('invalid warmup checkpoint');
         const roster = [sample.recipient, ...sample.links.map(link => link.sender)];
         if (new Set(roster).size !== players) throw new Error('invalid warmup roster');
-        const { cutoff, input_link: input } = sample;
-        if (input != null && !validInputLink(input, sample, roster)) {
+        const { cutoff, input_link: input, ack_link: ack } = sample;
+        if (input != null && !validWarmupLink(input, sample, roster, false)) {
           inputErrors[index] ??= 'invalid warmup input link';
           delete sample.input_link;
+        }
+        if (ack != null && !validWarmupLink(ack, sample, roster, true)) {
+          ackErrors[index] ??= 'invalid warmup ACK link';
+          delete sample.ack_link;
+        }
+        if (sample.native_frontier != null && !validNativeFrontier(sample.native_frontier, sample, roster)) {
+          nativeErrors[index] ??= 'invalid warmup native frontier';
+          delete sample.native_frontier;
         }
         if (cutoff !== null && (!isFrontier(cutoff) || cutoff.at_ms !== sample.through_ms
           || !(cutoff.reason === 'failed' && cutoff.state === 'failed'
@@ -422,6 +454,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   let observingDeparture = false;
   const departureSendLimit = 4096;
   const departureSendHistory = [];
+  const meshDepartureKeys = new Set();
   let departureSendCount = 0;
   let holding = false;
   let releasingRelay = false;
@@ -507,7 +540,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   const replayedRelayEvents = relayWireTrace && new WeakSet();
   let expiredRelayDelay;
   const warmupLinks = new Map();
-  let warmupInput;
+  let warmupInput, warmupAck, warmupNativeFrontier;
   let roomRoster = [];
   const warmupTicks = [];
   let warmupTickCount = 0;
@@ -537,7 +570,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   function warmupStatus() {
     if (!warmupLinks.size) return null;
     return { recipient: localUuid, started_ms: warmupStarted, through_ms: warmupCutoff?.at_ms ?? performance.now(), cutoff: warmupCutoff,
-      tick_count: warmupTickCount, ticks: warmupTicks.slice(), input_link: warmupInput,
+      tick_count: warmupTickCount, ticks: warmupTicks.slice(), input_link: warmupInput, ack_link: warmupAck, native_frontier: warmupNativeFrontier,
       links: Array.from(warmupLinks, ([sender, { packets, evicted, unretained, last_replied_report }]) => ({
         sender, evicted, unretained, last_replied_report, packets: Array.from(packets, ([payload, stages]) => ({ payload, ...stages })),
       })) };
@@ -555,15 +588,15 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       if (!warmupCutoff) checkpointWarmup(performance.now());
     }, 0);
   }
-  function recordWarmupInput(stage, remote, bytes, code = null, delivery = null) {
-    const stream = !warmupCutoff && warmupInput?.[stage];
-    if (!stream || remote !== warmupInput.sender || bytes.length > 1200 || bytes.length < 32 || !matches(bytes, 0)) return;
+  function recordWarmupInput(link, stage, remote, bytes, code = null, delivery = null) {
+    const stream = !warmupCutoff && link?.[stage];
+    if (!stream || remote !== link.sender || bytes.length > 1200 || bytes.length < 32 || !matches(bytes, 0)) return;
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (view.getUint32(16, true) !== 0x000252f5) return;
     const kind = view.getUint32(24, true);
     let start_frame = null;
     let ack_frame;
-    if (stage === 'ack') {
+    if (link === warmupAck || stage === 'ack') {
       if (kind !== 3 || bytes.length !== 32) return;
       ack_frame = view.getInt32(28, true);
     } else {
@@ -818,8 +851,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     resources.rtc.push(record);
     const nativeSend = channel.send;
     // WebKit reports a native send rejection on the calling stack without throwing.
+    const sampleSend = 'receipt.readyState = channel.readyState; receipt.bufferedAmount = channel.bufferedAmount; receipt.sentAt = instant(); ';
     const tagged = (name, receipt) => new Function('send', 'channel', 'receipt', 'instant',
-      `return function ${name}(bytes) { ${receipt ? 'receipt.sentAt = instant(); ' : ''}send.call(channel, bytes); }`)(nativeSend, channel, receipt, instant);
+      `return function ${name}(bytes) { ${receipt ? sampleSend : ''}send.call(channel, bytes); }`)(nativeSend, channel, receipt, instant);
     const emit = tagWebKitSends ? tagged(`fortressNativeSend_${index}`) : bytes => nativeSend.call(channel, bytes);
     channel.send = data => {
       const view = nativeBytes(data);
@@ -884,7 +918,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       }
       if (packet.kind === inputKind) {
         increment(relayInputSenders, packet.sender);
-        if (warmupInput?.sender === packet.sender) recordWarmupInput('raw', packet.sender, packet.bytes, null, relayPacket);
+        if (warmupInput?.sender === packet.sender) recordWarmupInput(warmupInput, 'raw', packet.sender, packet.bytes, null, relayPacket);
+      } else if (packet.kind === 3 && warmupAck?.sender === packet.sender) {
+        recordWarmupInput(warmupAck, 'raw', packet.sender, packet.bytes, null, relayPacket);
       }
       traceRelayQuality('receive', packet.sender, packet);
       if (receive('relay', reports, packet.sender, packet) && relayPacket) relayPacket.hold_gate_match = true;
@@ -948,7 +984,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
         bufferedBytesPeak = Math.max(bufferedBytesPeak, this.bufferedAmount);
         if (packet.kind === 5) recordWarmupReply(packet);
         if (packet.kind === 3 && this.readyState === nativeSocket.OPEN && warmupInput?.sender === packet.recipient)
-          recordWarmupInput('ack', packet.recipient, packet.bytes);
+          recordWarmupInput(warmupInput, 'ack', packet.recipient, packet.bytes);
         traceRelayQuality('send', packet.recipient, packet);
       }
     }, data, packet?.sender === localUuid ? packet : null);
@@ -984,19 +1020,22 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       if (warmupLinks.size) {
         warmupStarted = performance.now();
         const [sender, recipient] = [...roomRoster].sort();
+        const streams = stages => Object.fromEntries(stages.map(stage => [stage, { count: 0, first: null, recent: null }]));
         if (roomRoster.length === 8 && localUuid === recipient) {
-          warmupInput = { sender, recipient, ...Object.fromEntries(['raw', 'sdk', 'native', 'ack'].map(stage => [stage,
-            { count: 0, first: null, recent: null }])) };
+          warmupInput = { sender, recipient, ...streams(['raw', 'sdk', 'native', 'ack']) };
+        } else if (roomRoster.length === 8 && localUuid === sender) {
+          warmupAck = { sender: recipient, recipient: sender, ...streams(['raw', 'sdk', 'native']) };
         }
       }
     },
     recordWarmup,
     observeWarmupInput(stage, source, payload, code) {
-      if (warmupCutoff || !warmupInput || (stage !== 'sdk' && stage !== 'native') || typeof source !== 'string' || source.replaceAll('-', '') !== warmupInput.sender
+      const link = warmupInput ?? warmupAck;
+      if (warmupCutoff || !link || (stage !== 'sdk' && stage !== 'native') || typeof source !== 'string' || source.replaceAll('-', '') !== link.sender
           || typeof payload !== 'string' || payload.length > 2400 || !/^(?:[0-9a-f]{2})+$/.test(payload)
           || (stage === 'native' ? !Number.isInteger(code) : code !== -1)) return;
       const bytes = Uint8Array.from(payload.match(/../g), value => parseInt(value, 16));
-      recordWarmupInput(stage, warmupInput.sender, bytes, stage === 'native' ? code : null);
+      recordWarmupInput(link, stage, link.sender, bytes, stage === 'native' ? code : null);
     },
     async relayWireTrace(links) {
       const sockets = resources.sockets.length;
@@ -1022,19 +1061,21 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       const socket = resources.sockets[0];
       if (!relayWireTrace || resources.sockets.length !== 1 || socket.readyState !== nativeSocket.OPEN
           || blockedRelay || sender === localUuid || !roomRoster.includes(sender)) throw new Error('invalid same-link delivery gate');
-      const { frontier } = relayWireTrace.retentionSample(sender);
+      const { frontier, counts } = relayWireTrace.retentionSample(sender);
       if (!frontier.every(Boolean)) throw new Error('same-link control requires accepted input and quality before pressure');
       const started_ms = performance.now();
       blockedRelay = { socket, sender, id: ++relayGateSequence, deadline_ms: started_ms + 1250, inputs: 0, reports: 0 };
-      return { started_ms, frontier };
+      return { started_ms, frontier, raw_watermark: counts.raw };
     },
     resumeBlockedRelay(stamps) {
       if (!blockedRelay) return null;
       const { sender, id, deadline_ms, inputs, reports } = blockedRelay;
       if (stamps && performance.now() < deadline_ms && !relayWireTrace.hasBlockedRelayStamps(sender, id, stamps)) return null;
-      const resumed_ms = performance.now();
+      // The SDK may finish work queued before the gate opened. Freeze the last acceptance before allowing a new raw packet through.
+      const frontier = stamps && performance.now() < deadline_ms ? relayWireTrace.expiryFrontier(sender) : undefined;
       blockedRelay = null;
-      return { delivery_gate: id, resumed_ms, deadline_ms, inputs, reports };
+      const resumed_ms = performance.now();
+      return { delivery_gate: id, resumed_ms, deadline_ms, inputs, reports, frontier: resumed_ms < deadline_ms ? frontier : undefined };
     },
     pressureRelayLink(recipient) {
       const socket = resources.sockets[0];
@@ -1054,11 +1095,16 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       });
     },
     warmupStatus,
-    recordWarmupTick(before, after, budget, elapsed_us, state, frame, confirmed) {
+    recordWarmupTick(before, after, budget, elapsed_us, state, frame, confirmed, nativeSlots) {
       if (!warmupLinks.size || warmupCutoff) return;
       const at = performance.now();
       if (warmupTicks.length === 24) warmupTicks.shift();
       warmupTicks.push({ at_ms: at, before, after, budget, elapsed_us, state, frame, confirmed });
+      if (typeof nativeSlots === 'string' && nativeSlots.length > 0 && nativeSlots.length <= 2048) {
+        let slots = null;
+        try { slots = JSON.parse(nativeSlots); } catch {}
+        warmupNativeFrontier = { at_ms: at, frame, confirmed, slots };
+      }
       warmupTickCount++;
       scheduleWarmupCheckpoint(at);
     },
@@ -1094,6 +1140,15 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     },
     observeDeparture() { observingDeparture = true; return window.crossOriginIsolated ? instant() : null; },
     stopObservingDeparture() { observingDeparture = false; },
+    recordMeshDeparture(kind, player, had_peer) {
+      if (!closePrefix || !observingDeparture || typeof player !== 'string') return;
+      const validStage = kind === 'sdk_player_left' ? had_peer === undefined : kind === 'mesh_remove_peer' && typeof had_peer === 'boolean';
+      const peer = player.replaceAll('-', '');
+      const key = `${kind}:${peer}`;
+      if (!validStage || peer === localUuid || !roomRoster.includes(peer) || meshDepartureKeys.has(key)) return;
+      meshDepartureKeys.add(key);
+      console.debug(closePrefix + JSON.stringify({ kind, player, had_peer, page_us: instant() }));
+    },
     departureSends(attempts) {
       return Object.fromEntries(attempts.flatMap(attempt => {
         const receipt = departureSendHistory[attempt % departureSendLimit];
@@ -1191,15 +1246,23 @@ function reportedChannel(stack) {
     ? { channel, attempt } : { channel: null, attempt: null };
 }
 
-function recordCloseObservation(observations, text, received_ms) {
+function recordCloseObservation(observations, text, received_ms, identities, owner) {
   if (text.length > 768) return;
   let value;
   try { value = JSON.parse(text); } catch { return; }
-  if (!value || !CLOSE_STAGES.includes(value.kind)) return;
+  if (!value || !Number.isSafeInteger(value.page_us) || value.page_us < 0) return;
+  if (MESH_DEPARTURE_STAGES.includes(value.kind)) {
+    const { kind, player, had_peer, page_us } = value;
+    if (!identities?.uuids[owner] || identities.uuids[owner] === player || !identities.roster.includes(player)
+      || (kind === 'mesh_remove_peer' ? typeof had_peer !== 'boolean' : had_peer !== undefined)) return;
+    const key = `${kind}:${player}`;
+    if (!observations.has(key)) observations.set(key, { kind, player, ...(had_peer === undefined ? {} : { had_peer }), page_us, received_ms });
+    return;
+  }
+  if (!CLOSE_STAGES.includes(value.kind)) return;
   const { kind, index, local, remote, page_us } = value;
   const validFragment = fragment => fragment === null || typeof fragment === 'string' && /^[\w+/]{1,256}$/.test(fragment);
-  if (!Number.isSafeInteger(index) || index < 0 || index >= 256 || !Number.isSafeInteger(page_us) || page_us < 0
-    || !validFragment(local) || !validFragment(remote)) return;
+  if (!Number.isSafeInteger(index) || index < 0 || index >= 256 || !validFragment(local) || !validFragment(remote)) return;
   const key = `${index}:${kind}`;
   if (!observations.has(key)) observations.set(key, { kind, index, local, remote, page_us, received_ms });
 }
@@ -1210,23 +1273,35 @@ function reciprocalLinks(linksByPage, index, sender) {
     .map(peer => ({ ...peer, owner })));
 }
 
-function matchCloseObservations(errors, before, observations, report = {}) {
+function matchCloseObservations(errors, before, observations, report = {}, identities) {
   if (!before) return [];
   return errors.filter(({ attempt }) => Number.isSafeInteger(attempt) && attempt > 0).map(({ index, channel, attempt, received_ms }) => {
     const send = report.partialSnapshots?.[index]?.sends?.[attempt];
     const latest = exactSendTime(channel, attempt, send);
-    const sentAt = latest ?? report.proofs?.find(proof => proof.index === index && proof.channel === channel && proof.attempt === attempt)?.sentAt ?? null;
-    const receipt = { index, channel, attempt, sentAt, received_ms, observations: [] };
+    const prior = latest === null ? report.proofs?.find(proof => proof.index === index && proof.channel === channel && proof.attempt === attempt) : null;
+    const sentAt = latest ?? prior?.sentAt ?? null;
+    const sendState = prior?.sendState ?? exactSendState(latest, send);
+    const receipt = { index, channel, attempt, sentAt, sendState, received_ms, observations: [], lifecycle: [] };
     const sender = before[index].find(link => link.index === channel);
     if (!sender?.local || !sender.remote || sender.closed) return receipt;
     const counterparts = reciprocalLinks(before, index, sender);
     if (counterparts.length !== 1) return receipt;
-    for (const { owner, index: channelIndex, local, remote } of [{ ...sender, owner: index }, counterparts[0]]) {
+    const counterpart = counterparts[0];
+    for (const { owner, index: channelIndex, local, remote } of [{ ...sender, owner: index }, counterpart]) {
       for (const kind of CLOSE_STAGES) {
         const event = observations[owner].get(`${channelIndex}:${kind}`);
         if (event?.local === local && event.remote === remote) {
           const interval = owner === index ? {} : closeGap(sentAt, event.page_us, report.clocks?.[index], report.clocks?.[owner]);
           receipt.observations.push({ owner, ...event, ...interval });
+        }
+      }
+      const remotePlayer = identities?.uuids[owner === index ? counterpart.owner : index];
+      if (!remotePlayer) continue;
+      for (const kind of MESH_DEPARTURE_STAGES) {
+        const event = observations[owner].get(`${kind}:${remotePlayer}`);
+        if (event) {
+          const interval = owner === index ? {} : closeGap(sentAt, event.page_us, report.clocks?.[index], report.clocks?.[owner]);
+          receipt.lifecycle.push({ owner, ...event, ...interval });
         }
       }
     }
@@ -1252,6 +1327,12 @@ function exactSendTime(channel, attempt, receipt) {
     && Number.isSafeInteger(receipt.sentAt) && receipt.sentAt >= 0 ? receipt.sentAt : null;
 }
 
+function exactSendState(sentAt, receipt) {
+  if (sentAt === null || !['connecting', 'open', 'closing', 'closed'].includes(receipt.readyState)
+    || !Number.isSafeInteger(receipt.bufferedAmount) || receipt.bufferedAmount < 0) return null;
+  return { readyState: receipt.readyState, bufferedAmount: receipt.bufferedAmount };
+}
+
 function closeGap(sentAt, closedAt, senderClock, closerClock) {
   if (!senderClock || !closerClock || !Number.isSafeInteger(sentAt) || !Number.isSafeInteger(closedAt)) return { minimumGapUs: null, maximumGapUs: null };
   // Compare the earliest possible send with the latest possible close.
@@ -1264,7 +1345,8 @@ function closeGap(sentAt, closedAt, senderClock, closerClock) {
 function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, closer = null, clocks, receipt) {
   const sentAt = exactSendTime(channel, attempt, receipt);
   const before = linksBefore.find(peer => peer.index === channel) ?? null;
-  const evidence = { index, channel, attempt, sentAt, closer, before, sender: null, counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
+  const evidence = { index, channel, attempt, sentAt, sendState: exactSendState(sentAt, receipt), closer, before, sender: null,
+    counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
   if (!before?.local || !before.remote || before.closed) return evidence;
   evidence.sender = closedByPage[index].find(peer => peer.index === channel && peer.local === before.local && peer.remote === before.remote) ?? null;
   evidence.counterparts = reciprocalLinks(closedByPage, index, before);
@@ -1893,12 +1975,13 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const physicalCloseReport = {};
   const closeReport = {};
   const closeObservations = webkitMesh ? Array.from({ length: players }, () => new Map()) : null;
+  const traceMeshDeparture = webkitMesh && mode === 'mesh';
   let direct, peers;
   const closeReceipts = () => closeObservations ? {
     closeObservations: closeObservations.map(events => [...events.values()]),
     taggedCloseObservations: [
-      ...matchCloseObservations(physicalCloseErrors, direct?.map(peer => peer.wire.sctp), closeObservations, physicalCloseReport),
-      ...matchCloseObservations(departureErrors, peers?.map(peer => peer.wire.sctp), closeObservations, closeReport),
+      ...matchCloseObservations(physicalCloseErrors, direct?.map(peer => peer.wire.sctp), closeObservations, physicalCloseReport, roomIdentities),
+      ...matchCloseObservations(departureErrors, peers?.map(peer => peer.wire.sctp), closeObservations, closeReport, roomIdentities),
     ],
   } : {};
   const wait = async (page, condition, argument = null, timeout = PAGE_WAIT_MS) => {
@@ -1949,7 +2032,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       page.on('console', message => {
         const text = message.text();
         if (closeObservations && text.startsWith(CLOSE_CHECKPOINT)) {
-          recordCloseObservation(closeObservations[index], text.slice(CLOSE_CHECKPOINT.length), performance.now());
+          recordCloseObservation(closeObservations[index], text.slice(CLOSE_CHECKPOINT.length), performance.now(), roomIdentities, index);
         }
         warmupBarrier?.record(index, text);
         if (relayHold && text.startsWith(RELAY_HOLD_PREFIX)) relayHold.record(index, text, performance.now());
@@ -1981,7 +2064,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     phase = 'lobby';
     function connect(page, index, room) {
       return command(page, 'connect', { endpoint: socketEndpoint, name: `Player ${index}`, room, route, players,
-        wait_for_full_mesh: mode === 'mesh' || recovery, observe_recovery: recovery, trace_warmup: traceWarmup });
+        wait_for_full_mesh: mode === 'mesh' || recovery, observe_recovery: recovery, trace_close: traceMeshDeparture, trace_warmup: traceWarmup });
     }
     await connect(pages[0], 0, '');
     await wait(pages[0], () => window.fortressNative.state === 'lobby' && window.fortressNative.room !== '');
@@ -1989,14 +2072,21 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     await Promise.all(pages.slice(1).map((page, index) => connect(page, index + 1, room)));
     await Promise.all(pages.map(page => wait(page, () => window.fortressNative.ready_enabled)));
     const ready = await Promise.all(pages.map(page => command(page, 'ready')));
-    if (postRelease) {
+    warmupBarrier?.bindSession(ready[0].session_id);
+    if (postRelease || traceMeshDeparture) {
       const uuids = ready.map(peer => peer.uuid);
       const roster = [...uuids].sort();
-      assert.ok(roster.every(uuid => FROZEN_UUID.test(uuid)) && new Set(uuids).size === players);
-      for (const peer of ready) assert.deepEqual(peer.frozen_roster, roster, 'native departure requires the frozen roster');
-      roomIdentities = { uuids, roster };
-      if (traceRelayWire) relayHold = createRelayHold(ready[0].session_id, uuids);
-      postRelease.forEach((peer, index) => bindDepartureCheckpoints(peer, roster, uuids[index]));
+      const validRoster = roster.every(uuid => FROZEN_UUID.test(uuid)) && new Set(uuids).size === players;
+      if (postRelease) {
+        assert.ok(validRoster);
+        for (const peer of ready) assert.deepEqual(peer.frozen_roster, roster, 'native departure requires the frozen roster');
+        if (traceRelayWire) relayHold = createRelayHold(ready[0].session_id, uuids);
+        postRelease.forEach((peer, index) => bindDepartureCheckpoints(peer, roster, uuids[index]));
+        roomIdentities = { uuids, roster };
+      } else if (validRoster && ready.every(peer => Array.isArray(peer.frozen_roster) && peer.frozen_roster.length === players
+        && peer.frozen_roster.every((uuid, index) => uuid === roster[index]))) {
+        roomIdentities = { uuids, roster };
+      }
     }
     if (readRelayServer) await bindRelayServer(ready, traceScopePath, readRelayServer);
     await wait(pages[0], () => window.fortressNative.start_enabled);
@@ -2287,7 +2377,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples, departureHttpsClockSamples: closeReport.httpsClockSamples, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
-      warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupInputErrors: warmupBarrier?.inputErrors,
+      warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
+      warmupInputErrors: warmupBarrier?.inputErrors, warmupAckErrors: warmupBarrier?.ackErrors, warmupNativeErrors: warmupBarrier?.nativeErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier() };
   } catch (error) {
     failures.push(error);
@@ -2335,7 +2426,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       physicalClosePartialSnapshots: physicalCloseReport.partialSnapshots,
       closePartialSnapshots: closeReport.partialSnapshots, physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
-      states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupInputErrors: warmupBarrier?.inputErrors,
+      states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
+      warmupInputErrors: warmupBarrier?.inputErrors, warmupAckErrors: warmupBarrier?.ackErrors, warmupNativeErrors: warmupBarrier?.nativeErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
       relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined, expiryLinks) : undefined,

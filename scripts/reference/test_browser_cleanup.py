@@ -141,13 +141,19 @@ const trace = {
     packets.push(packet);
     return packet;
   },
-  retentionSample: () => ({ frontier: ['input', 'quality'] }),
+  retentionSample: () => ({ frontier: ['input', 'quality'], counts: { raw: { input: 1, quality: 2 } } }),
+  expiryFrontier: sender => {
+    const captured_ms = clock;
+    if (slowFreeze) clock += 2;
+    return { sender, captured_ms };
+  },
   hasBlockedRelayStamps(sender, gate, stamps) {
     return stamps.every(stamp => packets.some(packet => packet.delivery_gate === gate && packet.sender === sender
       && packet.kind === stamp.kind && packet.epoch === stamp.epoch && packet.seq === stamp.seq));
   },
 };
 let clock = 10;
+let slowFreeze = false;
 const realm = { window, trace, WebSocket: Socket, RTCPeerConnection: class {}, Uint8Array, ArrayBuffer, DataView, performance: { now: () => clock },
   setTimeout: run => { alarm = run; }, clearTimeout: () => {} };
 runInNewContext(`(${instrumentNativeWire})(false, '', trace)`, realm);
@@ -177,12 +183,22 @@ deliver(13, socket, 1);
 assert.equal(wire.resumeBlockedRelay(pressureStamps), null, 'duplicates and another sender cannot release the gate');
 assert.deepEqual(seen.splice(0), [13]);
 deliver(13);
-assert.equal(wire.resumeBlockedRelay(pressureStamps).reports, 3);
+const resumed = wire.resumeBlockedRelay(pressureStamps);
+assert.equal(resumed.reports, 3);
+assert.deepEqual({ ...resumed.frontier }, { sender: source, captured_ms: clock });
 wire.blockRelayLink(source);
 assert.equal(wire.resumeBlockedRelay(pressureStamps), null, 'an earlier gate must not qualify at the same page clock tick');
 wire.resumeBlockedRelay();
 deliver(14);
 assert.deepEqual(seen.splice(0), [14]);
+const finalGate = wire.blockRelayLink(source);
+deliver(12);
+deliver(13);
+clock = finalGate.started_ms + 1249;
+slowFreeze = true;
+const late = wire.resumeBlockedRelay(pressureStamps);
+assert.ok(late.resumed_ms >= late.deadline_ms, 'freeze completion must precede the resume deadline');
+assert.equal(late.frontier, undefined);
 wire.holdRelayControl();
 deliver(8);
 alarm();
@@ -350,9 +366,18 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
     await assert.rejects(trace.freeze(malformed), /invalid relay wire link selection/);
   }
   for (let seq = 141; seq <= 520; seq++) trace.record('raw', delivered(envelope(source, local, 4), BigInt(seq)));
+  const crowded = (await trace.freeze([scopedLink])).streams.raw.quality;
+  assert.equal(crowded.omitted, 0);
+  assert.deepEqual(crowded.events.map(event => Number(event.seq)), Array.from({ length: 520 }, (_, index) => index + 1));
+  for (let seq = 521; seq <= 1025; seq++) trace.record('raw', delivered(envelope(source, local, 4), BigInt(seq)));
   const wrapped = (await trace.freeze([`${source}/${local}`])).streams.raw.quality;
-  assert.equal(wrapped.omitted, 8);
-  assert.deepEqual(wrapped.events.map(event => Number(event.seq)), Array.from({ length: 512 }, (_, index) => index + 9));
+  assert.equal(wrapped.omitted, 1);
+  assert.deepEqual(wrapped.events.map(event => Number(event.seq)), Array.from({ length: 1024 }, (_, index) => index + 2));
+  for (let ordinal = 1; ordinal <= 521; ordinal++) trace.record('send', envelope(local, source, 4), ordinal);
+  const sentArchive = (await trace.freeze([`${local}/${source}`])).streams.send.quality;
+  assert.equal(sentArchive.events.length, 522);
+  assert.equal(sentArchive.events[1].socket_ordinal, 1);
+  assert.equal((await trace.freeze()).streams.send.quality.events.length, 128);
   const gateTrace = createRelayWireTrace();
   gateTrace.bind(room, local, [source, local, other]);
   gateTrace.record('raw', delivered(packet, 1n)).delivery_gate = 1;
@@ -562,44 +587,68 @@ assert.equal(nativeOnlyInput.stages.raw, null);
         # Value: protects=pressure confined to the raw boundary; fails_when=missing originals or leaked stamped packets pass; seam=control receipt
         script = r"""
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const { checkSameLinkRetention, exerciseSameLinkRetention } = require(process.argv[1]);
-const [sender, recipient, room] = ['sender', 'recipient', 'match'];
+const [sender, recipient, room] = ['11', '22', '33'].map(byte => byte.repeat(16));
 const stage = () => Object.fromEntries(['sync', 'input', 'quality'].map(family => [family, { events: [] }]));
+function packetBytes(kind) {
+  const envelope = Buffer.alloc(kind === 2 ? 109 : 103);
+  Buffer.from(`4653523101${room}${sender}${recipient}`, 'hex').copy(envelope);
+  envelope.writeUInt32LE(envelope.length - 57, 53);
+  Buffer.from(room, 'hex').copy(envelope, 57);
+  envelope.writeUInt32LE(0x000252f5, 73);
+  envelope.writeUInt16LE(1, 77);
+  envelope.writeUInt32LE(kind, 81);
+  return envelope;
+}
 function fixture() {
   const server = { room, roster: [sender, recipient], streams: { ingress: stage(), write: stage() } };
   const source = { room, local: sender, sockets: 1, streams: { send: stage(), raw: stage(), sdk: stage(), native: stage() } };
   const reporter = { room, local: recipient, sockets: 1, streams: { send: stage(), raw: stage(), sdk: stage(), native: stage() } };
-  const before = { started_ms: 25, frontier: [] };
+  const before = { started_ms: 25, frontier: [], raw_watermark: { input: 2, quality: 2 } };
+  const resumed = { resumed_ms: 35, deadline_ms: 40, delivery_gate: 1, frontier: { room, sender, recipient, packets: [] } };
   const ordinals = [];
   for (const [family, kind] of [['input', 2], ['quality', 4]]) {
-    for (let ordinal = 1; ordinal <= 130; ordinal++) {
+    const envelope = packetBytes(kind);
+    const digest = createHash('sha256').update(envelope).digest('hex');
+    for (let ordinal = 1; ordinal <= 522; ordinal++) {
       const seq = String(ordinal * 2 + (kind === 2 ? 0 : 1));
-      const packet = { sender, recipient, epoch: 1, seq, kind, envelope_bytes: 109, envelope_sha256: 'digest', ordinal, socket_ordinal: Number(seq) };
+      const packet = { sender, recipient, epoch: 1, seq, kind, envelope_bytes: envelope.length, envelope_sha256: digest,
+        ordinal, socket_ordinal: Number(seq) };
       source.streams.send[family].events.push(packet);
       server.streams.ingress[family].events.push(packet);
       server.streams.write[family].events.push({ ...packet, actual_recipient: recipient });
-      const raw = { ...packet, at_ms: ordinal === 1 ? 20 : 30 };
-      reporter.streams.raw[family].events.push(raw);
+      const raw = { ...packet, at_ms: ordinal === 1 ? 20 : ordinal === 2 ? 24 : 30 };
       if (ordinal === 1) {
         before.frontier.push({ ...packet, family });
+        reporter.streams.raw[family].events.push(raw);
         reporter.streams.sdk[family].events.push(packet);
         reporter.streams.native[family].events.push({ ...packet, code: 0 });
+      } else if (ordinal === 2) {
+        // Already queued at the gate. Only the resume pin retains these receiver observations.
+        resumed.frontier.packets.push({ kind, epoch: 1, seq, envelope: envelope.toString('hex'),
+          stages: { raw: { ordinal, at_ms: 24 }, sdk: { ordinal, at_ms: 26 }, native: { ordinal, at_ms: 27 } } });
       } else {
         raw.delivery_blocked = true;
         raw.delivery_gate = 1;
+        reporter.streams.raw[family].events.push(raw);
         ordinals.push(packet.socket_ordinal);
       }
     }
   }
-  return { server, source, reporter, before, ordinals };
+  return { server, source, reporter, before, resumed, ordinals };
 }
-function qualify({ server, source, reporter, before, ordinals }) {
-  return checkSameLinkRetention(server, [source, reporter], before, { resumed_ms: 35, delivery_gate: 1 }, ordinals);
+function qualify({ server, source, reporter, before, resumed, ordinals }) {
+  return checkSameLinkRetention(server, [source, reporter], before, resumed, ordinals);
 }
-assert.equal(qualify(fixture()).pressure.quality.count, 129);
+assert.equal(qualify(fixture()).pressure.quality.count, 520);
+assert.deepEqual(qualify(fixture()).frontier.map(row => row.seq), ['4', '5']);
 for (const [change, diagnostic] of [
-  [f => f.server.streams.ingress.input.events.shift(), /lost the original input packet stage/],
-  [f => f.ordinals.pop(), /needs over 128 new quality arrivals/],
+  [f => f.server.streams.ingress.input.events.splice(1, 1), /lost the original input packet stage/],
+  [f => delete f.resumed.frontier.packets[0].stages.raw, /lost the original input packet stage/],
+  [f => { f.resumed.frontier.packets[0].stages.raw.at_ms = f.before.started_ms; f.before.raw_watermark.input = 1; }, /lost the original input packet stage/],
+  [f => { f.resumed.frontier.packets[0].stages.raw.at_ms = f.before.started_ms; f.before.raw_watermark.input = '2'; }, /invalid raw ordinal watermark/],
+  [f => f.ordinals.splice(f.ordinals.length - 8), /needs over 512 new quality arrivals/],
   [f => f.reporter.streams.raw.quality.events[4].delivery_blocked = false, /did not stop at raw arrival/],
   [f => f.reporter.streams.raw.quality.events[4].delivery_gate = 2, /did not stop at raw arrival/],
   [f => f.reporter.streams.raw.quality.events[4].at_ms = 36, /did not stop at raw arrival/],
@@ -611,7 +660,7 @@ for (const [change, diagnostic] of [
 }
 
 (async () => {
-  const { server, source, reporter, before, ordinals } = fixture();
+  const { server, source, reporter, before, resumed, ordinals } = fixture();
   const page = wire => ({
     evaluate(run, arg) {
       globalThis.window = { fortressNativeWire: wire };
@@ -624,16 +673,16 @@ for (const [change, diagnostic] of [
   });
   const sourcePage = page({ pressureRelayLink: () => ordinals, relayWireTrace: () => source });
   const reporterPage = page({ blockRelayLink: () => before, relayWireTrace: () => reporter, resumeBlockedRelay(stamps) {
-    assert.equal(stamps.length, 258);
-    assert.equal(stamps.filter(stamp => stamp.kind === 4).length, 129);
-    return { resumed_ms: 35, deadline_ms: 40, delivery_gate: 1 };
+    assert.equal(stamps.length, 1040);
+    assert.equal(stamps.filter(stamp => stamp.kind === 4).length, 520);
+    return resumed;
   } });
   const result = await exerciseSameLinkRetention([sourcePage, reporterPage], [{ uuid: sender }, { uuid: recipient }], async select => {
     for (const change of [
-      writes => writes.push({ ...writes[1] }),
-      writes => writes[1].actual_recipient = 'unaddressed',
-      writes => writes[1].envelope_sha256 = 'different',
-      writes => writes[1].kind = 5,
+      writes => writes.push({ ...writes[2] }),
+      writes => writes[2].actual_recipient = 'unaddressed',
+      writes => writes[2].envelope_sha256 = 'different',
+      writes => writes[2].kind = 5,
     ]) {
       const incomplete = structuredClone(server);
       change(incomplete.streams.write.quality.events);
@@ -641,7 +690,7 @@ for (const [change, diagnostic] of [
     }
     return select(server);
   });
-  assert.equal(result.pressure.input.count, 129);
+  assert.equal(result.pressure.input.count, 520);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs')], check=True, timeout=10)
@@ -1138,7 +1187,7 @@ assert.equal(after.relaySenders[remote], wireBeforeCutoff.relaySenders[remote] +
         subprocess.run(command, check=True, timeout=10)
 
     def test_native_warmup_keeps_exact_input_stages_without_a_final_read(self):
-        # Value: protects=bounded exact input evidence; fails_when=unavailable stages are inferred or physical input is overwritten; seam=warmup console
+        # Value: protects=input and reverse ACK evidence; fails_when=unavailable stages are inferred or exact bytes are overwritten; seam=warmup console
         script = r"""
 const assert = require('node:assert/strict');
 const { runInNewContext } = require('node:vm');
@@ -1182,17 +1231,22 @@ class Socket {
   send() { if (this.reject) throw new Error('socket send failed'); }
 }
 let time = 1;
-const window = {}, tasks = [];
 const barrier = createWarmupBarrier(8, () => time);
-const realm = {
-  window, performance: {now: () => time}, console: {debug: value => barrier.record(1, value)},
-  setTimeout: callback => tasks.push(callback),
-  Uint8Array, ArrayBuffer, DataView, WebSocket: Socket, RTCPeerConnection: class {},
-};
-runInNewContext(`(${instrumentNativeWire})(false, ${JSON.stringify(WARMUP_CHECKPOINT)}, (${createRelayWireTrace})())`, realm);
-const socket = new window.WebSocket();
-const wire = window.fortressNativeWire;
-wire.bind(room, receiver, roster);
+barrier.bindSession(room);
+function makeWire(local, index) {
+  const window = {}, tasks = [];
+  const realm = {
+    window, performance: {now: () => time}, console: {debug: value => barrier.record(index, value)},
+    setTimeout: callback => tasks.push(callback),
+    Uint8Array, ArrayBuffer, DataView, WebSocket: Socket, RTCPeerConnection: class {},
+  };
+  runInNewContext(`(${instrumentNativeWire})(false, ${JSON.stringify(WARMUP_CHECKPOINT)}, (${createRelayWireTrace})())`, realm);
+  const socket = new window.WebSocket(), wire = window.fortressNativeWire;
+  wire.bind(room, local, roster);
+  return { socket, wire, tasks };
+}
+const { socket, wire, tasks } = makeWire(receiver, 1);
+const reverse = makeWire(sender, 0);
 const input9 = payload(2, 9, 8);
 socket.message({data: delivery(relayFrame(input9, sender, receiver), sender, 11)});
 tasks.shift()?.();
@@ -1242,7 +1296,47 @@ assert.throws(() => socket.send(relayFrame(ack, receiver, sender)), /socket send
 assert.equal(wire.warmupStatus().input_link.ack.count, 0);
 socket.reject = false;
 socket.send(relayFrame(ack, receiver, sender));
+reverse.socket.message({data: delivery(relayFrame(ack, receiver, sender), receiver, 21)});
+reverse.tasks.shift()?.();
+const earlyAck = barrier.checkpoints[0]?.ack_link;
+assert.ok(earlyAck, 'the watched reverse ACK must be observed on its addressed receiver');
+assert.equal(earlyAck.sender, receiver);
+assert.equal(earlyAck.recipient, sender);
+assert.equal(earlyAck.raw.first.payload, ack.toString('hex'));
+assert.equal(earlyAck.raw.first.start_frame, null);
+assert.equal(earlyAck.raw.first.ack_frame, 10);
+assert.equal(earlyAck.raw.first.seq, '21');
+assert.equal(earlyAck.sdk.first, null);
+assert.equal(earlyAck.native.first, null);
+const ack11 = payload(3, null, 11);
+reverse.socket.message({data: relayFrame(ack11, receiver, sender)});
+reverse.socket.message({data: relayFrame(ack11, other, sender)});
+reverse.socket.message({data: relayFrame(ack11, receiver, other)});
+reverse.socket.message({data: relayFrame(input9, receiver, sender)});
+reverse.wire.observeWarmupInput('sdk', receiver, ack.toString('hex'), -1);
+reverse.wire.observeWarmupInput('native', receiver, ack.toString('hex'), 6);
+reverse.wire.observeWarmupInput('native', receiver, ack.toString('hex'), 0);
+reverse.wire.observeWarmupInput('sdk', other, ack11.toString('hex'), -1);
+reverse.wire.observeWarmupInput('sdk', receiver, input9.toString('hex'), -1);
 time = 1050;
+const nativeSlots = roster.slice(1).map((_, i) => ({
+  slot: i + 1, receipt_frame: 16, connected: i !== 1, pending_output: i, gossip_bound: i === 0 ? 8 : i === 1 ? 17 : 16,
+}));
+reverse.wire.recordWarmupTick(0, 0, 8, 20, 'playing', 16, 8, JSON.stringify(nativeSlots));
+reverse.wire.finishWarmup('playing', 16, 12);
+const ackSample = barrier.checkpoints[0].ack_link;
+assert.deepEqual(barrier.checkpoints[0].native_frontier, { at_ms: 1050, frame: 16, confirmed: 8, slots: nativeSlots });
+assert.equal(ackSample.raw.count, 2);
+assert.equal(ackSample.raw.recent.ack_frame, 11);
+assert.equal(ackSample.raw.recent.seq, null);
+assert.equal(ackSample.sdk.count, 1);
+assert.equal(ackSample.native.count, 2);
+assert.equal(ackSample.native.first.code, 6);
+assert.equal(ackSample.native.recent.code, 0);
+reverse.socket.message({data: relayFrame(ack11, receiver, sender)});
+reverse.wire.observeWarmupInput('native', receiver, ack11.toString('hex'), 0);
+assert.equal(reverse.wire.warmupStatus().ack_link.raw.count, 2);
+assert.equal(reverse.wire.warmupStatus().ack_link.native.count, 2);
 wire.finishWarmup('playing', 20, 12);
 assert.deepEqual(barrier.errors, Array(8).fill(null));
 const sample = barrier.checkpoints[1].input_link;
@@ -1265,6 +1359,14 @@ socket.send(relayFrame(ack, receiver, sender));
 assert.equal(wire.warmupStatus().input_link.native.count, 2);
 assert.equal(wire.warmupStatus().input_link.raw.count, 5);
 assert.equal(wire.warmupStatus().input_link.ack.count, 1);
+const wrongAck = JSON.parse(JSON.stringify(barrier.checkpoints[0].ack_link));
+wrongAck.raw.first.payload = '00'.repeat(32);
+const wrongBounds = nativeSlots.map((slot, index) => index === 0 ? { ...slot, gossip_bound: 17 } : slot);
+const foreignSession = createWarmupBarrier(8, () => time);
+foreignSession.bindSession('ff'.repeat(16));
+foreignSession.record(0, WARMUP_CHECKPOINT + JSON.stringify(barrier.checkpoints[0]));
+assert.match(foreignSession.ackErrors[0], /invalid warmup ACK link/);
+assert.equal(foreignSession.errors[0], null);
 const wrong = JSON.parse(JSON.stringify(barrier.checkpoints[1]));
 wrong.input_link.sender = other;
 const brokenStream = JSON.parse(JSON.stringify(barrier.checkpoints[1]));
@@ -1278,7 +1380,8 @@ assert.equal(barrier.checkpoints[2].input_link, undefined);
   await gate.wait(async () => {
     for (const [index, recipient] of roster.entries()) {
       const page = { ...wrong, recipient, links: roster.filter(sender => sender !== recipient).map(sender => ({sender})),
-        input_link: index === 1 ? wrong.input_link : undefined };
+        input_link: index === 1 ? wrong.input_link : undefined, ack_link: index === 0 ? wrongAck : undefined,
+        native_frontier: index === 0 ? { at_ms: 1050, frame: 16, confirmed: 8, slots: wrongBounds } : undefined };
       gate.record(index, WARMUP_CHECKPOINT + JSON.stringify(page));
     }
   }, 50);
@@ -1286,6 +1389,10 @@ assert.equal(barrier.checkpoints[2].input_link, undefined);
   assert.match(gate.inputErrors[1], /invalid warmup input link/);
   assert.equal(gate.errors[1], null);
   assert.equal(gate.checkpoints[1].input_link, undefined);
+  assert.match(gate.ackErrors[0], /invalid warmup ACK link/);
+  assert.equal(gate.checkpoints[0].ack_link, undefined);
+  assert.match(gate.nativeErrors[0], /invalid warmup native frontier/);
+  assert.equal(gate.checkpoints[0].native_frontier, undefined);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs'),
@@ -2624,18 +2731,27 @@ const { runInNewContext } = require('node:vm');
 const { instrumentNativeWire } = require(process.argv[1]);
 let now = 0;
 let sent;
+let plannedState = 'connecting';
+let plannedBuffer = 0;
 class Connection {
   close() {}
   addEventListener() {}
   createDataChannel() {
-    return { id: 3, addEventListener() {}, send() { sent = { at: now * 1000, stack: new Error().stack }; } };
+    return {
+      id: 3, get readyState() { return plannedState; }, get bufferedAmount() { return plannedBuffer; }, addEventListener() {},
+      send() {
+        sent = { at: now * 1000, readyState: plannedState, bufferedAmount: plannedBuffer, stack: new Error().stack };
+        plannedState = 'closed';
+        plannedBuffer = 0;
+      },
+    };
   }
 }
 const window = { crossOriginIsolated: true };
 runInNewContext(`(${instrumentNativeWire})(true, '')`, {
   window, WebSocket: class {}, RTCPeerConnection: Connection,
   performance: { now: () => now },
-  Function: function(...args) { now += 5; return Function(...args); },
+  Function: function(...args) { now += 5; plannedState = now === 15 ? 'open' : 'closing'; plannedBuffer = now; return Function(...args); },
 });
 const first = new Connection().createDataChannel('first', {});
 const second = new Connection().createDataChannel('second', {});
@@ -2644,16 +2760,23 @@ wire.observeDeparture();
 const send = channel => {
   channel.send(new ArrayBuffer(1));
   const [, index, tag] = sent.stack.match(/fortressNativeSend_(\d+)_(\d+)/).map(Number);
-  return { index, tag, at: sent.at };
+  return { index, tag, at: sent.at, readyState: sent.readyState, bufferedAmount: sent.bufferedAmount };
 };
 const a = send(first);
 // Older witnesses encoded preparation time in the name itself.
 const recorded = wire.departureSends ? wire.departureSends([a.tag])[a.tag]?.sentAt : a.tag;
 assert.equal(recorded, a.at, 'timestamp must be taken at the native send');
+assert.equal(a.readyState, 'open');
+assert.equal(plannedState, 'closed');
+const actual = wire.departureSends([a.tag])[a.tag];
+assert.equal(actual?.readyState, a.readyState, 'channel readiness must be owned at the native send');
+assert.equal(actual?.bufferedAmount, a.bufferedAmount, 'queue size must be owned at the native send');
 const b = send(second);
 assert.equal(b.tag, a.tag + 1);
 assert.equal(b.index, a.index + 1);
 assert.equal(wire.departureSends([b.tag])[b.tag]?.channel, b.index);
+assert.equal(wire.departureSends([b.tag])[b.tag]?.readyState, 'closing');
+assert.equal(wire.departureSends([b.tag])[b.tag]?.bufferedAmount, b.bufferedAmount);
 for (let i = 0; i < 4096; ++i) first.send(new ArrayBuffer(1));
 const latest = send(second);
 const receipts = wire.departureSends([a.tag, b.tag, latest.tag, latest.tag + 1]);
@@ -2673,6 +2796,9 @@ const { runInNewContext } = require('node:vm');
 const { instrumentNativeWire, recordCloseObservation, matchCloseObservations } = require(process.argv[1]);
 let now = 10;
 const observed = [new Map(), new Map()];
+let emissions = 0;
+const uuids = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'];
+const identities = { uuids, roster: uuids };
 class Connection {
   signalingState = 'stable';
   remoteDescription = { sdp: 'a=ice-ufrag:sender' };
@@ -2690,7 +2816,11 @@ const prefix = 'close ';
 const window = {};
 runInNewContext(`(${instrumentNativeWire})(false, '', undefined, 'close ')`, {
   window, WebSocket: class {}, RTCPeerConnection: Connection,
-  performance: { now: () => now }, console: { debug: text => recordCloseObservation(observed[0], text.slice(prefix.length), now + 500) },
+  performance: { now: () => now },
+  console: { debug: text => {
+    emissions++;
+    recordCloseObservation(observed[0], text.slice(prefix.length), now + 500, identities, 0);
+  } },
 });
 const connection = new Connection();
 const channel = connection.createDataChannel('gameplay', {});
@@ -2701,16 +2831,41 @@ now = 40;
 channel.closeEvent();
 now = 45;
 channel.closeEvent();
+const wire = window.fortressNativeWire;
+wire.bind('abcdef0123456789abcdef0123456789', uuids[0], uuids);
+wire.recordMeshDeparture('sdk_player_left', uuids[1]);  // Before observation starts.
+assert.equal(observed[0].size, 3);
+wire.observeDeparture();
+now = 46;
+wire.recordMeshDeparture('sdk_player_left', uuids[1]);
+now = 47;
+wire.recordMeshDeparture('mesh_remove_peer', uuids[1], true);
+wire.recordMeshDeparture('mesh_remove_peer', uuids[1], false);  // A duplicate does not replace exact first evidence.
+wire.recordMeshDeparture('sdk_player_left', uuids[0]);
+for (const value of [
+  { kind: 'mesh_remove_peer', player: uuids[1], had_peer: 1 },
+  { kind: 'sdk_player_left', player: uuids[1], had_peer: false },
+  { kind: 'sdk_player_left', player: uuids[0] },
+  { kind: 'sdk_player_left', player: '33333333-3333-3333-3333-333333333333' },
+]) recordCloseObservation(observed[0], JSON.stringify({ ...value, page_us: 48000 }), 548, identities, 0);
+assert.equal(observed[0].size, 5);
+assert.equal(emissions, 5, 'a duplicate departure must not emit another receipt');
 const before = [[{ index: 0, local: 'closer', remote: 'sender' }], [{ index: 17, local: 'sender', remote: 'closer' }]];
 const error = { index: 1, channel: 17, attempt: 279, received_ms: 600 };
 const report = {
-  partialSnapshots: [null, { sends: { 279: { channel: 17, attempt: 279, sentAt: 47199 } } }],
+  partialSnapshots: [null, { sends: { 279: { channel: 17, attempt: 279, sentAt: 47199, readyState: 'open', bufferedAmount: 49 } } }],
   clocks: [{ offsetMin: 9900, offsetMax: 10100 }, { offsetMin: -5100, offsetMax: -4900 }],
 };
-const [receipt] = matchCloseObservations([error], before, observed, report);
+const [receipt] = matchCloseObservations([error], before, observed, report, identities);
 assert.equal(receipt.attempt, 279);
 assert.equal(receipt.sentAt, 47199);
+assert.deepEqual(receipt.sendState, { readyState: 'open', bufferedAmount: 49 });
 assert.equal(receipt.received_ms, 600);
+assert.deepEqual(receipt.lifecycle, [
+  { owner: 0, kind: 'sdk_player_left', player: uuids[1], page_us: 46000, received_ms: 546, minimumGapUs: -14001, maximumGapUs: -13601 },
+  { owner: 0, kind: 'mesh_remove_peer', player: uuids[1], had_peer: true, page_us: 47000, received_ms: 547,
+    minimumGapUs: -15001, maximumGapUs: -14601 },
+]);
 assert.deepEqual(receipt.observations.map(({ owner, kind, page_us, received_ms }) => [owner, kind, page_us, received_ms]), [
   [0, 'channel_close_called', 10000, 512],
   [0, 'channel_close_event', 40000, 540],
@@ -2752,10 +2907,11 @@ const sender = {...before, closed:true, connectionClosed:true, closedAt:50000};
 const closer = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
 const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
 const tagged = {index:1, channel:17, attempt:3};
-const receipt = {channel:17, attempt:3, sentAt:47199};
+const receipt = {channel:17, attempt:3, sentAt:47199, readyState:'open', bufferedAmount:256};
 const fail = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, receipt);
 assert.deepEqual(JSON.parse(JSON.stringify(fail)), {
-  ...tagged, sentAt:47199, closer:null, before, sender, counterparts:[{...closer, owner:0}], minimumGapUs:1999, maximumGapUs:2399, proof:null,
+  ...tagged, sentAt:47199, sendState:{readyState:'open', bufferedAmount:256}, closer:null, before, sender,
+  counterparts:[{...closer, owner:0}], minimumGapUs:1999, maximumGapUs:2399, proof:null,
 });
 const timed = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, sentAt:47200});
 assert.equal(timed.minimumGapUs, 2000);
@@ -2765,8 +2921,18 @@ for (const invalid of [null, {...receipt, sentAt:'47200'}, {...receipt, sentAt:-
   {...receipt, attempt:4, sentAt:47200}, {...receipt, channel:18, sentAt:47200}]) {
   const rejected = closeEvidence({...tagged, sentAt:999999}, [before], [[closer], [sender]], null, clocks, invalid);
   assert.equal(rejected.sentAt, null);
+  assert.equal(rejected.sendState, null);
   assert.equal(rejected.minimumGapUs, null);
   assert.equal(rejected.proof, null);
+}
+for (const malformed of [undefined, 'connected', 'OPEN']) {
+  const sample = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, sentAt:47200, readyState:malformed});
+  assert.equal(sample.sendState, null);
+  assert.equal(sample.proof, 'clock-order', 'optional sender state cannot alter close proof');
+}
+for (const malformed of [-1, Infinity, 0.5, '256']) {
+  const sample = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, bufferedAmount:malformed});
+  assert.equal(sample.sendState, null);
 }
 const early = closeEvidence(tagged, [before], [[closer], [sender]], null, clocks, {...receipt, sentAt:46799});
 assert.equal(early.maximumGapUs, 1999);
@@ -2798,7 +2964,7 @@ const { waitForCloseProofs } = require(process.argv[1]);
 const before = {index:17, local:'survivor', remote:'leaver', closeAborts:0, closed:false};
 const reciprocal = {index:18, local:'leaver', remote:'survivor', closeAborts:0, closed:true, connectionClosed:true, closedAt:30000};
 const clocks = [{offsetMin:9900, offsetMax:10100}, {offsetMin:-5100, offsetMax:-4900}];
-const receipt = {channel:17, attempt:3, sentAt:47200};
+const receipt = {channel:17, attempt:3, sentAt:47200, readyState:'open', bufferedAmount:128};
 const sample = (links, offset, sends = {}) => ({
   evaluate: async (_read, { attempts }) => {
     const start = now;
@@ -2865,7 +3031,7 @@ let now = 25;
   assert.deepEqual(crashReport.snapshotErrors, [{index:1, reason:'Error: Page crashed'}]);
   assert.deepEqual(crashReport.partialSnapshots, [{received_ms:26, links:[reciprocal], sends:{}}, null]);
   assert.deepEqual(crashReport.clockSamples, [{before:[], after:[{offsetMin:9459, offsetMax:10541}]}, {before:[], after:[]}]);
-  assert.deepEqual(crashReport.proofs, [{...warning[0], sentAt:null, closer:null, before, sender:null,
+  assert.deepEqual(crashReport.proofs, [{...warning[0], sentAt:null, sendState:null, closer:null, before, sender:null,
     counterparts:[{...reciprocal, owner:0}], minimumGapUs:null, maximumGapUs:null, proof:null}]);
 
   now = 25;
@@ -2878,6 +3044,7 @@ let now = 25;
     {received_ms:52, links:[{...reciprocal, closedAt:30001}], sends:{}}, {received_ms:26, links:[before], sends:{3:receipt}},
   ]);
   assert.equal(interruptedReport.proofs[0].proof, null);
+  assert.deepEqual(interruptedReport.proofs[0].sendState, { readyState: 'open', bufferedAmount: 128 });
 
   const lateReply = sample(() => { now = 5025; return [before]; }, -5000);
   now = 25;
@@ -2886,7 +3053,7 @@ let now = 25;
     /WebKit close evidence deadline/);
   assert.deepEqual(lateReport.partialSnapshots, [null, null]);
   assert.deepEqual(lateReport.clockSamples.map(page => page.after), [[], []]);
-  assert.deepEqual(lateReport.proofs, [{...warning[0], sentAt:null, closer:null, before, sender:null,
+  assert.deepEqual(lateReport.proofs, [{...warning[0], sentAt:null, sendState:null, closer:null, before, sender:null,
     counterparts:[], minimumGapUs:null, maximumGapUs:null, proof:null}]);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """

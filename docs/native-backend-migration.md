@@ -71,8 +71,15 @@ WebKit receipts distinguish application channel close calls, channel close
 events and peer connection close calls. Each observation keeps its browser
 timestamp and controller receipt, even when the final page read times out.
 Tagged send diagnostics list the matching reciprocal route and the possible
-gap to each observed stage when the page clocks are bounded. Nonce-matched
-same-origin HTTPS exchanges bracket each page clock with controller receipt
+gap to each observed stage when the page clocks are bounded. The exact send
+attempt also carries the channel's readiness and queued bytes sampled immediately
+before calling the browser send. Missing samples leave this evidence empty.
+Ordinary WebKit mesh departures also record the SDK's public `player_left`
+event and the peer factory's `remove_peer` entry for each frozen remote UUID.
+A removal entry records whether the peer was still registered. These are
+separate observations because the SDK's internal removal callback has no
+public event. The reciprocal route joins the observations to the tagged send
+without using them as close proof. Nonce-matched same-origin HTTPS exchanges bracket each page clock with controller receipt
 and response timestamps. The receipt keeps the HTTPS and debugger samples so
 an ambiguous interval can be reproduced. Acceptance requires a fresh SCTP
 abort or completed connection close followed by the tagged send, with at least
@@ -136,9 +143,14 @@ duration.
 
 Use the same-link pressure control with a local traced server build receipt.
 The control drops addressed packets after raw arrival for one link while
-the sender sends 129 inputs and 129 quality reports. It joins the earlier
-accepted packets across all stages, verifies the drop boundary and resumes the
-link before the normal correction, confirmed-history and departure checks.
+the sender sends 520 inputs and 520 quality reports. It freezes the original
+acceptance marks at gate resume, joins them across all stages, and verifies
+each injected packet stops at raw arrival. Then it runs the normal correction,
+confirmed-history and departure checks. Focused receipts keep up to 1,024
+browser sends, raw arrivals, server ingresses and addressed writes per directed
+link and packet family for inputs and quality traffic. The ordinary receipt still
+publishes the latest 128 per link and family. Evidence beyond the archive can
+remain missing even when a receiver kept its acceptance mark.
 
 ```sh
 python3 scripts/reference/native_online_probe.py --version "$GODOT_PIN" --cell relay:8 \
@@ -156,11 +168,23 @@ latency. Native enqueue represents accepted input to the native socket queue.
 For the first two UUIDs in the sorted frozen roster, the second page also
 retains the first and latest distinct gameplay input at raw arrival, SDK
 delivery, and native admission, plus the corresponding direction's outgoing
-ACK observations. Each stage keeps exact bytes. Joining a raw observation to
+ACK observations. The first page samples that same reverse direction in
+`ack_link` at raw arrival, SDK delivery, and native inbox enqueue. This
+separates missing ACK receipt from ACKs that reached the native inbox while
+confirmation remained stalled. Each stage keeps exact bytes. Joining a raw observation to
 the addressed write requires both a matching decoded transport stamp and the
 payload digest. When delivery decoding cannot match the packet, the collector
 keeps its browser bytes with `epoch` and `seq` set to `null`. An ACK describes
-the receiver's protocol frontier across all prior inputs on that link.
+the receiver's protocol frontier across all prior inputs on that link. Inbox
+acceptance alone does not establish application to the sender's native
+confirmation state.
+
+When the addon exposes the optional confirmation diagnostics, each page keeps
+one recent post-service native frontier while prediction is ahead. It records
+direct receipt frames, pending native output counts, and the remote gossip
+fold bound by frozen slot. A low direct receipt identifies local input progress;
+a lower gossip bound identifies a separate confirmation constraint. Both may
+occur in one room. Older addons omit the sample and still run the same gates.
 
 The `releaseTiming` receipt follows each prepared request by its unique path.
 The controller records request dispatch, receipt, header preparation,
