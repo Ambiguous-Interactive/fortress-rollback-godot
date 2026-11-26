@@ -33,3 +33,9 @@ broadcast. Eight alternating Node samples exercised 73,500 receives and
 counts both valid broadcasts. The
 [migration guide](../../docs/native-backend-migration.md#session-boundary)
 records that distinction. Hosted hold qualification remains open.
+
+The full reference run caught a reaping assertion immediately after SIGKILL.
+The ownership receipt named the escaped child and the launch rejected it,
+but its original PID still appeared live in `/proc` on that scheduler turn.
+Poll the same PID and start time through a bounded deadline before requiring
+a terminal state. Keep the exact rejection and absent receipt checks.

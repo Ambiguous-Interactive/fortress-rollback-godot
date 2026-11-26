@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from unittest import mock
 
 from godot_smoke import run as run_owned
@@ -48,8 +49,12 @@ else:
                 results = self.scenario(expected=EscapedDescendants, expected_diagnostic=r'^owned descendant survived the command: pid \d+ \(.+\)$',
                                         version='4.3', phase='positive', suite_part=DOWNLOAD_PART, before_download=escape)
                 pid, start = map(int, marker.read_text().split())
-                self.assertTrue(terminated(pid) or not _identity_check(start)(pid),
-                                f'escaped child {pid} must be terminal before the launcher rejects it')
+                same_process = _identity_check(start)
+                deadline = time.monotonic() + 5
+                # SIGKILL delivery can precede the terminal state reported by /proc.
+                while not terminated(pid) and same_process(pid) and time.monotonic() < deadline:
+                    time.sleep(0.025)
+                self.assertTrue(terminated(pid) or not same_process(pid), f'escaped child {pid} must reach a terminal state')
             finally:
                 if marker.is_file():
                     owned_pid, owned_start = map(int, marker.read_text().split())
