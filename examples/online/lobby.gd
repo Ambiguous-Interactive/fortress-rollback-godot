@@ -111,7 +111,7 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 	_config.set("decode_msgpack_payloads", false)
 	_config.set("auto_poll", false)
 	if backend_choice == "native":
-		# The relay broadcasts each addressed datagram to every room member.
+		# Budget for room-wide copies when a room uses the broadcast path.
 		_config.set("max_inbound_packets_per_poll", 256)
 	mesh.set("multiplayer_peer_factory", Multiplayer.create)
 	var connection_script: Script = load("res://addons/fortress_rollback/transport/signalfish_webrtc_connection.gd")

@@ -24,13 +24,13 @@
     },
     "server": {
       "repository": "https://github.com/Ambiguous-Interactive/signal-fish-server",
-      "revision": "8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560",
+      "revision": "3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1",
       "archive": {
-        "url": "https://codeload.github.com/Ambiguous-Interactive/signal-fish-server/tar.gz/8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560",
-        "digest": "c3b3bdbfba6812327550e037f24045cb77fdd29eaaea047b9f89606c10263c11",
+        "url": "https://codeload.github.com/Ambiguous-Interactive/signal-fish-server/tar.gz/3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1",
+        "digest": "edb354df9f6578bcc6e49f1a560ae0fc875604a4694f10166fcc434ad541825f",
         "algorithm": "sha256"
       },
-      "root": "signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560"
+      "root": "signal-fish-server-3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1"
     }
   },
   "artifacts": {

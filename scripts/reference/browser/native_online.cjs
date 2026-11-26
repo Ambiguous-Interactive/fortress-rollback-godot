@@ -79,10 +79,13 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
         && Number.isSafeInteger(row.ack_frame) && row.ack_frame >= -1
         && (ack ? row.start_frame === null : Number.isSafeInteger(row.start_frame) && row.start_frame >= 0)
         && (stage === 'native' ? Number.isInteger(row.code) : row.code === null)
-        && (row.epoch === null && row.seq === null || stage === 'raw' && Number.isInteger(row.epoch) && row.epoch > 0 && row.epoch <= 0xffffffff
-          && typeof row.seq === 'string' && /^[1-9][0-9]{0,19}$/.test(row.seq) && BigInt(row.seq) <= 0xffffffffffffffffn);
+        && (row.epoch === null && row.seq === null && row.lane === undefined
+          || stage === 'raw' && (row.lane === undefined || row.lane === 'addressed')
+            && Number.isInteger(row.epoch) && row.epoch > 0 && row.epoch <= 0xffffffff
+            && typeof row.seq === 'string' && /^[1-9][0-9]{0,19}$/.test(row.seq) && BigInt(row.seq) <= 0xffffffffffffffffn);
       return valid(stream.first) && (stream.recent === null || stream.count > 1 && valid(stream.recent)
-        && stream.recent.at_ms >= stream.first.at_ms && (stream.recent.payload !== stream.first.payload || stream.recent.code !== stream.first.code));
+        && stream.recent.at_ms >= stream.first.at_ms
+        && (stream.recent.payload !== stream.first.payload || stream.recent.code !== stream.first.code || stream.recent.lane !== stream.first.lane));
     });
   }
   function validNativeFrontier(frontier, sample, roster) {
@@ -486,6 +489,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   let qualityEventCount = 0;
   let bufferedBytesPeak = 0;
   let relayBroadcasts = 0;
+  let relayAddressedDeliveries = 0;
   const held = { mesh: 0, relay: 0 };
   const controlRoundTrips = { mesh: 0, relay: 0 };
   const holdConditions = route => [held[route] > 0, controlRoundTrips[route] > 0];
@@ -524,9 +528,9 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       releaseWhenHeld(stamps) {
         if (performance.now() - started_ms >= 750) return release('deadline');
         if (stamps.length !== 2 || stamps.some(stamp => stamp.recipient !== localUuid)
-            || (stamps[0].sender === stamps[1].sender && stamps[0].epoch === stamps[1].epoch && stamps[0].seq === stamps[1].seq)) return null;
+            || (stamps[0].sender === stamps[1].sender && stamps[0].epoch === stamps[1].epoch && stamps[0].seq === stamps[1].seq && stamps[0].lane === stamps[1].lane)) return null;
         if (!stamps.every(stamp => events.some(({ packet }) => packet?.sender === stamp.sender
-            && packet.recipient === stamp.recipient && packet.epoch === stamp.epoch && packet.seq === stamp.seq))) return null;
+            && packet.recipient === stamp.recipient && packet.epoch === stamp.epoch && packet.seq === stamp.seq && packet.lane === stamp.lane))) return null;
         return release('controller');
       },
       hold(event, packet) {
@@ -619,10 +623,10 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     const payload = hex(bytes);
     const at_ms = performance.now();
     const sample = { at_ms, payload, start_frame, ack_frame, code,
-      epoch: stamp?.epoch ?? null, seq: stamp?.seq ?? null };
+      epoch: stamp?.epoch ?? null, seq: stamp?.seq ?? null, ...(stamp?.lane === undefined ? {} : { lane: stamp.lane }) };
     stream.count++;
     if (!stream.first) stream.first = sample;
-    else if (stream.first.payload !== payload || stream.first.code !== code) stream.recent = sample;
+    else if (stream.first.payload !== payload || stream.first.code !== code || stream.first.lane !== sample.lane) stream.recent = sample;
     scheduleWarmupCheckpoint(at_ms);
   }
   const orderedWarmupToken = token => token.match(/../g).reverse().join('');
@@ -906,7 +910,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     socket.addEventListener('message', event => {
       if (replayedRelayEvents?.has(event)) return;
       const { data } = event;
-      const relayPacket = relayWireTrace?.record('raw', nativeBytes(data));
+      const binary = nativeBytes(data);
+      const relayPacket = relayWireTrace?.record('raw', binary);
       if (blockedRelay?.socket === socket && blockedRelay.sender === relayPacket?.sender && relayPacket.kind >= 2
           && performance.now() < blockedRelay.deadline_ms) {
         relayPacket.delivery_blocked = true;
@@ -922,7 +927,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       if (incoming?.kind === 'Offer') recovery.delivered.push({ ...incoming, at_ms: performance.now() });
       const packet = relayAddresses(data, true);
       if (!packet) return;
-      relayBroadcasts++;
+      if (binary?.[0] === 1) relayAddressedDeliveries++;
+      else relayBroadcasts++;
       if (packet === otherRelayRecipient) return;
       increment(relaySenders, packet.sender);
       if (!warmupCutoff && warmupLinks.has(packet.sender) && packet.kind === 4 && packet.bytes.length === 46 && (packet.bytes[30] & 3) === 0) {
@@ -1271,6 +1277,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
           queuedKinds: { ...recovery.queuedKinds }, receivedKinds: { ...recovery.receivedKinds },
           delivered: [...recovery.delivered], observed: [...recovery.observed] },
         relay_trace: { buffered_bytes_peak: bufferedBytesPeak, broadcasts: relayBroadcasts, events,
+          ...(relayAddressedDeliveries === 0 ? {} : { addressed_deliveries: relayAddressedDeliveries }),
           event_count: qualityEventCount, direction_counts: { ...qualityEventCounts } },
         ice: [...ice.values()], sctp: sctpStatus(),
         rtc: resources.rtc.map(({channel, sent, received}) => [channel.id, channel.readyState, sent, received]),

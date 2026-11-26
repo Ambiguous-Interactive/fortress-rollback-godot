@@ -194,12 +194,12 @@ executable from the installed pinned Rust toolchain and the verified server sour
 ```sh
 python3 scripts/reference/signalfish_build_server.py \
   --cargo <pinned-toolchain>/bin/cargo \
-  --source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
+  --source .cache/reference/signal-fish-server-3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1 \
   --output .cache/reference/results/signalfish-server-build
 python3 scripts/reference/signalfish_live_probe.py \
   --godot <editor> \
   --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-  --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
+  --server-source .cache/reference/signal-fish-server-3cd1173f6f6ecb758c7f672f00fa65cac4cfa2b1 \
   --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
   --output .cache/reference/results/signalfish-live-<version>
 ```

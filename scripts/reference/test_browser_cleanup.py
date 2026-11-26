@@ -254,6 +254,31 @@ assert.throws(() => assertJoinedRelayControl({ rows: complete.map(row => ({ ...r
 writes[0].actual_recipient = sender;
 assert.throws(() => joinRelayReceipts(server, [pageA, pageB]), /addressed socket/);
 writes[0].actual_recipient = recipient;
+const privatePacket = { ...packet, lane: 'addressed', socket_ordinal: 7, ordinal: 3 };
+server.streams.ingress.input.events.push(privatePacket);
+writes.push({ ...privatePacket, actual_recipient: recipient, ordinal: 13 });
+const senderStages = pageA.streams.send.input.events;
+senderStages.push({ ...privatePacket, ordinal: 17 });
+for (const [index, stage] of ['raw', 'sdk', 'native'].entries()) {
+  const arrivals = pageB.streams[stage].input.events;
+  arrivals.push({ ...packet, ordinal: 20 + index, code: 0 }, { ...privatePacket, ordinal: 30 + index, code: 0 });
+}
+pageB.streams.native.input.events.push({ ...privatePacket, ordinal: 33, code: 1 });
+const privateJoin = joinRelayReceipts(server, [pageA, pageB]);
+const privateRows = privateJoin.rows.filter(row => row.seq === packet.seq).sort((a, b) => a.send - b.send);
+assert.deepEqual(privateRows.map(row => [row.lane, row.send, row.ingress, row.write, row.raw, row.sdk, row.native, row.native_accepted]), [
+  [undefined, 1, [1], [1], [20], [21], [22], [22]],
+  ['addressed', 17, [3], [13], [30], [31], [32, 33], [32]],
+]);
+assert.deepEqual(privateJoin.unjoined_sends, []);
+senderStages[2] = { ...privatePacket, lane: undefined };
+assert.throws(() => joinRelayReceipts(server, [pageA, pageB]), /relay socket ordinal disagrees/);
+senderStages.pop();
+pageB.streams.raw.input.events.splice(-2);
+pageB.streams.sdk.input.events.splice(-2);
+pageB.streams.native.input.events.splice(-3);
+server.streams.ingress.input.events.pop();
+writes.pop();
 pageA.sockets = 2;
 const ambiguous = joinRelayReceipts(server, [pageA, pageB]);
 assert.ok(ambiguous.rows.every(row => row.send === null));
@@ -423,6 +448,45 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
   const secondFreezeCalls = digestCalls;
   assert.deepEqual(await digestFixture.freeze(), digestReceipt);
   assert.equal(digestCalls - secondFreezeCalls, 10, 'digest reuse must stay inside one freeze');
+
+  const lanes = createRelayWireTrace();
+  lanes.bind(room, local, [source, local, other]);
+  const ordinary = delivered(original, 5n);
+  assert.equal(lanes.record('raw', Buffer.concat([bytes('00'), ordinary])), undefined);
+  assert.equal(lanes.record('raw', Buffer.concat([bytes('01'), ordinary.subarray(0, -1)])), undefined);
+  assert.equal(lanes.record('raw', ordinary).ordinal, 1);
+  lanes.recordEngine('sdk', source, original.toString('hex'), 1, '5', null);
+  const addressedRaw = lanes.record('raw', Buffer.concat([bytes('01'), ordinary]));
+  assert.equal(addressedRaw.lane, 'addressed');
+  addressedRaw.delivery_gate = 1;
+  const expectedStamp = { kind: 4, epoch: 1, seq: '5' };
+  assert.equal(lanes.hasBlockedRelayStamps(source, 1, [expectedStamp]), false);
+  assert.equal(lanes.hasBlockedRelayStamps(source, 1, [{ ...expectedStamp, lane: 'addressed' }]), true);
+  lanes.recordEngine('native', source, original.subarray(57).toString('hex'), 1, '5', 0);
+  const broadcastPin = lanes.expiryFrontier(source).packets[0];
+  assert.equal(broadcastPin.lane, undefined);
+  assert.equal(broadcastPin.stages.raw.ordinal, 1);
+  lanes.recordEngine('sdk', source, original.toString('hex'), 1, '5', null, true);
+  lanes.recordEngine('native', source, original.subarray(57).toString('hex'), 1, '5', 0, true);
+  const privatePin = lanes.expiryFrontier(source).packets[0];
+  assert.equal(privatePin.lane, 'addressed');
+  assert.equal(privatePin.stages.sdk.ordinal, 2);
+  assert.equal(privatePin.stages.raw.ordinal, 2);
+  assert.equal(lanes.record('send', Buffer.concat([bytes('01' + other), outgoing]), 10), undefined);
+  assert.equal(lanes.record('send', Buffer.concat([bytes('00'), outgoing]), 11).lane, undefined);
+  lanes.record('send', Buffer.concat([bytes('01' + source), outgoing]), 12);
+  const repeated = [];
+  lanes.repeatQuality(source, other, wire => repeated.push(Buffer.from(wire)));
+  assert.deepEqual(repeated.map(wire => [wire[0], wire.subarray(1, 17).toString('hex'), wire.subarray(54, 70).toString('hex')]),
+    [[1, source, source], [1, source, source], [1, other, other]]);
+  const laneReceipt = await lanes.freeze();
+  assert.deepEqual(laneReceipt.streams.send.quality.events.map(event => [event.socket_ordinal, event.lane, event.carrierOpcode]),
+    [[11, undefined, undefined], [12, 'addressed', undefined]]);
+  for (const stage of ['raw', 'sdk', 'native']) {
+    const events = laneReceipt.streams[stage].quality.events;
+    assert.deepEqual(events.map(event => [event.epoch, event.seq, event.lane]), [[1, '5', undefined], [1, '5', 'addressed']]);
+    checkDigests(events, [original, original]);
+  }
 
   const members = [source, local, other, ...['55', '66', '77', '88', '99'].map(value => value.repeat(16))];
   const pressured = createRelayWireTrace();
@@ -1337,13 +1401,21 @@ reverse.socket.message({data: relayFrame(ack11, receiver, sender)});
 reverse.wire.observeWarmupInput('native', receiver, ack11.toString('hex'), 0);
 assert.equal(reverse.wire.warmupStatus().ack_link.raw.count, 2);
 assert.equal(reverse.wire.warmupStatus().ack_link.native.count, 2);
+const ordinaryRecent = wire.warmupStatus().input_link.raw.recent;
+assert.equal(ordinaryRecent.seq, '12', 'return to initial bytes on the same lane preserves the most recent distinct delivery');
+assert.equal(ordinaryRecent.payload, input10.toString('hex'));
+const privateWire = Buffer.concat([Buffer.from([1]), delivery(relayFrame(input9, sender, receiver), sender, 11)]);
+socket.message({data: privateWire});
 wire.finishWarmup('playing', 20, 12);
 assert.deepEqual(barrier.errors, Array(8).fill(null));
 const sample = barrier.checkpoints[1].input_link;
-assert.equal(sample.raw.count, 5);
+assert.equal(sample.raw.count, 6);
 assert.equal(sample.raw.first.seq, '11', 'duplicates cannot change the earliest exact delivery');
-assert.equal(sample.raw.recent.seq, '12', 'return to initial bytes cannot overwrite their most recent distinct replacement');
-assert.equal(sample.raw.recent.payload, input10.toString('hex'));
+assert.equal(sample.raw.first.lane, undefined);
+assert.equal(sample.raw.recent.seq, sample.raw.first.seq);
+assert.equal(sample.raw.recent.payload, sample.raw.first.payload);
+assert.equal(sample.raw.recent.lane, 'addressed', 'an equal payload and stamp can arrive on a different lane');
+assert.equal(barrier.inputErrors[1], null);
 assert.equal(sample.sdk.count, 1);
 assert.equal(sample.sdk.recent, null);
 assert.equal(sample.native.count, 2);
@@ -1357,7 +1429,7 @@ wire.observeWarmupInput('native', sender, input10.toString('hex'), 0);
 socket.message({data: relayFrame(input10, sender, receiver)});
 socket.send(relayFrame(ack, receiver, sender));
 assert.equal(wire.warmupStatus().input_link.native.count, 2);
-assert.equal(wire.warmupStatus().input_link.raw.count, 5);
+assert.equal(wire.warmupStatus().input_link.raw.count, 6);
 assert.equal(wire.warmupStatus().input_link.ack.count, 1);
 const wrongAck = JSON.parse(JSON.stringify(barrier.checkpoints[0].ack_link));
 wrongAck.raw.first.payload = '00'.repeat(32);
