@@ -34,6 +34,10 @@
 
 ### Fixed
 
+- Fix native WebRTC Leave so the match stops sending gameplay before closing peer connections. [Online example](docs/online-example.md#leave-and-restart)
+
+- Fix late packets from a departed peer interrupting an in-progress coordinated drop.
+
 - Stop native WebRTC matches when a player leaves. Surviving players keep their direct links until they press Leave.
 
 - Fix native online matches ending when an SDK receive burst fills the SignalFish relay queue.

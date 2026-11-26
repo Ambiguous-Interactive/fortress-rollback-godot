@@ -11,6 +11,7 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
+const MAX_COMMAND_ID: int = 9_007_199_254_740_991
 const GATE_FRAME: int = 12
 const HISTORY_LIMIT: int = 128
 const RECOVERY_HISTORY_LIMIT: int = 512
@@ -174,6 +175,7 @@ class ObservedLobby:
 	var close_wire: JavaScriptObject
 	var _close_remote_uuids: Dictionary = {}
 	var _engine_mesh_open: bool = false
+	var leave_unacknowledged: Variant
 	var _last_play_tick_us: int = -1
 	var _next_warmup_tick_us: int = 0
 	var _next_native_frontier_us: int = 0
@@ -189,6 +191,11 @@ class ObservedLobby:
 			client.connect("player_left", _record_mesh_departure)
 			mesh.set("multiplayer_peer_factory", _observed_multiplayer)
 		super._connect_callbacks()
+
+	func disconnect_room() -> void:
+		if state == "leaving":
+			leave_unacknowledged = _leave_pending.duplicate()
+		super.disconnect_room()
 
 	func bind_close_roster(roster: PackedStringArray, owner: String) -> void:
 		_close_remote_uuids.clear()
@@ -356,6 +363,8 @@ var scene: Node2D
 var lobby: ObservedLobby
 var command_id: int = 0
 var command_code: Error = OK
+var departure_id: int = 0
+var departure_code: Error = OK
 var session_id: String = ""
 var uuid: String = ""
 var room_id: String = ""
@@ -374,16 +383,8 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	var departure_id: int = 0
-	var text: String = JavaScriptBridge.eval("JSON.stringify(window.fortressNativeCommand || {})")
-	if text.length() <= 1024:
-		var value: Variant = JSON.parse_string(text)
-		if value is Dictionary and int(value.get("id", 0)) > command_id:
-			command_id = int(value.id)
-			if value.get("kind") == "leave":
-				departure_id = command_id
-				JavaScriptBridge.eval("console.debug('fortress native departure ' + JSON.stringify({id: %d, stage: 'entered', page_ms: performance.now()}))" % departure_id)
-			_command(value)
+	if departure_id == 0:
+		_read_browser_command()
 	var match_status: Types.Status = lobby.game_match.status()
 	var warmup_ready: bool = lobby.state == "playing" and match_status.confirmed_frame >= GATE_FRAME
 	if warmup_match != null and (lobby.state == "failed" or warmup_ready):
@@ -432,6 +433,9 @@ func _process(_delta: float) -> void:
 		"terminal_endpoint": lobby.game_match.driver.native_terminal_endpoint(),
 		"interrupted": lobby.game_match.driver.native_interrupted_endpoints(),
 		"sdk_roster": _sdk_roster(),
+		"sdk_mesh_peers": lobby.mesh.call("get_peer_ids") if lobby.state == "failed" and is_instance_valid(lobby.mesh) else [],
+		"mesh_quiesced_for": lobby._quiesced_for,
+		"leave_unacknowledged": lobby.leave_unacknowledged,
 		"frozen_roster": lobby.game_match.membership.roster(),
 		"relay_peers": lobby.game_match.fallback.status().relay_peers,
 		"plan": lobby.plan,
@@ -454,16 +458,38 @@ func _process(_delta: float) -> void:
 			)
 		)
 	JavaScriptBridge.eval("window.fortressNative = " + JSON.stringify(result))
-	if departure_id != 0:
+	if departure_id != 0 and (lobby.state == "offline" or departure_code != OK):
 		JavaScriptBridge.eval(
 			(
-				"const { command_id: id, command_code: code, state } = window.fortressNative; "
-				+ "console.debug('fortress native departure ' + JSON.stringify({id, stage: 'published', code, state, page_ms: performance.now()}))"
-			),
+				"const { state, leave_unacknowledged: unacknowledged } = window.fortressNative; "
+				+ "console.debug('fortress native departure ' + JSON.stringify({id: %d, stage: 'published', code: %d, state, unacknowledged, page_ms: performance.now()}))"
+			) % [departure_id, departure_code],
 			false
 		)
+		departure_id = 0
 	if game != null:
 		_capture_history(game)
+
+
+func _read_browser_command() -> void:
+	var text: String = JavaScriptBridge.eval("JSON.stringify(window.fortressNativeCommand || {})")
+	if text.length() > 1024:
+		return
+	var value: Variant = JSON.parse_string(text)
+	if not value is Dictionary:
+		return
+	var raw_id: Variant = value.get("id")
+	if not (raw_id is int or raw_id is float) or not is_finite(float(raw_id)) or raw_id != floorf(float(raw_id)) \
+		or raw_id <= command_id or raw_id > MAX_COMMAND_ID:
+		return
+	command_id = int(raw_id)
+	if value.get("kind") == "leave":
+		departure_id = command_id
+		lobby.leave_unacknowledged = null
+		JavaScriptBridge.eval("console.debug('fortress native departure ' + JSON.stringify({id: %d, stage: 'entered', page_ms: performance.now()}))" % departure_id)
+	_command(value)
+	if departure_id != 0:
+		departure_code = command_code
 
 
 func _capture_history(game: ObservedGame) -> void:

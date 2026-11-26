@@ -3,6 +3,7 @@ use crate::protocol::{PlayerId, RoomId};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, VecDeque};
+use std::convert::identity;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -17,6 +18,7 @@ const MAX_SCOPE_BYTES: u64 = 1024;
 const MAX_REQUEST_DIGITS: u64 = 20;
 const MAX_REQUEST_LINKS: usize = 8;
 const MAX_REQUEST_BYTES: u64 = MAX_REQUEST_DIGITS + MAX_REQUEST_LINKS as u64 * (1 + 32 + 1 + 32);
+const RECEIPT_WRITE_BUFFER_BYTES: usize = 128 * 1024;
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(20);
 
 static TRACE: OnceLock<Option<Arc<Trace>>> = OnceLock::new();
@@ -183,14 +185,14 @@ impl Trace {
 
         let mut published = 0;
         loop {
-            if let Some(request) = self.publish_request(paths, published)? {
+            if let Some(request) = self.publish_request(paths, published, identity)? {
                 published = request;
             }
             std::thread::sleep(PUBLISH_INTERVAL);
         }
     }
 
-    fn publish_request(&self, paths: &ReceiptPaths, published: u64) -> anyhow::Result<Option<u64>> {
+    fn publish_request<W: Write>(&self, paths: &ReceiptPaths, published: u64, wrap_output: impl FnOnce(File) -> W) -> anyhow::Result<Option<u64>> {
         let scope = self.scope.get().ok_or_else(|| anyhow::anyhow!("missing relay trace scope"))?;
         let Some(request) = paths.read_request(scope) else { return Ok(None) };
         if request.generation <= published || (published == 0 && request.generation != 1) {
@@ -209,8 +211,7 @@ impl Trace {
         }
 
         let streams = self.state.lock().map_err(|_| anyhow::anyhow!("relay trace lock poisoned"))?.snapshot(&request.links);
-        let file = File::create(&paths.scratch)?;
-        let mut writer = BufWriter::new(file);
+        let mut writer = BufWriter::with_capacity(RECEIPT_WRITE_BUFFER_BYTES, wrap_output(File::create(&paths.scratch)?));
         serde_json::to_writer(
             &mut writer,
             &Snapshot {
@@ -497,7 +498,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let paths = ReceiptPaths::new(directory.path().join("receipt.json"));
         fs::write(&paths.request, "1").unwrap();
-        assert_eq!(trace.publish_request(&paths, 0).unwrap(), Some(1));
+        assert_eq!(trace.publish_request(&paths, 0, identity).unwrap(), Some(1));
         let snapshot: serde_json::Value = serde_json::from_slice(&fs::read(&paths.output).unwrap()).unwrap();
         let streams = &snapshot["streams"];
         assert_eq!(streams["unaddressed_writes"], 2 * (2 * CAPACITY + 8));
@@ -552,7 +553,7 @@ mod tests {
             let generation = published + 1;
             let request = if selected { format!("{generation}\n{}/{}", sender.simple(), recipient.simple()) } else { generation.to_string() };
             fs::write(&paths.request, &request).unwrap();
-            assert_eq!(trace.publish_request(&paths, published).unwrap(), Some(generation), "{request:?}");
+            assert_eq!(trace.publish_request(&paths, published, identity).unwrap(), Some(generation), "{request:?}");
             published = generation;
             let snapshot: serde_json::Value = serde_json::from_slice(&fs::read(&paths.output).unwrap()).unwrap();
             assert_eq!(snapshot["request"], published);
@@ -580,6 +581,51 @@ mod tests {
         }
     }
 
+    // Value: protects=the final eight-player receipt's I/O budget; fails_when=JSON is emitted in small writes; why_new=receipt equality does not bound writes; seam=Write
+    #[test]
+    fn full_room_receipt_batches_file_writes() {
+        use std::cell::Cell;
+
+        struct CountedFile<'a> {
+            file: File,
+            writes: &'a Cell<usize>,
+        }
+
+        impl Write for CountedFile<'_> {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.writes.set(self.writes.get() + 1);
+                self.file.write(bytes)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                self.file.flush()
+            }
+        }
+
+        let room_id = RoomId::from_u128(1);
+        let roster = [2, 3, 4, 5, 6, 7, 8, 9].map(PlayerId::from_u128);
+        let trace = trace_for(room_id, &roster);
+        for &sender in &roster {
+            for &recipient in roster.iter().filter(|&&recipient| recipient != sender) {
+                for seq in 1..=CAPACITY as u64 {
+                    for tag in [2, 4] {
+                        record_pair(&trace, room_id, sender, recipient, tag, seq);
+                    }
+                }
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let paths = ReceiptPaths::new(directory.path().join("receipt.json"));
+        fs::write(&paths.request, "3").unwrap();
+        let writes = Cell::new(0);
+        let generation = trace.publish_request(&paths, 2, |file| CountedFile { file, writes: &writes }).unwrap();
+        assert_eq!(generation, Some(3));
+        assert!(!paths.scratch.exists());
+        let bytes = paths.output.metadata().unwrap().len();
+        assert!((10 * 1024 * 1024..=14 * 1024 * 1024).contains(&bytes), "wrong receipt size: {bytes}");
+        assert!((1..=128).contains(&writes.get()), "{} writes for {bytes} bytes", writes.get());
+    }
+
     // Value: protects=one atomic receipt per generation; fails_when=idle or superseded requests publish; why_new=packet joins do not exercise the publisher; seam=none
     #[test]
     fn receipts_require_fresh_requests() {
@@ -591,7 +637,7 @@ mod tests {
         let [sender, recipient, _, _] = roster;
         let trace = trace_for(room_id, &roster);
         let scope = trace.scope.get().unwrap();
-        let publish = |published| trace.publish_request(&paths, published).unwrap();
+        let publish = |published| trace.publish_request(&paths, published, identity).unwrap();
         assert_eq!(publish(0), None);
         for invalid in ["", "0", "01", "+1", "1\n", "２", "2", "18446744073709551616", "999999999999999999999"] {
             fs::write(&paths.request, invalid).unwrap();

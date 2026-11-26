@@ -74,16 +74,18 @@ Tagged send diagnostics list the matching reciprocal route and the possible
 gap to each observed stage when the page clocks are bounded. The exact send
 attempt also carries the channel's readiness and queued bytes sampled immediately
 before calling the browser send. Missing samples leave this evidence empty.
-Ordinary WebKit mesh departures also record the SDK's public `player_left`
-event and the peer factory's `remove_peer` entry for each frozen remote UUID.
-A removal entry records whether the peer was still registered. These are
-separate observations because the SDK's internal removal callback has no
-public event. The reciprocal route joins the observations to the tagged send
-without using them as close proof. Nonce-matched same-origin HTTPS exchanges bracket each page clock with controller receipt
-and response timestamps. The receipt keeps the HTTPS and debugger samples so
-an ambiguous interval can be reproduced. Acceptance requires a fresh SCTP
-abort or completed connection close followed by the tagged send, with at least
-2 ms between the latest possible close and earliest possible send.
+Ordinary mesh departures require each survivor to acknowledge that gameplay
+has stopped before the leaver closes its connections. The witness checks that
+the SDK removes the intended peer. WebKit also records the SDK's `player_left`
+signal, the peer factory's `remove_peer` entry and whether the peer was still
+registered. The receipt joins these observations to the exact reciprocal route.
+Nonce-matched same-origin HTTPS exchanges bracket each page clock with
+controller receipt and response timestamps. The receipt keeps the HTTPS and
+debugger samples so an ambiguous interval can be reproduced. For an ordinary
+departure, a fresh SCTP abort on the tagged sending channel qualifies when
+its reciprocal connection has closed. The clock-order proof requires at least
+2 ms between the latest possible connection close and the earliest possible
+send.
 
 To isolate a hosted browser failure on both Godot pins, select the room in the
 manual workflow dispatch.

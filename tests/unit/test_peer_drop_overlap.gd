@@ -40,8 +40,25 @@ func run_case(name: String, context: RefCounted) -> void:
 	# reach one outcome instead of the proposer continuing alone.
 	var goodbye: int = mesh.peers[SECOND].close(mesh.now, 7)
 	context.equal(goodbye, I.Code.OK, "the second participant says goodbye")
-	_deliver(context, mesh, _drain(mesh), true)
+	var rest: Array[Dictionary] = []
+	var received_goodbye: bool = false
+	for packet: Dictionary in _drain(mesh):
+		if not received_goodbye and packet.from == SECOND and packet.to == PROPOSER:
+			var decoded: T.Result = Codec.decode(packet.bytes, _limits(4))
+			if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.GOODBYE:
+				context.equal(mesh.peers[PROPOSER].receive(packet.bytes, _id(SECOND), mesh.now), I.Code.OK, "receive the second peer's genuine GOODBYE")
+				received_goodbye = true
+				continue
+		rest.append(packet)
+	context.equal(received_goodbye, true, "the established route delivers the second peer's departure")
+	context.equal(mesh.peers[PROPOSER].status().lifecycle, Types.Lifecycle.RUNNING, "the committed proposer still services its abort grace")
+	context.equal(bool(proposer.broken), true, "the committed proposer has observed the participant loss")
+	context.equal(mesh.peers[PROPOSER]._drops.is_gone(_id(SECOND).hex_encode()), true, "the second participant is already irrevocably gone")
+	context.equal(mesh.peers[PROPOSER].receive(mesh.late_ready, _id(SECOND), mesh.now), I.Code.OK, "a reordered READY from the gone participant is inert")
+	context.equal(mesh.peers[PROPOSER]._core.frozen_frame(TARGET), committed, "the late READY preserves the committed freeze")
+	_deliver(context, mesh, rest, true)
 	_settle(context, mesh, 800000)
+	context.equal(mesh.peers[PROPOSER].receive(mesh.late_ready, _id(SECOND), mesh.now), I.Code.TERMINATED, "the ended match still rejects packets")
 	for survivor: int in SURVIVORS:
 		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.TERMINATED, "the READY-to-commit overlap ends every survivor")
 		context.equal(mesh.peers[survivor].status().reason, Types.Code.PROTOCOL_FAILED, "the overlap names a protocol failure")
@@ -199,11 +216,12 @@ func _drive_to_commit(context: RefCounted, mesh: Dictionary) -> int:
 		for packet: Dictionary in _drain(mesh):
 			if packet.from == TARGET or packet.to == TARGET:
 				continue
-			if packet.from == PROPOSER:
-				var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
-				if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER \
-					and decoded.message.phase == Drop.Phase.COMMIT:
+			var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+			if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+				if packet.from == PROPOSER and decoded.message.phase == Drop.Phase.COMMIT:
 					continue
+				if packet.from == SECOND and packet.to == PROPOSER and decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage == Drop.Stage.READY:
+					mesh["late_ready"] = packet.bytes.duplicate()
 			packets.append(packet)
 		_deliver(context, mesh, packets, true)
 	context.equal(mesh.cuts.has(PROPOSER), true, "the proposer commits the certified operation")

@@ -1,0 +1,18 @@
+# Native room qualification
+
+| Finding | Evidence | Action |
+| --- | --- | --- |
+| Immediate mesh close overtook the survivors' departure notification. | The baseline Leave regression detached the RTC mesh and closed the SDK socket before recording any prepare. All five previous hosted WebKit failures retained an unproved send to the intended leaver. Four also reached the snapshot deadline. | Stop gameplay before sending the acknowledgment. Keep signaling open until the bounded wait ends. Check the actual SDK removal and the other live links before each survivor's Leave. |
+| A command receipt can outlive its synchronous handler. | Review found that another command could relabel a pending Leave and an extra teardown could erase its acknowledgment snapshot. The revised fixture drives both orders of simultaneous Leave and validates the original command identity. | Keep receipt ownership on the admitted command until publication. Validate the whole command ID before conversion. |
+| Alternative proof conditions need separate sentences. | The existing tagged-send test accepts a fresh SCTP abort at a 1,999 µs lower clock bound and rejects clock ordering below 2 ms. The original migration paragraph could apply the margin to both paths. | State the SCTP abort and clock-order conditions separately in the migration guide. |
+| A bounded initiator can leave a survivor waiting for an event forever. | The original survivor path stayed quiesced after a missing `PlayerLeft` or an unrelated `SIGNAL_TOO_LARGE`. Both pinned phases now verify timeout cleanup, ordinary refusal handling, and a real removal event queued at the deadline. | Give each role a fixed deadline. Poll signaling once before the survivor's deadline verdict and defer only the two expected refusal codes. |
+| Large relay receipts paid repeated small host-file writes. | The historical 12,587,008-byte payload took 1,537 default-buffer writes and 97 after batching. The production publisher regression fails with `1392 writes for 11385856 bytes` under the old buffer. The reviewed publisher passes all five Rust trace tests. | Measure the write budget through the real scratch file and publish path. Keep the original generation and packet checks. Use the exported room to verify the controller deadline. |
+| Browser launch can consume the available Unix socket path before gameplay starts. | Chromium rejected the 118-byte generated `SingletonSocket` path. The same browser started with the short workspace temporary directory and reached the overlap fixture. | Give the subprocess a short temporary path and keep the full receipts in the session output directory. |
+| An already committed survivor could reject a queued packet during the terminal grace window. | Live Chromium withheld the pending survivor's COMMIT, then observed the second survivor's actual GOODBYE. The committed peer received a late packet and reported a premature transport failure. The focused regression reproduced `TERMINATED=13` for a late READY while the committed barrier still held its grace window. Both engine pins passed once receive used the same gone-peer predicate as poll. | Exercise a real late packet while both survivors publish different certified outcomes. Keep the serial departure control. |
+
+The [browser integration guide](../skills/testing/references/browser-integration.md)
+replaces the existing native departure note with the acknowledgment and receipt
+boundaries. The [infrastructure evidence guide](../skills/testing/references/infrastructure.md)
+records the production write count and browser socket path controls.
+
+State `findings-acted`.

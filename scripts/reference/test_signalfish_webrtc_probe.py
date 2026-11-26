@@ -462,7 +462,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                           'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1,
                           'peer-drop-missing-lost': 1,
                           'peer-drop-commit': 1,
-                          'peer-drop-second': 1, 'peer-drop-rollback': 1, 'peer-drop-foreign': 1,
+                          'peer-drop-second': 1, 'peer-drop-overlap': 1, 'peer-drop-rollback': 1, 'peer-drop-foreign': 1,
                           'peer-drop-room': 1, 'peer-drop-room-continue': 1, 'peer-drop-process': 1,
                           'peer-drop-process-missing': 1, 'peer-drop-room-after-drop': 1,
                           'peer-drop-room-before-drop': 1}
@@ -486,7 +486,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
 
     def test_room_tables_bind_the_browser_ground_truth(self):
         source = (ROOT / 'scripts/reference/browser/webrtc.cjs').read_text()
-        self.assertIn("for (const count of (recordingPressure ? [2] : peerDrop ? [3] : "
+        self.assertIn("for (const count of (recordingPressure ? [2] : dropOverlap ? [4] : peerDrop ? [3] : "
                       "(corrupt || defaultFactory || disableFallback) ? [2] : [2, 4, 8])) {", source,
                       'the room ternary changed; revisit PEAK_PLAYERS and ROOM_COUNTS beside it')
         for label, rooms in webrtc_runner.ROOM_COUNTS.items():
@@ -494,6 +494,8 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
             peak = webrtc_runner.PEAK_PLAYERS[label]
             if rooms == 3:
                 self.assertEqual(peak, 8, f'{label} runs 2/4/8-player rooms, so its peak is one eight-player room')
+            elif label == 'peer-drop-overlap':
+                self.assertEqual(peak, 4, 'the coordinated overlap needs a four-player room')
             else:
                 # A single-room peak drifting 2<->3 passes this class check; the
                 # 3->2 direction fails the exact wave-plan assertions above and
@@ -537,7 +539,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                                             'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
                                             'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing',
                                             'peer-drop-missing-lost', 'peer-drop-commit', 'peer-drop-second',
-                                            'peer-drop-rollback', 'peer-drop-foreign', 'peer-drop-room',
+                                            'peer-drop-overlap', 'peer-drop-rollback', 'peer-drop-foreign', 'peer-drop-room',
                                             'peer-drop-room-continue', 'peer-drop-process',
                                             'peer-drop-process-missing', 'peer-drop-room-after-drop',
                                             'peer-drop-room-before-drop'], overlap=True)
@@ -545,11 +547,11 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                                   ['peer-drop', 'peer-drop-corrupt'], ['peer-drop-close', 'peer-drop-answer'],
                                   ['peer-drop-relay', 'peer-drop-missing'],
                                   ['peer-drop-missing-lost', 'peer-drop-commit'],
-                                  ['peer-drop-second', 'peer-drop-rollback'],
-                                  ['peer-drop-foreign', 'peer-drop-room'],
-                                  ['peer-drop-room-continue', 'peer-drop-process'],
-                                  ['peer-drop-process-missing', 'peer-drop-room-after-drop'],
-                                  ['peer-drop-room-before-drop']])
+                                  ['peer-drop-second', 'peer-drop-overlap'],
+                                  ['peer-drop-rollback', 'peer-drop-foreign'],
+                                  ['peer-drop-room', 'peer-drop-room-continue'],
+                                  ['peer-drop-process', 'peer-drop-process-missing'],
+                                  ['peer-drop-room-after-drop', 'peer-drop-room-before-drop']])
         mixed = webrtc_runner.label_waves(['mixed', 'mixed-default', 'mixed-close', 'recording-pressure'], overlap=True)
         self.assertEqual(mixed, [['mixed'], ['mixed-default'], ['mixed-close'], ['recording-pressure']])
         for plan in (direct, mixed, serial):

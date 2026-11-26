@@ -30,8 +30,19 @@ func on_protocol_error(reason: String) -> void:
 	_dispatch("_on_protocol_error", [reason])
 
 
+func on_server_error(_message: Variant = null, code: Variant = null, _extra: Variant = null) -> void:
+	if code is int:
+		_dispatch("_on_server_error", [code])
+	else:
+		on_failure()
+
+
 func on_mesh_departure() -> void:
 	_dispatch("_on_mesh_departure", [])
+
+
+func on_mesh_departure_signal(player: String, generation: String, payload: Variant) -> void:
+	_dispatch("_on_mesh_departure_signal", [player, generation, payload])
 
 
 func _dispatch(method: String, arguments: Array) -> void:

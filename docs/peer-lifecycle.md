@@ -371,6 +371,12 @@ a failed barrier, `timeout` on both survivors, no `peer_dropped` event, no froze
 interval, every donor journal chunk dropped at least twice, an unchanged pre-cut confirmed prefix
 against the independently reconstructed original inputs, and no frame advance from a post-terminal
 step or poll. A committed, frozen or continued receipt fails the control.
+The `peer-drop-overlap` case uses four exported clients in a fixed room. After the first peer goes silent, the coordinator
+receives both READY reports and withholds COMMIT to one survivor. Another survivor receives the original COMMIT at the
+direct boundary, closes its endpoint before dispatch, and stops sending. The two remaining survivors end for participant
+loss. The coordinator retains its freeze, while the pending survivor has no freeze. The witness checks the original
+confirmed inputs and rejects a receipt with the withheld COMMIT entry removed.
+
 The `peer-drop-second` case departs one page after seven inputs and a second page after twelve.
 The remaining survivor certifies the first cut, then observes the second departure and
 freezes that slot on its own confirmed frontier; this is a one-member freeze and no second

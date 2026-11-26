@@ -18,6 +18,7 @@ import zipfile
 
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_drop import validate_drop_browser
+from browser.webrtc_drop_overlap import check_overlap_order_controls, validate_drop_overlap
 from browser.webrtc_recording import engine_identity, validate_recording, validate_pressure
 from browser.webrtc_runner import room_count, run_browser, run_wave
 from browser.webrtc_matrix import PAIRS, prepare_firefox, validate_identity
@@ -42,7 +43,7 @@ HOST_WAIT_SECONDS = 900.0
 PRINT_LOCK = threading.Lock()
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
           'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-missing-lost', 'peer-drop-commit',
-          'peer-drop-second', 'peer-drop-rollback', 'peer-drop-foreign',
+          'peer-drop-second', 'peer-drop-overlap', 'peer-drop-rollback', 'peer-drop-foreign',
           'peer-drop-room', 'peer-drop-room-continue', 'peer-drop-process', 'peer-drop-process-missing',
           'peer-drop-room-after-drop', 'peer-drop-room-before-drop', 'recording-pressure')
 
@@ -402,12 +403,13 @@ def main():
                        'peer-drop-close', 'peer-drop-close-events', 'peer-drop-answer', 'peer-drop-answer-events', 'peer-drop-relay', 'peer-drop-relay-events',
                        'peer-drop-missing', 'peer-drop-missing-events', 'peer-drop-missing-lost', 'peer-drop-missing-lost-events',
                        'peer-drop-commit', 'peer-drop-commit-events',
-                       'peer-drop-second', 'peer-drop-second-events',
+                       'peer-drop-second', 'peer-drop-second-events', 'peer-drop-overlap', 'peer-drop-overlap-events',
                        'peer-drop-rollback', 'peer-drop-rollback-events', 'peer-drop-foreign', 'peer-drop-foreign-events',
                        'peer-drop-room', 'peer-drop-room-events', 'peer-drop-room-continue', 'peer-drop-room-continue-events',
                        'peer-drop-process', 'peer-drop-process-events', 'peer-drop-process-missing', 'peer-drop-process-missing-events',
                        'peer-drop-room-after-drop', 'peer-drop-room-after-drop-events',
                        'peer-drop-room-before-drop', 'peer-drop-room-before-drop-events')]
+    owned_logs += [f'{version}-peer-drop-overlap-control.json' for version in versions]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -430,7 +432,9 @@ def main():
                'recording': ROOT / 'scripts/reference/browser/webrtc_recording.gd',
                'recording_validator': ROOT / 'scripts/reference/browser/webrtc_recording.py',
                'drop': ROOT / 'scripts/reference/browser/webrtc_drop.gd',
+               'drop_overlap': ROOT / 'scripts/reference/browser/webrtc_drop_overlap.gd',
                'drop_validator': ROOT / 'scripts/reference/browser/webrtc_drop.py',
+               'drop_overlap_validator': ROOT / 'scripts/reference/browser/webrtc_drop_overlap.py',
                'browser_launcher': ROOT / 'scripts/reference/browser/webrtc.cjs',
                'browser_matrix': ROOT / 'scripts/reference/browser/webrtc_matrix.py',
                'receipt_arguments': ROOT / 'scripts/reference/receipt_arguments.py',
@@ -581,6 +585,7 @@ def main():
                     shutil.copytree(sdk / 'addons/signal_fish', project / 'addons/signal_fish')
                     for key, filename in [('host', 'host.gd'), ('game', 'webrtc_game.gd'), ('setup', 'webrtc_setup.gd'),
                                           ('mixed', 'webrtc_mixed.gd'), ('recording', 'webrtc_recording.gd'), ('drop', 'webrtc_drop.gd'),
+                                          ('drop_overlap', 'webrtc_drop_overlap.gd'),
                                           ('clock_test', 'clock_test.gd'), ('clock_fixture', 'clock_fixture.gd')]:
                         shutil.copyfile(sources[key], project / filename)
                     (project / 'project.godot').write_text(
@@ -596,7 +601,7 @@ def main():
                     executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish',
                                 'host': project / 'host.gd', 'game': project / 'webrtc_game.gd', 'setup': project / 'webrtc_setup.gd', 'project': project / 'project.godot',
                                 'mixed': project / 'webrtc_mixed.gd', 'recording': project / 'webrtc_recording.gd', 'drop': project / 'webrtc_drop.gd',
-                                'clock_test': project / 'clock_test.gd', 'clock_fixture': project / 'clock_fixture.gd',
+                                'drop_overlap': project / 'webrtc_drop_overlap.gd', 'clock_test': project / 'clock_test.gd', 'clock_fixture': project / 'clock_fixture.gd',
                                 'scene': project / 'main.tscn', 'preset': project / 'export_presets.cfg', 'certificate': certificate, 'private_key': tls_private_key}
                     frozen = inventory(executed)
                     command = [str(engine), '--headless', '--path', str(project)]
@@ -626,7 +631,11 @@ def main():
                             output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log',
                                                  rooms=room_count(label), cancel=cancel)
                             validate_identity(json.loads(output), pair, pins)
-                            if label.startswith('peer-drop'):
+                            if label == 'peer-drop-overlap':
+                                result = validate_drop_overlap(json.loads(output))
+                                control = check_overlap_order_controls(result)
+                                (args.output / f'{version}-{label}-control.json').write_text(json.dumps(control) + '\n')
+                            elif label.startswith('peer-drop'):
                                 result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt', label == 'peer-drop-close',
                                                                label == 'peer-drop-answer', label == 'peer-drop-relay',
                                                                missing_history=label in ('peer-drop-missing', 'peer-drop-missing-lost'),
@@ -693,6 +702,9 @@ def main():
                         'and canonical continuation are required. '
                         'The peer-drop-second label departs a second page after twelve inputs; the single survivor freezes that slot '
                         'on its own confirmed frontier, then continues to 40 inputs with 38 canonical prefix checks. '
+                        'The peer-drop-overlap label certifies the first departure in a fixed four-player room. Its coordinator withholds '
+                        'COMMIT to one follower, and another closes its endpoint before dispatching the transmitted COMMIT. Both remaining '
+                        'survivors end for participant loss. Only the coordinator retains the certified freeze. '
                         'The peer-drop-rollback label makes both survivors predict frame seven before the departing page submits it, '
                         'so a real pending correction is captured before the freeze at the agreed cut of seven, applies the certified '
                         'frozen value after commit, and continues with 38 canonical prefix checks. A lost held packet or a cut-six '
