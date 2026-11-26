@@ -55,9 +55,10 @@ uses that SDK limit; injected transports must enforce their own equivalent bound
 
 With a compatible server and SDK, **Native / relay** requests private binary
 delivery. The server's session plan must list every frozen remote seat with a
-valid UUID and epoch. Incomplete plans use ordinary delivery. Negotiated
-broadcast adds one carrier byte and addressed delivery adds 17. The queue and
-socket budgets include these bytes.
+valid UUID and epoch. An incomplete plan at setup selects ordinary delivery.
+Changes to the peer or epoch list invalidate an active private route.
+Negotiated broadcast adds one carrier byte and addressed delivery adds 17.
+The queue and socket budgets include these bytes.
 
 The v1 addressed request carries the recipient UUID and the application
 envelope. The server checks the current seated recipient at admission. Plan

@@ -244,10 +244,10 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 				result.code = _failure
 				break
 			var buffered: int = transport.call("get_buffered_amount")
-			var current_transport: Object = client.get("transport") if is_instance_valid(client) else null
 			result.code = _gate()
 			if result.code != Code.OK:
 				break
+			var current_transport: Object = client.get("transport") if is_instance_valid(client) else null
 			if not is_instance_valid(transport) or current_transport != transport:
 				_failure = Code.SDK_FAILURE
 				result.code = _failure

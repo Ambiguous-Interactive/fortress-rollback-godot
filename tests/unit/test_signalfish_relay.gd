@@ -443,18 +443,20 @@ func _addressed_reentry(context: RefCounted) -> void:
 	context.equal(fixture.relay.status().pending_packets, 0, "deferred detach clears queue after unwind")
 	_destroy(fixture)
 
-	client = AddressedClient.new()
-	fixture = _addressed_fixture(context, client, complete, _addressed_controls())
-	packets = [_packet(fixture, 8)]
-	context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "own a packet before the transport replacement")
-	var replacement: Transport = Transport.new()
-	replacement.buffered = 262144
-	client.transport.on_buffered = func() -> void: client.transport = replacement
-	var replaced: Relay.Result = fixture.relay.poll(0)
-	context.equal(replaced.code, Relay.Code.SDK_FAILURE, "new transport requires a new measured lifetime")
-	context.equal(client.attempts.size(), 0, "a different physical socket cannot use the old socket budget")
-	context.equal(fixture.relay.status().pending_packets, 1, "the unsent packet remains owned")
-	_destroy(fixture)
+	for during_gate: bool in [false, true]:
+		client = AddressedClient.new()
+		fixture = _addressed_fixture(context, client, complete, _addressed_controls())
+		packets = [_packet(fixture, 8)]
+		context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "own a packet before the transport replacement")
+		var replacement: Transport = Transport.new()
+		replacement.buffered = 262144
+		var swap: Callable = func() -> void: client.transport = replacement
+		client.transport.on_buffered = (func() -> void: client.on_identity = swap) if during_gate else swap
+		var replaced: Relay.Result = fixture.relay.poll(0)
+		context.equal(replaced.code, Relay.Code.SDK_FAILURE, "transport replaced during %s" % ("identity gate" if during_gate else "buffer read"))
+		context.equal(client.attempts.size(), 0, "a different physical socket cannot use the old socket budget")
+		context.equal(fixture.relay.status().pending_packets, 1, "the unsent packet remains owned")
+		_destroy(fixture)
 
 	for send_result: Error in [OK, ERR_BUSY]:
 		client = AddressedClient.new()
