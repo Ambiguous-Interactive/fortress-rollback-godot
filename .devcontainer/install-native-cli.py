@@ -26,6 +26,23 @@ QUERY_CREDENTIALS = re.compile(r'(https?://[^\s?#]+)\?[^\s]*')
 NPM_ERROR = re.compile(r'npm (?:ERR!|error) code ([A-Z0-9_]+)')
 PACKAGE_VERSION = re.compile(r'(?<![A-Za-z0-9_@/.+-])(@[a-z0-9._-]+/[a-z0-9._-]+@[0-9A-Za-z.+_-]+)(?![A-Za-z0-9_@/.+-])')
 PUBLICATION_ERRORS = {'ETARGET', 'E404'}
+SAFE_NPM_ERRORS = PUBLICATION_ERRORS | {'E401', 'EACCES'}
+PHASE_UNKNOWN = 'no registry or wrapper postinstall evidence observed'
+PHASE_REGISTRY = 'registry activity observed; wrapper postinstall start unobserved'
+PHASE_POSTINSTALL = 'wrapper postinstall started; completion unobserved'
+PHASE_POSTINSTALL_DONE = 'wrapper postinstall completed; subsequent phase unclassified'
+LIFECYCLE_RECORDS = (PHASE_POSTINSTALL, PHASE_POSTINSTALL_DONE)
+JOURNAL_FULL = '...[journal truncated at the byte budget]'
+HTTP_STATUS = r'[1-5][0-9]{2}|\(status unreported\)'
+ERROR_CODE = '|'.join(sorted(SAFE_NPM_ERRORS))
+SAFE_JOURNAL_RECORD = re.compile('|'.join((
+    f'npm HTTP GET (?:{HTTP_STATUS}); (?:' + '|'.join((PHASE_REGISTRY, *LIFECYCLE_RECORDS)) + ')',
+    *LIFECYCLE_RECORDS,
+    f'npm error code (?:{ERROR_CODE})(?:, (?:{ERROR_CODE})){{0,3}}',
+    r'npm error \(details omitted\)',
+    re.escape(JOURNAL_FULL),
+)))
+
 
 # One install's npm http log stays far below this; the cap bounds a pathological
 # loop and each single line, so a stuck build cannot fill the disk with evidence.
@@ -65,7 +82,7 @@ def journal_path(package):
     disables journaling instead of breaking the install.
     """
     slug = package.removeprefix('@').replace('/', '-')
-    return Path(tempfile.gettempdir()) / f'install-native-cli-{slug}.log'
+    return Path(tempfile.gettempdir()) / f'install-native-cli-{slug}-evidence-v1.log'
 
 
 def _open_journal(path):
@@ -92,18 +109,7 @@ def _open_journal(path):
 
 
 def journal_tail(package):
-    """The retained journal's redacted tail for a failure diagnostic (issue #249).
-
-    The retention note alone names a path the failing CI context can never read
-    again: a killed container or discarded Docker layer takes the file with it,
-    which is exactly what the 2026-11-18 occurrence's job log shows. The tail
-    therefore travels into the diagnostic stream itself. The read is bounded
-    twice — only the file's last ``JOURNAL_TAIL_READ_BYTES`` are loaded, so a
-    planted oversized file cannot exhaust memory, and the resulting lines are
-    capped by the line and byte budgets — and every line is re-redacted so the
-    diagnostic never depends on the writer. The first line of a truncated read
-    is dropped as partial unless the read begins at the file's start.
-    """
+    """Read a bounded tail containing only the installed safe record vocabulary."""
     path = journal_path(package)
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -117,24 +123,18 @@ def journal_tail(package):
             data = source.read(JOURNAL_TAIL_READ_BYTES)
     except OSError:
         return []
-    lines = data.decode('utf-8', errors='replace').splitlines()
-    if partial and lines:
-        # The cut can land inside a line; its consumed head is outside the read
-        # and the remainder is not evidence on its own.
+    lines = data.decode('utf-8', errors='replace').split('\n')
+    if partial:
+        # A backward cut may begin in the middle of a record.
         lines = lines[1:]
+    lines = [line for line in lines if SAFE_JOURNAL_RECORD.fullmatch(line)]
     if not lines:
         return []
     tail = lines[-JOURNAL_TAIL_LINES:]
     if partial or len(lines) > JOURNAL_TAIL_LINES:
         tail.insert(0, f'...[journal head truncated; showing the last {len(tail)} lines]')
-    # The budget bounds exactly what is printed, so each line is redacted
-    # before its size counts: redaction can lengthen a line (a short query
-    # becomes the longer ?<redacted>), and measuring the raw line first could
-    # print past the budget.
-    encoded = []
-    for line in tail:
-        redacted = redact_query_strings(line)
-        encoded.append((redacted, len(redacted.encode('utf-8', errors='replace')) + 1))
+    # Accepted records and generated markers contain only ASCII.
+    encoded = [(line, len(line) + 1) for line in tail]
     tail_marker = f'...[journal tail truncated at the {JOURNAL_TAIL_BYTES}-byte diagnostic budget]'
     kept = []
     remaining = JOURNAL_TAIL_BYTES
@@ -167,24 +167,28 @@ class InstallEvidence:
         self.publication_error = False
         self.other_error = False
         self.missing_spec = False
+        self.incomplete = False
         self.recent = deque(maxlen=JOURNAL_TAIL_LINES)
 
     def summary(self):
         if self.postinstall_completed:
-            return 'wrapper postinstall completed; subsequent phase unclassified'
+            return PHASE_POSTINSTALL_DONE
         if self.postinstall_started:
-            return 'wrapper postinstall started; completion unobserved'
+            return PHASE_POSTINSTALL
         if self.registry:
-            return 'registry activity observed; wrapper postinstall start unobserved'
-        return 'no registry or wrapper postinstall evidence observed'
+            return PHASE_REGISTRY
+        return PHASE_UNKNOWN
 
-    def observe(self, line):
-        evidence = self._extract(line.rstrip('\r\n'))
+    def observe(self, line, complete=True):
+        if len(line) > PENDING_LIMIT_BYTES:
+            self.incomplete = True
+            return None
+        evidence = self._extract(line.rstrip('\r\n'), complete)
         if evidence:
             self.recent.append(evidence)
         return evidence
 
-    def _extract(self, line):
+    def _extract(self, line, complete):
         # Publication matching stays independent of rendering. Only fixed error
         # codes and a match against the frozen dependency set can leave here.
         diagnostic = redact_query_strings(line)
@@ -193,23 +197,24 @@ class InstallEvidence:
         self.other_error |= bool(errors - PUBLICATION_ERRORS)
         self.missing_spec |= any(match.removesuffix('.') in self.publication_specs
                                  for match in PACKAGE_VERSION.findall(diagnostic))
+        if complete and self.wrapper:
+            marker = f'npm info run {self.wrapper} postinstall '
+            _, found, payload = line.rpartition(marker)
+            # npm's stderr record may follow unterminated foreground stdout on
+            # the merged descriptor. Accept a complete suffix with the exact spec.
+            if found and re.fullmatch(r"\{ code: (?:-?[0-9]+|null), signal: (?:null|'SIG[A-Z0-9]+') \}", payload):
+                self.postinstall_completed = True
+                return self.summary()
+            if line == f'> {self.wrapper} postinstall' or (found and re.fullmatch(r'[^\s{]+ +\S.*', payload)):
+                self.postinstall_started = True
+                return self.summary()
+
         fetch = re.match(r'^npm http fetch GET (?:([1-5][0-9]{2}) )?https?://', line)
         if fetch:
             self.registry = True
             return f'npm HTTP GET {fetch[1] or "(status unreported)"}; {self.summary()}'
-        start = f'npm info run {self.wrapper} postinstall '
-        if self.wrapper and line.startswith(start):
-            if re.fullmatch(r"\{ code: (?:-?[0-9]+|null), signal: (?:null|'SIG[A-Z0-9]+') \}", line[len(start):]):
-                self.postinstall_completed = True
-            else:
-                self.postinstall_started = True
-            return self.summary()
-        if self.wrapper and line == f'> {self.wrapper} postinstall':
-            self.postinstall_started = True
-            return self.summary()
-
         if errors:
-            safe = sorted(errors & (PUBLICATION_ERRORS | {'E401', 'EACCES'}))
+            safe = sorted(errors & SAFE_NPM_ERRORS)
             return 'npm error code ' + ', '.join(safe) if safe else 'npm error (details omitted)'
         return None
 
@@ -247,19 +252,36 @@ class Installer:
         pending = ''
         dropping = False
         written = 0
+        pending_lifecycle = set(LIFECYCLE_RECORDS)
+        marker = (JOURNAL_FULL + '\n').encode('ascii')
+        reserve = sum(len(record) + 1 for record in pending_lifecycle)
+        general_full = False
 
-        def record(line):
-            nonlocal written
-            safe = evidence.observe(line)
+        def record(line, complete=True):
+            nonlocal written, reserve, general_full
+            safe = evidence.observe(line, complete)
             if safe is None or journal is None or written < 0:
                 return
-            data = (safe + '\n').encode('utf-8')
-            marker = b'...[journal truncated at the byte budget]\n'
-            truncated = written + len(data) + len(marker) > JOURNAL_LIMIT_BYTES
+            data = (safe + '\n').encode('ascii')
+            if safe in LIFECYCLE_RECORDS:
+                if safe not in pending_lifecycle:
+                    return
+                pending_lifecycle.remove(safe)
+                reserve -= len(data)
+            else:
+                if general_full:
+                    return
+                # Keep space for each lifecycle transition even if HTTP fills
+                # the regular budget before the wrapper starts.
+                general_full = written + len(data) + len(marker) + reserve > JOURNAL_LIMIT_BYTES
+                if general_full:
+                    data = marker
+            if written + len(data) > JOURNAL_LIMIT_BYTES:
+                return
             try:
-                journal.write(marker if truncated else data)
+                journal.write(data)
                 journal.flush()
-                written = -1 if truncated else written + len(data)
+                written += len(data)
             except OSError as breakdown:
                 print(f'install evidence journal write failed ({breakdown}); continuing without it',
                       file=sys.stderr, flush=True)
@@ -271,7 +293,7 @@ class Installer:
                 left = deadline - time.monotonic()
                 if left <= 0:
                     if pending and not dropping:
-                        record(pending)
+                        record(pending, complete=False)
                     raise subprocess.TimeoutExpired(process.args, budget)
                 ready, _, _ = select.select([fileno], [], [], min(left, 0.5))
                 if not ready:
@@ -279,15 +301,16 @@ class Installer:
                 chunk = os.read(fileno, 65536)
                 if not chunk:
                     if not dropping:
-                        record(pending + decoder.decode(b'', final=True))
+                        record(pending + decoder.decode(b'', final=True), complete=False)
                     break
                 lines = (pending + decoder.decode(chunk, final=False)).split('\n')
                 pending = lines.pop()
                 for line in lines:
-                    if not dropping and len(line) <= PENDING_LIMIT_BYTES:
+                    if not dropping:
                         record(line)
                     dropping = False
                 if dropping or len(pending) > PENDING_LIMIT_BYTES:
+                    evidence.incomplete = True
                     dropping = True
                     pending = ''
         finally:
@@ -406,7 +429,7 @@ class Installer:
                 for line in raw.splitlines():
                     evidence.observe(line)
                 evidence.print_summary()
-                retry = evidence.missing_spec and evidence.publication_error and not evidence.other_error
+                retry = evidence.missing_spec and evidence.publication_error and not (evidence.other_error or evidence.incomplete)
                 if retry or not self._journaled:
                     for record in evidence.recent:
                         print(record, file=sys.stderr)

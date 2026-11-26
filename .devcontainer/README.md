@@ -297,8 +297,10 @@ the wrapper lifecycle. That lifecycle includes the native version probe and
 fallback npm. A completion record leaves later work unclassified. An install
 can also time out before either marker appears.
 
-The journal records HTTP status and wrapper lifecycle markers. It omits URLs,
-script commands, and script output. A successful global install removes it.
+The journal records HTTP status and wrapper lifecycle markers at
+`install-native-cli-<package-slug>-evidence-v1.log` in the system temporary
+directory. It omits URLs, script commands, and script output. A successful
+global install removes it.
 
 ### Browser witnessing capability (#385)
 

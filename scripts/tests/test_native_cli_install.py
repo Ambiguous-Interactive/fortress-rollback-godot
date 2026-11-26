@@ -66,6 +66,8 @@ elif args[:1] == ['install']:
         print('Authorization: Bearer LIFECYCLE-SECRET', flush=True)
         if scenario.get('stall') == 'native':
             subprocess.run([str(root / 'fake-native'), '--version'], check=True)
+        if scenario.get('stall') == 'after-lifecycle':
+            print('native version script output without newline', end='', flush=True)
         print('npm info run ' + package + '@' + version + ' postinstall { code: 0, signal: null }', file=sys.stderr, flush=True)
         if scenario.get('stall') == 'after-lifecycle':
             time.sleep(60)
@@ -249,7 +251,7 @@ class NativeCliInstallTests(unittest.TestCase):
                        FAKE_ROOT=str(root), TMPDIR=str(root))
             command = [sys.executable, str(HELPER), '@opencode/cli', 'arm64',
                        '--attempts', '1', '--interval', '0', '--timeout', '60']
-            evidence = root / 'install-native-cli-opencode-cli.log'
+            evidence = root / 'install-native-cli-opencode-cli-evidence-v1.log'
             process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 # The journal appears as soon as the install command starts streaming;
@@ -287,7 +289,7 @@ class NativeCliInstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(helper.tempfile, 'tempdir', directory):
                 evidence = helper.journal_path('@opencode/cli')
-                evidence.write_text('npm HTTP GET 200; registry activity observed\n',
+                evidence.write_text(f'npm HTTP GET 200; {helper.PHASE_REGISTRY}\n',
                                     encoding='utf-8')
                 evidence.chmod(0o600)
                 args = SimpleNamespace(timeout=1, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
@@ -347,64 +349,27 @@ class NativeCliInstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(helper.tempfile, 'tempdir', directory):
                 evidence = helper.journal_path('@opencode/cli')
-                evidence.write_text(''.join(f'line {number}\n' for number in range(1, 61)), encoding='utf-8')
+                def record(status):
+                    return f'npm HTTP GET {status}; {helper.PHASE_REGISTRY}'
+
+                evidence.write_text(''.join(f'{record(status)}\n' for status in range(200, 260)), encoding='utf-8')
                 evidence.chmod(0o600)
                 tail = helper.journal_tail('@opencode/cli')
                 self.assertEqual(len(tail), 41)
                 self.assertIn('showing the last 40 lines', tail[0])
-                self.assertEqual(tail[1], 'line 21')
-                self.assertEqual(tail[-1], 'line 60')
-                evidence.write_text('npm http fetch GET https://registry.example/x.tgz?t=SECRET', encoding='utf-8')
-                self.assertEqual(helper.journal_tail('@opencode/cli'),
-                                 ['npm http fetch GET https://registry.example/x.tgz?<redacted>'],
-                                 'the tail re-redacts defensively')
-                # The byte budget bounds a journal of huge lines: the newest small
-                # lines survive, the oversized head line does not, and the cut
-                # names itself instead of flooding the diagnostic.
-                huge = 'x' * (helper.JOURNAL_TAIL_BYTES + 1)
-                evidence.write_text(f'{huge}\nnewest 1\nnewest 2\n', encoding='utf-8')
-                self.assertEqual(helper.journal_tail('@opencode/cli'),
-                                 ['...[journal tail truncated at the 16384-byte diagnostic budget]',
-                                  'newest 1', 'newest 2'])
-                # The marker's own bytes come out of the budget: when the newest
-                # line nearly fills it, older lines are dropped until the marker
-                # fits, and the printed diagnostic never exceeds the budget.
-                evidence.write_text(('é' * 5000 + '\n') * 2, encoding='utf-8')
-                tail = helper.journal_tail('@opencode/cli')
-                self.assertEqual(tail[0], '...[journal tail truncated at the 16384-byte diagnostic budget]')
-                self.assertLessEqual(sum(len(line.encode('utf-8')) + 1 for line in tail),
-                                     helper.JOURNAL_TAIL_BYTES,
-                                     'the marker is charged to the byte budget')
-                self.assertLessEqual(sum(len(line.encode('utf-8')) + 1 for line in tail[1:]),
-                                     helper.JOURNAL_TAIL_BYTES,
-                                     'the newest multibyte line is kept whole beside the marker')
-                # The read itself is bounded: a file larger than the read window
-                # loads only its newest bytes, drops the partial cut line, and
-                # keeps the newest complete lines with the head marker. The
-                # fixture size is asserted first, so the window cut is real.
-                stale = ''.join(f'stale {number}\n' for number in range(24000))
-                evidence.write_text(stale + 'fresh 1\nfresh 2\n', encoding='utf-8')
-                self.assertGreater(evidence.stat().st_size, helper.JOURNAL_TAIL_READ_BYTES,
-                                   'the fixture must exceed the read window for the cut to be real')
+                self.assertEqual(tail[1], record(220))
+                self.assertEqual(tail[-1], record(259))
+                evidence.write_text(f'{record(200)}\n{record(201)}\n{record(202)}\n')
+                with patch.object(helper, 'JOURNAL_TAIL_BYTES', 150):
+                    tail = helper.journal_tail('@opencode/cli')
+                self.assertEqual(tail, ['...[journal tail truncated at the 150-byte diagnostic budget]', record(202)])
+                self.assertLessEqual(sum(len(line.encode('utf-8')) + 1 for line in tail), 150)
+                stale = (record(200) + '\n') * 5000
+                evidence.write_text(stale + record(201) + '\n' + record(202) + '\n', encoding='utf-8')
+                self.assertGreater(evidence.stat().st_size, helper.JOURNAL_TAIL_READ_BYTES)
                 tail = helper.journal_tail('@opencode/cli')
                 self.assertIn('journal head truncated', tail[0])
-                self.assertEqual(tail[-2:], ['fresh 1', 'fresh 2'])
-                self.assertNotIn('stale 1\nstale 2', '\n'.join(tail), 'the cut line never leaks its head')
-                # Redaction happens before the budget counts: a short query that
-                # redacts into the longer ?<redacted> cannot print past it. The
-                # 40-line fixture's raw bytes fit the budget while its redacted
-                # bytes do not, which is exactly the ordering bug's shape.
-                line_template = 'npm http fetch GET https://r.example/' + 'a' * 364 + '?t=x'
-                evidence.write_text(''.join(line_template + '\n' for _ in range(40)), encoding='utf-8')
-                raw_total = sum(len(line.encode('utf-8')) + 1 for line in evidence.read_text(encoding='utf-8').splitlines())
-                self.assertLessEqual(raw_total, helper.JOURNAL_TAIL_BYTES,
-                                     "the fixture's raw bytes must fit the budget")
-                printed = helper.journal_tail('@opencode/cli')
-                self.assertLessEqual(sum(len(line.encode('utf-8')) + 1 for line in printed),
-                                     helper.JOURNAL_TAIL_BYTES,
-                                     'the redacted diagnostic stays within the byte budget')
-                self.assertTrue(all('t=x' not in line for line in printed),
-                                'the printed lines are the redacted ones')
+                self.assertEqual(tail[-2:], [record(201), record(202)])
                 evidence.chmod(0o000)
                 try:
                     self.assertEqual(helper.journal_tail('@opencode/cli'), [])
@@ -612,7 +577,7 @@ class NativeCliInstallTests(unittest.TestCase):
         for stall, summary in cases:
             with self.subTest(stall=stall), tempfile.TemporaryDirectory() as directory:
                 result, calls = self.invoke(arch='arm64', tmpdir=directory, stall=stall)
-                evidence = Path(directory) / 'install-native-cli-opencode-cli.log'
+                evidence = Path(directory) / 'install-native-cli-opencode-cli-evidence-v1.log'
                 installs = [call for call in calls if call[0] == 'install']
                 self.assertEqual(len(installs), 1, 'only publication failures can retry')
                 self.assertEqual(installs[0][-1], '@opencode/cli@2.0.30')
@@ -640,6 +605,7 @@ class NativeCliInstallTests(unittest.TestCase):
                 "print('x' * 200000 + 'hide-me', flush=True); "
                 "print('npm http fetch GET 200 https://registry.example/hide-me\\n' * 600, flush=True); "
                 f"print('> {wrapper} postinstall', flush=True); "
+                f"print('npm info run {wrapper} postinstall {{ code: 0, signal: null }}', flush=True); "
                 "sys.exit(42)"
             )
             args = SimpleNamespace(timeout=5, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
@@ -651,14 +617,61 @@ class NativeCliInstallTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'exit 42'):
                     helper.Installer(args).command([sys.executable, '-c', script], phase='global installation',
                                                    merged=True, wrapper=wrapper)
-            evidence = Path(directory) / 'install-native-cli-opencode-cli.log'
+            evidence = Path(directory) / 'install-native-cli-opencode-cli-evidence-v1.log'
             self.assertLessEqual(evidence.stat().st_size, 512)
             self.assertIn('journal truncated at the byte budget', evidence.read_text())
-            self.assertIn('wrapper postinstall started; completion unobserved', stderr.getvalue(),
+            self.assertIn('wrapper postinstall started; completion unobserved', evidence.read_text(),
+                          'the on-disk journal keeps lifecycle evidence after exhausting its general space')
+            self.assertIn('wrapper postinstall completed; subsequent phase unclassified', evidence.read_text(),
+                          'the on-disk journal keeps both lifecycle transitions')
+            self.assertIn('wrapper postinstall completed; subsequent phase unclassified', stderr.getvalue(),
                           'phase tracking continues even after the disk budget is exhausted')
             self.assertNotIn('hide-me', stderr.getvalue())
             self.assertNotIn('hide-me', evidence.read_text())
             self.assertLess(len(stderr.getvalue().encode()), helper.JOURNAL_TAIL_BYTES)
+
+    def test_journal_replay_accepts_only_safe_records(self):
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory, patch.object(helper.tempfile, 'tempdir', directory):
+            evidence = helper.journal_path('@opencode/cli')
+            safe = 'wrapper postinstall started; completion unobserved'
+            evidence.write_text(f'Authorization: Bearer RAW-SECRET\n{safe}\n{safe} embedded-secret\n')
+            evidence.chmod(0o600)
+            self.assertEqual(helper.journal_tail('@opencode/cli'), [safe])
+            legacy = evidence.with_name('install-native-cli-opencode-cli.log')
+            self.assertNotEqual(evidence, legacy)
+            evidence.unlink()
+            legacy.write_text('Authorization: Bearer LEGACY-SECRET\n')
+            legacy.chmod(0o600)
+            self.assertEqual(helper.journal_tail('@opencode/cli'), [])
+
+    def test_oversized_npm_line_prevents_publication_retry(self):
+        helper = self.load_helper()
+        wrapper = '@opencode/cli@2.0.30'
+        missing = '@opencode/cli-linux-arm64@2.0.30'
+        args = SimpleNamespace(timeout=5, package='@opencode/cli', arch='arm64', attempts=3, interval=0)
+        for padding in (48, 200000):
+            with self.subTest(padding=padding), tempfile.TemporaryDirectory() as directory:
+                script = (
+                    "import sys; "
+                    f"print('npm error code ETARGET: {missing}'); "
+                    f"print('x' * {padding} + 'npm error code EACCES'); "
+                    "sys.exit(1)"
+                )
+                with patch.object(helper.tempfile, 'tempdir', directory), \
+                        patch.object(helper, 'PENDING_LIMIT_BYTES', 64), contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaisesRegex(ValueError, 'failed during global installation'):
+                        helper.Installer(args).command([sys.executable, '-c', script], [missing], phase='global installation',
+                                                       merged=True, wrapper=wrapper)
+
+    def test_incomplete_postinstall_marker_does_not_name_the_lifecycle(self):
+        helper = self.load_helper()
+        wrapper = '@opencode/cli@2.0.30'
+        observer = helper.InstallEvidence(wrapper, ())
+        for raw in (f'npm info run {wrapper} postinstall ', f'npm info run {wrapper} postinstall {{ code: 0,'):
+            with self.subTest(raw=raw):
+                observer.observe(raw)
+                self.assertEqual(observer.summary(), 'no registry or wrapper postinstall evidence observed')
 
     def test_install_failure_streams_lifecycle_and_registry_phase_evidence(self):
         # Value: a hung global install localizes to wrapper lifecycle execution versus
