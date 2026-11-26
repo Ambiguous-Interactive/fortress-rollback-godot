@@ -1249,13 +1249,16 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
         script = r"""
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { captureAndReleaseInput, createReleaseSignal } = require(process.argv[1]);
+const { captureAndReleaseInput, createReleaseSignal, recordReleaseTiming } = require(process.argv[1]);
 const signal = createReleaseSignal(2);
 const server = http.createServer((req, res) => { if (!signal.handle(req, res)) res.writeHead(404).end(); });
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = 'http://127.0.0.1:' + server.address().port;
   const path = index => origin + signal.paths[index];
+  assert.deepEqual(signal.timings(), signal.paths.map(path => ({
+    path, request_received_ms: null, first_write_ms: null, finished_ms: null, continuation: null, resource: null,
+  })));
   let evaluations = 0, releases = 0;
   global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: {
     status: () => ({ holding: true }),
@@ -1272,10 +1275,24 @@ async function run() {
   assert.equal((await fetch(path(0))).status, 409);
   assert.equal((await fetch(path(0), { method: 'POST' })).status, 405);
   assert.equal(releases, 0);
+  assert.ok(signal.timings().every(receipt => receipt.request_received_ms !== null && receipt.first_write_ms === null));
   signal.release(performance.now() + 500);
   const receipts = await Promise.all([first, last]);
   assert.deepEqual(receipts.map(receipt => receipt.index), [0, 1]);
   assert.equal(evaluations, 2);
+  const receipt = signal.timings()[0];
+  assert.ok(receipt.request_received_ms <= receipt.first_write_ms && receipt.first_write_ms <= receipt.finished_ms);
+  assert.equal(receipt.continuation, null);
+  assert.equal(receipt.resource, null);
+  const entered = { path: signal.paths[0], requested_ms: 10, continued_ms: 510, status: 204 };
+  const resource = { path: signal.paths[0], response_start_ms: null, response_end_ms: 25 };
+  assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, path: signal.paths[1] }), 700), false);
+  assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...resource, response_start_ms: 26 }), 700), false);
+  assert.equal(recordReleaseTiming(receipt, JSON.stringify(resource), 700), true);
+  assert.equal(recordReleaseTiming(receipt, JSON.stringify(entered), 701), true);
+  assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...entered, continued_ms: 615 }), 800), false);
+  assert.deepEqual(receipt.resource, { response_start_ms: null, response_end_ms: 25, controller_ms: 700 });
+  assert.deepEqual(receipt.continuation, { requested_ms: 10, continued_ms: 510, status: 204, controller_ms: 701 });
   assert.equal(releases, 2);
   assert.equal((await fetch(path(0))).status, 409);
   assert.throws(() => signal.release(performance.now() + 500), /relay release requests unavailable/);
@@ -1286,6 +1303,80 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
   signal.cancel();
   server.close();
 });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
+    def test_native_relay_release_matches_its_resource_before_or_after_continuation(self):
+        # Value: protects=independent release clocks and exact resource identity; fails_when=timing needs the other event or matches a foreign fetch
+        script = r"""
+const assert = require('node:assert/strict');
+const { captureAndReleaseInput, recordReleaseTiming } = require(process.argv[1]);
+const path = '/native-release/control';
+const prefix = 'timing ';
+global.location = { href: 'http://localhost/test' };
+global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: { status: () => ({}), release: () => 'released' } };
+const page = { evaluate(callback, argument) { return callback(argument); } };
+
+async function run(responseDelay, continuationDelay, { unavailable = false, status = 204, nearDeadline = false } = {}) {
+  const receipt = { path, continuation: null, resource: null };
+  let now = 10;
+  let controller = 3000;
+  let observe;
+  let disconnected = false;
+  let resume;
+  global.performance = { now: () => now };
+  global.PerformanceObserver = class {
+    static supportedEntryTypes = unavailable ? [] : ['resource'];
+    constructor(callback) { observe = entries => callback({ getEntries: () => entries }); }
+    observe(options) { assert.deepEqual(options, { type: 'resource' }); }
+    disconnect() { disconnected = true; }
+  };
+  console.debug = message => {
+    assert.ok(message.startsWith(prefix));
+    assert.equal(recordReleaseTiming(receipt, message.slice(prefix.length), ++controller), true);
+    if (nearDeadline && receipt.continuation) now = 1006;
+  };
+  global.fetch = () => new Promise(resolve => { resume = resolve; });
+  const released = captureAndReleaseInput(page, 0, path, prefix);
+  const resource = { name: new URL(path, location.href).href, initiatorType: 'fetch',
+    responseStart: 11 + responseDelay, responseEnd: 12 + responseDelay };
+  if (!unavailable) {
+    observe([{ ...resource, name: resource.name + '?other' }, { ...resource, initiatorType: 'xmlhttprequest' }]);
+    assert.equal(disconnected, false);
+    assert.equal(receipt.resource, null);
+    if (continuationDelay) {
+      observe([resource]);
+      assert.equal(receipt.continuation, null);
+      assert.equal(disconnected, true);
+    }
+  }
+  const continued = now = resource.responseEnd + continuationDelay;
+  resume({ status, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '1000000' }) });
+  if (status === 204) assert.equal((await released).release, 'released');
+  else await assert.rejects(released, /native relay release signal returned HTTP 409/);
+  assert.deepEqual(receipt.continuation,
+    { requested_ms: 10, continued_ms: continued, status, controller_ms: continuationDelay ? 3002 : 3001 });
+  if (unavailable) {
+    assert.equal(receipt.resource, null);
+  } else {
+    if (!continuationDelay) {
+      assert.equal(receipt.resource, null);
+      observe([{ ...resource, responseStart: 0 }]);
+    }
+    assert.equal(disconnected, true);
+    assert.deepEqual(receipt.resource, { response_start_ms: continuationDelay ? 11 : null, response_end_ms: 12 + responseDelay,
+      controller_ms: continuationDelay ? 3001 : 3002 });
+    assert.equal(receipt.continuation.continued_ms - receipt.resource.response_end_ms, continuationDelay);
+  }
+}
+
+(async () => {
+  await run(450, 0);
+  await run(0, 450);
+  await run(0, 0, { unavailable: true });
+  await run(0, 0, { status: 409 });
+  await run(993, 0, { nearDeadline: true });
+})().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
@@ -1787,6 +1878,7 @@ run().catch(error => { console.error(error); process.exitCode = 1; }).finally(()
     def test_native_engine_turn_reports_the_actual_baseline_and_later_frame(self):
         # Value: protects=engine turn evidence; fails_when=earlier progress replaces the baseline or final reads own the trace; seam=browser entrypoint
         script = r"""
+const assert = require('node:assert/strict');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { runMain, _load: load } = require('node:module');
 const entrypoint = process.argv[1];
@@ -1800,12 +1892,30 @@ const unavailable = () => new Promise(() => {});
 let now = 0;
 global.performance = { now: () => ++now };
 Object.defineProperty(global, 'window', { get: () => realm.getStore() });
+global.location = { href: 'https://127.0.0.1/test' };
+global.PerformanceObserver = class {
+  static supportedEntryTypes = ['resource'];
+  constructor(callback) { window.resourceObserver = entries => callback({ getEntries: () => entries }); }
+  observe() {}
+  disconnect() {}
+};
+console.debug = text => window.publishTiming(text);
 const timeout = global.setTimeout;
 global.setTimeout = (callback, ms, ...args) => timeout(callback, [5000, 30000].includes(ms) ? 20 : ms, ...args);
 let releaseRequest;
 global.fetch = path => new Promise(resolve => {
-  const response = { socket: { destroyed: false }, writeHead(status, headers) { this.status = status; this.headers = new Headers(headers); return this; },
-    end() { this.writableEnded = true; resolve({ status: this.status, headers: this.headers }); } };
+  const owner = window;
+  const response = { socket: { destroyed: false }, once(event, callback) { assert.equal(event, 'finish'); this.finish = callback; },
+    writeHead(status, headers) { this.status = status; this.headers = new Headers(headers); return this; },
+    end() {
+      this.writableEnded = true;
+      this.finish();
+      const at = performance.now();
+      resolve({ status: this.status, headers: this.headers });
+      setImmediate(() => realm.run(owner, () => owner.resourceObserver([{
+        name: new URL(path, location.href).href, initiatorType: 'fetch', responseStart: at, responseEnd: at,
+      }])));
+    } };
   if (!releaseRequest({ url: path, method: 'GET' }, response)) throw new Error('fixture release request was not handled');
 });
 global.requestAnimationFrame = callback => {
@@ -1825,7 +1935,7 @@ function makePage() {
     const sample = { kind, page_ms: performance.now(), state: status, frame, confirmed, turns, restores, ...fields };
     events.console({ text: () => 'fortress native post-release ' + JSON.stringify(sample) });
   }
-  const pageWindow = { index, fortressNative: state, fortressNativeReady: true,
+  const pageWindow = { index, fortressNative: state, fortressNativeReady: true, publishTiming: text => events.console({ text: () => text }),
     fortressNativePostRelease: { mark(kind, frames, progress) { mark(kind, { frames, ...progress }); }, arm() {}, setTarget() {} },
     fortressNativeWire: {
       arm() { state.stalls++; return hold(); },
@@ -1906,6 +2016,11 @@ runMain();
                     self.assertIn('fixture baseline RPC failed', failure)
                 self.assertEqual(report['compared_frames'], 40)
                 self.assertEqual([state['status'] for state in report['states']], ['rejected', 'rejected'])
+                self.assertEqual(len(report['releaseTiming']), 2)
+                for timing in report['releaseTiming']:
+                    self.assertEqual(timing['continuation']['status'], 204)
+                    self.assertIsNotNone(timing['finished_ms'])
+                    self.assertGreater(timing['resource']['controller_ms'], timing['continuation']['controller_ms'])
                 self.assertIn('native peer 0 diagnostics deadline', run.stderr)
                 self.assertIn('native peer 1 diagnostics deadline', run.stderr)
                 engine_turns = report.get('engineTurns')
