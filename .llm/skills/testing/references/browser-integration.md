@@ -262,11 +262,11 @@ Apply each page observation at its completion time before waiting for sibling
 pages. Check that peer's existing deadline first, then rearm the earliest live
 deadline. Exercise asymmetric timely completions and exact expired boundaries;
 an all-pages barrier can otherwise discard valid progress against stale clocks.
-Keep one latest timely snapshot per page for failure diagnostics, with its
-receipt time. Require the complete qualifying round to prove cross-page close
-order. Bound each calibration evaluation by the shared deadline. A timed-out
-read must never append a late sample or start another read.
-Keep clock bounds and samples. Publish [close stages](../../../../docs/native-backend-migration.md#session-boundary) before the final page read.
+Retain the latest timely snapshot and its receipt time per page. Require a
+complete qualifying round to prove cross-page close order. Bound calibration
+by the shared deadline and ignore late reads without issuing another.
+Publish [close stages and release timing](../../../../docs/native-backend-migration.md#session-boundary) independently of the final page read.
+Keep clock bounds and samples. Test HTTP response delay separately from page continuation delay.
 An interval spanning the required gap is ambiguous. An upper bound below
 the threshold proves that the observed send fell short of it.
 Use a bounded exact attempt receipt if constructing the stack tag precedes the
