@@ -2503,18 +2503,23 @@ const crashed = {evaluate: async () => { throw Error('Page crashed'); }};
   const send = {channel:17, attempt:3, sentAt:47081};
   const provedSend = {channel:17, attempt:4, sentAt:47082};
   const leaver = {evaluate: async () => {
-    if (++round === 2) throw Error('Page crashed');
-    return {links:[counterpart], sampledAt:50000, sends:{}};
+    if (++round === 3) throw Error('Page crashed');
+    return {links:[counterpart], sampledAt:now * 1000 - 10000, sends:{}};
   }};
-  const sender = {evaluate: async () => ({links:[before], sampledAt:now * 1000 + 5000, sends:round === 1 ? {3:send, 4:provedSend} : {}})};
+  const sendsByRound = [{3:send, 4:provedSend}, {3:send}, {}];
+  const sender = {evaluate: async () => ({
+    links:[before], sampledAt:now * 1000 + (round === 2 ? 4999 : 5000), sends:sendsByRound[round - 1],
+  })};
   await assert.rejects(waitForCloseProofs([leaver, sender], initial.slice(0, 2), [...warning, {...warning[0], attempt:4}], report, {
     clocks:clocks.slice(0, 2), clock:() => now, delay:async ms => { now += ms; },
   }), /WebKit close snapshots failed/);
-  assert.deepEqual(report.partialSnapshots.map(snapshot => [snapshot.received_ms, snapshot.sends]), [[60, {}], [85, {}]]);
+  assert.deepEqual(report.partialSnapshots.map(snapshot => [snapshot.received_ms, snapshot.sends]), [[85, {}], [110, {}]]);
   assert.equal(report.proofs[0].sentAt, send.sentAt);
-  assert.equal(report.proofs[0].minimumGapUs, 1999);
+  assert.equal(report.proofs[0].minimumGapUs, 2000);
   assert.deepEqual(report.proofs.map(receipt => receipt.proof), [null, null]);
-  assert.deepEqual(report.lastCompleteProofs.map(receipt => [receipt.attempt, receipt.minimumGapUs, receipt.proof]), [[4, 2000, 'clock-order']]);
+  assert.deepEqual(report.lastCompleteProofs.map(receipt => [receipt.attempt, receipt.minimumGapUs, receipt.proof]), [
+    [4, 2000, 'clock-order'], [3, 2000, 'clock-order'],
+  ]);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         command = ['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')]

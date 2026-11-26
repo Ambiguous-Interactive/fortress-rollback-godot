@@ -1211,6 +1211,7 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
   if (clocks) report.clockSamples ??= pages.map(() => ({ before: [], after: [] }));
   const latestSnapshots = pages.map(() => null);
   const observedSends = pages.map(() => Object.create(null));
+  const completeProofs = new Map();
   report.partialSnapshots = latestSnapshots;
   let rounds = 0;
   const deadline = clock() + DIAGNOSTIC_MS;
@@ -1241,7 +1242,6 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
       }
     });
     const complete = !failed.length && clock() < deadline;
-    if (!complete) report.lastCompleteProofs = report.proofs.filter(evidence => evidence.proof);
     const links = latestSnapshots.map(snapshot => snapshot?.links ?? []);
     report.proofs = roundErrors.map(error => {
       const sends = complete ? latestSnapshots[error.index].sends : observedSends[error.index];
@@ -1251,16 +1251,22 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
     });
     report.snapshotErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
     if (failed.length) {
+      report.lastCompleteProofs = [...completeProofs.values()];
       throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} close snapshot failed`, { cause: reason })),
         'WebKit close snapshots failed');
     }
     if (!complete) break;
-    for (const proof of report.proofs) assert.ok(proof.before, `WebKit send failure for peer ${proof.index} lacked a sending channel`);
+    for (const evidence of report.proofs) {
+      const { index, channel, attempt, proof } = evidence;
+      assert.ok(evidence.before, `WebKit send failure for peer ${index} lacked a sending channel`);
+      if (proof) completeProofs.set(`${index}:${channel}:${attempt}`, evidence);
+    }
     const remaining = deadline - clock();
     if (remaining <= 0) break;
     if (roundErrors.length === errors.length && report.proofs.every(proof => proof.proof)) return links;
     await delay(Math.min(25, remaining));
   }
+  report.lastCompleteProofs = [...completeProofs.values()];
   const pending = [...new Set(report.proofs.filter(proof => !proof.proof).map(proof => `peer ${proof.index} channel ${proof.channel}`))];
   throw new Error(`WebKit close evidence deadline${pending.length ? ` for ${pending.join(', ')}` : ''}`);
 }
