@@ -441,7 +441,7 @@ for (let i = 0; i < 140; i++) trace.record('raw', delivered(envelope(source, loc
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const { createRelayWireTrace } = require(process.argv[1]);
-const { instrumentNativeWire, instrumentPostRelease, postReleaseCheckpoint } = require(process.argv[2]);
+const { instrumentPostRelease, postReleaseCheckpoint } = require(process.argv[2]);
 const { joinRelayReceipts, relayExpiryRows } = require(process.argv[3]);
 const [room, source, local, other] = ['11', '22', '33', '44'].map(value => value.repeat(16));
 const roster = [source, local, other];
@@ -525,6 +525,9 @@ assert.deepEqual(inputRow.missing, []);
 assert.deepEqual(reportRow.missing, ['send', 'ingress', 'write']);
 const withoutServer = relayExpiryRows(expiry, null);
 assert.deepEqual(withoutServer.map(row => row.missing), [['send', 'ingress', 'write'], ['send', 'ingress', 'write']]);
+const afterRead = structuredClone(expiry);
+afterRead[0].frontier.packets[0].stages.raw = null;
+assert.deepEqual(relayExpiryRows(afterRead, joined)[0].missing, ['raw'], 'later page data cannot fill a missing pre-acceptance stage');
 assert.equal(trace.expiryFrontier(other).packets.find(packet => packet.kind === 2), undefined);
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs'),

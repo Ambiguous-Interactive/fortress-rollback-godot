@@ -320,7 +320,7 @@ function relayExpiryRows(expiries, joined) {
     const candidate = byStamp.get(stampKey(packet));
     const row = candidate && sameEnvelope(packet, candidate) ? candidate : null;
     const missing = ['send', 'ingress', 'write'].filter(stage => stage === 'send' ? row?.send == null : !row?.[stage].length);
-    for (const stage of ['raw', 'sdk']) if (!stages[stage] && !row?.[stage].length) missing.push(stage);
+    for (const stage of ['raw', 'sdk']) if (!stages[stage]) missing.push(stage);
     return { ...packet, missing };
   }));
 }
