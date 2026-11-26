@@ -449,7 +449,11 @@ const hex = value => Buffer.from(value, 'hex');
 const trace = createRelayWireTrace();
 trace.bind(room, local, roster);
 const bytes = (sender, kind, mutation = 0) => {
-  const body = Buffer.alloc({2: 24, 4: 18, 5: 16}[kind]);
+  const body = Buffer.alloc({2: 31, 4: 18, 5: 16}[kind]);
+  if (kind === 2) {
+    body.writeBigUInt64LE(1n, 0);
+    body.writeInt32LE(420, 9);
+  }
   body[body.length - 1] = mutation;
   const payload = Buffer.concat([hex(room), hex('f552020001000000'), Buffer.from([kind, 0, 0, 0]), body]);
   return Buffer.concat([hex('4653523101'), hex(room), hex(sender), hex(local), Buffer.from([payload.length, 0, 0, 0]), payload]);

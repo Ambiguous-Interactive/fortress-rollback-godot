@@ -275,13 +275,13 @@ function checkSameLinkRetention(server, browsers, before, resumed, ordinals) {
 
 function validateRelayExpiryFrontier(frontier, uuid, local, at_ms) {
   const { room, sender, recipient, packets } = frontier ?? {};
-  const requireValid = condition => assert.ok(condition, 'invalid native expiry frontier');
+  const requireValid = (condition, field) => assert.ok(condition, `invalid native expiry frontier ${field}`);
   requireValid(typeof room === 'string' && /^[0-9a-f]{32}$/.test(room)
     && local && sender === uuid.replaceAll('-', '') && recipient === local.replaceAll('-', '')
-    && Array.isArray(packets) && packets.length <= 2);
+    && Array.isArray(packets) && packets.length <= 2, 'scope');
   const uint = (value, max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value > 0 && value <= max;
-  const mark = (value, ceiling) => {
-    requireValid(uint(value?.ordinal) && Number.isFinite(value.at_ms) && value.at_ms >= 0 && value.at_ms <= ceiling);
+  const mark = (value, ceiling, stage) => {
+    requireValid(uint(value?.ordinal) && Number.isFinite(value.at_ms) && value.at_ms >= 0 && value.at_ms <= ceiling, stage);
     return { ordinal: value.ordinal, at_ms: value.at_ms };
   };
   const seen = new Set();
@@ -290,24 +290,24 @@ function validateRelayExpiryFrontier(frontier, uuid, local, at_ms) {
     requireValid((kind === 2 || kind === 4) && !seen.has(kind) && uint(epoch, 0xffffffff)
       && typeof seq === 'string' && /^[1-9][0-9]{0,19}$/.test(seq) && BigInt(seq) <= 0xffffffffffffffffn
       && typeof envelope === 'string' && /^(?:[0-9a-f]{2}){85,1257}$/.test(envelope)
-      && envelope.startsWith('4653523101' + room + sender + recipient));
+      && envelope.startsWith('4653523101' + room + sender + recipient), 'stamp and envelope');
     seen.add(kind);
     const bytes = Buffer.from(envelope, 'hex');
     const payload = bytes.subarray(57);
     requireValid(bytes.readUInt32LE(53) === payload.length && payload.subarray(0, 16).toString('hex') === room
-      && payload.readUInt32LE(16) === 0x000252f5 && payload.readUInt16LE(20) !== 0 && payload.readUInt32LE(24) === kind);
-    if (kind === 4) requireValid(bytes.length === 103);
+      && payload.readUInt32LE(16) === 0x000252f5 && payload.readUInt16LE(20) !== 0 && payload.readUInt32LE(24) === kind, 'native header');
+    if (kind === 4) requireValid(bytes.length === 103, 'quality report length');
     else {
-      requireValid(bytes.length >= 109);
+      requireValid(bytes.length >= 109, 'input length');
       const count = bytes.readBigUInt64LE(85);
-      requireValid(count <= BigInt(Math.floor((bytes.length - 109) / 7)));
+      requireValid(count <= BigInt(Math.floor((bytes.length - 109) / 7)), 'input status count');
       const statusesEnd = 93 + Number(count) * 7;
-      requireValid(bytes.readBigUInt64LE(statusesEnd + 8) === BigInt(bytes.length - statusesEnd - 16));
-      for (let offset = 93; offset < statusesEnd; offset++) requireValid(bytes[offset] <= 1);
+      requireValid(bytes.readBigUInt64LE(statusesEnd + 8) === BigInt(bytes.length - statusesEnd - 16), 'input body size');
+      for (let offset = 93; offset < statusesEnd; offset += 7) requireValid(bytes[offset] <= 1, 'input status value');
     }
-    const native = mark(stages?.native, at_ms);
-    const sdk = stages.sdk === undefined ? null : mark(stages.sdk, native.at_ms);
-    const raw = stages.raw === undefined ? null : mark(stages.raw, sdk?.at_ms ?? native.at_ms);
+    const native = mark(stages?.native, at_ms, 'native stage');
+    const sdk = stages.sdk === undefined ? null : mark(stages.sdk, native.at_ms, 'SDK stage');
+    const raw = stages.raw === undefined ? null : mark(stages.raw, sdk?.at_ms ?? native.at_ms, 'raw stage');
     const hash = data => createHash('sha256').update(data).digest('hex');
     return { sender, recipient, kind, epoch, seq, envelope_bytes: bytes.length,
       envelope_sha256: hash(bytes), payload_sha256: hash(payload), stages: { raw, sdk, native } };
