@@ -299,8 +299,9 @@ can also time out before either marker appears.
 
 The journal records HTTP status and wrapper lifecycle markers at
 `install-native-cli-<package-slug>-evidence-v1.log` in the system temporary
-directory. It omits URLs, script commands, and script output. A successful
-global install removes it.
+directory. The installer uses npm's background scripts so npm emits complete
+lifecycle records even when script output has no newline. The journal omits
+URLs, script commands, and script output. A successful global install removes it.
 
 ### Browser witnessing capability (#385)
 

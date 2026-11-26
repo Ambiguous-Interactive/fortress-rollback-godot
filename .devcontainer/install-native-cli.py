@@ -197,15 +197,13 @@ class InstallEvidence:
         self.other_error |= bool(errors - PUBLICATION_ERRORS)
         self.missing_spec |= any(match.removesuffix('.') in self.publication_specs
                                  for match in PACKAGE_VERSION.findall(diagnostic))
-        if complete and self.wrapper:
-            marker = f'npm info run {self.wrapper} postinstall '
-            _, found, payload = line.rpartition(marker)
-            # npm's stderr record may follow unterminated foreground stdout on
-            # the merged descriptor. Accept a complete suffix with the exact spec.
-            if found and re.fullmatch(r"\{ code: (?:-?[0-9]+|null), signal: (?:null|'SIG[A-Z0-9]+') \}", payload):
+        marker = f'npm info run {self.wrapper} postinstall '
+        if complete and self.wrapper and line.startswith(marker):
+            payload = line[len(marker):]
+            if re.fullmatch(r"\{ code: (?:-?[0-9]+|null), signal: (?:null|'SIG[A-Z0-9]+') \}", payload):
                 self.postinstall_completed = True
                 return self.summary()
-            if line == f'> {self.wrapper} postinstall' or (found and re.fullmatch(r'[^\s{]+ +\S.*', payload)):
+            if re.fullmatch(r'[^\s{]+ +\S.*', payload):
                 self.postinstall_started = True
                 return self.summary()
 
@@ -510,11 +508,11 @@ class Installer:
                     self.command(['npm', 'cache', 'add', spec, '--prefer-online'],
                                  phase=f'native archive for {spec}', archive=archive)
                 # Frozen exact latest: the release cannot change while readiness or installation retries.
-                # Foreground scripts and npm's info records expose the wrapper's
-                # entry and exit. HTTP records only prove registry activity.
+                # Keep script output off the npm logger's stream so it cannot
+                # splice a fragment onto a lifecycle record.
                 wrapper = package + '@' + version
                 self.command(['npm', 'install', '-g', '--include=optional', '--prefer-offline',
-                              '--foreground-scripts', '--loglevel=info', wrapper],
+                              '--foreground-scripts=false', '--loglevel=info', wrapper],
                              install_specs, phase='global installation', merged=True, wrapper=wrapper)
                 break
             except PublicationPending as failure:

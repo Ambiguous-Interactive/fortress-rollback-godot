@@ -57,16 +57,16 @@ elif args[:2] == ['cache', 'add']:
         sys.exit(1)
     (root / 'archive_ready').touch()
 elif args[:1] == ['install']:
-    if '--foreground-scripts' in args and any(arg in args for arg in ('--loglevel=http', '--loglevel=info')):
+    if '--loglevel=info' in args:
         print('npm http fetch GET 200 https://user:USERINFO-SECRET@registry.example/PRIVATE-PATH?token=SIGNED-QUERY-CREDENTIAL', file=sys.stderr, flush=True)
         if scenario.get('stall') == 'acquisition':
             time.sleep(60)
         print('npm info run ' + package + '@' + version + ' postinstall /some/path node ./postinstall.mjs', file=sys.stderr, flush=True)
-        print('> ' + package + '@' + version + ' postinstall', flush=True)
-        print('Authorization: Bearer LIFECYCLE-SECRET', flush=True)
+        if '--foreground-scripts=false' not in args:
+            print('Authorization: Bearer LIFECYCLE-SECRET', flush=True)
         if scenario.get('stall') == 'native':
             subprocess.run([str(root / 'fake-native'), '--version'], check=True)
-        if scenario.get('stall') == 'after-lifecycle':
+        if scenario.get('stall') == 'after-lifecycle' and '--foreground-scripts=false' not in args:
             print('native version script output without newline', end='', flush=True)
         print('npm info run ' + package + '@' + version + ' postinstall { code: 0, signal: null }', file=sys.stderr, flush=True)
         if scenario.get('stall') == 'after-lifecycle':
@@ -604,7 +604,7 @@ class NativeCliInstallTests(unittest.TestCase):
                 "print('npm http fetch GET 200 https://registry.example/hide-me', flush=True); "
                 "print('x' * 200000 + 'hide-me', flush=True); "
                 "print('npm http fetch GET 200 https://registry.example/hide-me\\n' * 600, flush=True); "
-                f"print('> {wrapper} postinstall', flush=True); "
+                f"print('npm info run {wrapper} postinstall /some/path node ./postinstall.mjs', flush=True); "
                 f"print('npm info run {wrapper} postinstall {{ code: 0, signal: null }}', flush=True); "
                 "sys.exit(42)"
             )
@@ -664,11 +664,12 @@ class NativeCliInstallTests(unittest.TestCase):
                         helper.Installer(args).command([sys.executable, '-c', script], [missing], phase='global installation',
                                                        merged=True, wrapper=wrapper)
 
-    def test_incomplete_postinstall_marker_does_not_name_the_lifecycle(self):
+    def test_postinstall_markers_require_a_complete_npm_record(self):
         helper = self.load_helper()
         wrapper = '@opencode/cli@2.0.30'
         observer = helper.InstallEvidence(wrapper, ())
-        for raw in (f'npm info run {wrapper} postinstall ', f'npm info run {wrapper} postinstall {{ code: 0,'):
+        for raw in (f'npm info run {wrapper} postinstall ', f'npm info run {wrapper} postinstall {{ code: 0,',
+                    f'script output: npm info run {wrapper} postinstall {{ code: 0, signal: null }}'):
             with self.subTest(raw=raw):
                 observer.observe(raw)
                 self.assertEqual(observer.summary(), 'no registry or wrapper postinstall evidence observed')
@@ -681,7 +682,7 @@ class NativeCliInstallTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         installs = [call for call in calls if call[0] == 'install']
         self.assertEqual(len(installs), 1)
-        self.assertIn('--foreground-scripts', installs[0])
+        self.assertIn('--foreground-scripts=false', installs[0])
         self.assertIn('--loglevel=info', installs[0])
         fetch = 'npm HTTP GET 200; registry activity observed; wrapper postinstall start unobserved'
         lifecycle = 'wrapper postinstall started; completion unobserved'
@@ -693,7 +694,7 @@ class NativeCliInstallTests(unittest.TestCase):
         views = [call for call in calls if call[0] == 'view']
         self.assertTrue(views)
         for view in views:
-            self.assertNotIn('--foreground-scripts', view)
+            self.assertNotIn('--foreground-scripts=false', view)
             self.assertNotIn('--loglevel=info', view)
 
     def test_install_publication_delay_retries_only_the_expected_native_release(self):
