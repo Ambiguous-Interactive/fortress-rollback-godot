@@ -209,7 +209,7 @@ never returns.
 Separate the history request, page publication and controller receipt. Keep each timely history when another page fails.
 Retain each page's later engine-turn baseline and advancement dispatch and
 receipt under the same deadline. Earlier correction progress cannot prove a later turn.
-For native mesh departure, keep servicing the sockets and fence later SDK callbacks. Read the roster and survivor sockets before explicit Leave.
+Keep native mesh signaling active through the Leave deadline. Bind the survivor acknowledgments and actual SDK removal to the original Leave command.
 Sample a corrected frontier at the end of the physics turn that crosses it.
 A rendered snapshot can skip intervening physics turns. If late controller
 input raises the target, backfill from bounded page-local observations and

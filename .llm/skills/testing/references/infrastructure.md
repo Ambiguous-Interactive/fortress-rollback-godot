@@ -11,6 +11,8 @@ verify the caller's HEAD, status and index bytes remain unchanged.
 
 Scope diagnostic environment variables to their intended child process; unrelated
 helpers can interpret the same variable differently and corrupt structured output.
+Keep the browser's temporary directory short enough for its generated Unix
+socket paths. Store full logs and exported projects under a separate output root.
 
 Tool probes must check process exit status before accepting version text or a
 completion marker. Test both empty failures and plausible output followed by
@@ -54,6 +56,8 @@ inventories into declared partitions while retaining cases, assertions and repea
 Include cold tool/OS preparation in the outer job budget; a warm setup duration cannot reserve a valid verification window.
 Localize stalled package acquisition before changing budgets again; preserve repository signature and checksum authentication when selecting mirror alternatives.
 Size harness command envelopes after encoding and serialization; a binary payload cap does not include hex expansion or JSON overhead.
+Measure receipt write budgets through the production scratch file and atomic
+publisher. Verify the real controller deadline separately with a full-size room.
 Dependency-only baseline refreshes must preserve readable recordings from known compatible source revisions.
 Exercise original provenance metadata as well as newly generated fixtures; regenerated fixtures alone hide rejection regressions.
 Verify that matrix selectors reach the actual command arguments; a declared partition alone can silently repeat the full workload.
