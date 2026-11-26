@@ -1332,7 +1332,7 @@ const advance = () => {
   callback();
 };
 
-for (const cancelled of [false, true]) {
+for (const outcome of ['delivered', 'cancelled', 'expired']) {
   const host = createReleaseSignal(1, 450);
   let finish;
   const response = {
@@ -1342,17 +1342,14 @@ for (const cancelled of [false, true]) {
     destroy() { this.destroyed = true; },
   };
   assert.equal(host.handle({ url: host.paths[0], method: 'GET' }, response), true);
-  host.release(2000);
+  host.release(now + (outcome === 'expired' ? 449 : 500));
   const [receipt] = host.timings();
   assert.equal(receipt.finished_ms, null);
-  if (cancelled) {
-    host.cancel();
-    assert.equal(timer, undefined);
-    assert.equal(response.destroyed, true);
-  } else {
-    advance();
-    assert.equal(receipt.finished_ms - receipt.first_write_ms, 450);
-  }
+  if (outcome === 'cancelled') host.cancel();
+  else advance();
+  assert.equal(timer, undefined);
+  assert.equal(response.destroyed, outcome === 'delivered' ? undefined : true);
+  assert.equal(receipt.finished_ms, outcome === 'delivered' ? receipt.first_write_ms + 450 : null);
 }
 
 (async () => {
@@ -1363,16 +1360,24 @@ for (const cancelled of [false, true]) {
   assert.throws(() => assertReleaseDelay([receipt], 'continuation'), /lacks the continuation delay/);
   const continuation = { status: 204, controller_ms: 3900, fetch_resolved_ms: 1252, continued_ms: 1702 };
   assertReleaseDelay([{ ...receipt, continuation }], 'continuation');
+  assert.throws(() => assertReleaseDelay([{ ...receipt, continuation: { ...continuation, status: 500 } }], 'continuation'),
+    /lacks release delivery timing/);
   assert.throws(() => assertReleaseDelay([{ ...receipt, resource: null, finished_ms: 3151 }], 'delivery'), /lacks release delivery timing/);
   console.debug = () => {};
-  global.fetch = async () => ({ status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '1000000' }) });
-  global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: { status: () => ({}), release: () => 'released' } };
   const page = { evaluate(callback, argument) { return callback(argument); } };
-  const release = captureAndReleaseInput(page, 0, '/native-release/control', '', 450);
-  await Promise.resolve();
-  assert.equal(window.fortressNativeStalled, undefined);
-  advance();
-  assert.equal((await release).release, 'released');
+  for (const budget of ['1000000', '400000']) {
+    global.fetch = async () => ({ status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': budget }) });
+    global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: { status: () => ({}), release: () => 'released' } };
+    const release = captureAndReleaseInput(page, 0, '/native-release/control', '', 450);
+    await Promise.resolve();
+    assert.equal(window.fortressNativeStalled, undefined);
+    advance();
+    if (budget === '1000000') assert.equal((await release).release, 'released');
+    else {
+      await assert.rejects(release, /native relay release deadline/);
+      assert.equal(window.fortressNativeStalled, undefined);
+    }
+  }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
