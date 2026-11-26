@@ -2587,14 +2587,26 @@ function makePage() {
   const events = {};
   let lateBaseline;
   let publishHistory;
-  const hold = () => ({ at_ms: performance.now(), held: { mesh: 0, relay: 1 }, bytes: 1, queued: 1, released: 0 });
+  let released = 0;
+  const hold = () => ({ at_ms: performance.now(), held: { mesh: 0, relay: 1 }, bytes: 1, queued: 1 - released, released });
   function mark(kind, fields = {}) {
     const { state: status, frame, confirmed, turns, restores } = state;
     const sample = { kind, page_ms: performance.now(), state: status, frame, confirmed, turns, restores, ...fields };
     events.console({ text: () => 'fortress native post-release ' + JSON.stringify(sample) });
   }
   function expire() {
-    mark('native_expiry', { endpoint: 2 - index, uuid: roster[1 - index],
+    const uuid = roster[1 - index];
+    const sender = uuid.replaceAll('-', ''), recipient = state.uuid.replaceAll('-', '');
+    const envelope = Buffer.alloc(103);
+    Buffer.from('4653523101' + state.session_id + sender + recipient, 'hex').copy(envelope);
+    envelope.writeUInt32LE(46, 53);
+    Buffer.from(state.session_id, 'hex').copy(envelope, 57);
+    envelope.writeUInt32LE(0x000252f5, 73);
+    envelope.writeUInt16LE(1, 77);
+    envelope.writeUInt32LE(4, 81);
+    mark('native_expiry', { endpoint: 2 - index, uuid,
+      frontier: { room: state.session_id, sender, recipient, packets: [{ kind: 4, epoch: 1, seq: '1',
+        envelope: envelope.toString('hex'), stages: { native: { ordinal: 1, at_ms: performance.now() } } }] },
       expiry: { observed_us: 3000000, sdk_queued: 0, sdk_peak: 51, sdk_before_poll: 2,
         service_started_us: 2999900, service_gap_us: 100, service_gap_peak_us: 500, last_accepted: null } });
   }
@@ -2626,6 +2638,7 @@ function makePage() {
       },
       holdObservation: () => ({ ...hold(), control_round_trips: 1, buffered_bytes: 0, traffic: [] }),
       async release() {
+        released = 1;
         Object.assign(state, { frame: 40, confirmed: 40, turns: 21, restores: 3 });
         mark('corrected_frontier', { frames: 40, emitted_ms: now + 1 });
         Object.assign(state, { frame: 41, turns: 22 });
@@ -2767,6 +2780,9 @@ runMain();
                             self.assertNotIn('relayJoinError', report)
                             self.assertEqual(report['relayJoined']['joined'], ['00000000-0000-0000-0000-000000000002'])
                             self.assertEqual(report['postRelease'][1]['native_expiry']['uuid'], '00000000-0000-0000-0000-000000000001')
+                            self.assertEqual([peer.get('checkpoint_error') for peer in report['postRelease']], [None, None])
+                            self.assertEqual([(f"{row['sender']}/{row['recipient']}", row['upstream_scope']) for row in report['relayExpiryRows']],
+                                             [(link, 'focused'), ('/'.join(reversed(link.split('/'))), 'outside-focus')])
                         if control == 'history staggered':
                             self.assertLess(reporter['native_expiry']['controller_order'],
                                             report['postRelease'][1]['history_published']['controller_order'])
