@@ -13,6 +13,8 @@ const MESH_PATH: String = "res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd"
 const START_TIMEOUT_US: int = 30_000_000
 const NATIVE_MESH_GRACE_US: int = 3_000_000
 const MESH_LEAVE_WAIT_US: int = 2_000_000
+# Keep an additional second for signaling delivery after the initiator's full wait.
+const MESH_SURVIVOR_WAIT_US: int = MESH_LEAVE_WAIT_US + 1_000_000
 const MESH_DEPARTURE_SIGNAL: String = "fortress_mesh_departure_v1"
 
 var game_match: Match = Match.new()
@@ -44,7 +46,7 @@ var _connection_revision: int = 0
 var _is_servicing: bool = false
 var _callbacks: Callbacks
 var _departure_generation: String = ""
-var _leave_started_us: int = -1
+var _departure_started_us: int = -1
 var _leave_pending: PackedStringArray = []
 var _quiesced_for: PackedStringArray = []
 var _sending_departure_signal: bool = false
@@ -268,12 +270,14 @@ func _tick(now_us: int, buttons: int) -> void:
 		return
 	_last_now = now_us
 	if state in ["leaving", "quiesced"]:
-		if state == "leaving" and now_us - _leave_started_us >= MESH_LEAVE_WAIT_US:
+		if state == "leaving" and now_us - _departure_started_us >= MESH_LEAVE_WAIT_US:
 			disconnect_room()
 			return
 		client.call("poll")
 		if state == "leaving" and _leave_pending.is_empty():
 			disconnect_room()
+		elif state == "quiesced" and now_us - _departure_started_us >= MESH_SURVIVOR_WAIT_US:
+			_fail("SignalFish did not confirm the player's departure.")
 		return
 	if state == "playing" and not game_match.poll_protocol_time(now_us - _epoch):
 		_fail(game_match.failure)
@@ -395,7 +399,7 @@ func leave(now_us: int) -> void:
 	state = "leaving"
 	message = "Leaving the room…"
 	_departure_generation = generation
-	_leave_started_us = maxi(now_us, _last_now)
+	_departure_started_us = maxi(now_us, _last_now)
 	_leave_pending = game_match.membership.roster()
 	_leave_pending.remove_at(_leave_pending.find(game_match.membership.local_uuid()))
 	if not already_quiesced:
@@ -430,6 +434,7 @@ func _on_mesh_departure_signal(player: String, generation: String, payload: Vari
 				state = "quiesced"
 				message = "A player is leaving. Gameplay has stopped."
 				_departure_generation = generation
+				_departure_started_us = _last_now
 				game_match.detach(true)
 			_quiesced_for.append(player)
 			_send_departure_signal(player, "quiesced")
@@ -466,7 +471,7 @@ func disconnect_room() -> void:
 	all_ready = false
 	game_match.detach()
 	_departure_generation = ""
-	_leave_started_us = -1
+	_departure_started_us = -1
 	_leave_pending.clear()
 	_quiesced_for.clear()
 	_cleanup_pending = false
@@ -542,8 +547,10 @@ func _on_protocol_error(reason: String) -> void:
 
 func _on_server_error(code: int) -> void:
 	# A refused ACK cannot close a quiesced survivor before the original PlayerLeft.
-	if state == "quiesced" and _sdk_error_codes != null and _sdk_error_codes.call("category", code) == "signaling":
-		return
+	if state == "quiesced" and _sdk_error_codes != null:
+		var token: String = _sdk_error_codes.call("to_wire_string", code)
+		if token in ["SIGNAL_RATE_LIMITED", "SIGNAL_TARGET_NOT_FOUND"]:
+			return
 	_on_failure()
 
 

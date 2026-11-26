@@ -73,7 +73,7 @@ class BrowserMesh:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["relay_send_failure", "sdk_failure_deadline", "mesh_departure", "explicit_mesh_leave", "simultaneous_mesh_leave"])
+	return PackedStringArray(["relay_send_failure", "sdk_failure_deadline", "mesh_departure", "explicit_mesh_leave", "simultaneous_mesh_leave", "quiesced_departure_deadline"])
 
 
 func _build(context: RefCounted, start_game: bool = true, local: String = Fixture.U, remote: String = Fixture.V) -> Dictionary:
@@ -106,6 +106,12 @@ func _build(context: RefCounted, start_game: bool = true, local: String = Fixtur
 func run_case(name: String, context: RefCounted) -> void:
 	if name == "sdk_failure_deadline":
 		_clock_failure(context)
+		context.finish()
+		return
+	if name == "quiesced_departure_deadline":
+		for code: int in [0, 1, 2, 3]:
+			_quiesced_departure_deadline(context, code)
+		_quiesced_departure_deadline(context, 0, true)
 		context.finish()
 		return
 	if name == "simultaneous_mesh_leave":
@@ -198,8 +204,8 @@ func _mesh_departure(context: RefCounted, initial_state: String) -> void:
 	context.equal(lobby.state, "offline", "Leave returns to the lobby")
 
 
-static func category(code: int) -> String:
-	return "signaling" if code == 1 else "room"
+static func to_wire_string(code: int) -> String:
+	return ["", "SIGNAL_RATE_LIMITED", "SIGNAL_TARGET_NOT_FOUND", "SIGNAL_TOO_LARGE"][code]
 
 
 func _leave_fixture(context: RefCounted, local: String, remote: String) -> Dictionary:
@@ -242,7 +248,7 @@ func _explicit_mesh_leave(context: RefCounted, unavailable: bool) -> void:
 		remaining.disconnect_room()
 		node.free()
 		return
-	var start: int = leaver.get("_leave_started_us")
+	var start: int = leaver._departure_started_us
 	var deadline: int = start + Lobby.MESH_LEAVE_WAIT_US
 	var prepare: Array = controls[0]
 	context.equal(prepare[0], Fixture.V, "prepare uses the remote UUID")
@@ -264,9 +270,6 @@ func _explicit_mesh_leave(context: RefCounted, unavailable: bool) -> void:
 		context.equal(survivor.mesh.detach_calls, [], "prepare retains survivor links for real SDK removal")
 		context.equal(remaining_client.close_reasons, [], "prepare retains survivor signaling")
 		context.equal(remaining_client.control_outbox.size(), 1, "survivor acknowledges the validated prepare")
-		remaining_client.server_error.emit("Signal rate limited", 1)
-		context.equal(remaining.state, "quiesced", "a signaling refusal leaves the mesh ready for the SDK PlayerLeft")
-		context.equal(remaining_client.close_reasons, [], "a refused acknowledgment cannot cascade socket closure")
 		if remaining_client.control_outbox.size() == 1:
 			var reply: Array = remaining_client.control_outbox[0]
 			leaving_client.control_inbox.append([Fixture.V, reply[1], reply[2]])
@@ -282,6 +285,49 @@ func _explicit_mesh_leave(context: RefCounted, unavailable: bool) -> void:
 	context.equal(close_reasons.size(), 1, "late service cannot close the disposed socket again")
 	remaining.disconnect_room()
 	node.free()
+
+
+func _quiesced_departure_deadline(context: RefCounted, code: int, timely_departure: bool = false) -> void:
+	var fixture: Dictionary = _leave_fixture(context, Fixture.V, Fixture.U)
+	var lobby: Lobby = fixture.lobby
+	var client: Client = fixture.client
+	var mesh: BrowserMesh = fixture.mesh
+	var started: int = 100
+	var cutoff: int = started + 3_000_000
+	var prepare: Array = [Fixture.U, lobby.game_match.adapter.status().generation, {Lobby.MESH_DEPARTURE_SIGNAL: "prepare"}]
+	client.control_inbox.append(prepare)
+	lobby.tick(started, 0)
+	context.equal(lobby.state, "quiesced", "prepare waits for the SDK departure")
+	context.equal(client.control_outbox.size(), 1, "survivor submits its acknowledgment")
+	if code > 0:
+		client.server_error.emit("SignalFish signal refused", code)
+	if timely_departure:
+		client.departing_player = Fixture.U
+		lobby.tick(cutoff, 0)
+		context.equal(lobby.state, "failed", "queued PlayerLeft wins at the cutoff and completes the normal survivor stop")
+		context.equal(mesh.detach_calls, [], "timely SDK departure retains remaining links beyond the cutoff")
+		context.equal(client.close_reasons, [], "timely SDK departure retains signaling until explicit Leave")
+		lobby.disconnect_room()
+		return
+	if code == 3:
+		context.equal(lobby.state, "failed", "an unrelated signaling error immediately fails the room")
+	else:
+		client.control_inbox.append(prepare)
+		lobby.tick(cutoff - 1, 0)
+		context.equal(lobby.state, "quiesced", "acknowledgment success or ordinary refusal waits for real departure until cutoff")
+		context.equal(client.close_reasons, [], "survivor keeps signaling attached through the delivery allowance")
+		context.equal(client.control_outbox.size(), 1, "duplicate prepare does not repeat acknowledgment")
+		lobby.tick(cutoff, 0)
+		context.equal(lobby.state, "failed", "missing PlayerLeft fails and releases the survivor at the exact cutoff")
+		var timeout_cause: String = lobby.message
+		context.equal(timeout_cause.begins_with("SignalFish did not confirm"), true, "failure identifies the absent confirmation")
+		client.departing_player = Fixture.U
+		lobby.tick(cutoff + 1, 0)
+		context.equal(client.departing_player, "", "failed socket service consumes the late event")
+		context.equal(lobby.message, timeout_cause, "late PlayerLeft cannot change the timeout cause")
+	context.equal(mesh.detach_calls, [true], "terminal survivor releases the SDK mesh once")
+	context.equal(client.close_reasons, ["Online example failed"], "terminal survivor closes its SDK socket once")
+	lobby.disconnect_room()
 
 
 func _simultaneous_mesh_leave(context: RefCounted, first: int) -> void:
