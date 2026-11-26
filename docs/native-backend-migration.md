@@ -81,10 +81,11 @@ signal, the peer factory's `remove_peer` entry and whether the peer was still
 registered. The receipt joins these observations to the exact reciprocal route.
 Nonce-matched same-origin HTTPS exchanges bracket each page clock with
 controller receipt and response timestamps. The receipt keeps the HTTPS and
-debugger samples so an ambiguous interval can be reproduced. Acceptance for a
-tagged send requires a fresh SCTP abort or completed connection close followed
-by the send, with at least 2 ms between the latest possible close and earliest
-possible send.
+debugger samples so an ambiguous interval can be reproduced. For an ordinary
+departure, a fresh SCTP abort on the tagged sending channel qualifies when
+its reciprocal connection has closed. The clock-order proof requires at least
+2 ms between the latest possible connection close and the earliest possible
+send.
 
 To isolate a hosted browser failure on both Godot pins, select the room in the
 manual workflow dispatch.
