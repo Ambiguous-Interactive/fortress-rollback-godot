@@ -1553,7 +1553,8 @@ function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, fir
 
 function assertReleaseDelay(timings, kind) {
   for (const [index, receipt] of timings.entries()) {
-    assert.ok(releaseDeliveryTiming(receipt).write_to_response_end_ms, `native peer ${index} lacks release delivery timing`);
+    const timing = releaseDeliveryTiming(receipt);
+    assert.ok(timing.handoff_to_response_end_ms, `native peer ${index} lacks release delivery timing`);
     const { continuation } = receipt;
     const elapsed = kind === 'delivery'
       ? (receipt.handoff_ms ?? NaN) - receipt.first_write_ms

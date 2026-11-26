@@ -1367,6 +1367,7 @@ for (const outcome of ['delivered', 'cancelled', 'expired']) {
     resource: { fetch_start_ms: 550, response_end_ms: 1250, response_status: 204, controller_ms: 3600 } };
   assert.throws(() => assertReleaseDelay([receipt], 'delivery'), /lacks the delivery delay/);
   assertReleaseDelay([{ ...receipt, handoff_ms: 3151 }], 'delivery');
+  assert.throws(() => assertReleaseDelay([{ ...receipt, handoff_ms: 3160 }], 'delivery'), /lacks release delivery timing/);
   assert.throws(() => assertReleaseDelay([receipt], 'continuation'), /lacks the continuation delay/);
   const continuation = { status: 204, controller_ms: 3900, fetch_resolved_ms: 1252, continued_ms: 1702 };
   assertReleaseDelay([{ ...receipt, continuation }], 'continuation');
