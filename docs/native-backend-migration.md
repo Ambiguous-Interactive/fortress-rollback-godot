@@ -136,9 +136,14 @@ duration.
 
 Use the same-link pressure control with a local traced server build receipt.
 The control drops addressed packets after raw arrival for one link while
-the sender sends 129 inputs and 129 quality reports. It joins the earlier
-accepted packets across all stages, verifies the drop boundary and resumes the
-link before the normal correction, confirmed-history and departure checks.
+the sender sends 520 inputs and 520 quality reports. It freezes the original
+acceptance marks at gate resume, joins them across all stages, and verifies
+each injected packet stops at raw arrival. Then it runs the normal correction,
+confirmed-history and departure checks. Focused receipts keep up to 1,024
+browser sends, raw arrivals, server ingresses and addressed writes per directed
+link and packet family for inputs and quality traffic. The ordinary receipt still
+publishes the latest 128 per link and family. Evidence beyond the archive can
+remain missing even when a receiver kept its acceptance mark.
 
 ```sh
 python3 scripts/reference/native_online_probe.py --version "$GODOT_PIN" --cell relay:8 \

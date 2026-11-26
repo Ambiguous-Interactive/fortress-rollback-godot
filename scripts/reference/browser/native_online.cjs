@@ -1046,8 +1046,10 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       const { sender, id, deadline_ms, inputs, reports } = blockedRelay;
       if (stamps && performance.now() < deadline_ms && !relayWireTrace.hasBlockedRelayStamps(sender, id, stamps)) return null;
       const resumed_ms = performance.now();
+      // The SDK may finish work queued before the gate opened. Freeze the last acceptance before allowing a new raw packet through.
+      const frontier = stamps && resumed_ms < deadline_ms ? relayWireTrace.expiryFrontier(sender) : undefined;
       blockedRelay = null;
-      return { delivery_gate: id, resumed_ms, deadline_ms, inputs, reports };
+      return { delivery_gate: id, resumed_ms, deadline_ms, inputs, reports, frontier };
     },
     pressureRelayLink(recipient) {
       const socket = resources.sockets[0];
