@@ -524,14 +524,17 @@ const server = { room, roster, streams: { ingress: stage([ingress]), write: stag
 const sourcePage = { room, local: source, sockets: 1, streams: { raw: stage(), sdk: stage(), native: stage(),
   send: stage([{ ...ingress, ordinal: 30 }]) } };
 const joined = joinRelayReceipts(server, [sourcePage, { error: 'final read timed out' }], expiry);
-const [inputRow, reportRow] = relayExpiryRows(expiry, joined);
+const [inputRow, reportRow] = relayExpiryRows(expiry, joined, [source + '/' + local]);
 assert.deepEqual(inputRow.missing, []);
+assert.equal(inputRow.upstream_scope, 'focused');
 assert.deepEqual(reportRow.missing, ['send', 'ingress', 'write']);
-const withoutServer = relayExpiryRows(expiry, null);
+const withoutServer = relayExpiryRows(expiry, null, []);
 assert.deepEqual(withoutServer.map(row => row.missing), [['send', 'ingress', 'write'], ['send', 'ingress', 'write']]);
+assert.equal(withoutServer[0].upstream_scope, 'room');
+assert.equal(relayExpiryRows(expiry, null, [other + '/' + local])[0].upstream_scope, 'outside-focus');
 const afterRead = structuredClone(expiry);
 afterRead[0].frontier.packets[0].stages.raw = null;
-assert.deepEqual(relayExpiryRows(afterRead, joined)[0].missing, ['raw'], 'later page data cannot fill a missing pre-acceptance stage');
+assert.deepEqual(relayExpiryRows(afterRead, joined, [source + '/' + local])[0].missing, ['raw'], 'later page data cannot fill a missing pre-acceptance stage');
 assert.equal(trace.expiryFrontier(other).packets.find(packet => packet.kind === 2), undefined);
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs'),

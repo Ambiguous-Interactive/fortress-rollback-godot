@@ -314,14 +314,16 @@ function validateRelayExpiryFrontier(frontier, uuid, local, at_ms) {
   }) };
 }
 
-function relayExpiryRows(expiries, joined) {
+function relayExpiryRows(expiries, joined, selectedLinks) {
   const byStamp = new Map((joined?.rows ?? []).map(row => [stampKey(row), row]));
   return expiries.flatMap(({ frontier }) => (frontier?.packets ?? []).map(({ stages, ...packet }) => {
+    const link = `${packet.sender}/${packet.recipient}`;
+    const upstream_scope = !selectedLinks.length ? 'room' : selectedLinks.includes(link) ? 'focused' : 'outside-focus';
     const candidate = byStamp.get(stampKey(packet));
     const row = candidate && sameEnvelope(packet, candidate) ? candidate : null;
     const missing = ['send', 'ingress', 'write'].filter(stage => stage === 'send' ? row?.send == null : !row?.[stage].length);
     for (const stage of ['raw', 'sdk']) if (!stages[stage]) missing.push(stage);
-    return { ...packet, missing };
+    return { ...packet, upstream_scope, missing };
   }));
 }
 
