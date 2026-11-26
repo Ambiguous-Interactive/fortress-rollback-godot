@@ -1260,7 +1260,8 @@ async function run() {
   const origin = 'http://127.0.0.1:' + server.address().port;
   const path = index => origin + signal.paths[index];
   assert.deepEqual(signal.timings(), signal.paths.map(path => ({
-    path, request_dispatched_ms: null, request_received_ms: null, first_write_ms: null, finished_ms: null, continuation: null, resource: null,
+    path, request_dispatched_ms: null, request_received_ms: null, first_write_ms: null, handoff_ms: null, finished_ms: null,
+    continuation: null, resource: null,
   })));
   let evaluations = 0, releases = 0;
   global.window = { fortressNative: { state: 'playing' }, fortressNativeWire: {
@@ -1284,7 +1285,7 @@ async function run() {
   assert.deepEqual(receipts.map(receipt => receipt.index), [0, 1]);
   assert.equal(evaluations, 2);
   const receipt = signal.timings()[0];
-  assert.ok(receipt.request_received_ms <= receipt.first_write_ms && receipt.first_write_ms <= receipt.finished_ms);
+  assert.ok(receipt.request_received_ms <= receipt.first_write_ms && receipt.first_write_ms <= receipt.handoff_ms && receipt.handoff_ms <= receipt.finished_ms);
   assert.equal(receipt.continuation, null);
   assert.equal(receipt.resource, null);
   const entered = { path: signal.paths[0], requested_ms: 10, continued_ms: 510, status: 204 };
@@ -1294,7 +1295,8 @@ async function run() {
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(resource), 700), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify(entered), 701), true);
   assert.equal(recordReleaseTiming(receipt, JSON.stringify({ ...entered, continued_ms: 615 }), 800), false);
-  assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: null, response_end_ms: 25, response_status: null, controller_ms: 700 });
+  assert.deepEqual(receipt.resource, { fetch_start_ms: 10, request_start_ms: null, response_start_ms: null, response_end_ms: 25,
+    response_status: null, controller_ms: 700 });
   assert.deepEqual(receipt.continuation, { requested_ms: 10, continued_ms: 510, status: 204, controller_ms: 701 });
   assert.equal(releases, 2);
   assert.equal((await fetch(path(0))).status, 409);
@@ -1347,25 +1349,27 @@ for (const outcome of ['delivered', 'cancelled', 'expired']) {
   assert.equal(host.handle({ url: host.paths[0], method: 'GET' }, response), true);
   host.release(now + (outcome === 'expired' ? 449 : 500));
   const [receipt] = host.timings();
+  assert.equal(receipt.handoff_ms, null);
   assert.equal(receipt.finished_ms, null);
   if (outcome === 'cancelled') host.cancel();
   else advance();
   assert.equal(timer, undefined);
   assert.equal(response.destroyed, outcome === 'delivered' ? undefined : true);
+  assert.equal(receipt.handoff_ms, outcome === 'delivered' ? receipt.first_write_ms + 450 : null);
   assert.equal(receipt.finished_ms, outcome === 'delivered' ? receipt.first_write_ms + 450 : null);
 }
 
 (async () => {
-  const receipt = { request_dispatched_ms: 2000, request_received_ms: 2700, first_write_ms: 2701, finished_ms: 2702,
+  const receipt = { request_dispatched_ms: 2000, request_received_ms: 2700, first_write_ms: 2701, handoff_ms: 2702, finished_ms: 3151,
     resource: { fetch_start_ms: 550, response_end_ms: 1250, response_status: 204, controller_ms: 3600 } };
   assert.throws(() => assertReleaseDelay([receipt], 'delivery'), /lacks the delivery delay/);
-  assertReleaseDelay([{ ...receipt, finished_ms: 3151 }], 'delivery');
+  assertReleaseDelay([{ ...receipt, handoff_ms: 3151 }], 'delivery');
   assert.throws(() => assertReleaseDelay([receipt], 'continuation'), /lacks the continuation delay/);
   const continuation = { status: 204, controller_ms: 3900, fetch_resolved_ms: 1252, continued_ms: 1702 };
   assertReleaseDelay([{ ...receipt, continuation }], 'continuation');
   assert.throws(() => assertReleaseDelay([{ ...receipt, continuation: { ...continuation, status: 500 } }], 'continuation'),
     /lacks release delivery timing/);
-  assert.throws(() => assertReleaseDelay([{ ...receipt, resource: null, finished_ms: 3151 }], 'delivery'), /lacks release delivery timing/);
+  assert.throws(() => assertReleaseDelay([{ ...receipt, resource: null, handoff_ms: 3151 }], 'delivery'), /lacks release delivery timing/);
   console.debug = () => {};
   const page = { evaluate(callback, argument) { return callback(argument); } };
   for (const budget of ['1000000', '400000']) {
@@ -1382,6 +1386,32 @@ for (const outcome of ['delivered', 'cancelled', 'expired']) {
     }
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
+    def test_native_relay_release_uses_network_landmarks_to_bound_handoff(self):
+        # Value: protects=causal release bounds; fails_when=fetch dispatch jitter hides host handoff or a contradictory landmark supplies a bound
+        script = r"""
+const assert = require('node:assert/strict');
+const { releaseDeliveryTiming } = require(process.argv[1]);
+const receipt = { request_dispatched_ms: 2000, request_received_ms: 2700, first_write_ms: 2701, handoff_ms: 3151, finished_ms: 3152,
+  resource: { fetch_start_ms: 550, request_start_ms: 1200, response_start_ms: 1660, response_end_ms: 1670, response_status: 204, controller_ms: 3200 } };
+const cap = { page_ms: 1650 };
+assert.deepEqual(releaseDeliveryTiming(receipt, cap), {
+  offset_ms: { min: 1489, max: 1502 }, write_to_response_end_ms: { min: 456, max: 473 },
+  handoff_to_response_end_ms: { min: 6, max: 23 }, hold_cap_to_response_end_ms: 20,
+});
+const absent = { ...receipt, resource: { ...receipt.resource, request_start_ms: null, response_start_ms: null } };
+assert.deepEqual(releaseDeliveryTiming(absent, cap), {
+  offset_ms: { min: 1479, max: 2152 }, write_to_response_end_ms: { min: 450, max: 499 },
+  handoff_to_response_end_ms: { min: 0, max: 49 }, hold_cap_to_response_end_ms: 20,
+});
+const contradictory = { ...receipt, resource: { ...receipt.resource, request_start_ms: 1600 } };
+assert.equal(releaseDeliveryTiming(contradictory, cap).offset_ms, null);
+assert.equal(releaseDeliveryTiming(contradictory, cap).handoff_to_response_end_ms, null);
+assert.equal(releaseDeliveryTiming(contradictory, cap).hold_cap_to_response_end_ms, 20);
+assert.equal(releaseDeliveryTiming({ ...receipt, handoff_ms: 3199 }).handoff_to_response_end_ms, null);
+assert.equal(releaseDeliveryTiming({ ...receipt, resource: { ...receipt.resource, response_status: 500 } }, cap).hold_cap_to_response_end_ms, null);
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
@@ -1420,7 +1450,7 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
   global.fetch = () => new Promise(resolve => { resume = resolve; });
   const released = captureAndReleaseInput(page, 0, path, prefix);
   const resource = { name: new URL(path, location.href).href, initiatorType: 'fetch',
-    fetchStart: 10, responseStart: 9, responseEnd: 22 + responseDelay, responseStatus: status };
+    fetchStart: 10, requestStart: 11, responseStart: 9, responseEnd: 22 + responseDelay, responseStatus: status };
   if (!unavailable) {
     observe([{ ...resource, name: resource.name + '?other' }, { ...resource, initiatorType: 'xmlhttprequest' }]);
     assert.equal(disconnected, false);
@@ -1445,12 +1475,15 @@ async function run(responseDelay, continuationDelay, { unavailable = false, stat
       observe([{ ...resource, responseStart: 0 }]);
     }
     assert.equal(disconnected, true);
-    assert.deepEqual(receipt.resource, { fetch_start_ms: 10, response_start_ms: continuationDelay ? 9 : null, response_end_ms: 22 + responseDelay,
+    assert.deepEqual(receipt.resource, { fetch_start_ms: 10, request_start_ms: 11,
+      response_start_ms: continuationDelay ? 9 : null, response_end_ms: 22 + responseDelay,
       response_status: status, controller_ms: received + (continuationDelay ? 1 : 2) });
     assert.equal(receipt.continuation.continued_ms - receipt.resource.response_end_ms, continuationDelay);
     assert.deepEqual(releaseDeliveryTiming(receipt), {
-      offset_ms: { min: 2988, max: 2996 },
-      write_to_response_end_ms: status === 204 ? { min: Math.max(0, responseDelay - 2), max: responseDelay + 10 } : null,
+      offset_ms: { min: 2988, max: 2995 },
+      write_to_response_end_ms: status === 204 ? { min: Math.max(0, responseDelay - 2), max: responseDelay + 9 } : null,
+      handoff_to_response_end_ms: null,
+      hold_cap_to_response_end_ms: null,
     });
     const resourceOnly = { ...receipt, continuation: null };
     assert.deepEqual(releaseDeliveryTiming(resourceOnly), releaseDeliveryTiming(receipt));
