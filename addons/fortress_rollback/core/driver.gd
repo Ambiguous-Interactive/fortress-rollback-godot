@@ -43,7 +43,7 @@ class StepResult:
 	var reason: int = Types.Code.OK
 	## Frame the session failed at; -1 while the session runs.
 	var failure_frame: int = -1
-	## Failed ordered callback (Types.Kind), or -1 when no callback failed.
+	## Ordered request that failed or could not start (Types.Kind), or -1 when unavailable.
 	var failure_kind: int = -1
 	var events: Array[RefCounted] = []
 

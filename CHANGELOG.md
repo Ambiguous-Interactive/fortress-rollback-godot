@@ -34,6 +34,8 @@
 
 ### Fixed
 
+- Fix missing frame and request details when a rollback snapshot is unavailable.
+
 - Fix native WebRTC Leave so the match stops sending gameplay before closing peer connections. [Online example](docs/online-example.md#leave-and-restart)
 
 - Fix late packets from a departed peer interrupting an in-progress coordinated drop.
