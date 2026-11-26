@@ -2289,12 +2289,13 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     });
     const relayWire = relayWireFailure && (await relayWireFailure).map(({ status, value, reason }) =>
       status === 'fulfilled' ? value ?? null : { error: String(reason) });
+    const [serverReceipt] = relayServerFailure ? await relayServerFailure : [];
+    const holdReceipt = relayHold && await relayHoldReceipt();
     const expiries = postRelease?.flatMap(peer => peer.native_expiry ? [peer.native_expiry] : []) ?? [];
     let relayJoined;
     let relayJoinError;
-    if (relayServerFailure) {
+    if (serverReceipt) {
       try {
-        const [serverReceipt] = await relayServerFailure;
         if (serverReceipt.status === 'rejected') throw serverReceipt.reason;
         relayJoined = joinRelayReceipts(serverReceipt.value, relayWire, expiries);
       } catch (joinError) {
@@ -2315,7 +2316,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
       relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined) : undefined,
-      relayHold: relayHold && await relayHoldReceipt(),
+      relayHold: holdReceipt,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
     }));
