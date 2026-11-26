@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify exported Godot rollback gameplay through real Chromium and Firefox WebRTC meshes."""
+from contextlib import ExitStack
 import hashlib
 import json
 import math
@@ -8,7 +9,6 @@ from pathlib import Path
 import platform
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -16,6 +16,7 @@ import threading
 import time
 import zipfile
 
+from browser.local_stun import local_port, local_stun
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_drop import validate_drop_browser
 from browser.webrtc_drop_overlap import check_overlap_order_controls, validate_drop_overlap
@@ -375,6 +376,12 @@ def main():
     if args.online_example and args.label:
         parser.error('--label applies to the transport witness')
     labels = [label for label in LABELS if label in (args.label or LABELS)]
+    stun_tool = None
+    if args.browser_pair == 'chromium-firefox':
+        stun = os.environ.get('FORTRESS_STUN_EXECUTABLE') or shutil.which('turnserver')
+        if not stun:
+            parser.error('install Coturn or set FORTRESS_STUN_EXECUTABLE to its turnserver binary')
+        stun_tool = Path(stun)
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / ('online-example.json' if args.online_example else 'signalfish-webrtc.json')
     receipt.write_text('{"passed": false, "failure": "in_progress"}\n')
@@ -394,7 +401,7 @@ def main():
     if not args.online_example and not host_capacity.acquire_when_free(HOST_LEASE_NAME, HOST_WAIT_SECONDS):
         raise ValueError('the development host stayed busy; the browser witness needs a responsive host')
 
-    owned_logs = ['server.log', 'tls-certificate.log', 'instrument-controls.log'] + [f'{version}-{suffix}.log' for version in versions
+    owned_logs = ['server.log', 'stun.log', 'tls-certificate.log', 'instrument-controls.log'] + [f'{version}-{suffix}.log' for version in versions
         for suffix in ('version', 'import', 'clock-test', 'export', 'clean', 'faults', 'corrupt', 'clean-events',
                        'faults-events', 'corrupt-events', 'default', 'default-events', 'mixed', 'mixed-events',
                        'recording-pressure', 'recording-pressure-events', 'mixed-default', 'mixed-default-events', 'mixed-disabled',
@@ -446,6 +453,9 @@ def main():
                'display_test': ROOT / 'scripts/reference/browser/webrtc_display.test.cjs',
                'watchdog_test': ROOT / 'scripts/reference/browser/webrtc_watchdog.test.cjs', 'node': Path(shutil.which('node')),
                'browser_lock': ROOT / 'scripts/reference/browser/package-lock.json', 'openssl': Path(shutil.which('openssl'))}
+    sources['local_stun'] = ROOT / 'scripts/reference/browser/local_stun.py'
+    if stun_tool is not None:
+        sources['stun'] = stun_tool
     if args.online_example:
         sources.update(online_example=ROOT / 'examples/online', offline_example=ROOT / 'examples/offline',
                        integration_game=ROOT / 'examples/integration/game.gd', integration_game_uid=ROOT / 'examples/integration/game.gd.uid',
@@ -532,7 +542,7 @@ def main():
     run([str(sources['node']), '--test', str(sources['instrument_test']), str(sources['watchdog_test']), str(sources['display_test'])],
         environment, args.output / 'instrument-controls.log')
     records, executed_records = [], []
-    with tempfile.TemporaryDirectory(prefix='fortress-real-webrtc-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='fortress-real-webrtc-') as temporary, ExitStack() as network:
         root = Path(temporary)
         certificate, tls_private_key = root / 'localhost.crt', root / 'localhost.key'
         run([str(sources['openssl']), 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
@@ -544,15 +554,16 @@ def main():
         if source_inventory(server_source) != server_before:
             raise ValueError('server source differs from pinned archive')
         config = json.loads((server_source / 'config.example.json').read_text())
-        with socket.socket() as selection:
-            selection.bind(('127.0.0.1', 0))
-            port = selection.getsockname()[1]
+        port = local_port()
         if args.online_example:
             from online_install import server_config
             config = server_config(server_source, port)
         config['port'] = port
         config['session'].update(default_topology='mesh', enable_webrtc=True, enable_direct=False, enable_ice_pregather=False, ice_servers=[])
         config['turn'].update(enabled=False, urls=[], stun_urls=[])
+        if stun_tool is not None:
+            endpoint = network.enter_context(local_stun(stun_tool, root, args.output / 'stun.log'))
+            config['session']['ice_servers'] = [{'urls': [endpoint]}]
         if not args.online_example:
             config['security']['allowed_apps'][0].update(app_id='fortress-live-webrtc', app_name='Local WebRTC rollback witness',
                                                         max_players_per_room=8, rate_limit_per_minute=100000)
@@ -682,7 +693,8 @@ def main():
               'template_artifacts': template_artifacts, 'server_source_inventory': server_before, 'executed': executed_records,
               'server_config': config, 'server_events': server_events, 'records': records,
               'log_sha256': {name: digest(args.output / name) for name in owned_logs if (args.output / name).exists()},
-              'limits': 'Real release Web exports in two independent selected pinned browser processes over local host ICE. '
+              'limits': 'Real release Web exports in two independent selected pinned browser processes. '
+                        'The Chromium–Firefox pair also uses a local STUN-only listener. '
                         'Ordinary labels use 2/4/8 peers, 40 submitted frames and 38 corrected canonical prefixes per peer. '
                         'Recording-pressure uses two peers and 257 original frames across queue reuse with repeated synthetic direct/socket buffer refusal, '
                         'post-wrap exact-byte relay retries, real addressed server receipts and decoded original final-state recordings. '
