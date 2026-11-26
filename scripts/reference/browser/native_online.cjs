@@ -1,3 +1,4 @@
+const { createDepartureClock } = require('./native_departure_clock.cjs');
 const { assertRecoveredRoom, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace } = require('./native_relay_trace.cjs');
 const { createRelayHold, RELAY_HOLD_CAP, RELAY_HOLD_PREFIX, RELAY_HOLD_WINDOW_MS } = require('./native_relay_hold.cjs');
@@ -23,6 +24,8 @@ const CANONICAL_SNAPSHOT = /^(?:[0-9a-f]{2})+$/;
 const FROZEN_UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const CLOSE_CLOCK_PRE_SAMPLES = 3;
 const CLOSE_CLOCK_POST_SAMPLES = 4;
+const CLOSE_HTTPS_PRE_SAMPLES = 2;
+const CLOSE_HTTPS_SAMPLE_MS = 500;
 const WEBKIT_CLOSED_STREAM = 'Error sending binary data through RTCDataChannel.';
 const CLOSE_CHECKPOINT = 'fortress native close ';
 const CLOSE_STAGES = ['channel_close_called', 'channel_close_event', 'connection_close_called'];
@@ -1189,7 +1192,20 @@ function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, c
   return evidence;
 }
 
-async function calibrateDepartureClocks(pages, report, clock = () => performance.now(), timeout = PAGE_WAIT_MS) {
+async function sampleDepartureHttps(pages, report, stage, httpsClock, deadline, clock) {
+  const timeout = Math.min(CLOSE_HTTPS_SAMPLE_MS, Math.floor(deadline - clock()));
+  if (timeout <= 0) return;
+  report.httpsClockSamples ??= pages.map(() => ({ before: [], after: [] }));
+  await Promise.all(pages.map(async (page, index) => {
+    const sample = await httpsClock.sample(page, timeout);
+    report.httpsClockSamples[index][stage].push(sample);
+    if (!sample.bound || clock() >= deadline || !report.clocks[index]) return;
+    report.clocks[index] = intersectClock(report.clocks[index], sample.bound);
+    if (!report.clocks[index]) sample.error = 'HTTPS and debugger clock bounds disagree';
+  }));
+}
+
+async function calibrateDepartureClocks(pages, report, clock = () => performance.now(), timeout = PAGE_WAIT_MS, httpsClock) {
   const clockSamples = pages.map(() => ({ before: [], after: [] }));
   report.clockSamples = clockSamples;
   const deadline = clock() + timeout;
@@ -1213,9 +1229,12 @@ async function calibrateDepartureClocks(pages, report, clock = () => performance
     throw new AggregateError(failed.map(({ index, reason }) => new Error(`native peer ${index} departure clock failed`, { cause: reason })),
       'WebKit departure clock calibration failed');
   }
+  if (httpsClock) {
+    for (let i = 0; i < CLOSE_HTTPS_PRE_SAMPLES; i++) await sampleDepartureHttps(pages, report, 'before', httpsClock, deadline, clock);
+  }
 }
 
-async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks = report.clocks, clock = () => performance.now(), delay = pause } = {}) {
+async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks = report.clocks, clock = () => performance.now(), delay = pause, httpsClock } = {}) {
   if (!errors.length) return undefined;
   report.proofs = [];
   report.clocks = clocks?.slice();
@@ -1225,6 +1244,7 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
   const completeProofs = new Map();
   report.partialSnapshots = latestSnapshots;
   let rounds = 0;
+  let sampledHttps = false;
   const deadline = clock() + DIAGNOSTIC_MS;
   while (clock() < deadline) {
     const roundErrors = errors.slice();
@@ -1254,12 +1274,13 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
     });
     const complete = !failed.length && clock() < deadline;
     const links = latestSnapshots.map(snapshot => snapshot?.links ?? []);
-    report.proofs = roundErrors.map(error => {
+    const proveRound = () => roundErrors.map(error => {
       const sends = complete ? latestSnapshots[error.index].sends : observedSends[error.index];
       const evidence = closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks, sends?.[error.attempt]);
       if (!complete) evidence.proof = null;
       return evidence;
     });
+    report.proofs = proveRound();
     report.snapshotErrors = failed.map(({ index, reason }) => ({ index, reason: String(reason) }));
     if (failed.length) {
       report.lastCompleteProofs = [...completeProofs.values()];
@@ -1267,6 +1288,12 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
         'WebKit close snapshots failed');
     }
     if (!complete) break;
+    if (httpsClock && !sampledHttps && report.proofs.some(evidence => !evidence.proof)) {
+      sampledHttps = true;
+      await sampleDepartureHttps(pages, report, 'after', httpsClock, deadline, clock);
+      if (clock() >= deadline) break;
+      report.proofs = proveRound();
+    }
     for (const evidence of report.proofs) {
       const { index, channel, attempt, proof } = evidence;
       assert.ok(evidence.before, `WebKit send failure for peer ${index} lacked a sending channel`);
@@ -1685,7 +1712,10 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const releaseSignal = route === 'relay' ? createReleaseSignal(players, releaseDelay === 'delivery' ? RELEASE_DELAY_MS : 0) : undefined;
   const releaseTiming = releaseSignal?.timings();
   const playwright = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
-  const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY, 0, releaseSignal?.handle);
+  const webkitMesh = route === 'mesh' && browserPair.includes('webkit');
+  const departureClock = webkitMesh && !liveClose ? createDepartureClock() : null;
+  const { server, proxyPairs } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY, 0,
+    departureClock?.handle ?? releaseSignal?.handle);
   const origin = `https://127.0.0.1:${server.address().port}`;
   const socketEndpoint = `wss://127.0.0.1:${server.address().port}/v3/ws`;
   const pages = [];
@@ -1729,7 +1759,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const engineTurns = [];
   const physicalCloseReport = {};
   const closeReport = {};
-  const closeObservations = route === 'mesh' && browserPair.includes('webkit') ? Array.from({ length: players }, () => new Map()) : null;
+  const closeObservations = webkitMesh ? Array.from({ length: players }, () => new Map()) : null;
   let direct, peers;
   const closeReceipts = () => closeObservations ? {
     closeObservations: closeObservations.map(events => [...events.values()]),
@@ -2050,9 +2080,9 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         assert.equal(peer.wire.held.relay > 0, peer.index < 2, 'relay gameplay for the closed pair must also be held');
       }
     } else {
-      if (route === 'mesh' && browserPair.includes('webkit')) {
+      if (departureClock) {
         phase = 'departure clock calibration';
-        await calibrateDepartureClocks(pages, closeReport);
+        await calibrateDepartureClocks(pages, closeReport, undefined, undefined, departureClock);
       }
       phase = 'departure';
       await leave(pages.at(-1), players - 1);
@@ -2083,7 +2113,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         assert.equal(peer[key], before[key], `terminal ${key} changed for survivor ${index}`);
     }
     phase = 'teardown';
-    if (!liveClose) closeLinks = await waitForCloseProofs(pages, peers, departureErrors, closeReport) ?? closeLinks;
+    if (!liveClose) closeLinks = await waitForCloseProofs(pages, peers, departureErrors, closeReport, { httpsClock: departureClock }) ?? closeLinks;
     if (liveClose) await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.releaseTerminal())));
     const teardown = await Promise.allSettled(survivors.map(leave));
     const leaveErrors = teardown.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
@@ -2121,7 +2151,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
-      departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples, ...closeReceipts(),
+      departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples, departureHttpsClockSamples: closeReport.httpsClockSamples, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier() };
@@ -2164,7 +2194,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       departureClocks: closeReport.clocks, departureCommands, roomIdentities, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       lastCompleteCloseProofs: [...(physicalCloseReport.lastCompleteProofs ?? []), ...(closeReport.lastCompleteProofs ?? [])],
-      departureClockSamples: closeReport.clockSamples, departureClockErrors: closeReport.calibrationErrors,
+      departureClockSamples: closeReport.clockSamples, departureHttpsClockSamples: closeReport.httpsClockSamples,
+      departureClockErrors: closeReport.calibrationErrors,
       physicalClosePartialSnapshots: physicalCloseReport.partialSnapshots,
       closePartialSnapshots: closeReport.partialSnapshots, physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,

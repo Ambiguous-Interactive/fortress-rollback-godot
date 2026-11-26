@@ -339,7 +339,7 @@ def main():
              'watchdog': BROWSER / 'webrtc_watchdog.cjs', 'recovery': BROWSER / 'native_recovery.cjs',
              'bridge': BROWSER / 'native_online_bridge.gd', 'sdk': sdk / 'addons/signal_fish', 'relay_wire_trace': BROWSER / 'native_relay_trace.cjs',
              'relay_stage': BROWSER / 'native_relay_stage.py', 'relay_control': BROWSER / 'native_relay_control.cjs',
-             'relay_hold': BROWSER / 'native_relay_hold.cjs',
+             'relay_hold': BROWSER / 'native_relay_hold.cjs', 'departure_clock': BROWSER / 'native_departure_clock.cjs',
              'runtime': ROOT / 'addons/fortress_rollback', 'example': ROOT / 'examples'}
     if stun_tool is not None:
         files['stun'] = stun_tool
