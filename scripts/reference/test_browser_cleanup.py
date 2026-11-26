@@ -2793,10 +2793,14 @@ assert.equal(receipts[latest.tag + 1] ?? null, null, 'an unobserved attempt has 
         script = r"""
 const assert = require('node:assert/strict');
 const { runInNewContext } = require('node:vm');
-const { instrumentNativeWire, matchCloseObservations } = require(process.argv[1]);
+const { closeEvidence, frozenMeshSendRoutes, instrumentNativeWire, matchCloseObservations } = require(process.argv[1]);
 const window = { crossOriginIsolated: true };
 let now = 10;
 class Connection {
+  constructor(local, remote) {
+    this.localDescription = { sdp: `a=ice-ufrag:${local}` };
+    this.remoteDescription = { sdp: `a=ice-ufrag:${remote}` };
+  }
   close() {}
   addEventListener() {}
   createDataChannel() {
@@ -2808,7 +2812,9 @@ runInNewContext(`(${instrumentNativeWire})(true, '', undefined, 'close ')`, {
   performance: { now: () => now },
 });
 const wire = window.fortressNativeWire;
-const channel = new Connection().createDataChannel('gameplay', {});
+const connection = new Connection('a', 'b');
+const channel = connection.createDataChannel('gameplay', {});
+const wrongChannel = new Connection('c', 'd').createDataChannel('gameplay', {});
 const uuids = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333'];
 const [sender, recipient, bystander] = uuids;
 const session = Buffer.alloc(16, 42);
@@ -2818,13 +2824,21 @@ other[other.length - 1]++;
 wire.bind(session.toString('hex'), sender, uuids);
 assert.equal(wire.meshSendTracing(), false);
 assert.equal(wire.beginMeshSend(recipient, bytes.toString('hex')), 0);
-wire.observeDeparture();
+const before = [[{ index: 0, local: 'a', remote: 'b' }, { index: 1, local: 'c', remote: 'd' }],
+  [{ index: 19, local: 'b', remote: 'a' }], [{ index: 8, local: 'd', remote: 'c' }]];
+const identities = { uuids, roster: uuids };
+const [frozenRoutes] = frozenMeshSendRoutes(before, identities);
+assert.deepEqual(frozenRoutes.map(({ index, player }) => [index, player]), [[0, recipient], [1, bystander]]);
+const ambiguous = [[...before[0], { ...before[0][0], index: 23 }], ...before.slice(1)];
+assert.deepEqual(frozenMeshSendRoutes(ambiguous, identities)[0].map(route => route.index), [1]);
+wire.observeDeparture(frozenRoutes);
 assert.equal(wire.meshSendTracing(), true);
 assert.equal(wire.beginMeshSend(sender, bytes.toString('hex')), 0);
 assert.equal(wire.beginMeshSend(recipient, 'X'.repeat(58)), 0);
 const send = wire.beginMeshSend(recipient, bytes.toString('hex'));
 now = 11;
 channel.send(other);
+wrongChannel.send(bytes);
 now = 12;
 channel.send(bytes);
 channel.send(bytes);  // Only the first matching DOM call belongs to this one addressed send.
@@ -2836,30 +2850,39 @@ const wrongPeer = wire.beginMeshSend(bystander, bytes.toString('hex'));
 channel.send(bytes);
 wire.endMeshSend(wrongPeer, 0);
 const nested = wire.beginMeshSend(recipient, bytes.toString('hex'));
-assert.equal(wire.beginMeshSend(recipient, bytes.toString('hex')), 0);
+assert.equal(wire.beginMeshSend('', bytes.toString('hex')), 0);
 channel.send(bytes);
 wire.endMeshSend(nested, 0);
-const sends = wire.departureSends([1, 2, 3, 4, 5, 6]);
-const errors = Object.keys(sends).map(attempt => ({ index: 0, channel: 0, attempt: Number(attempt) }));
-const before = [[{ index: 0, local: 'a', remote: 'b' }], [{ index: 19, local: 'b', remote: 'a' }], []];
+const replaced = wire.beginMeshSend(recipient, bytes.toString('hex'));
+connection.remoteDescription = { sdp: 'a=ice-ufrag:replacement' };
+channel.send(bytes);
+wire.endMeshSend(replaced, 0);
+const sends = wire.departureSends([1, 2, 3, 4, 5, 6, 7, 8]);
+const errors = Object.values(sends).map(({ attempt, channel }) => ({ index: 0, channel, attempt }));
 const observations = [new Map(), new Map(), new Map()];
 const report = { partialSnapshots: [{ sends }], clocks: [] };
-const identities = { uuids, roster: uuids };
+const expected = { id: send, player: recipient, bytes: bytes.length, enteredAt: 10000, returnedAt: 13000, code: 9 };
 const records = matchCloseObservations(errors, before, observations, report, identities);
-assert.deepEqual(records.map(record => record.engineSend), [
-  null, { id: send, player: recipient, bytes: bytes.length, enteredAt: 10000, returnedAt: 13000, code: 9 },
-  null, null, null, null,
-]);
-for (const change of [{ enteredAt: 12001 }, { returnedAt: 11999 }, { code: -1 }, { id: '1' }, { bytes: 1201 }]) {
-  const original = sends[2].engineSend;
-  sends[2].engineSend = { ...original, ...change };
-  const [invalid] = matchCloseObservations([errors[1]], before, observations, report, identities);
+assert.deepEqual(records.map(record => record.engineSend), [null, null, expected, null, null, null, null, null]);
+const proof = receipt => closeEvidence(errors[2], before[0], before, null, undefined, receipt, identities);
+assert.deepEqual(proof(sends[3]).engineSend, expected);
+for (const change of [{ enteredAt: 12001 }, { returnedAt: 11999 }, { code: -1 }, { id: '1' }, { bytes: 1201 }, { player: bystander }]) {
+  const original = sends[3].engineSend;
+  sends[3].engineSend = { ...original, ...change };
+  const [invalid] = matchCloseObservations([errors[2]], before, observations, report, identities);
   assert.equal(invalid.engineSend, null, 'malformed boundary must not be attributed');
   assert.equal(invalid.sentAt, 12000, 'tagged send evidence remains available without the engine receipt');
-  sends[2].engineSend = original;
+  assert.equal(proof(sends[3]).engineSend, undefined, 'direct close proof also checks the exact recipient and boundary');
+  sends[3].engineSend = original;
 }
-const [withoutRoster] = matchCloseObservations([errors[1]], before, observations, report);
+const [withoutRoster] = matchCloseObservations([errors[2]], before, observations, report);
 assert.equal(withoutRoster.engineSend, null);
+assert.equal(closeEvidence(errors[2], before[0], before, null, undefined, sends[3]).engineSend, undefined);
+const stale = { partialSnapshots: [{ sends: { 3: { ...sends[3], attempt: 4 } } }],
+  proofs: [{ ...errors[2], sentAt: 12000 }] };
+const [prior] = matchCloseObservations([errors[2]], before, observations, stale, identities);
+assert.equal(prior.sentAt, 12000);
+assert.equal(prior.engineSend, null, 'a prior timestamp cannot validate the engine boundary of the wrong attempt');
 wire.stopObservingDeparture();
 assert.equal(wire.meshSendTracing(), false);
 """

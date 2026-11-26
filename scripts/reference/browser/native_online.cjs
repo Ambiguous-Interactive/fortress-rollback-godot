@@ -458,7 +458,8 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   let departureSendCount = 0;
   let meshSendCount = 0;
   let meshSend;
-  const meshSendTracing = () => tagWebKitSends && Boolean(closePrefix) && observingDeparture;
+  const meshSendRoutes = new Map();
+  const meshSendTracing = () => tagWebKitSends && observingDeparture && meshSendRoutes.size > 0;
   let holding = false;
   let releasingRelay = false;
   let releaseInFlight = 0;
@@ -865,8 +866,11 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
         if (tagWebKitSends && observingDeparture) {
           const attempt = ++departureSendCount;
           const receipt = { attempt, channel: index, sentAt: null };
-          // A delayed or unrelated send has no matching packet on the active engine call stack.
-          if (packet && meshSend?.payload && meshSend.payload === hex(nativeBytes(bytes))) {
+          // Select the frozen recipient before claiming byte-identical sends on the active call stack.
+          const route = meshSend?.payload && meshSendRoutes.get(index);
+          if (packet && route && route.player === meshSend.boundary.player && record.connection.signalingState !== 'closed'
+              && route.local === ufrag(record.connection.localDescription) && route.remote === ufrag(record.connection.remoteDescription)
+              && meshSend.payload === hex(nativeBytes(bytes))) {
             receipt.engineSend = meshSend.boundary;
             meshSend.payload = null;
           }
@@ -1146,8 +1150,17 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     meshOpen(peers) {
       return resources.rtc.filter(({channel, connection}) => channel.readyState === 'open' && connection.connectionState === 'connected').length === peers * 3;
     },
-    observeDeparture() { observingDeparture = true; return window.crossOriginIsolated ? instant() : null; },
-    stopObservingDeparture() { observingDeparture = false; },
+    observeDeparture(routes) {
+      if (!observingDeparture && tagWebKitSends && routes) {
+        for (const route of routes) meshSendRoutes.set(route.index, route);
+      }
+      observingDeparture = true;
+      return window.crossOriginIsolated ? instant() : null;
+    },
+    stopObservingDeparture() {
+      observingDeparture = false;
+      meshSendRoutes.clear();
+    },
     meshSendTracing,
     beginMeshSend(player, payload) {
       if (!meshSendTracing()) return 0;
@@ -1303,6 +1316,17 @@ function reciprocalLinks(linksByPage, index, sender) {
     .map(peer => ({ ...peer, owner })));
 }
 
+function frozenMeshSendRoutes(linksByPage, identities) {
+  if (!identities) return undefined;
+  return linksByPage.map((links, index) => links.flatMap(({ index: channel, local, remote, closed }) => {
+    if (!local || !remote || closed) return [];
+    const counterparts = reciprocalLinks(linksByPage, index, { local, remote });
+    const [counterpart] = counterparts;
+    if (counterparts.length !== 1 || counterpart.closed || reciprocalLinks(linksByPage, counterpart.owner, counterpart).length !== 1) return [];
+    return [{ index: channel, local, remote, player: identities.uuids[counterpart.owner] }];
+  }));
+}
+
 function matchCloseObservations(errors, before, observations, report = {}, identities) {
   if (!before) return [];
   return errors.filter(({ attempt }) => Number.isSafeInteger(attempt) && attempt > 0).map(({ index, channel, attempt, received_ms }) => {
@@ -1317,8 +1341,7 @@ function matchCloseObservations(errors, before, observations, report = {}, ident
     const counterparts = reciprocalLinks(before, index, sender);
     if (counterparts.length !== 1) return receipt;
     const counterpart = counterparts[0];
-    const engineSend = prior?.engineSend ?? exactEngineSend(latest, send?.engineSend);
-    if (engineSend && engineSend.player === identities?.uuids[counterpart.owner]) receipt.engineSend = engineSend;
+    receipt.engineSend = exactEngineSend(sentAt, prior ? prior.engineSend : send?.engineSend, identities?.uuids[counterpart.owner]);
     for (const { owner, index: channelIndex, local, remote } of [{ ...sender, owner: index }, counterpart]) {
       for (const kind of CLOSE_STAGES) {
         const event = observations[owner].get(`${channelIndex}:${kind}`);
@@ -1365,10 +1388,10 @@ function exactSendState(sentAt, receipt) {
   return { readyState: receipt.readyState, bufferedAmount: receipt.bufferedAmount };
 }
 
-function exactEngineSend(sentAt, boundary) {
+function exactEngineSend(sentAt, boundary, recipient) {
   if (!boundary || sentAt === null) return null;
   const { id, player, bytes, enteredAt, returnedAt, code } = boundary;
-  if (!Number.isSafeInteger(id) || id < 1 || typeof player !== 'string' || !FROZEN_UUID.test(player)
+  if (!Number.isSafeInteger(id) || id < 1 || player !== recipient || typeof player !== 'string' || !FROZEN_UUID.test(player)
       || !Number.isSafeInteger(bytes) || bytes < 28 || bytes > 1200
       || !Number.isSafeInteger(enteredAt) || enteredAt < 0 || enteredAt > sentAt
       || !Number.isSafeInteger(returnedAt) || returnedAt < sentAt || !Number.isSafeInteger(code) || code < 0) return null;
@@ -1384,18 +1407,18 @@ function closeGap(sentAt, closedAt, senderClock, closerClock) {
   };
 }
 
-function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, closer = null, clocks, receipt) {
+function closeEvidence({ index, channel, attempt }, linksBefore, closedByPage, closer = null, clocks, receipt, identities) {
   const sentAt = exactSendTime(channel, attempt, receipt);
   const before = linksBefore.find(peer => peer.index === channel) ?? null;
   const evidence = { index, channel, attempt, sentAt, sendState: exactSendState(sentAt, receipt), closer, before, sender: null,
     counterparts: [], minimumGapUs: null, maximumGapUs: null, proof: null };
-  const engineSend = exactEngineSend(sentAt, receipt?.engineSend);
-  if (engineSend) evidence.engineSend = engineSend;
   if (!before?.local || !before.remote || before.closed) return evidence;
   evidence.sender = closedByPage[index].find(peer => peer.index === channel && peer.local === before.local && peer.remote === before.remote) ?? null;
   evidence.counterparts = reciprocalLinks(closedByPage, index, before);
   if (evidence.counterparts.length !== 1) return evidence;
   const [counterpart] = evidence.counterparts;
+  const engineSend = exactEngineSend(sentAt, receipt?.engineSend, identities?.uuids[counterpart.owner]);
+  if (engineSend) evidence.engineSend = engineSend;
   Object.assign(evidence, closeGap(sentAt, counterpart.closedAt, clocks?.[index], clocks?.[counterpart.owner]));
   if (closer !== null) {
     if (counterpart.owner === closer && counterpart.closed && evidence.sender?.closed) evidence.proof = 'stream-close';
@@ -1430,7 +1453,7 @@ function recordDepartureHttps(samples, report, stage, useBounds) {
   });
 }
 
-async function calibrateDepartureClocks(pages, report, clock = () => performance.now(), timeout = PAGE_WAIT_MS, httpsClock) {
+async function calibrateDepartureClocks(pages, report, clock = () => performance.now(), timeout = PAGE_WAIT_MS, httpsClock, sendRoutes) {
   const clockSamples = pages.map(() => ({ before: [], after: [] }));
   report.clockSamples = clockSamples;
   const deadline = clock() + timeout;
@@ -1440,7 +1463,9 @@ async function calibrateDepartureClocks(pages, report, clock = () => performance
     for (let attempt = 0; attempt < CLOSE_CLOCK_PRE_SAMPLES; attempt++) {
       const start = clock();
       if (start >= deadline) throw new Error(`absolute ${label} deadline`);
-      const sampledAt = await boundedRoom(() => page.evaluate(() => window.fortressNativeWire.observeDeparture()), Math.ceil(deadline - start), label);
+      const routes = attempt === 0 ? sendRoutes?.[index] : undefined;
+      const sampledAt = await boundedRoom(() => page.evaluate(routes => window.fortressNativeWire.observeDeparture(routes), routes),
+        Math.ceil(deadline - start), label);
       const end = clock();
       if (end >= deadline) throw new Error(`absolute ${label} deadline`);
       samples.push(clockWindow(Math.floor(start * 1000), Math.ceil(end * 1000), sampledAt));
@@ -1464,7 +1489,8 @@ async function calibrateDepartureClocks(pages, report, clock = () => performance
   }
 }
 
-async function waitForCloseProofs(pages, before, errors, report, { closer = null, clocks = report.clocks, clock = () => performance.now(), delay = pause, httpsClock } = {}) {
+async function waitForCloseProofs(pages, before, errors, report,
+  { closer = null, clocks = report.clocks, clock = () => performance.now(), delay = pause, httpsClock, identities } = {}) {
   if (!errors.length) return undefined;
   report.proofs = [];
   report.clocks = clocks?.slice();
@@ -1513,7 +1539,7 @@ async function waitForCloseProofs(pages, before, errors, report, { closer = null
     const links = latestSnapshots.map(snapshot => snapshot?.links ?? []);
     report.proofs = roundErrors.map(error => {
       const sends = complete ? latestSnapshots[error.index].sends : observedSends[error.index];
-      const evidence = closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks, sends?.[error.attempt]);
+      const evidence = closeEvidence(error, before[error.index].wire.sctp, links, closer, report.clocks, sends?.[error.attempt], identities);
       if (!complete) evidence.proof = null;
       return evidence;
     });
@@ -2350,7 +2376,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     } else {
       if (departureClock) {
         phase = 'departure clock calibration';
-        await calibrateDepartureClocks(pages, closeReport, undefined, undefined, departureClock);
+        const sendRoutes = frozenMeshSendRoutes(peers.map(peer => peer.wire.sctp), roomIdentities);
+        await calibrateDepartureClocks(pages, closeReport, undefined, undefined, departureClock, sendRoutes);
       }
       phase = 'departure';
       await leave(pages.at(-1), players - 1);
@@ -2381,7 +2408,9 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         assert.equal(peer[key], before[key], `terminal ${key} changed for survivor ${index}`);
     }
     phase = 'teardown';
-    if (!liveClose) closeLinks = await waitForCloseProofs(pages, peers, departureErrors, closeReport, { httpsClock: departureClock }) ?? closeLinks;
+    if (!liveClose) {
+      closeLinks = await waitForCloseProofs(pages, peers, departureErrors, closeReport, { httpsClock: departureClock, identities: roomIdentities }) ?? closeLinks;
+    }
     if (liveClose) await Promise.all(pages.map(page => page.evaluate(() => window.fortressNativeWire.releaseTerminal())));
     const teardown = await Promise.allSettled(survivors.map(leave));
     const leaveErrors = teardown.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
@@ -2520,6 +2549,7 @@ if (require.main === module) {
 module.exports = { armAndWaitForInput, assertReleaseDelay, bindDepartureCheckpoints, calibrateDepartureClocks, captureAndReleaseInput, closeEvidence, compareHistory,
   createReleaseSignal,
   createWarmupBarrier, instrumentNativeWire, instrumentPostRelease, leaveWithReceipt, missedCorrectionDeadline,
-  matchCloseObservations, postReleaseCheckpoint, readConfirmedHistory, recordCloseObservation, recordReleaseTiming, releaseDeliveryTiming, relayReleaseEvidence,
+  frozenMeshSendRoutes, matchCloseObservations, postReleaseCheckpoint, readConfirmedHistory, recordCloseObservation, recordReleaseTiming,
+  releaseDeliveryTiming, relayReleaseEvidence,
   reportedChannel, waitForCloseProofs,
   waitForCorrectedHistory, WARMUP_CHECKPOINT };

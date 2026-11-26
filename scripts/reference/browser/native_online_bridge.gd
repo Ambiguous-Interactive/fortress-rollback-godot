@@ -133,8 +133,7 @@ class ObservedMultiplayer:
 		var boundary: int = 0
 		if _wire.meshSendTracing():
 			var player: String = _remote_uuids.get(_target_peer, "")
-			if not player.is_empty():
-				boundary = _wire.beginMeshSend(player, bytes.hex_encode())
+			boundary = _wire.beginMeshSend(player, bytes.hex_encode())
 		var code: Error = super.put_packet(bytes)
 		if boundary > 0:
 			_wire.endMeshSend(boundary, code)
