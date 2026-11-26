@@ -46,6 +46,7 @@ const HOLD_CONDITIONS = ['stall', 'prediction', 'frontier', 'held_input', 'quali
 function createWarmupBarrier(players, clock = () => performance.now()) {
   const latest = Array(players).fill(null);
   const errors = Array(players).fill(null);
+  const inputErrors = Array(players).fill(null);
   const received = Array(players).fill(null);
   let startedAt = Infinity;
   let deadline = Infinity;
@@ -54,9 +55,28 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
   const ready = new Promise(resolve => { complete = resolve; });
   const states = new Set(['offline', 'connecting', 'joining', 'lobby', 'starting', 'playing', 'failed']);
   const isFrontier = value => states.has(value?.state) && Number.isSafeInteger(value.frame) && Number.isSafeInteger(value.confirmed);
+  function validInputLink(input, sample, roster) {
+    const [sender, recipient] = [...roster].sort();
+    if (players !== 8 || input.sender !== sender || input.recipient !== recipient || sample.recipient !== recipient) return false;
+    return ['raw', 'sdk', 'native', 'ack'].every(stage => {
+      const stream = input[stage];
+      if (!Number.isSafeInteger(stream?.count) || stream.count < 0) return false;
+      if (!stream.count) return stream.first === null && stream.recent === null;
+      const valid = row => row && Number.isFinite(row.at_ms) && row.at_ms >= sample.started_ms && row.at_ms <= sample.through_ms
+        && typeof row.payload === 'string' && row.payload.length <= 2400 && /^(?:[0-9a-f]{2})+$/.test(row.payload)
+        && (stage === 'ack' ? row.payload.length === 64 : row.payload.length >= 218)
+        && Number.isSafeInteger(row.ack_frame) && row.ack_frame >= -1
+        && (stage === 'ack' ? row.start_frame === null : Number.isSafeInteger(row.start_frame) && row.start_frame >= 0)
+        && (stage === 'native' ? Number.isInteger(row.code) : row.code === null)
+        && (row.epoch === null && row.seq === null || stage === 'raw' && Number.isInteger(row.epoch) && row.epoch > 0 && row.epoch <= 0xffffffff
+          && typeof row.seq === 'string' && /^[1-9][0-9]{0,19}$/.test(row.seq) && BigInt(row.seq) <= 0xffffffffffffffffn);
+      return valid(stream.first) && (stream.recent === null || stream.count > 1 && valid(stream.recent)
+        && stream.recent.at_ms >= stream.first.at_ms && (stream.recent.payload !== stream.first.payload || stream.recent.code !== stream.first.code));
+    });
+  }
   return {
     get checkpoints() { return latest.map(record => record?.sample ?? null); },
-    errors, received,
+    errors, inputErrors, received,
     frontier() {
       const peers = latest.map((record, index) => {
         const { sample, received_ms } = record ?? { sample: null, received_ms: null };
@@ -86,10 +106,9 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
         const roster = [sample.recipient, ...sample.links.map(link => link.sender)];
         if (new Set(roster).size !== players) throw new Error('invalid warmup roster');
         const { cutoff, input_link: input } = sample;
-        if (input != null) {
-          const [sender, recipient] = [...roster].sort();
-          if (players !== 8 || input.sender !== sender || input.recipient !== recipient || sample.recipient !== recipient)
-            throw new Error('invalid warmup input link');
+        if (input != null && !validInputLink(input, sample, roster)) {
+          inputErrors[index] ??= 'invalid warmup input link';
+          delete sample.input_link;
         }
         if (cutoff !== null && (!isFrontier(cutoff) || cutoff.at_ms !== sample.through_ms
           || !(cutoff.reason === 'failed' && cutoff.state === 'failed'
@@ -547,7 +566,10 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     }
     if (ack_frame < -1) return;
     // Keep a stamp only when the delivery decoder identifies this same packet.
-    const stamp = delivery?.sender === remote && delivery.recipient === localUuid && delivery.kind === kind ? delivery : null;
+    const deliveredBytes = delivery?.bytes.subarray(57);
+    const stamp = delivery?.sender === remote && delivery.recipient === localUuid && delivery.kind === kind
+      && deliveredBytes.length === bytes.length && deliveredBytes.every((byte, index) => byte === bytes[index]) ? delivery : null;
+    if (stage === 'raw' && relayWireTrace && !stamp) return;
     const payload = hex(bytes);
     const at_ms = performance.now();
     const sample = { at_ms, payload, start_frame, ack_frame, code,
@@ -2222,7 +2244,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples, departureHttpsClockSamples: closeReport.httpsClockSamples, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
-      warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
+      warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupInputErrors: warmupBarrier?.inputErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier() };
   } catch (error) {
     failures.push(error);
@@ -2268,7 +2290,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       physicalClosePartialSnapshots: physicalCloseReport.partialSnapshots,
       closePartialSnapshots: closeReport.partialSnapshots, physicalCloseSnapshotErrors: physicalCloseReport.snapshotErrors,
       closeSnapshotErrors: closeReport.snapshotErrors, armed, holdReadyReceived: mixed ? undefined : holdReadyReceived, stalled,
-      states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors,
+      states: diagnostics, warmup: warmupBarrier?.checkpoints, warmupCheckpointErrors: warmupBarrier?.errors, warmupInputErrors: warmupBarrier?.inputErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
       relayHold: relayHold && await relayHoldReceipt(),

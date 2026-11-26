@@ -1094,7 +1094,8 @@ wire.observeWarmupInput('sdk', sender, input10.toString('hex'), 0);
 wire.observeWarmupInput('native', sender, 'g'.repeat(12), 0);
 const malformed = Buffer.from(input10);
 malformed.writeBigUInt64LE(2n, 100);
-socket.message({data: relayFrame(malformed, sender, receiver)});
+socket.message({data: delivery(relayFrame(malformed, sender, receiver), sender, 14)});
+socket.message({data: delivery(relayFrame(input10, sender, receiver), other, 15)});
 socket.message({data: relayFrame(input10, other, receiver)});
 socket.message({data: relayFrame(input10, sender, other)});
 socket.message({data: delivery(relayFrame(input10, sender, receiver), sender, 12)});
@@ -1132,9 +1133,26 @@ assert.equal(wire.warmupStatus().input_link.raw.count, 3);
 assert.equal(wire.warmupStatus().input_link.ack.count, 1);
 const wrong = JSON.parse(JSON.stringify(barrier.checkpoints[1]));
 wrong.input_link.sender = other;
-barrier.record(2, WARMUP_CHECKPOINT + JSON.stringify(wrong));
-assert.match(barrier.errors[2], /invalid warmup input link/);
-assert.equal(barrier.checkpoints[2], null);
+const brokenStream = JSON.parse(JSON.stringify(barrier.checkpoints[1]));
+brokenStream.input_link.raw.count = 0;
+barrier.record(2, WARMUP_CHECKPOINT + JSON.stringify(brokenStream));
+assert.match(barrier.inputErrors[2], /invalid warmup input link/);
+assert.equal(barrier.errors[2], null);
+assert.equal(barrier.checkpoints[2].input_link, undefined);
+(async () => {
+  const gate = createWarmupBarrier(8, () => time);
+  await gate.wait(async () => {
+    for (const [index, recipient] of roster.entries()) {
+      const page = { ...wrong, recipient, links: roster.filter(sender => sender !== recipient).map(sender => ({sender})),
+        input_link: index === 1 ? wrong.input_link : undefined };
+      gate.record(index, WARMUP_CHECKPOINT + JSON.stringify(page));
+    }
+  }, 50);
+  assert.equal(gate.received.filter(value => value !== null).length, 8, 'invalid optional evidence cannot block the warmup gate');
+  assert.match(gate.inputErrors[1], /invalid warmup input link/);
+  assert.equal(gate.errors[1], null);
+  assert.equal(gate.checkpoints[1].input_link, undefined);
+})().catch(error => { console.error(error); process.exitCode = 1; });
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs'),
                         str(ROOT / 'scripts/reference/browser/native_relay_trace.cjs')], check=True, timeout=10)
