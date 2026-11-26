@@ -1789,7 +1789,7 @@ process.once('beforeExit', code => {
         script = r"""
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { captureAndReleaseInput, createReleaseSignal } = require(process.argv[1]);
+const { captureAndReleaseInput, createReleaseSignal, recordReleaseTiming, releaseDeliveryTiming } = require(process.argv[1]);
 let now = 300;
 global.performance = { now: () => now };
 function request(signal, index) {
@@ -1830,8 +1830,14 @@ async function run() {
   await checked;
   assert.equal(window.fortressNativeStalled, undefined, 'a late response cannot publish even its stalled snapshot');
   for (const response of [{ url: 'https://localhost/another-nonce' }, { url: 'https://localhost/prepared', redirected: true }]) {
+    const receipt = { path: 'https://localhost/prepared', request_dispatched_ms: 300, request_received_ms: 302, first_write_ms: 320,
+      handoff_ms: 320, finished_ms: 321,
+      resource: { fetch_start_ms: 10, request_start_ms: 11, response_end_ms: 30, response_status: 204, controller_ms: 330 } };
+    assert.ok(releaseDeliveryTiming(receipt).handoff_to_response_end_ms);
+    console.debug = text => assert.ok(recordReleaseTiming(receipt, text.slice('timing '.length), 331));
     global.fetch = async () => ({ ...response, status: 204, headers: new Headers({ 'X-Fortress-Release-Budget-Us': '600000' }) });
-    await assert.rejects(captureAndReleaseInput(page, 0, 'https://localhost/prepared'), /does not match the release request/);
+    await assert.rejects(captureAndReleaseInput(page, 0, receipt.path, 'timing '), /does not match the release request/);
+    assert.equal(releaseDeliveryTiming(receipt).handoff_to_response_end_ms, null);
     assert.equal(window.fortressNativeStalled, undefined);
   }
 }

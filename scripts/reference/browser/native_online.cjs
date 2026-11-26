@@ -1596,9 +1596,13 @@ function createReleaseSignal(players, delayMs = 0) {
 
 function recordReleaseTiming(receipt, text, controller_ms) {
   try {
-    const { path, requested_ms, fetch_resolved_ms, continued_ms, status, fetch_start_ms, request_start_ms = null,
+    const { path, response_mismatch, requested_ms, fetch_resolved_ms, continued_ms, status, fetch_start_ms, request_start_ms = null,
       response_start_ms, response_end_ms, response_status } = JSON.parse(text);
     if (path !== receipt.path) return false;
+    if (response_mismatch === true) {
+      receipt.response_mismatch = true;
+      return true;
+    }
     const time = value => Number.isFinite(value) && value >= 0;
     if (!receipt.continuation && time(requested_ms) && time(continued_ms) && requested_ms <= continued_ms
       && (fetch_resolved_ms === undefined || time(fetch_resolved_ms) && requested_ms <= fetch_resolved_ms && fetch_resolved_ms <= continued_ms)
@@ -1619,8 +1623,10 @@ function recordReleaseTiming(receipt, text, controller_ms) {
   return false;
 }
 
-function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, first_write_ms, handoff_ms, finished_ms, resource, continuation }, holdCap) {
+function releaseDeliveryTiming({ request_dispatched_ms, request_received_ms, first_write_ms, handoff_ms, finished_ms, resource, continuation,
+  response_mismatch }, holdCap) {
   const timing = { offset_ms: null, write_to_response_end_ms: null, handoff_to_response_end_ms: null, hold_cap_to_response_end_ms: null };
+  if (response_mismatch) return timing;
   const { fetch_start_ms, request_start_ms, response_end_ms, response_status, controller_ms } = resource ?? {};
   const delivered = (response_status ?? continuation?.status) === 204 && (!continuation || continuation.status === 204);
   if (delivered && Number.isFinite(response_end_ms) && Number.isFinite(holdCap?.page_ms))
@@ -1687,7 +1693,10 @@ function captureAndReleaseInput(page, index, signalPath = null, timingPrefix = n
       const requested_ms = performance.now();
       const signal = await fetch(url, { cache: 'no-store', redirect: 'error' });
       const fetchResolved = performance.now();
-      if (signal.url !== url || signal.redirected) throw new Error('native relay response does not match the release request');
+      if (signal.url !== url || signal.redirected) {
+        if (timingPrefix) publish({ response_mismatch: true });
+        throw new Error('native relay response does not match the release request');
+      }
       const status = signal.status;
       if (delayMs && status === 204) await new Promise(resolve => setTimeout(resolve, delayMs));
       const continued_ms = delayMs ? performance.now() : fetchResolved;
