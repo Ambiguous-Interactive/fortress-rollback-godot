@@ -75,6 +75,15 @@ async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly
   } finally { active = false; }
 }
 
+async function releaseRecordingTail(pages) {
+  await Promise.all(pages.map(page => page.waitForFunction(
+    () => document.body.dataset.fortressRecordingTailReady === 'true', null, { timeout: 120000 })));
+  await Promise.all(pages.map(page => page.evaluate(() => { window.fortressRecordingTailStep = true; })));
+  await Promise.all(pages.map(page => page.waitForFunction(
+    () => document.body.dataset.fortressRecordingTail === '257', null, { timeout: 10000 })));
+  await Promise.all(pages.map(page => page.evaluate(() => { window.fortressRecordingTailReleased = true; })));
+}
+
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault,
   disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false, dropClose = false,
   dropAnswer = false, dropRelay = false, dropMissing = false, dropHistoryLost = false, dropCommit = false, dropSecond = false, dropRollback = false, dropForeign = false,
@@ -117,6 +126,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   evidence.relayBlockedReads = 0;
   evidence.relayPostWrapBlockedReads = 0;
   evidence.recordingRelaySends = [];
+  evidence.recordingFinalRelaySend = null;
   evidence.maximumRelayBuffered = 0;
   evidence.captureError = false;
   window.fortressScheduling = { frames: 0, first: performance.now(), last: null };
@@ -154,23 +164,35 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
     socket.addEventListener('close', event => { record.close_code = event.code; });
     return socket;
   } });
+  const carriesRecordingTail = view => {
+    const envelopeHeader = 57;
+    if (view.length < 133 || view[0] !== 70 || view[1] !== 83 || view[2] !== 82 || view[3] !== 49 || view[envelopeHeader + 6] !== 3) return false;
+    const packet = new DataView(view.buffer, view.byteOffset + envelopeHeader, view.byteLength - envelopeHeader);
+    return packet.getInt32(44, true) + packet.getUint16(52, true) === 257;
+  };
   const websocketSend = WebSocket.prototype.send;
   WebSocket.prototype.send = function(bytes) {
     if (typeof bytes !== 'string') evidence.binarySent++;
-    const trace = recordingPressure && this.readyState === nativeSocket.OPEN && typeof bytes !== 'string' && evidence.recordingRelaySends.length < 2;
+    const track = recordingPressure && this.readyState === nativeSocket.OPEN && typeof bytes !== 'string';
+    const trackRetry = track && evidence.recordingRelaySends.length < 2;
+    const trackTail = track && evidence.recordingFinalRelaySend === null && Number(document.body?.dataset.fortressFrame) >= 255;
     const result = websocketSend.call(this, bytes);
-    if (trace) {
+    if (trackRetry || trackTail) {
       const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
         : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
       if (!view) evidence.captureError = true;
       else if (view.length <= 1081) {
-        const wire = Array.from(view, byte => byte.toString(16).padStart(2, '0')).join('');
-        if (!relaySends.has(wire)) {
-          if (relaySends.size >= 1024) evidence.captureError = true;
-          else relaySends.add(wire);
-          if (wire === window.fortressRecordingRefusedHead && !evidence.captureError) {
-            evidence.recordingRelaySends.push({ turn: window.fortressRecordingTurn, wire, first: true });
-            window.fortressRecordingRefusedHead = '';
+        const finalInput = trackTail && carriesRecordingTail(view);
+        if (trackRetry || finalInput) {
+          const wire = Array.from(view, byte => byte.toString(16).padStart(2, '0')).join('');
+          if (finalInput) evidence.recordingFinalRelaySend = { wire, turn: window.fortressRecordingTurn, released: window.fortressRecordingTailReleased === true };
+          if (trackRetry && !relaySends.has(wire)) {
+            if (relaySends.size >= 1024) evidence.captureError = true;
+            else relaySends.add(wire);
+            if (wire === window.fortressRecordingRefusedHead && !evidence.captureError) {
+              evidence.recordingRelaySends.push({ turn: window.fortressRecordingTurn, wire, first: true });
+              window.fortressRecordingRefusedHead = '';
+            }
           }
         }
       }
@@ -222,7 +244,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
     if (record.blockedLink) {
       Object.defineProperty(channel, 'bufferedAmount', { get() {
         const frame = Number(document.body?.dataset.fortressFrame ?? -1);
-        if (frame >= 4 && frame < (recordingPressure ? 253 : 16)) { record.blockedReads++; return 262144; }
+        if (frame >= 4 && frame < (recordingPressure ? 257 : 16)) { record.blockedReads++; return 262144; }
         return buffered.call(channel);
       } });
     }
@@ -661,8 +683,11 @@ async function main() {
               window.fortressSecondRelease = JSON.stringify(release);
             }, serialDispatch);
           }
-          if (!dropRoom && !dropRoomContinue && !dropRoomAfterDrop && !dropRoomBeforeDrop && !dropProcess && !dropProcessMissing)
-            await waitGameplay(pages, undefined, undefined, recordingPressure ? 256 : secondBoundary ? 43 : 39);
+          if (!dropRoom && !dropRoomContinue && !dropRoomAfterDrop && !dropRoomBeforeDrop && !dropProcess && !dropProcessMissing) {
+            const gameplay = waitGameplay(pages, undefined, undefined, recordingPressure ? 256 : secondBoundary ? 43 : 39);
+            if (recordingPressure) await Promise.all([gameplay, releaseRecordingTail(pages)]);
+            else await gameplay;
+          }
           await Promise.all(evidencePages.map(page => page.evaluate(() => { window.fortressTeardownArmed = true; })));
           await Promise.all(evidencePages.map(page => page.waitForFunction(() => document.body.dataset.fortressTeardownArmed === 'true',
             null, { timeout: 10000 })));
@@ -763,7 +788,8 @@ async function main() {
   }
 }
 
-module.exports = { instrument, isDropCanonicalFailure, isRoomContinueFailure, isProcessMissingFailure, resourcesClosed, closeDepartingRtc };
+module.exports = { instrument, isDropCanonicalFailure, isRoomContinueFailure, isProcessMissingFailure, resourcesClosed, closeDepartingRtc,
+  releaseRecordingTail };
 if (require.main === module) main().catch(error => {
   process.exitCode=1;
   try {console.error(inspect(error,{customInspect:false,getters:false,depth:8}));} catch {console.error('Browser probe failed; diagnostic unavailable.');}

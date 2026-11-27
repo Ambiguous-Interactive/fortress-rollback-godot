@@ -96,6 +96,7 @@ class RecordingTests(unittest.TestCase):
                   'errors': [], 'browser_instances': 2, 'records': [{'players': 2, 'peers': []}]}
         ids = [f'{index:08x}-0000-0000-0000-000000000000' for index in range(2)]
         packets = [[pressure_input(ids[index], ids[1 - index], index, start) for start in (129, 134)] for index in range(2)]
+        final_packets = [pressure_input(ids[index], ids[1 - index], index, 256) for index in range(2)]
         for index in range(2):
             period = 5 + index
             retries = [dict(envelope=packet, start_frame=start, frame=start + 1, refused_turn=100 * period + n * period + 1,
@@ -104,15 +105,42 @@ class RecordingTests(unittest.TestCase):
             state = dict(uuid=ids[index], pressure_refusals=20, pressure_post_wrap_refusals=10,
                          pressure_retries=10, accepted_binary=30, refused_head_bytes=0, caller_pending=0,
                          maximum_pending=10, maximum_relay_pending=10, maximum_relay_received=10,
-                         retried_inputs=retries, received_inputs=packets[1 - index])
+                         retried_inputs=retries, received_inputs=packets[1 - index] + [final_packets[1 - index]])
             channels = [dict(id=1), dict(id=2), dict(id=3, blockedLink=True, blockedReads=20, ordered=False, negotiated=True,
                                                    maxPacketLifeTime=1, maxRetransmits=None, sent=10, received=10)]
             row = dict(players=2, frames_submitted=257, canonical_comparisons=255, minimum_confirmed=255,
                        active_comparisons=254, rollback_loads=10, mixed=state, recording=recording(2, 257))
+            row['recording_tail'] = {
+                'held': dict(frame=257, received_frame=255, turn=1234, loads=9),
+                'receipt': dict(envelope=final_packets[1 - index], frame=257, turn=1235, stage='recording_confirmation'),
+                'after': dict(frame=257, confirmed_frame=256, received_frame=256, loads=10),
+            }
             result['records'][0]['peers'].append(dict(result=dict(passed=True, records=[row], binary_receives=30),
                 rtc=dict(binarySent=30, captureError=False, relayBlockedReads=20, relayPostWrapBlockedReads=10, channels=channels, recordingRelaySends=sends,
+                         recordingFinalRelaySend=dict(wire=final_packets[index], turn=1235, released=True),
                          teardown=dict(channels=3, connections_created=1, connections=1, websockets_created=1, websockets=1))))
         self.assertIs(validate_pressure(result, ENGINE), result)
+        for physical in (None, {'wire': packets[0][0], 'turn': 1235, 'released': True},
+                         {'wire': final_packets[0], 'turn': 1235, 'released': False},
+                         {'wire': final_packets[0], 'turn': 1234, 'released': True}):
+            with self.subTest(physical=physical):
+                changed = copy.deepcopy(result)
+                changed['records'][0]['peers'][0]['rtc']['recordingFinalRelaySend'] = physical
+                with self.assertRaisesRegex(ValueError, 'final addressed receipt missing matching physical send'):
+                    validate_pressure(changed, ENGINE)
+        for section, key, value, diagnostic in [
+            ('held', 'received_frame', 256, 'was not held'),
+            ('receipt', 'stage', 'gameplay', 'receipt missing after the hold'),
+            ('receipt', 'turn', 1233, 'receipt missing after the hold'),
+            ('receipt', 'envelope', packets[1][0], 'lacks original input 256'),
+            ('after', 'frame', 258, 'did not correct input 256'),
+            ('after', 'loads', 9, 'did not correct input 256'),
+        ]:
+            with self.subTest(section=section, key=key):
+                changed = copy.deepcopy(result)
+                changed['records'][0]['peers'][0]['result']['records'][0]['recording_tail'][section][key] = value
+                with self.assertRaisesRegex(ValueError, diagnostic):
+                    validate_pressure(changed, ENGINE)
         for section, key, value in [('mixed', 'pressure_post_wrap_refusals', 0), ('mixed', 'pressure_retries', 0),
                                     ('mixed', 'refused_head_bytes', 100), ('mixed', 'accepted_binary', True),
                                     ('rtc', 'relayPostWrapBlockedReads', 0), ('rtc', 'binarySent', 0), ('rtc', 'captureError', True),

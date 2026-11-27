@@ -35,6 +35,8 @@ var refused_head: PackedByteArray = PackedByteArray()
 var refused_input: Dictionary = {}
 var retried_inputs: Array[Dictionary] = []
 var received_inputs: Dictionary = {}
+var recording_tail: Dictionary = {}
+var final_input: Dictionary = {}
 
 func configure(host: Node, mode: Object) -> bool:
 	uuid = host.memberships[0].local_uuid()
@@ -75,6 +77,9 @@ func _observe_relay(host: Node, capture_recording: bool = false) -> void:
 					host.errors.append("recording_pressure_receipt_overflow")
 				else:
 					received_inputs[envelope] = true
+				if final_input.is_empty() and input.message.start_frame + input.message.frame_count == host.frame_count:
+					final_input = {"envelope": envelope, "frame": host.peers[0].status().current_frame,
+						"turn": host.pressure_service_turn, "stage": host.stage}
 			if not _early_input(input.message): return
 			var payload: String = decoded.payload.hex_encode()
 			if relay_payloads.size() >= 128 and not relay_payloads.has(payload):
@@ -88,6 +93,29 @@ func _early_input(message: T.Message) -> bool:
 
 func _post_wrap_input(message: T.Message) -> bool:
 	return message.kind == T.Kind.INPUT and message.start_frame > 128
+
+
+func recording_tail_barrier(host: Node) -> bool:
+	var peer: Peer = host.peers[0]
+	var frame: int = peer.status().current_frame
+	var endpoints: Array = peer.network_status().peers.values()
+	if frame != host.frame_count or endpoints.size() != 1 or endpoints[0].last_received_frame != frame - 2 or not final_input.is_empty():
+		host.errors.append("recording_tail_early_delivery")
+		return false
+	recording_tail = {"frame": frame, "received_frame": endpoints[0].last_received_frame,
+		"turn": host.pressure_service_turn, "loads": host.games[0].loads}
+	JavaScriptBridge.eval("document.body.dataset.fortressRecordingTail = '%d'" % frame)
+	if await host._wait_cleanup("window.fortressRecordingTailReleased || false"):
+		return true
+	host.errors.append("recording_tail_release_timeout")
+	return false
+
+
+func recording_tail_result(host: Node) -> Dictionary:
+	var peer: Peer = host.peers[0]
+	var endpoints: Array = peer.network_status().peers.values()
+	return {"held": recording_tail, "receipt": final_input, "after": {"frame": peer.status().current_frame,
+		"confirmed_frame": peer.status().confirmed_frame, "received_frame": endpoints[0].last_received_frame, "loads": host.games[0].loads}}
 
 
 func has_pending() -> bool:

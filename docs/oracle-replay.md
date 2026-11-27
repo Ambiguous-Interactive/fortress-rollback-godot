@@ -542,12 +542,19 @@ two distinct post-wrap original-input envelopes from a refused socket-buffer rea
 to the sender's first successful send on its sole WebSocket and the receiving SDK's binary signal.
 The receipt records each refusal and retry turn. Validation checks the expected
 five- or six-turn release schedule, the envelope's frozen sender and recipient,
-and the original input bytes. After recovery, both decoded recordings
-contain every finalized input/status row and all 258 original checksum boundaries.
+and the original input bytes. A browser controller waits for both endpoints to
+receive input 255, then lets them simulate input 256 with prediction. Both reach
+boundary 257 before transport service can send the final original. The first
+physical WebSocket send containing that input must match the other endpoint's
+addressed SDK receipt. Each endpoint corrects the final frame with one LOAD
+while staying at boundary 257. Both decoded recordings contain every finalized
+input/status row and all 258 original checksum boundaries.
 
 These are Godot browser witnesses, not source-runtime comparisons. Buffer pressure
 is injected; physical relay congestion, the complete asymmetric delivery/stall
 schedule, neutral and withheld-delivery browser controls, and unchanged-source
 recovery remain open in #256. #253 retains the source's speculative checksum
-discrepancy at this pin; upstream fixed the ordering defect in #381, and the
-pin advance is #53's reviewed upgrade.
+discrepancy at this pin. Upstream #381 fixes checksum refresh for recorded rows.
+That revision still requires a local sample for `advance_frame()`; recording
+newly confirmed rows during recovery without a forward step remains open.
+The pin advance is #53's reviewed upgrade.

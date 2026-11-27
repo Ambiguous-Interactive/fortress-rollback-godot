@@ -169,6 +169,10 @@ func _play(count: int) -> bool:
 				for endpoint_status: Dictionary in peer.network_status().peers.values():
 					if endpoint_status.last_received_frame < frame - 1: return false
 			return true, true): return false
+		if recording_pressure and frame == frame_count - 1:
+			JavaScriptBridge.eval("document.body.dataset.fortressRecordingTailReady = 'true'")
+			if not await _wait(func() -> bool: return JavaScriptBridge.eval("window.fortressRecordingTailStep || false"), true):
+				return false
 		_update_transport_clock()
 		for index: int in clients.size():
 			var slot: int = memberships[index].slot(clients[index].get_player_id())
@@ -186,6 +190,9 @@ func _play(count: int) -> bool:
 				errors.append("canonical_prefix_frame_%d" % (frame - 2))
 				return false
 			active_comparisons += 1
+		if recording_pressure and frame == frame_count - 1:
+			if not await mixed.recording_tail_barrier(self): return false
+			break
 		if not _service_batch(): return false
 		await get_tree().create_timer(0.002).timeout
 	stage = "final_confirmation"
@@ -214,6 +221,8 @@ func _play(count: int) -> bool:
 		"mixed": mixed.report() if mixed_enabled else {}}
 	if mixed_enabled:
 		row["recording"] = recording
+	if recording_pressure:
+		row["recording_tail"] = mixed.recording_tail_result(self)
 	records.append(row)
 	return true
 
