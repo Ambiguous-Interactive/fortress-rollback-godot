@@ -1,6 +1,9 @@
 """Validate coordinated-drop browser evidence separately from ordinary fixed meshes."""
-import re
+from copy import deepcopy
 import hashlib
+import json
+import re
+import struct
 
 
 _UUID = re.compile(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}')
@@ -614,10 +617,115 @@ def _validate_commit_loss(survivors):
         raise ValueError('peer-drop lost-commit acknowledgement missing')
 
 
+def _validate_serial_boundary(record, survivors, boundary):
+    last, leaver = survivors
+    first = record['peers'][2]['result']['records'][0]
+    dispatch = record.get('serialDispatch')
+    ready = dispatch.get('ready') if isinstance(dispatch, dict) else None
+    dispatched = dispatch.get('dispatched_us') if isinstance(dispatch, dict) else None
+    if (not isinstance(ready, list) or len(ready) != 2 or type(dispatched) is not int
+            or any(not isinstance(item, dict) or type(item.get('observed_us')) is not int
+                   or not 0 <= item['observed_us'] <= dispatched for item in ready)):
+        raise ValueError('peer-drop serial dispatch preceded acknowledgement')
+    release = leaver.get('serial_release')
+    try:
+        consumed = json.loads(release) if isinstance(release, str) else None
+    except json.JSONDecodeError:
+        consumed = None
+    if consumed != dispatch:
+        raise ValueError('peer-drop serial release was not applied')
+    session_id = last.get('session_id')
+    if (not isinstance(session_id, str) or not re.fullmatch(r'[0-9a-f]{32}', session_id)
+            or leaver.get('session_id') != session_id or first.get('session_id') != session_id):
+        raise ValueError('peer-drop serial session differs from the original roster')
+    if (type(leaver.get('serial_departure_boundary')) is not int or leaver['serial_departure_boundary'] != boundary
+            or leaver['minimum_confirmed'] >= boundary or last['minimum_confirmed'] >= last['frames_submitted']
+            or type(last.get('operation')) is not int or last['operation'] <= 0
+            or type(last.get('coordinator')) is not int or last['coordinator'] != min(row['slot'] for row in survivors)):
+        raise ValueError('peer-drop serial departure boundary missing')
+    for row, other, observation in zip(survivors, reversed(survivors), ready):
+        gate = row.get('serial_ready')
+        acknowledged = [_peer_id(other['uuid'])] if row['role'] == 1 else []
+        confirmation = observation.get('confirmation')
+        if (not isinstance(gate, dict) or {key: value for key, value in observation.items() if key != 'observed_us'} != gate
+                or type(gate.get('commit_boundary')) is not int or gate['commit_boundary'] != 8
+                or type(gate.get('departure_boundary')) is not int or gate['departure_boundary'] != boundary
+                or type(confirmation) is not int or not row['freeze_frame'] <= confirmation < boundary
+                or boundary == 40 and confirmation != 39
+                or row.get('minimum_confirmed', -1) < confirmation
+                or gate.get('uuid') != row['uuid'] or gate.get('first_target') != first['uuid'] or gate.get('session_id') != session_id
+                or type(gate.get('operation')) is not int or gate['operation'] != last['operation']
+                or type(row.get('operation')) is not int or row['operation'] != gate['operation']
+                or type(row.get('coordinator')) is not int or row['coordinator'] != last['coordinator']
+                or gate.get('digest') != row['digest']
+                or gate.get('commit_acks') != acknowledged or row.get('acknowledged_peers') != acknowledged
+                or row.get('commit_ack_peers') != []):
+            raise ValueError('peer-drop serial acknowledgement boundary or identity differs')
+    if (leaver['canonical_comparisons'] != ready[1]['confirmation'] + 1
+            or last['second_freeze_frame'] < ready[0]['confirmation']):
+        raise ValueError('peer-drop serial exposed original history missing')
+    if last['drop_frames'] != {_peer_id(first['uuid']): last['freeze_frame'], _peer_id(leaver['uuid']): last['second_freeze_frame']}:
+        raise ValueError('peer-drop serial publication identity differs')
+    cuts = {last['departing_slot']: last['freeze_frame'], last['second_slot']: last['second_freeze_frame']}
+    values = [0, 0, 0]
+    canonical = []
+    for frame in range(last['canonical_comparisons']):
+        for slot in range(3):
+            sample = (17 * min(frame, cuts.get(slot, frame)) + 31 * slot + 1) & 255
+            values[slot] = (33 * values[slot] + sample) & 0xffffffff
+        canonical.append(struct.pack('<4I', frame + 1, *values).hex())
+    if last.get('serial_canonical') != canonical:
+        raise ValueError('peer-drop serial canonical history differs from original inputs')
+
+
+def check_serial_controls(result, second_boundary):
+    control = deepcopy(result)
+    record = control['records'][0]
+    dispatch = record['serialDispatch']
+    last, leaver = (page['result']['records'][0] for page in record['peers'][:2])
+    diagnostics = []
+    def reject(expected):
+        try:
+            validate_drop_browser(control, second_departure=True, second_boundary=second_boundary)
+        except ValueError as error:
+            if str(error) != expected:
+                raise
+            diagnostics.append(str(error))
+        else:
+            raise ValueError(f'serial negative control passed: {expected}')
+
+    sent, consumed = dispatch['dispatched_us'], leaver['serial_release']
+    dispatch['dispatched_us'] = max(row['observed_us'] for row in dispatch['ready']) - 1
+    leaver['serial_release'] = json.dumps(dispatch)
+    reject('peer-drop serial dispatch preceded acknowledgement')
+    dispatch['dispatched_us'] = sent
+    reject('peer-drop serial release was not applied')
+    leaver['serial_release'] = consumed
+    session_id = leaver['session_id']
+    leaver['session_id'] = f'{int(session_id, 16) ^ 1:032x}'
+    reject('peer-drop serial session differs from the original roster')
+    leaver['session_id'] = session_id
+    confirmed = leaver['minimum_confirmed']
+    leaver['minimum_confirmed'] = leaver['frames_submitted']
+    reject('peer-drop serial departure boundary missing')
+    leaver['minimum_confirmed'] = confirmed
+    frozen = last['second_frozen_value']
+    last['second_frozen_value'] = f'{int(frozen, 16) ^ 1:02x}'
+    reject('peer-drop second departure freeze missing')
+    last['second_frozen_value'] = frozen
+    last['serial_canonical'][-1] = '00' * 16
+    reject('peer-drop serial canonical history differs from original inputs')
+    return {'diagnostics': diagnostics}
+
+
 def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False,
                            missing_history=False, history_lost=False, second_departure=False, rollback_departure=False,
                            foreign_proposal=False, room_departure=False, room_continue=False, process_death=False,
-                           process_missing=False, room_after_drop=False, room_before_drop=False, commit_loss=False):
+                           process_missing=False, room_after_drop=False, room_before_drop=False, commit_loss=False, second_boundary=''):
+    if second_boundary and (not second_departure or second_boundary not in ('after-ack', 'last-turn')):
+        raise ValueError('peer-drop serial boundary requires a known second departure schedule')
+    second_turn, second_minimum = {'': (12, 10), 'after-ack': (8, 6), 'last-turn': (40, 39)}[second_boundary]
+    final_turn = 44 if second_boundary else 40
     if history_lost and not missing_history:
         raise ValueError('peer-drop lost-history mode requires the withholding schedule')
     new_modes = [process_death, process_missing, room_after_drop, room_before_drop, commit_loss]
@@ -640,6 +748,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
             or result.get('dropMissing', False) is not missing_history
             or result.get('dropHistoryLost', False) is not history_lost
             or result.get('dropSecond', False) is not second_departure or result.get('dropRollback', False) is not rollback_departure
+            or result.get('secondBoundary', '') != second_boundary
             or result.get('dropForeign', False) is not foreign_proposal
             or result.get('dropRoom', False) is not room_departure
             or result.get('dropRoomContinue', False) is not room_continue
@@ -738,8 +847,10 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                     or row['frames_submitted'] != 40):
                 raise ValueError('peer-drop departure or continued input missing')
         elif index == 1:
-            if (not _departing_row(row, 2, 12)
-                    or type(row.get('canonical_comparisons')) is not int or row['canonical_comparisons'] != 10
+            comparisons = row.get('canonical_comparisons')
+            if (not _departing_row(row, 2, second_turn)
+                    or type(comparisons) is not int
+                    or not second_minimum <= comparisons <= (second_turn if second_boundary else 10)
                     or type(row.get('drop_events')) is not int or row['drop_events'] != 1):
                 raise ValueError('peer-drop second departure evidence missing')
         if physical_close or relay_only:
@@ -762,12 +873,12 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 raise ValueError('peer-drop relay socket exceeded its bound')
         required = [('players', 3), ('state', 'committed')]
         if second_departure and index == 0:
-            required += [('drop_events', 2), ('active_comparisons', 30), ('canonical_comparisons', 38),
-                         ('frames_submitted', 40), ('departed', False)]
+            required += [('drop_events', 2), ('active_comparisons', final_turn - 10), ('canonical_comparisons', final_turn - 2),
+                         ('frames_submitted', final_turn), ('departed', False)]
         elif second_departure:
-            if type(row.get('active_comparisons')) is not int or row['active_comparisons'] < 2:
+            if type(row.get('active_comparisons')) is not int or row['active_comparisons'] < max(0, second_turn - 10):
                 raise ValueError('peer-drop second departure active comparisons missing')
-            if type(row.get('minimum_confirmed')) is not int or row['minimum_confirmed'] < 10:
+            if type(row.get('minimum_confirmed')) is not int or row['minimum_confirmed'] < second_minimum:
                 raise ValueError('peer-drop second departure confirmation missing')
         else:
             required += [('drop_events', 1), ('canonical_comparisons', 38), ('active_comparisons', 30)]
@@ -775,7 +886,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
             if (row.get(field) != expected or (type(expected) is int and type(row.get(field)) is not int)
                     or (type(expected) is bool and type(row.get(field)) is not bool)):
                 raise ValueError('peer-drop agreement or canonical history incomplete')
-        minimum_confirmed = 10 if second_departure and index == 1 else 38
+        minimum_confirmed = second_minimum if second_departure and index == 1 else final_turn - 2
         if (type(row.get('slot')) is not int or not 0 <= row['slot'] < 3
                 or type(row.get('freeze_frame')) is not int
                 or (row['freeze_frame'] != 7 if rollback_departure else not 0 <= row['freeze_frame'] <= 6)
@@ -827,7 +938,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         second_frame = last.get('second_freeze_frame')
         frames = last.get('drop_frames')
         if (type(second_slot) is not int or not 0 <= second_slot < 3
-                or type(second_frame) is not int or not 10 <= second_frame <= 11
+                or type(second_frame) is not int or not second_minimum <= second_frame < second_turn
                 or type(last.get('second_frontier')) is not int or last['second_frontier'] != second_frame
                 or not isinstance(roster, list) or len(roster) != 3
                 or departed_second.get('uuid') != roster[second_slot]
@@ -1015,4 +1126,6 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 raise ValueError('peer-drop foreign proposal evidence missing')
         if room_after_drop:
             _validate_after_drop(result, survivors)
+        if second_boundary:
+            _validate_serial_boundary(records[0], survivors, second_turn)
     return result

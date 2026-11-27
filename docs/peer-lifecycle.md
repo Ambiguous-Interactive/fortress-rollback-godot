@@ -393,6 +393,16 @@ barrier opens. It continues to 40 inputs. The validator requires both published 
 the first pending publication, both departing identities, the first operation's commit
 acknowledgement, a second freeze equal to the confirmed frontier at observation, and 30 active
 plus 38 canonical prefix comparisons.
+
+The `peer-drop-second-after-ack` case stops the second page before it samples
+turn 8. Both survivors have observed the first COMMIT and the proposer has
+received the required acknowledgement. The `peer-drop-second-last-turn` case
+stops the second page after both survivors confirm original input turn 39.
+Both cases bind the applied release to the first operation, read the second
+frozen byte from the survivor's finalized inputs and compare its canonical
+history through boundary 42. The controls move dispatch before acknowledgement,
+substitute a stale release and change the applied frozen byte.
+
 The `peer-drop-rollback` case makes both survivors predict frame seven before the departing
 page submits its eighth input. Both survivors hold a real actual-input correction pending at
 frame seven when the departure is observed; the agreed cut settles at seven because the held
