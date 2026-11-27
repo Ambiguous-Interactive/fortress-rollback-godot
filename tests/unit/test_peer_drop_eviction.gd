@@ -6,6 +6,8 @@ const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const History = preload("res://addons/fortress_rollback/core/peer_drop_history.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
+const MESH_CAPACITY: int = 18
+
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(["unequal_retained_history", "retained_history_control", "journal_after_ring_wrap"])
@@ -25,8 +27,12 @@ func _unequal_delivery(context: RefCounted, unequal: bool) -> void:
 	_width = 4
 	_seen = 0
 	_donor_sources.clear()
-	var mesh: Dictionary = _wide_mesh(context)
+	var mesh: Dictionary = _recording_mesh(context, 0, Callable(), MESH_CAPACITY)
 	_play(context, mesh, 6, true)
+	var donor: RefCounted = mesh.peers[1]._core
+	var target_queue: Queue = donor._queues[2]
+	context.equal(target_queue._frames.size(), MESH_CAPACITY, "the donor uses the smallest supported mesh ring")
+	context.equal(target_queue._frames[4], 4, "the original target row occupies its physical slot before the advance")
 	for frame: int in range(20 if unequal else 3):
 		mesh.now += 1000
 		for player: int in range(3):
@@ -34,11 +40,12 @@ func _unequal_delivery(context: RefCounted, unequal: bool) -> void:
 			context.equal(result.code in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "unequal delivery advances or reaches the prediction bound")
 		for exchange: int in range(2):
 			_deliver(context, mesh, _drain(mesh))
-	var donor: RefCounted = mesh.peers[1]._core
 	context.equal(mesh.peers[0]._core.received_frames()[2], 7, "the recipient truly lacks every target row from eight onward")
 	context.equal(donor.received_frames()[2], 22 if unequal else 8, "the donor receives a real changing-input suffix")
 	context.equal(donor.retained_input(2, 8), _sample(2, 8), "global confirmation keeps the first missing actual row readable")
-	context.equal(donor.rollback_floor(), 7 if unequal else 1, "the fast recipient cannot raise the floor past missing history")
+	context.equal(donor.rollback_floor(), 7 if unequal else 1, "the slow recipient bounds donor reclamation")
+	context.equal(target_queue._frames[4], 22 if unequal else 4, "the late target row replaces the old tag only in the long schedule")
+	context.equal(target_queue.confirmed_input(8).bytes, _sample(2, 8), "the slot for the first missing row survives real ring wrap")
 	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
 	var cut: int = 22 if unequal else 8
 	for survivor: int in [0, 1]:
@@ -63,7 +70,7 @@ func _settings(locals: PackedInt32Array) -> Config:
 	config.input_width = _width
 	config.neutral_input.resize(_width)
 	config.max_prediction_frames = 8
-	config.queue_capacity = 18
+	config.queue_capacity = MESH_CAPACITY
 	config.history_slots = 9
 	config.check_distance = 0
 	config.sync_test = false

@@ -835,9 +835,17 @@ with clean delivery, one lost original historical backfill, and unequal grouped 
 use distinct wire formats and different departure triggers. Their retained
 history floors also differ before the drop. This gate does not establish wire
 interoperability, complete barrier participant/sequence/journal parity, all
-asymmetric exposed-frontier cases beyond the four/five schedule, physical donor eviction
-of a still-required range, or the remaining negative history paths. Live browser recovery
-has its own [exported witness](peer-lifecycle.md#unequal-confirmation-frontiers). Broader
+asymmetric exposed-frontier cases beyond the four/five schedule or the remaining negative
+history paths. In the coordinated v6 source, the confirmation fold includes the running
+recipient's contiguous target receipt and the prediction gate bounds the input-ring reclaim
+floor. A recipient that never received frame F therefore keeps an eligible donor from
+evicting that row while the recipient remains in the fold and the target remains active.
+See the pinned [confirmation fold](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sessions/p2p_session.rs#L15532-L15568)
+and [ring reclamation](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/input_queue/mod.rs#L1647-L1675).
+The wrap schedules exercise recovery after old slots are reused. The Godot
+[minimum-capacity witness](peer-lifecycle.md#unequal-confirmation-frontiers)
+checks a physical tag directly. Post-partition membership or availability changes fall
+outside this retention argument. Live browser recovery has its own exported witness. Broader
 acceptance remains
 under [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188),
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
