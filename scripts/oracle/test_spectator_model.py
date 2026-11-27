@@ -60,25 +60,21 @@ class SpectatorModelTests(unittest.TestCase):
     def test_jar_verification(self):
         import tempfile
         from pathlib import Path
+        from tlc_artifact import ensure_jar
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             good = root / 'good.jar'
             good.write_bytes(b'reviewed bytes')
             corrupt = root / 'corrupt.jar'
             corrupt.write_bytes(b'other bytes')
-            original_source, original_sha = model.JAR_SOURCE, model.JAR_SHA256
-            try:
-                model.JAR_SOURCE, model.JAR_SHA256 = good, model.digest(good)
-                seeded = root / 'nested' / 'tla2tools.jar'
-                model.ensure_jar(seeded)
-                self.assertEqual(model.digest(seeded), model.JAR_SHA256)
-                with self.assertRaisesRegex(ValueError, 'cached TLC artifact'):
-                    model.ensure_jar(corrupt)
-                model.JAR_SOURCE = corrupt
-                with self.assertRaisesRegex(ValueError, 'repository TLC artifact'):
-                    model.ensure_jar(good)
-            finally:
-                model.JAR_SOURCE, model.JAR_SHA256 = original_source, original_sha
+            expected = model.digest(good)
+            seeded = root / 'nested' / 'tla2tools.jar'
+            ensure_jar(seeded, good, expected)
+            self.assertEqual(model.digest(seeded), expected)
+            with self.assertRaisesRegex(ValueError, 'cached TLC artifact'):
+                ensure_jar(corrupt, good, expected)
+            with self.assertRaisesRegex(ValueError, 'repository TLC artifact'):
+                ensure_jar(good, corrupt, expected)
 
 
 if __name__ == '__main__':

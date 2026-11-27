@@ -67,9 +67,10 @@ def check_rust(traces, output, *, manifest, upstream, delayed=False, roster=Fals
     environment = source_build_environment(adapter, upstream, revision)
     adapter_hashes = upstream_inventory(adapter.parent)
     cargo, _ = setup_rust(manifest, False)
+    target = CACHE / 'target' / ('spectator-' + revision)
     execute([str(cargo), '+' + manifest['rust']['version'], 'build', '--locked', *(['--features', 'spectator-status'] if statuses else []), '--bin', 'spectator',
-             '--manifest-path', str(adapter)], output / 'rust-build.log', timeout=600, environment=environment)
-    binary = CACHE / 'target/debug/spectator'
+             '--manifest-path', str(adapter), '--target-dir', str(target)], output / 'rust-build.log', timeout=600, environment=environment)
+    binary = target / 'debug/spectator'
     fingerprint = digest(binary)
     expected = expected_rust(traces)
     observations = []
@@ -79,6 +80,8 @@ def check_rust(traces, output, *, manifest, upstream, delayed=False, roster=Fals
         if stderr.strip():
             raise ValueError('pinned spectator runtime emitted unexpected stderr')
         actual = json.loads(stdout)
+        if not isinstance(actual, dict) or actual.pop('upstream_revision', None) != revision:
+            raise ValueError('spectator observer revision differs from selected Fortress source')
         compare(actual, expected)
         observations.append(actual)
     compare(observations[0], observations[1])
@@ -97,7 +100,7 @@ def check_rust(traces, output, *, manifest, upstream, delayed=False, roster=Fals
         negative = controls(observations[0], expected)
     else:
         negative = delay_controls(observations[0], expected) if delayed else negative_controls(observations[0], expected)
-    return {'complete': True, 'binary_sha256': fingerprint, 'workloads': len(traces), 'repetitions': 2,
+    return {'complete': True, 'binary_sha256': fingerprint, 'upstream_revision': revision, 'workloads': len(traces), 'repetitions': 2,
             'observations_sha256': digest(output / 'rust-observed.json'),
             'negative_controls': negative}
 
