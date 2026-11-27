@@ -242,12 +242,13 @@ Join new sends through raw, check SDK and native absence, and keep original ordi
 Release a diagnostic gate on its exact blocked stamps within the page deadline.
 Keep one server receipt request outstanding through timeout and match its generation and links.
 An on-time open only proves publication when the opened file contains that generation.
-For late publication, compare pre-rename server work against the controller window from before request publication.
+For late publication, replay the original generation byte for byte and measure encoding, file writes and rename separately.
+Compare the original pre-rename server work against the controller window from before request publication.
 Order writes by server ordinal and page observations by the recipient's clock.
 Stamp validated history synchronously in the console listener with the expiry's controller ordinal.
 Await the original failure write before browser cleanup. Bound the wait and handle both the write callback and stream error.
 Bind supplemental socket evidence to the acknowledged failure line by digest, with one tagged socket per frozen recipient.
-Keep browser source clocks separate from callback times. Recheck proxy coverage after teardown and leave gaps or duplicates unresolved.
+Recheck proxy coverage after teardown. Resolve Firefox expiry order only with strict source bounds and no omitted or tied callback candidate at the inlet.
 Prove ordering between clocks by holding the original socket's FIFO until
 both exact raw stamps arrive and the controller reads their successful writes.
 Freeze native acceptance in the same page turn as the check. Reuse digests only
@@ -261,8 +262,7 @@ snapshots small. When a page can publish data before its evaluation reply
 arrives, arm a page-scoped listener before dispatch. Match the request ID and
 frame count and validate the complete receipt within the original deadline.
 Prepare shared ZIP tools through verified member comparison and atomic replacement.
-Exercise preparation with a live executable and a corrupt-cache control. Use a
-private Firefox installation when another run can refresh the shared tree.
+Exercise preparation with a live executable and a corrupt-cache control. Use private copies for assets that another run can refresh or hard-link during capture.
 Apply each page observation at its completion time before waiting for sibling
 pages. Check that peer's existing deadline first, then rearm the earliest live
 deadline. Exercise asymmetric timely completions and exact expired boundaries;

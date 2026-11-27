@@ -60,7 +60,9 @@ def _build_locked(cargo, cache, output, offline):
 
     commands = [[str(patch_tool), '--batch', '--forward', '--fuzz=0', '-p1'],
                 [str(cargo), 'clean', '-p', 'signal-fish-server'],
-                [str(cargo), 'build', '--locked', '--no-default-features', '--bin', 'signal-fish-server']]
+                # Release optimization is unnecessary for the bounded receipt serializer.
+                [str(cargo), 'build', '--locked', '--no-default-features', '--bin', 'signal-fish-server',
+                 '--config', 'profile.dev.package.signal-fish-server.opt-level=1']]
     with tempfile.NamedTemporaryFile(prefix='.relay-server-', dir=output) as staged:
         with tempfile.TemporaryDirectory(prefix='relay-trace-build-', dir=workspace_cache) as temporary, log_path.open('wb') as log:
             source = extract(archive, pin, Path(temporary))

@@ -1,11 +1,49 @@
 // Value: constructor tracking charges orphan connections that never create a data channel.
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { instrument, isDropCanonicalFailure, isRoomContinueFailure, isProcessMissingFailure, resourcesClosed, closeDepartingRtc } = require('./webrtc.cjs');
+const { instrument, isDropCanonicalFailure, isRoomContinueFailure, isProcessMissingFailure, resourcesClosed, closeDepartingRtc,
+  releaseRecordingTail } = require('./webrtc.cjs');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const { pauseElapsed, registerOnlineInit, collectDiagnostics, measured } = require('./online.cjs');
+
+// Value: a fast endpoint cannot release the final original until the slower one also completes its prediction.
+test('recording tail release waits for both readiness and both completed predictions', async () => {
+  const paused = () => {
+    let resume;
+    const waiting = new Promise(resolve => { resume = resolve; });
+    return { waiting, resume };
+  };
+  const milestones = [0, 1].map(() => [paused(), paused()]);
+  const pages = milestones.map(steps => {
+    const sandbox = vm.createContext({ window: {}, document: { body: { dataset: {} } } });
+    let wait = 0;
+    return {
+      sandbox,
+      async waitForFunction(predicate) {
+        await steps[wait++].waiting;
+        assert.equal(vm.runInContext(`(${predicate.toString()})()`, sandbox), true);
+      },
+      async evaluate(operation) { return vm.runInContext(`(${operation.toString()})()`, sandbox); },
+    };
+  });
+  const release = releaseRecordingTail(pages);
+  const arrive = async (page, step, property, value) => {
+    pages[page].sandbox.document.body.dataset[property] = value;
+    milestones[page][step].resume();
+    await new Promise(resolve => setImmediate(resolve));
+  };
+  await arrive(0, 0, 'fortressRecordingTailReady', 'true');
+  assert.ok(pages.every(page => page.sandbox.window.fortressRecordingTailStep === undefined));
+  await arrive(1, 0, 'fortressRecordingTailReady', 'true');
+  assert.ok(pages.every(page => page.sandbox.window.fortressRecordingTailStep === true));
+  await arrive(0, 1, 'fortressRecordingTail', '257');
+  assert.ok(pages.every(page => page.sandbox.window.fortressRecordingTailReleased === undefined));
+  await arrive(1, 1, 'fortressRecordingTail', '257');
+  await release;
+  assert.ok(pages.every(page => page.sandbox.window.fortressRecordingTailReleased === true));
+});
 
 // Value: download latency cannot extend gameplay; the real collector accepts only retained offline matches and restores storage methods on failure.
 test('diagnostic downloads require an offline match that stays frozen throughout completion', async () => {
@@ -808,7 +846,7 @@ test('corrupt control sets both physical second directions before either origina
 });
 
 // Value: repeated relay refusal must preserve actual socket state and stop exactly after queue reuse.
-test('recording pressure follows service turns on both physical socket types through frame252', () => {
+test('recording pressure follows relay turns and keeps the direct path blocked through final receipt', () => {
   class Socket {
     static OPEN = 1;
     constructor() { this.readyState = 1; this.nativeBuffered = 7; this.sent = []; }
@@ -849,6 +887,11 @@ test('recording pressure follows service turns on both physical socket types thr
     assert.equal(window.fortressRtc.relayPostWrapBlockedReads, 2);
     document.body.dataset.fortressFrame = '253';
     assert.equal(socket.bufferedAmount, 7);
+    assert.equal(channel.bufferedAmount, 262144);
+    document.body.dataset.fortressFrame = '256';
+    assert.equal(socket.bufferedAmount, 7);
+    assert.equal(channel.bufferedAmount, 262144);
+    document.body.dataset.fortressFrame = '257';
     assert.equal(channel.bufferedAmount, 7);
     assert.equal(socket.readyState, 1);
     assert.equal(window.fortressArmRecordingHead('0102'), true);
@@ -874,6 +917,24 @@ test('recording pressure follows service turns on both physical socket types thr
     window.fortressRecordingTurn = 18;
     socket.send(new Uint8Array([4, 5]));
     assert.equal(window.fortressRtc.recordingRelaySends.length, 1, 'a prior identical send can explain the receiver receipt');
+    document.body.dataset.fortressFrame = '256';
+    const terminal = new Uint8Array(135).subarray(1, 134);
+    terminal.set(Buffer.from('FSR1'));
+    terminal[63] = 3;
+    terminal[102] = 1; // Little-endian frame 256.
+    terminal[109] = 1;
+    socket.refuseSend = true;
+    assert.throws(() => socket.send(terminal), /socket send refused/);
+    assert.equal(window.fortressRtc.recordingFinalRelaySend, null);
+    socket.refuseSend = false;
+    window.fortressRecordingTailReleased = true;
+    window.fortressRecordingTurn = 19;
+    socket.send(terminal);
+    const tail = { turn: 19, wire: Buffer.from(terminal).toString('hex'), released: true };
+    assert.deepEqual(window.fortressRtc.recordingFinalRelaySend, tail);
+    window.fortressRecordingTurn = 20;
+    socket.send(terminal);
+    assert.deepEqual(window.fortressRtc.recordingFinalRelaySend, tail);
     document.body.dataset.fortressFrame = '129';
     const observedRefusals = window.fortressRtc.relayPostWrapBlockedReads;
     for (let index = 0; index < 1024; index++) socket.send(Uint8Array.from([8, index >> 8, index & 255]));

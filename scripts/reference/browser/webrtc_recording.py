@@ -71,11 +71,49 @@ def validate_recording(value, count, expected_engine=None, frames=40):
     return frames
 
 
+def _addressed_payload(envelope, sender, recipient, label):
+    if type(envelope) is not str or not re.fullmatch(r'(?:[0-9a-f]{2}){133,1081}', envelope):
+        raise ValueError(f'{label} envelope invalid')
+    data = bytes.fromhex(envelope)
+    if (data[:21] != b'FSR1\x01' + bytes([2]) * 16 or data[21:37].hex() != sender.replace('-', '')
+            or data[37:53].hex() != recipient.replace('-', '') or struct.unpack_from('<I', data, 53)[0] != len(data) - 57):
+        raise ValueError(f'{label} address invalid')
+    return data[57:]
+
+
+def _validate_recording_tail(source, row, sender, recipient, slot, source_index):
+    tail = row.get('recording_tail')
+    if type(tail) is not dict or any(type(tail.get(key)) is not dict for key in ('held', 'receipt', 'after')):
+        raise ValueError('recording pressure final receipt inventory incomplete')
+    held, receipt, after = (tail[key] for key in ('held', 'receipt', 'after'))
+    if (any(type(value) is not int for value in (held.get('frame'), held.get('received_frame'), held.get('turn'), held.get('loads')))
+            or held['frame'] != 257 or held['received_frame'] != 255 or held['turn'] < 1 or held['loads'] < 1):
+        raise ValueError('recording pressure final input was not held at boundary 257')
+    if (type(receipt.get('frame')) is not int or receipt['frame'] != 257 or type(receipt.get('turn')) is not int
+            or receipt['turn'] < held['turn'] or receipt.get('stage') not in ('final_confirmation', 'recording_confirmation')):
+        raise ValueError('recording pressure final addressed receipt missing after the hold')
+    envelope = receipt.get('envelope')
+    payload = _addressed_payload(envelope, sender, recipient, 'recording pressure final addressed receipt')
+    start = validate_original_input(payload, 2, sender, slot, source_index, 257, (129, 257), 'recording pressure final receipt')
+    if start + struct.unpack_from('<H', payload, 52)[0] != 257 or envelope not in row['mixed']['received_inputs']:
+        raise ValueError('recording pressure final addressed receipt lacks original input 256')
+    physical = source['rtc'].get('recordingFinalRelaySend')
+    source_hold = source['result']['records'][0].get('recording_tail', {})
+    source_held_turn = source_hold.get('held', {}).get('turn') if type(source_hold) is dict and type(source_hold.get('held')) is dict else None
+    if (type(physical) is not dict or physical.get('wire') != envelope or physical.get('released') is not True
+            or type(physical.get('turn')) is not int or type(source_held_turn) is not int or physical['turn'] <= source_held_turn):
+        raise ValueError('recording pressure final addressed receipt missing matching physical send')
+    wanted = {'frame': 257, 'received_frame': 256, 'confirmed_frame': 256, 'loads': held['loads'] + 1}
+    if any(type(after.get(key)) is not int or after[key] != value for key, value in wanted.items()) or after['loads'] != row['rollback_loads']:
+        raise ValueError('recording pressure final recovery did not correct input 256 at boundary 257')
+
+
 def _validate_pressure_routes(peers, identities):
     for index, (sender, recipient) in enumerate((identities, identities[::-1])):
         source, destination = peers[index], peers[1 - index]
         sent, retried = source['rtc'].get('recordingRelaySends'), source['result']['records'][0]['mixed'].get('retried_inputs')
-        receipt = destination['result']['records'][0]['mixed']
+        destination_row = destination['result']['records'][0]
+        receipt = destination_row['mixed']
         received = receipt.get('received_inputs')
         if (type(sent) is not list or len(sent) != 2 or type(retried) is not list or len(retried) != 2
                 or type(received) is not list or len(received) > min(512, receipt['accepted_binary'])
@@ -96,13 +134,8 @@ def _validate_pressure_routes(peers, identities):
             if not last_read < read <= source['rtc']['relayPostWrapBlockedReads']:
                 raise ValueError('recording pressure attributed retry socket read invalid')
             envelope = retry.get('envelope')
-            if type(envelope) is not str or not re.fullmatch(r'(?:[0-9a-f]{2}){133,1081}', envelope):
-                raise ValueError('recording pressure attributed retry envelope invalid')
-            data = bytes.fromhex(envelope)
-            if (data[:21] != b'FSR1\x01' + bytes([2]) * 16 or data[21:37].hex() != sender.replace('-', '')
-                    or data[37:53].hex() != recipient.replace('-', '') or struct.unpack_from('<I', data, 53)[0] != len(data) - 57):
-                raise ValueError('recording pressure attributed retry address invalid')
-            if validate_original_input(data[57:], 2, sender, slot, index, 257, (129, frame), 'recording pressure') != start or start in starts:
+            payload = _addressed_payload(envelope, sender, recipient, 'recording pressure attributed retry')
+            if validate_original_input(payload, 2, sender, slot, index, 257, (129, frame), 'recording pressure') != start or start in starts:
                 raise ValueError('recording pressure attributed retry original range invalid')
             if physical.get('first') is not True:
                 raise ValueError('recording pressure attributed retry first physical send missing')
@@ -110,6 +143,7 @@ def _validate_pressure_routes(peers, identities):
                 raise ValueError('recording pressure attributed retry missing physical send or addressed receipt')
             starts.add(start)
             last_retry, last_read = retry_turn, read
+        _validate_recording_tail(source, destination_row, sender, recipient, slot, index)
 
 
 def validate_pressure(result, expected_engine=None):

@@ -108,6 +108,8 @@ gh workflow run gdextension-experiment.yml -f qualification=firefox -f cell=rela
 ```
 
 The traced run builds the pinned server with receipt hooks on each Godot pin.
+Its build command sets optimization level 1 for the instrumented server crate
+to reduce the time spent encoding a full receipt.
 The job artifact includes the build receipt and log, the browser log, and any
 published server scope and packet snapshot. Pair each traced run with a stock
 run at the same revision, browser profile, and room size to measure overhead.
@@ -121,6 +123,12 @@ links to the controller's `controller_timing`. The server row records request
 observation, the locked state cutoff, snapshot completion, buffered JSON
 serialization and the result of rechecking the request and renaming the
 snapshot. A superseded request has `published: false`.
+
+The matched eight-player Firefox 4.3 captures used CPUs 0–2 and the same
+three-second controller deadline.
+[Original receipt](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/blob/8d7cf5c30e9369a6a72a1752d36e43c987bd8152/before-relay-8-server-trace.json.gz)
+[Optimized receipt](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/blob/8d7cf5c30e9369a6a72a1752d36e43c987bd8152/after-relay-8-server-trace.json.gz)
+[Server and controller timings](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/blob/8d7cf5c30e9369a6a72a1752d36e43c987bd8152/README.md)
 
 On deadline failure, the browser log retains `relayServerControllerTiming`
 and any `relayServerRecoveryTiming`. The matching generation may have opened
@@ -242,6 +250,17 @@ On failure, the witness waits for the original phase receipt write before
 browser cleanup. After cleanup, `relayFirefoxFailure` can supplement an
 acknowledged write. Match it to the original JSON line using `failure_sha256`.
 The callback marker uses the controller's acknowledgement of that write.
+
+For a native expiry, the reporting Firefox page brackets the service turn
+with wall-clock reads on Gecko's frame clock. The receipt checks elapsed time
+against the page's monotonic clock and allows for Firefox timer precision.
+The comparison assumes the host wall clock stays continuous between the frame
+and the service turn. Each exact carrier on the expired directed link can
+report signed `min_gap_ms` and `max_gap_ms` relative to that turn. An entirely
+negative interval establishes frame receipt before expiry. An entirely positive
+interval establishes receipt after expiry. Overlap, invalid samples, and
+evicted frame candidates leave the order unresolved. Use the original phase
+receipt to check subsequent page message, decoder, SDK, and native observations.
 
 Use `--trace-mixed-receive --browser-pair chromium-firefox` with the trace
 server to collect both receipts in one relay room. Each engine observes
