@@ -100,7 +100,7 @@ class RecordingTests(unittest.TestCase):
             period = 5 + index
             retries = [dict(envelope=packet, start_frame=start, frame=start + 1, refused_turn=100 * period + n * period + 1,
                             retry_turn=101 * period + n * period, blocked_read=n + 1) for n, (packet, start) in enumerate(zip(packets[index], (129, 134)))]
-            sends = [dict(wire=retry['envelope'], turn=retry['retry_turn']) for retry in retries]
+            sends = [dict(wire=retry['envelope'], turn=retry['retry_turn'], first=True) for retry in retries]
             state = dict(uuid=ids[index], pressure_refusals=20, pressure_post_wrap_refusals=10,
                          pressure_retries=10, accepted_binary=30, refused_head_bytes=0, caller_pending=0,
                          maximum_pending=10, maximum_relay_pending=10, maximum_relay_received=10,
@@ -110,12 +110,12 @@ class RecordingTests(unittest.TestCase):
             row = dict(players=2, frames_submitted=257, canonical_comparisons=255, minimum_confirmed=255,
                        active_comparisons=254, rollback_loads=10, mixed=state, recording=recording(2, 257))
             result['records'][0]['peers'].append(dict(result=dict(passed=True, records=[row], binary_receives=30),
-                rtc=dict(binarySent=30, relayBlockedReads=20, relayPostWrapBlockedReads=10, channels=channels, recordingRelaySends=sends,
+                rtc=dict(binarySent=30, captureError=False, relayBlockedReads=20, relayPostWrapBlockedReads=10, channels=channels, recordingRelaySends=sends,
                          teardown=dict(channels=3, connections_created=1, connections=1, websockets_created=1, websockets=1))))
         self.assertIs(validate_pressure(result, ENGINE), result)
         for section, key, value in [('mixed', 'pressure_post_wrap_refusals', 0), ('mixed', 'pressure_retries', 0),
                                     ('mixed', 'refused_head_bytes', 100), ('mixed', 'accepted_binary', True),
-                                    ('rtc', 'relayPostWrapBlockedReads', 0), ('rtc', 'binarySent', 0),
+                                    ('rtc', 'relayPostWrapBlockedReads', 0), ('rtc', 'binarySent', 0), ('rtc', 'captureError', True),
                                     ('row', 'active_comparisons', 253), ('row', 'frames_submitted', 40),
                                     ('mixed', 'refused_head_bytes', False), ('mixed', 'refused_head_bytes', 0.0),
                                     ('mixed', 'caller_pending', False), ('mixed', 'caller_pending', 0.0),
@@ -143,6 +143,7 @@ class RecordingTests(unittest.TestCase):
                     validate_pressure(changed, ENGINE)
         for mutation, diagnostic in [('missing_receipt', 'missing physical send or addressed receipt'),
                                      ('missing_send', 'inventory incomplete'), ('wrong_wire', 'missing physical send or addressed receipt'),
+                                     ('prior_send', 'first physical send missing'),
                                      ('wrong_turn', 'retry turn'), ('reordered_retries', 'retry turn'), ('wrong_socket_read', 'socket read'),
                                      ('wrong_recipient', 'retry address'), ('wrong_session', 'retry address'), ('wrong_sample', 'original input bytes'),
                                      ('wrong_connection', 'header or identity')]:
@@ -156,6 +157,8 @@ class RecordingTests(unittest.TestCase):
                     received.pop(0)
                 elif mutation == 'missing_send':
                     sender['rtc'].pop('recordingRelaySends')
+                elif mutation == 'prior_send':
+                    sent[0]['first'] = False
                 elif mutation == 'wrong_wire':
                     sent[0]['wire'] = retries[1]['envelope']
                 elif mutation == 'wrong_turn':

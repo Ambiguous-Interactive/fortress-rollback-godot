@@ -104,6 +104,8 @@ def _validate_pressure_routes(peers, identities):
                 raise ValueError('recording pressure attributed retry address invalid')
             if validate_original_input(data[57:], 2, sender, slot, index, 257, (129, frame), 'recording pressure') != start or start in starts:
                 raise ValueError('recording pressure attributed retry original range invalid')
+            if physical.get('first') is not True:
+                raise ValueError('recording pressure attributed retry first physical send missing')
             if physical.get('wire') != envelope or envelope not in received:
                 raise ValueError('recording pressure attributed retry missing physical send or addressed receipt')
             starts.add(start)
@@ -148,7 +150,7 @@ def validate_pressure(result, expected_engine=None):
         for key in ('maximum_pending', 'maximum_relay_pending', 'maximum_relay_received'):
             if type(state.get(key)) is not int or not 0 <= state[key] <= 128:
                 raise ValueError('recording pressure owned queue exceeded its bound')
-        if (type(witness.get('binary_receives')) is not int or witness['binary_receives'] < state['accepted_binary']
+        if (rtc.get('captureError') is not False or type(witness.get('binary_receives')) is not int or witness['binary_receives'] < state['accepted_binary']
                 or type(rtc.get('binarySent')) is not int or rtc['binarySent'] < 2):
             raise ValueError('recording pressure physical binary transport missing')
         for key in ('relayBlockedReads', 'relayPostWrapBlockedReads'):

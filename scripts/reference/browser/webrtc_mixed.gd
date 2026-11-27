@@ -183,9 +183,9 @@ func _capture_refused_input(host: Node, blocked_read: int) -> void:
 	for earlier: Dictionary in retried_inputs:
 		if earlier.start_frame == packet.message.start_frame: return
 	var hex: String = refused_head.hex_encode()
+	if not JavaScriptBridge.eval("window.fortressArmRecordingHead(" + JSON.stringify(hex) + ")"): return
 	refused_input = {"envelope": hex, "start_frame": packet.message.start_frame, "frame": host.peers[0].status().current_frame,
 		"refused_turn": host.pressure_service_turn, "blocked_read": blocked_read}
-	JavaScriptBridge.eval("window.fortressRecordingRefusedHead = " + JSON.stringify(hex))
 
 
 func _record_bounds() -> void:

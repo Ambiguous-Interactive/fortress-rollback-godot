@@ -126,12 +126,18 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   }
   window.fortressSockets = [];
   const nativeSocket = WebSocket;
+  const nativeBuffered = recordingPressure ? Object.getOwnPropertyDescriptor(nativeSocket.prototype, 'bufferedAmount').get : null;
+  const relaySends = new Set();
+  window.fortressArmRecordingHead = envelope => {
+    if (relaySends.has(envelope) || evidence.captureError) return false;
+    window.fortressRecordingRefusedHead = envelope;
+    return true;
+  };
   window.WebSocket = new Proxy(nativeSocket, { construct(target, args, newTarget) {
     const socket = Reflect.construct(target, args, newTarget);
     const record = { socket, received: 0, opened: false, failed: false, close_code: null };
     window.fortressSockets.push(record);
     if (recordingPressure) {
-      const buffered = Object.getOwnPropertyDescriptor(nativeSocket.prototype, 'bufferedAmount').get;
       Object.defineProperty(socket, 'bufferedAmount', { get() {
         const frame = Number(document.body?.dataset.fortressFrame ?? -1);
         if (frame >= 4 && frame < 253 && window.fortressRelayRefused === true) {
@@ -139,7 +145,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
           if (frame > 128) evidence.relayPostWrapBlockedReads++;
           return 262144;
         }
-        return buffered.call(socket);
+        return nativeBuffered.call(socket);
       } });
     }
     socket.addEventListener('message', () => { record.received++; });
@@ -151,17 +157,26 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   const websocketSend = WebSocket.prototype.send;
   WebSocket.prototype.send = function(bytes) {
     if (typeof bytes !== 'string') evidence.binarySent++;
-    const target = recordingPressure && this.readyState === nativeSocket.OPEN ? window.fortressRecordingRefusedHead : '';
+    const trace = recordingPressure && this.readyState === nativeSocket.OPEN && typeof bytes !== 'string' && evidence.recordingRelaySends.length < 2;
     const result = websocketSend.call(this, bytes);
-    if (target && evidence.recordingRelaySends.length < 2 && bytes.byteLength <= 1081) {
-      const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      const wire = Array.from(view, byte => byte.toString(16).padStart(2, '0')).join('');
-      if (wire === target) {
-        evidence.recordingRelaySends.push({ turn: window.fortressRecordingTurn, wire });
-        window.fortressRecordingRefusedHead = '';
+    if (trace) {
+      const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
+        : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
+      if (!view) evidence.captureError = true;
+      else if (view.length <= 1081) {
+        const wire = Array.from(view, byte => byte.toString(16).padStart(2, '0')).join('');
+        if (!relaySends.has(wire)) {
+          if (relaySends.size >= 1024) evidence.captureError = true;
+          else relaySends.add(wire);
+          if (wire === window.fortressRecordingRefusedHead && !evidence.captureError) {
+            evidence.recordingRelaySends.push({ turn: window.fortressRecordingTurn, wire, first: true });
+            window.fortressRecordingRefusedHead = '';
+          }
+        }
       }
     }
-    evidence.maximumRelayBuffered = Math.max(evidence.maximumRelayBuffered, this.bufferedAmount || 0);
+    const buffered = nativeBuffered ? nativeBuffered.call(this) : this.bufferedAmount;
+    evidence.maximumRelayBuffered = Math.max(evidence.maximumRelayBuffered, buffered || 0);
     return result;
   };
   const remember = (list, bytes) => {
