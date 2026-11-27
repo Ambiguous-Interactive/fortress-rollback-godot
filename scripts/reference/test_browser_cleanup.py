@@ -3804,6 +3804,7 @@ module.exports.firefox=module.exports.chromium;
                     name = name.rsplit('-', 1)[0]
                 log.unlink(missing_ok=True)
                 environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_CHROMIUM_EXECUTABLE': '/fixture',
+                               'FORTRESS_FIREFOX_EXECUTABLE': '/fixture',
                                'FORTRESS_TLS_CERT': str(certificate), 'FORTRESS_TLS_KEY': str(certificate), 'CLEANUP_LOG': str(log),
                                'FAIL_PRIMARY': str(int(primary)), 'FAIL_OPAQUE': str(int(opaque)),
                                'FAIL_CUSTOM_INSPECT': str(int(custom_inspect)), 'CUSTOM_INSPECT_ON_GOTO': str(int(custom_inspect and name == 'smoke')),

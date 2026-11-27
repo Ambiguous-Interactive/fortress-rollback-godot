@@ -53,6 +53,7 @@ Correlate command receipts to the issuing page and command ID. Record entry and 
 Test an acknowledgment arriving after a dispatch rejection and require the asynchronous test to reach its final assertion.
 Await all owned context and browser closures after sibling rejection, then await server closure. Preserve context-before-browser order for Firefox.
 When a cleanup callback contract changes, update every dependent test double and run the complete CI control command, including sibling test files.
+Set each fake browser's executable variable in the fixture. The local browser environment may otherwise hide failures on tool-free CI.
 Route callbacks run outside the runner's awaited stack. Forward their failures into the same owner and fence every callback continuation before starting another browser action.
 A check inside an async wrapper leaves a caller-resumption gap; use lazy action thunks and a synchronous stop check immediately before publication.
 Retain started-operation failures observed through owned cleanup and its final event-loop flush. Handle abandoned RPC rejections after failed-owner retirement without resuming work.
