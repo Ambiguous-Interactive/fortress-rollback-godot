@@ -175,6 +175,10 @@ class RecordingTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, diagnostic):
                     validate_pressure(changed, ENGINE)
         changed = copy.deepcopy(result)
+        changed['records'][0]['peers'][0]['rtc']['teardown'].update(websockets_created=2, websockets=2)
+        with self.assertRaisesRegex(ValueError, 'expected one WebSocket'):
+            validate_pressure(changed, ENGINE)
+        changed = copy.deepcopy(result)
         changed['records'][0]['peers'][0]['result']['records'][0]['recording'] = recording(2)
         with self.assertRaisesRegex(ValueError, 'recovery-only'):
             validate_pressure(changed, ENGINE)

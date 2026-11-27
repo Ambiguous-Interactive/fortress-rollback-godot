@@ -539,7 +539,7 @@ Accepted bytes still traverse the pinned SDK, real WebSockets and SignalFish ser
 The witness checks retained relay heads before retry and compares original
 canonical prefixes while pressure remains active. In each direction it follows
 two distinct post-wrap original-input envelopes from a refused socket-buffer read
-to the sender's first successful WebSocket send and the receiving SDK's binary signal.
+to the sender's first successful send on its sole WebSocket and the receiving SDK's binary signal.
 The receipt records each refusal and retry turn. Validation checks the expected
 five- or six-turn release schedule, the envelope's frozen sender and recipient,
 and the original input bytes. After recovery, both decoded recordings
