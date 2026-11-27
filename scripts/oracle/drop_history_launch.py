@@ -15,7 +15,8 @@ from launch import execute, git_identity, require_unchanged
 from p2p_launch import source_files, upstream_inventory, executable_identity
 from drop_history_contract import history_bytes, compare, negative_controls, loss_evidence_controls, commit_loss_evidence_controls, require, REVISION
 
-from drop_history_contract import wrapped_evidence_controls
+from drop_history_contract import same, wrapped_evidence_controls
+from drop_history_deadline import check_commit_deadline, deadline_controls
 from drop_history_ack_controls import controls as ack_loss_evidence_controls
 from drop_history_inventory_controls import controls as inventory_loss_evidence_controls
 
@@ -28,10 +29,10 @@ def inventory():
     return {str(path.relative_to(ROOT)): digest(path) for path in sorted(set(files))}
 
 
-def parse_godot(stdout, stderr):
+def parse_godot(stdout, stderr, prefix=PREFIX):
     if any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
         raise ValueError('drop history: Godot engine error')
-    records = [line[len(PREFIX):] for line in stdout.splitlines() if line.startswith(PREFIX)]
+    records = [line[len(prefix):] for line in stdout.splitlines() if line.startswith(prefix)]
     if len(records) != 1:
         raise ValueError('drop history: missing/duplicate Godot completion')
     return json.loads(records[0])
@@ -114,6 +115,31 @@ def interior_history_control(engine, output, source, target_slots=1):
         raise ValueError('drop history: interior history control survived')
     return 'observed_interior_history_permutation'
 
+
+
+def deadline_evidence(engine, binary, output):
+    cases = {}
+    for offset in (-1, 0, 1):
+        case = []
+        for repeat in (1, 2):
+            stdout, stderr = execute([str(binary), '--commit-deadline', str(offset)], output / f'source-commit-deadline-{offset}-{repeat}.log')
+            require(not stderr.strip(), 'source COMMIT deadline stderr')
+            observed = json.loads(stdout)
+            check_commit_deadline(observed, offset)
+            case.append(observed)
+        require(same(*case), 'source COMMIT deadline fresh-process repeat mismatch')
+        cases[str(offset)] = case[0]
+    suite = 'res://tests/unit/test_peer_drop_commit.gd'
+    stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script', 'res://tests/runner/run_tests.gd',
+                              '--', '--suite', suite, '--case', 'commit_deadline'], output / 'godot-commit-deadline.log')
+    godot = parse_godot(stdout, stderr, 'FORTRESS_TEST_RESULT ')
+    require(godot.get('passed') is True and godot.get('complete') is True and len(godot.get('records', [])) == 1, 'Godot COMMIT deadline case')
+    record = godot['records'][0]
+    require(record.get('suite') == suite and record.get('case') == 'commit_deadline' and record.get('seed') == '1701'
+            and len(record.get('runs', [])) == 2 and same(*record['runs'])
+            and record['runs'][0].get('assertions', 0) > 0 and record['runs'][0].get('failures') == [], 'Godot COMMIT deadline repeat')
+
+    return {'source': cases, 'godot': record}, deadline_controls(cases['0'])
 
 
 def build(command, log, rustc):
@@ -246,6 +272,8 @@ def main():
     controls.append(prepare_publication_control(engine, args.output))
     controls.append(interior_history_control(engine, args.output, observed[0]['multi-clean']['source']))
     controls.append('grouped:' + interior_history_control(engine, args.output, observed[0]['grouped-clean']['source'], 2))
+    deadline, deadline_controls = deadline_evidence(engine, binary, args.output)
+    controls.extend(deadline_controls)
     require_unchanged('local source inventory', local_sources, inventory())
     require_unchanged('upstream source inventory', pinned_sources, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
@@ -253,7 +281,7 @@ def main():
     require_unchanged('repository identity', identity, git_identity())
     verify_tools(tool_paths, tool_identities)
     records = args.output / 'comparison.json'
-    records.write_text(json.dumps(observed[0], indent=2) + '\n')
+    records.write_text(json.dumps({**observed[0], 'commit-deadline': deadline}, indent=2) + '\n')
     receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True, 'upstream_revision': REVISION,
         'upstream_archive_sha256': manifest['sources']['fortress']['archive']['digest'],
         'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'upstream_source_sha256': pinned_sources,
@@ -262,7 +290,8 @@ def main():
         'engine': engine_version.strip(), 'engine_identity': engine_identity, 'binary_identity': binary_identity,
         'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'tool_identities': tool_identities, 'default_features': False, 'features': [],
         'execution_identities_unchanged': True, 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),
-        'evidence': evidence, 'negative_controls': controls,
+        'evidence': evidence, 'commit_deadline': {offset: outcome['advance'] for offset, outcome in deadline['source'].items()},
+        'negative_controls': controls,
         'scope': ('Paired one/four-row single-target and four-row two-target clean/lost-first-history three-endpoint original-history/cut scenarios: source explicit removal; '
                   'Godot elapsed timeout; equal and unequal exposed frontiers; first-prepare loss alone; first-inventory/COMMIT/ACK loss alone or combined with donor data; '
                   'prepare publications are paired with their routing; '
@@ -271,6 +300,7 @@ def main():
                   'against the pinned participants.')}, indent=2) + '\n')
     print('drop history: two survivors preserve twenty original canonical prefixes and statuses through '
           'one/four-row single/two-target donor recovery and lost inventory/commits/acknowledgements, twice', flush=True)
+    print('drop history: source and Godot commit before the deadline and refuse at equality and after', flush=True)
 
 
 if __name__ == '__main__':
