@@ -16,6 +16,13 @@ The optimized 4.3 Firefox pilot printed `relay:4 passed` and
 1,436 ms. Independent verification found 40 original canonical rows, eight
 clean Leaves and exact Gecko carriers on all 56 directed links.
 
+On the unchanged CPU mask, both pinned Firefox matrices selected generation 3
+in time. Selection took 962 ms for eight peers on 4.3 and 389 ms on 4.7.2.
+Both stock Chromium controls passed the same canonical history and Leave
+checks. A deliberate Firefox post-history hold confirmed 36 input and 20
+quality carriers at Gecko and raw arrival before expiry and stopped at the
+SDK boundary.
+
 The [browser integration guidance](../skills/testing/references/browser-integration.md)
 now calls for separate encode and write measurements, strict coverage at the
 inlet, and private copies for concurrently staged assets. It replaces the
