@@ -103,24 +103,32 @@ test('expiry clock bounds stay on the reporting page, expired sender and exact c
   assert.equal(join([, bounds(120)]).observation, undefined);
 });
 
-test('evicted callback candidates leave expiry order unresolved', () => {
+test('evicted callback candidates leave expiry order unresolved', context => {
   const { page, socket } = fakePage();
   const snapshot = observeFirefoxFrames(page, endpoint, 1);
   const frame = socket();
+  let controllerMs = 10;
+  context.mock.method(performance, 'now', () => controllerMs);
   frame(carrier.toString('base64'), 98);
-  const evictedCallback = snapshot().frames[0].controller_ms;
+  const [earlierFrame] = snapshot().frames;
+  controllerMs = 20;
   frame(carrier.toString('base64'), 100);
   const firefox_clock = firefoxExpiryWindow([
     { wall_ms: 120, page_before_ms: 10, page_after_ms: 10 }, { wall_ms: 130, page_before_ms: 20, page_after_ms: 20 },
   ], 25);
   const expiry = { uuid: 'cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd', page_ms: 25, firefox_clock };
-  const joined = inlet_ms => {
+  const joined = (inlet_ms, capture = snapshot) => {
     const input = { ...receive, rows: [{ ...packet, proxy: [{ ...proxy, inlet_ms }] }] };
-    return joinFirefoxFrames([, snapshot], input, [, recipient], 0, [, expiry]).rows[0];
+    return joinFirefoxFrames([, capture], input, [, recipient], 0, [, expiry]).rows[0];
   };
   assert.equal(joined(0).status, 'observed');
   assert.deepEqual(joined(0).observation.expiry_timing, { order: 'unresolved', reason: 'frame_candidates_evicted' });
-  assert.equal(joined(evictedCallback).observation.expiry_timing.order, 'before');
+  const atEarlier = earlierFrame.controller_ms;
+  assert.deepEqual(joined(atEarlier).observation.expiry_timing, { order: 'unresolved', reason: 'frame_candidates_evicted' });
+  const newest = snapshot();
+  assert.equal(joined(15).observation.expiry_timing.order, 'before');
+  const complete = () => ({ ...newest, omitted: 0, frames: [earlierFrame, ...newest.frames] });
+  assert.deepEqual(joined(atEarlier, complete).observation.expiry_timing, { order: 'unresolved', reason: 'frame_candidate_at_inlet' });
 });
 
 // Value: protects=Gecko-to-native ordering despite callback delay; fails_when=callback time or overlapping bounds decide order; why_new=real Firefox; seam=loopback.

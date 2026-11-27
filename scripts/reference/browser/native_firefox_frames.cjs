@@ -104,7 +104,8 @@ function joinFirefoxFrames(observers, receive, recipients = [], failurePublished
     else if (stream.sockets > 1 || stream.proxy.length > 1 || proxy.length > 1) status = 'ambiguous';
     else if (proxy.length === 1 && proxy[0].socket === stream.proxy[0] && Number.isFinite(proxy[0].inlet_ms)) {
       const [write] = proxy;
-      const matching = (stream.byDigest.get(write.carrier_sha256) ?? []).filter(frame => frame.controller_ms > write.inlet_ms);
+      const candidates = stream.byDigest.get(write.carrier_sha256) ?? [];
+      const matching = candidates.filter(frame => frame.controller_ms > write.inlet_ms);
       if (matching.length > 1) status = 'ambiguous';
       else if (matching.length === 1) {
         status = 'observed';
@@ -113,9 +114,13 @@ function joinFirefoxFrames(observers, receive, recipients = [], failurePublished
         observation = { proxy_ordinal: write.ordinal, ...frame,
           callback_after_failure_publication: failurePublishedMs === undefined ? undefined : frame.controller_ms > failurePublishedMs };
         if (expiry && expiry.sender === packet.sender) {
-          observation.expiry_timing = stream.omitted && !(stream.omitted_through_ms <= write.inlet_ms)
-            ? { order: 'unresolved', reason: 'frame_candidates_evicted' }
-            : expiryTiming(expiry, frame.gecko_ms);
+          if (stream.omitted && !(stream.omitted_through_ms < write.inlet_ms)) {
+            observation.expiry_timing = { order: 'unresolved', reason: 'frame_candidates_evicted' };
+          } else if (candidates.some(candidate => candidate.controller_ms === write.inlet_ms)) {
+            observation.expiry_timing = { order: 'unresolved', reason: 'frame_candidate_at_inlet' };
+          } else {
+            observation.expiry_timing = expiryTiming(expiry, frame.gecko_ms);
+          }
         }
       }
     }
