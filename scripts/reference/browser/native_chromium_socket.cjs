@@ -75,8 +75,9 @@ function joinChromiumSocket(log, status, host, receive, recipients = []) {
     if (proxy.length !== 1) return { result };
     const candidate = proxy[0];
     const plan = socketPlans[candidate.socket];
-    if (!plan?.socket?.browser_endpoint || recipients[plan.socket.page_index] !== stamp.recipient) return { result };
-    if (socketPlans.some(other => other !== plan && other.socket.browser_endpoint === plan.socket.browser_endpoint)) {
+    if (receive.refused || !plan?.socket?.browser_endpoint || recipients[plan.socket.page_index] !== stamp.recipient) return { result };
+    if (socketPlans.some(other => other !== plan && (other.socket.browser_endpoint === plan.socket.browser_endpoint
+      || other.socket.page_index === plan.socket.page_index))) {
       result.status = 'ambiguous';
       return { result };
     }

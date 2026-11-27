@@ -43,7 +43,7 @@ const { once } = require('node:events');
 const { createHash, webcrypto } = require('node:crypto');
 const { createRelayProxyTrace, joinRelayReceive, traceProxyWrites } = require('./native_relay_proxy.cjs');
 const { createRelayWireTrace, decodeRelayDelivery } = require('./native_relay_trace.cjs');
-const { relayExpiryTraffic } = require('./native_relay_proxy.cjs');
+const { refreshRelayReceive, relayExpiryTraffic } = require('./native_relay_proxy.cjs');
 
 test('expiry follow-up orders server writes separately from recipient observations', () => {
   const packet = (seq, write, sender = 'source', epoch = 1) => ({
@@ -125,6 +125,27 @@ function deliveryWire(sender, recipient, room) {
   return Buffer.concat([Buffer.from([1, 0x85]), text('from_player'), binary(sender), text('encoding'), text('message_pack'),
     text('payload'), binary(envelope), text('epoch'), Buffer.from([3]), text('seq'), Buffer.from([42])]);
 }
+
+test('settled proxy capture keeps original anchors and detects late duplicates', () => {
+  const sender = Buffer.alloc(16, 17);
+  const recipient = Buffer.alloc(16, 34);
+  const room = Buffer.alloc(16, 51);
+  const carrier = deliveryWire(sender, recipient, room);
+  const proxy = createRelayProxyTrace();
+  const socket = proxy.open({ page_index: 1, browser_endpoint: '127.0.0.1:44001' });
+  const [first] = socket(Buffer.concat([Buffer.from('HTTP/1.1 101 Switching Protocols\r\n\r\n'), frame(0x82, carrier)]));
+  const joined = { rows: [{ ...first, kind: 4, write: [1] }] };
+  const original = joinRelayReceive(joined, proxy.snapshot(), [], first.room);
+  const refresh = () => refreshRelayReceive(original, joined, proxy.snapshot());
+  assert.deepEqual(refresh().rows[0].proxy, original.rows[0].proxy);
+  socket(frame(0x82, carrier));
+  assert.deepEqual(refresh().rows[0].proxy.map(write => write.ordinal), [1, 2], 'late duplicate makes the carrier ambiguous');
+  assert.deepEqual(original.rows[0].proxy.map(write => write.ordinal), [1], 'published failure remains intact');
+
+  const settled = proxy.snapshot();
+  settled.sockets[0].events.shift();
+  assert.deepEqual(refreshRelayReceive(original, joined, settled).rows[0].proxy, [], 'rollover cannot substitute a new ordinal');
+});
 
 test('an unchanged addressed carrier distinguishes forwarding from decoding', async () => {
   const sender = Buffer.alloc(16, 17);

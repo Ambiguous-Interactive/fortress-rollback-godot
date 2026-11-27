@@ -3,7 +3,7 @@ const { createDepartureClock, CLOSE_HTTPS_PRE_SAMPLES } = require('./native_depa
 const { observeFirefoxFrames, joinFirefoxFrames } = require('./native_firefox_frames.cjs');
 const { assertRecoveredRoom, OmittedReplacement, PHYSICAL_PAIRS, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace, decodeRelayDelivery } = require('./native_relay_trace.cjs');
-const { createRelayProxyTrace, joinRelayReceive, relayExpiryTraffic } = require('./native_relay_proxy.cjs');
+const { createRelayProxyTrace, joinRelayReceive, refreshRelayReceive, relayExpiryTraffic } = require('./native_relay_proxy.cjs');
 const { createRelayHold, RELAY_HOLD_CAP, RELAY_HOLD_PREFIX, RELAY_HOLD_WINDOW_MS } = require('./native_relay_hold.cjs');
 const { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, exerciseSameLinkRetention,
   joinRelayReceipts, readRelayWireDiagnostic, relayExpiryRows, validateRelayExpiryFrontier } = require('./native_relay_control.cjs');
@@ -2643,7 +2643,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     } catch (writeError) {
       failures.push(writeError);
     }
-    if (traceBrowserReceive) failureReceipt = { sha256: createHash('sha256').update(failure).digest('hex'), receive: relayReceive, published_ms };
+    if (traceBrowserReceive) failureReceipt = { sha256: createHash('sha256').update(failure).digest('hex'), relayReceive, relayJoined, published_ms };
   } finally {
     releaseSignal?.cancel();
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
@@ -2655,16 +2655,18 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     failures.push(...await closeAll([server], owner => new Promise((resolve, reject) =>
       owner.close(error => error ? reject(error) : resolve())), 'host'));
   }
-  if (chromiumCapture && (failureReceipt || result)) {
+  const browserReceipt = traceBrowserReceive ? failureReceipt ?? result : undefined;
+  const browserReceive = browserReceipt?.relayReceive && refreshRelayReceive(browserReceipt.relayReceive, browserReceipt.relayJoined, relayProxy.snapshot());
+  if (chromiumCapture && browserReceipt) {
     const recipients = roomIdentities?.uuids.map((uuid, index) => browserPeers[index]?.name === 'chromium' ? uuid.replaceAll('-', '') : null);
-    const observed = await chromiumCapture.finish(new URL(origin).host, failureReceipt?.receive ?? result?.relayReceive, recipients)
+    const observed = await chromiumCapture.finish(new URL(origin).host, browserReceive, recipients)
       .catch(() => ({ status: 'unavailable' }));
     if (failureReceipt?.published_ms !== undefined) console.error(JSON.stringify({ relaySocketFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
     else if (result) result.relaySocketReceive = observed;
   }
   if (traceFirefoxFrames && (failureReceipt?.published_ms !== undefined || result)) {
     const recipients = roomIdentities?.uuids.map(uuid => uuid.replaceAll('-', ''));
-    const observed = joinFirefoxFrames(firefoxObservers, failureReceipt?.receive ?? result?.relayReceive, recipients, failureReceipt?.published_ms);
+    const observed = joinFirefoxFrames(firefoxObservers, browserReceive, recipients, failureReceipt?.published_ms);
     if (failureReceipt) console.error(JSON.stringify({ relayFirefoxFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
     else result.relayFirefoxReceive = observed;
   }
