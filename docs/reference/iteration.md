@@ -123,6 +123,29 @@ and the complete verdict. The tracker requires 40 completed heads of each event 
 [Hosted trial and receipts](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45115694355) ·
 [Rollout tracker](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/451)
 
+### November 27 hosted sample
+
+The rollout report through 03:04:17 UTC counted 87 completed PR heads at p95
+276 seconds and 52 completed merge candidates at p95 490 seconds. It found
+all five required check contexts for each candidate. Matched runner-minute
+ratios were 0.8869 for PR heads and 0.9377 for merge candidates.
+
+Before the pinned server source selection changed, 41 merge candidates
+reached p95 490 seconds. In one 505-second candidate, the minimum-engine
+oracle lane spent 456 seconds on the ordinary P2P corpus and 169 seconds
+on the concurrent wrap corpus. After that change, the 11 candidates
+observed so far took at most 353 seconds. The source-path change kept the
+oracle workload intact. The new window needs 40 candidates for a p95
+verdict. [Slow oracle job](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45483064387/job/138761060282)
+
+In the 326-second November 27 candidate, the server build step took 83
+seconds before dependent browser jobs could start. The last browser job
+spent 21 seconds installing dependencies and 156 seconds running the
+transport witness. It finished 14 seconds before the final required
+verdict. Measure the shared build plus the last dependent browser job
+from their absolute timestamps. Per-job pickup and duration omit time
+spent waiting for prerequisite jobs. [Candidate jobs](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45930154643)
+
 ## Reproducing an experiment
 
 Compare CI layouts at the same revision. Across local revisions, match the edits, engine, host capacity, cases and results. Keep cold and warm
