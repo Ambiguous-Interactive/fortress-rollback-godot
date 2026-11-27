@@ -133,7 +133,7 @@ function createRelayServerReader(path) {
       }
       throw new Error('relay server receipt deadline');
     } catch (error) {
-      error.receiptTiming = timing;
+      if (error instanceof Error) error.receiptTiming = timing;
       throw error;
     }
   }

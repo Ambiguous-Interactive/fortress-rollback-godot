@@ -2067,7 +2067,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     if (!relayHold?.started || !readRelayServer) return null;
     return relayHoldServer ??= readRelayServer(undefined, DIAGNOSTIC_MS, relayHold.links).catch(error => {
       relayHoldServerError = String(error);
-      relayHoldServerTiming = error.receiptTiming;
+      relayHoldServerTiming = error?.receiptTiming;
     });
   };
   async function relayHoldReceipt() {
@@ -2588,7 +2588,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
       relayReceive,
-      relayServerControllerTiming: error.receiptTiming,
+      relayServerControllerTiming: error?.receiptTiming,
       relayServerRecoveryTiming: serverReceipt?.value?.controller_timing ?? serverReceipt?.reason?.receiptTiming,
       relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined, expiryLinks) : undefined,
       relayExpiryTraffic: traceRelayWire ? relayExpiryTraffic(expiries, relayJoined, relayWire, relayReceive) : undefined,

@@ -181,6 +181,8 @@ Object.defineProperty(globalThis, 'performance', { value: { now: () => now } });
     assert.equal(error.receiptTiming.selection_finished_ms, 150);
     return true;
   });
+  await read(() => { throw null; }).then(
+    () => assert.fail('selection should reject'), error => assert.equal(error, null));
   await assert.rejects(read(candidate => {
     now = 151;
     return candidate;
