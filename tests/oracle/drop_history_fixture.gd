@@ -20,6 +20,7 @@ var _drop_first_ack: bool = false
 var _lost_commit: Array[Dictionary] = []
 var _drop_first_commit: bool = false
 var _drop_first_history: bool = false
+var _drop_all_history: bool = false
 var _corrupt_interior_history: bool = false
 var _drop_first_prepare: bool = false
 var _unrouted_prepare: bool = false
@@ -75,7 +76,8 @@ func observe(
 	drop_first_inventory: bool = false,
 	drop_first_prepare: bool = false,
 	unrouted_prepare: bool = false,
-	warmup: int = 0
+	warmup: int = 0,
+	donor_timeout_case: String = ""
 ) -> Dictionary:
 	_warmup_frames = warmup
 	_drop_first_inventory = drop_first_inventory
@@ -84,6 +86,7 @@ func observe(
 	_drop_first_ack = drop_first_ack
 	_drop_first_commit = drop_first_commit
 	_drop_first_history = drop_first_history
+	_drop_all_history = donor_timeout_case == "timeout"
 	_corrupt_interior_history = corrupt_interior
 	_mode = "remote_donor"
 	_missing_peer = 0
@@ -115,6 +118,11 @@ func observe(
 	if warmup > 0:
 		for peer: int in range(2):
 			expired_original_rows.append(mesh.peers[peer]._core._queues[2 * _slots].confirmed_input(0).code == Queue.Code.NO_CONFIRMED_INPUT)
+	var opening: Array[Dictionary] = []
+	if not donor_timeout_case.is_empty():
+		opening = _donor_opening(context, mesh, before)
+		if _drop_all_history:
+			return _donor_timeout(context, mesh, before, opening)
 	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
 	var cuts: Array = []
 	for peer: int in range(2):
@@ -172,10 +180,65 @@ func observe(
 		"failures": context.failures
 	}
 
+	if not opening.is_empty():
+		result.opening = opening
 	if warmup > 0:
 		result.warmup = warmup
 		result.expired_original_rows = expired_original_rows
 	return result
+
+
+func _exposed_rows(context: RefCounted, peer: Peer, game: ObservedGame, frontier: int) -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for frame: int in range(frontier + 1):
+		var row: Types.FrameInputs = peer.confirmed_inputs(frame)
+		context.equal(row != null, true, "public confirmed row remains accessible")
+		if row == null:
+			continue
+		var inputs: Array[Dictionary] = []
+		for slot: int in range(3 * _slots):
+			var input: Types.InputResult = row.read(slot)
+			context.equal(input.code, Types.Code.OK, "public confirmed slot remains accessible")
+			inputs.append({"bytes": input.bytes.hex_encode(), "status": ObservedGame.status_name(input.status)})
+		rows.append({"frame": frame, "inputs": inputs, "state": {"frame": frame, "bytes": game.states[frame].hex_encode(), "inputs": game.applied[frame]}})
+	return rows
+
+
+func _donor_opening(context: RefCounted, mesh: Dictionary, before: Array[Dictionary]) -> Array[Dictionary]:
+	var survivors: Array[Dictionary] = []
+	for index: int in range(2):
+		var result: Driver.StepResult = mesh.peers[index].recover(mesh.now)
+		context.equal(result.code, Types.Code.OK, "apply pending corrections before exposing original rows")
+	_deliver(context, mesh, _without_peer(_drain(mesh), 2))
+	for index: int in range(2):
+		var peer: Peer = mesh.peers[index]
+		survivors.append({"peer": index, "rows_before": _exposed_rows(context, peer, mesh.games[index], before[index].confirmed),
+			"frame_before": peer.status().current_frame, "game_before": mesh.games[index].bytes().hex_encode()})
+	return survivors
+
+
+func _donor_timeout(context: RefCounted, mesh: Dictionary, before: Array[Dictionary], survivors: Array[Dictionary]) -> Dictionary:
+	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
+	for index: int in range(2):
+		var peer: Peer = mesh.peers[index]
+		var result: Dictionary = survivors[index]
+		var advanced: Driver.StepResult = peer.step(mesh.now, _inputs(mesh, index))
+		var status: Types.Status = peer.status()
+		result.rows_after = _exposed_rows(context, peer, mesh.games[index], before[index].confirmed)
+		result.confirmed_after = status.confirmed_frame
+		result.frame_after = status.current_frame
+		result.game_after = mesh.games[index].bytes().hex_encode()
+		result.advance = advanced.code
+		result.lifecycle = status.lifecycle
+		result.target_receipts = Array(peer._core.received_frames()).slice(2 * _slots)
+		var cuts: Array[int] = []
+		for slot: int in range(2 * _slots, 3 * _slots):
+			cuts.append(peer._core.frozen_frame(slot))
+		result.cuts = cuts
+	context.equal(_observation.publications.is_empty(), true, "every accepted observed control reaches owned routing")
+	return {"before": before, "survivors": survivors, "reasons": mesh.reasons, "drop_events": mesh.cuts,
+		"history_emissions": _history_emissions, "history_receipts": _history_receipts, "lost_history": _lost_history,
+		"commit_emissions": _commit_emissions, "failures": context.failures}
 
 
 func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], terminated: bool = false) -> void:
@@ -236,7 +299,7 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		if _drop_first_commit and _lost_commit.is_empty() and not commit_emission.is_empty():
 			_lost_commit.append(commit_emission)
 			continue
-		if _drop_first_history and _lost_history.is_empty() and not history_emission.is_empty():
+		if (_drop_all_history or (_drop_first_history and _lost_history.is_empty())) and not history_emission.is_empty():
 			_lost_history.append(history_emission)
 			continue
 		if _corrupt_interior_history and not history_emission.is_empty() and packet.to == 0:

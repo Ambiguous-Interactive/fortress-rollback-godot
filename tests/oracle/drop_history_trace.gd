@@ -20,6 +20,10 @@ func _initialize() -> void:
 	var grouped: bool = arguments.has("--multiple-target-slots")
 	var wrapped: bool = arguments.has("--wrapped-history")
 	var unequal: bool = arguments.has("--unequal-exposure")
+	if arguments.size() == 1 and arguments[0] in ["--drop-all-history", "--deliver-all-history"]:
+		var mode: String = "timeout" if arguments[0] == "--drop-all-history" else "deliver"
+		_report(context, Fixture.new().observe(context, -1, false, 4, false, 2, true, false, false, false, false, false, 0, mode))
+		return
 	var expected_arguments: int = int(inventory_loss) + int(prepare_loss) + int(unrouted_prepare) + int(ack_loss) + int(commit_loss) + int(loss) \
 		+ int(multi) + int(corrupt) + int(grouped) + int(unequal) + int(wrapped)
 	if (corrupt and not multi) or arguments.size() != expected_arguments:
@@ -38,5 +42,9 @@ func _initialize() -> void:
 		context, status_control, loss, 4 if multi else 1, corrupt, 2 if grouped else 1, unequal, commit_loss, ack_loss, inventory_loss, \
 		prepare_loss, unrouted_prepare, 251 if wrapped else 0
 	)
+	_report(context, result)
+
+
+func _report(context: RefCounted, result: Dictionary) -> void:
 	print("FORTRESS_DROP_HISTORY_RESULT " + JSON.stringify(result))
 	quit(0 if context.failures.is_empty() else 1)

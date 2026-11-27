@@ -17,6 +17,7 @@ from drop_history_contract import history_bytes, compare, negative_controls, los
 
 from drop_history_contract import same, wrapped_evidence_controls
 from drop_history_deadline import check_commit_deadline, deadline_controls
+from drop_history_timeout import check_delivery_control, check_timeout, timeout_controls
 from drop_history_ack_controls import controls as ack_loss_evidence_controls
 from drop_history_inventory_controls import controls as inventory_loss_evidence_controls
 
@@ -114,6 +115,29 @@ def interior_history_control(engine, output, source, target_slots=1):
     else:
         raise ValueError('drop history: interior history control survived')
     return 'observed_interior_history_permutation'
+
+
+
+def donor_timeout_evidence(engine, binary, output):
+    results = []
+    for repeat in (1, 2):
+        stdout, stderr = execute([str(binary), '--drop-all-history'], output / f'source-donor-timeout-{repeat}.log')
+        require(not stderr.strip(), 'source donor timeout stderr')
+        source = json.loads(stdout)
+        stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
+                                  'res://tests/oracle/drop_history_trace.gd', '--', '--drop-all-history'],
+                                  output / f'godot-donor-timeout-{repeat}.log')
+        godot = parse_godot(stdout, stderr)
+        check_timeout(source, godot)
+        stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
+                                  'res://tests/oracle/drop_history_trace.gd', '--', '--deliver-all-history'],
+                                  output / f'godot-donor-delivery-control-{repeat}.log')
+        delivered = parse_godot(stdout, stderr)
+        check_delivery_control(delivered, godot)
+        results.append({'source': source, 'godot': godot, 'godot_delivery_control': delivered})
+    require(same(*results), 'donor timeout fresh-process repeat mismatch')
+    result = results[0]
+    return result, check_timeout(result['source'], result['godot']), timeout_controls(result['source'], result['godot'])
 
 
 
@@ -274,6 +298,8 @@ def main():
     controls.append('grouped:' + interior_history_control(engine, args.output, observed[0]['grouped-clean']['source'], 2))
     deadline, deadline_controls = deadline_evidence(engine, binary, args.output)
     controls.extend(deadline_controls)
+    timeout, timeout_summary, rejected_timeouts = donor_timeout_evidence(engine, binary, args.output)
+    controls.extend(rejected_timeouts)
     require_unchanged('local source inventory', local_sources, inventory())
     require_unchanged('upstream source inventory', pinned_sources, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
@@ -281,7 +307,7 @@ def main():
     require_unchanged('repository identity', identity, git_identity())
     verify_tools(tool_paths, tool_identities)
     records = args.output / 'comparison.json'
-    records.write_text(json.dumps({**observed[0], 'commit-deadline': deadline}, indent=2) + '\n')
+    records.write_text(json.dumps({**observed[0], 'commit-deadline': deadline, 'donor-timeout': timeout}, indent=2) + '\n')
     receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True, 'upstream_revision': REVISION,
         'upstream_archive_sha256': manifest['sources']['fortress']['archive']['digest'],
         'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'upstream_source_sha256': pinned_sources,
@@ -291,7 +317,7 @@ def main():
         'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'tool_identities': tool_identities, 'default_features': False, 'features': [],
         'execution_identities_unchanged': True, 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),
         'evidence': evidence, 'commit_deadline': {offset: outcome['advance'] for offset, outcome in deadline['source'].items()},
-        'negative_controls': controls,
+        'donor_timeout_retries_discarded': timeout_summary, 'negative_controls': controls,
         'scope': ('Paired one/four-row single-target and four-row two-target clean/lost-first-history three-endpoint original-history/cut scenarios: source explicit removal; '
                   'Godot elapsed timeout; equal and unequal exposed frontiers; first-prepare loss alone; first-inventory/COMMIT/ACK loss alone or combined with donor data; '
                   'prepare publications are paired with their routing; '
@@ -301,6 +327,7 @@ def main():
     print('drop history: two survivors preserve twenty original canonical prefixes and statuses through '
           'one/four-row single/two-target donor recovery and lost inventory/commits/acknowledgements, twice', flush=True)
     print('drop history: source and Godot commit before the deadline and refuse at equality and after', flush=True)
+    print(f'drop history: all donor retries lost ({timeout_summary}); both survivors preserve exposed history and refuse advancement', flush=True)
 
 
 if __name__ == '__main__':
