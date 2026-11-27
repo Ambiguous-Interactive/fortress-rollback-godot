@@ -146,37 +146,29 @@ claimed revision: the recorded candidate digest is proven to be the upstream
 archive when the next fetch verifies it. Without `--advance` the tool only
 records the observation under
 `sources[name].review` (`observed_revision`, `observed_on`, and the report and
-archive digests); with `--advance` it additionally rewrites the pin itself —
-`revision`, archive URL, digest and root — records `advanced_from` and
-`advanced_on`, and stamps every changed path with a commit link. Every recorded
-field is validated by `fetch.load_manifest`, so malformed bookkeeping fails the
-next manifest load. Extract the observed tree from the same archive you pass,
-because the binding compares byte for byte including file modes:
+archive digests). Copy the observation report's `review_binding` into the
+decision file under `binding`. Its `paths` array needs exactly one entry for
+every path in `requires_review`. Each entry has a `path`, a `disposition` of
+`ported`, `inapplicable`, or `intentional_divergence`, and an `evidence` string
+referencing the test result or review rationale.
 
 ```sh
-curl -L -o /tmp/candidate.tar.gz https://codeload.github.com/wallstop/fortress-rollback/tar.gz/<sha>
-mkdir -p /tmp/candidate && tar -xzf /tmp/candidate.tar.gz -C /tmp/candidate
+mkdir -p docs/reference/pin-reviews
 python3 scripts/reference/drift.py --source fortress \
-    --old .cache/reference/fortress-rollback-<reviewed-sha> \
-    --new /tmp/candidate/fortress-rollback-<sha> \
-    --pins docs/reference/pins.json --new-revision <sha> \
-    --archive /tmp/candidate.tar.gz \
-    --ledger docs/reference/parity-ledger.json --report .cache/scratch/drift-report.json --advance
+    --old "$reviewed_tree" --new "$candidate_tree" \
+    --pins docs/reference/pins.json --new-revision "$revision" --archive "$candidate_archive" \
+    --ledger docs/reference/parity-ledger.json \
+    --report "docs/reference/pin-reviews/fortress-$revision.json" \
+    --advance --decisions "$decisions"
 ```
 
-The report is the review evidence, not the approval: an advanced pin merges
-only after a full oracle requalification run against it (the Reference
-Baseline workflow runs the complete differential on every pins.json change)
-and a reviewed `requires_review` list. The binding compares byte for byte
-including file modes, so extract the observed tree and run the tool under the
-same umask — a differently-masked extraction is refused loudly, not silently
-accepted. Two boundaries stay explicit: the compared tree is bound to the
-archive *you supply* (its digest is proven to be the upstream archive only
-when the next fetch verifies it, which the Reference Baseline requalification
-does before an advancement can merge), and `--old` is trusted to be the
-verified pinned extraction (`fetch.sources` output under
-`.cache/reference/`) — pass the wrong tree and the report names visible
-drift, but the evidence is only as honest as that path.
+Advance with no decision file when the report has zero flagged paths. Commit
+the advancement report with the manifest so Gate can rebuild the comparison
+and verify the decisions against both archives. Maintainers review the cited
+evidence. The grouped Reference Baseline runs full oracle requalification
+before merge. Extract both trees and run the tool under the same umask to
+match file modes. The operator comparison uses the supplied archive bytes.
+Gate fetches the manifest archives and verifies the recorded digests.
 
 ### Weekly reporting
 

@@ -8,10 +8,12 @@ import hashlib
 import json
 import tempfile
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+import check_pin_reviews
 import drift
 
 
@@ -325,7 +327,17 @@ class DriftPinFlowTests(unittest.TestCase):
                                archive_files if archive_files is not None else unchanged)
         return pins, old_tree, new_tree, archive
 
-    def run_flow(self, folder, advance=False, source='sdk', revision=NEW_REVISION, **corpus):
+    def decision_file(self, folder, archive, transform):
+        base = Path(folder)
+        path = base / 'decisions.json'
+        binding = dict(source='sdk', reviewed_revision=OLD_REVISION, candidate_revision=NEW_REVISION,
+                       reviewed_archive_sha256=hashlib.sha256((base / 'reviewed.tar.gz').read_bytes()).hexdigest(),
+                       candidate_archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest())
+        paths = [dict(path='src/lib.rs', disposition='ported', evidence='qualification run 123')]
+        path.write_text(json.dumps(transform(dict(binding=binding, paths=paths))), encoding='utf-8')
+        return str(path)
+
+    def run_flow(self, folder, advance=False, source='sdk', revision=NEW_REVISION, decisions=None, **corpus):
         pins, old_tree, new_tree, archive = self.corpus(folder, **corpus)
         report = Path(folder) / 'report.json'
         argv = ['--source', source, '--old', str(old_tree), '--new', str(new_tree),
@@ -333,6 +345,8 @@ class DriftPinFlowTests(unittest.TestCase):
                 '--report', str(report)]
         if advance:
             argv.append('--advance')
+        if decisions is not None:
+            argv.extend(['--decisions', self.decision_file(folder, archive, decisions)])
         # The pin flow reads the reviewed archive from the fetch cache the
         # corpus seeds; point the tool's cache root at it.
         with patch.object(drift, 'CACHE', Path(folder) / 'cache'):
@@ -361,23 +375,121 @@ class DriftPinFlowTests(unittest.TestCase):
             self.assertEqual(written['records'][0]['url'], f'https://github.com/example/sdk/blob/{NEW_REVISION}/src/lib.rs')
             self.assertEqual(written['requires_review'], ['src/lib.rs'])
 
+    def test_advance_refuses_unresolved_drift_without_writing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            stderr = StringIO()
+            with redirect_stderr(stderr):
+                code, pins, report = self.run_flow(folder, advance=True)
+            self.assertEqual(code, 1)
+            self.assertIn('unresolved drift paths: src/lib.rs', stderr.getvalue())
+            self.assertEqual(json.loads(pins.read_text())['sources']['sdk']['revision'], OLD_REVISION)
+            self.assertFalse(report.exists())
+
+    def test_invalid_review_decisions_leave_pin_and_report_untouched(self):
+        cases = (
+            ('stale revision', lambda d: dict(d, binding=dict(d['binding'], reviewed_revision='c' * 40)), 'do not bind'),
+            ('stale archive', lambda d: dict(d, binding=dict(d['binding'], candidate_archive_sha256='c' * 64)), 'do not bind'),
+            ('duplicate', lambda d: dict(d, paths=d['paths'] * 2), 'duplicate review decision'),
+            ('extra', lambda d: dict(d, paths=d['paths'] + [dict(d['paths'][0], path='src/old.rs')]), 'does not name a flagged path'),
+            ('missing evidence', lambda d: dict(d, paths=[dict(d['paths'][0], evidence=' \t')]), 'invalid review disposition or empty evidence'),
+            ('unresolved', lambda d: dict(d, paths=[dict(d['paths'][0], disposition='pending')]), 'invalid review disposition or empty evidence'),
+            ('missing path', lambda d: dict(d, paths=[]), 'unresolved drift paths: src/lib.rs'),
+        )
+        for label, transform, diagnostic in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as folder:
+                stderr = StringIO()
+                with redirect_stderr(stderr):
+                    code, pins, report = self.run_flow(folder, advance=True, decisions=transform)
+                self.assertEqual(code, 1)
+                self.assertIn(diagnostic, stderr.getvalue())
+                entry = json.loads(pins.read_text())['sources']['sdk']
+                self.assertEqual(entry['revision'], OLD_REVISION)
+                self.assertNotIn('review', entry)
+                self.assertFalse(report.exists())
+
+    def test_explicit_null_review_is_refused_even_with_no_flagged_paths(self):
+        files = {'src/lib.rs': '// documentation\npub fn step() -> u32 { 1 }\n', 'Cargo.toml': '[package]\nname = "sdk"\n'}
+        with tempfile.TemporaryDirectory() as folder:
+            stderr = StringIO()
+            with redirect_stderr(stderr):
+                code, pins, report = self.run_flow(folder, advance=True, decisions=lambda _data: None, tree_files=files, archive_files=files)
+            self.assertEqual(code, 1)
+            self.assertIn('review decisions do not bind', stderr.getvalue())
+            self.assertEqual(json.loads(pins.read_text())['sources']['sdk']['revision'], OLD_REVISION)
+            self.assertFalse(report.exists())
+
+    def test_archive_report_classifies_the_bytes_it_hashes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            pins, old, new, archive = self.corpus(folder)
+            entry = json.loads(pins.read_text())['sources']['sdk']
+            candidate = dict(entry, revision=NEW_REVISION, root='sdk-' + NEW_REVISION, archive=None)
+            expected = hashlib.sha256(archive.read_bytes()).hexdigest()
+            replacement = make_archive(base, 'replacement.tar.gz', candidate['root'], {'src/lib.rs': 'replacement'})
+            extract = drift.extract_source
+
+            def replace_during_extraction(path, root, destination):
+                if root == entry['root']:
+                    replacement.replace(archive)
+                return extract(path, root, destination)
+
+            with patch.object(drift, 'CACHE', base / 'cache'), patch.object(drift, 'extract_source', side_effect=replace_during_extraction):
+                report = drift.archive_report('sdk', entry, candidate, base / 'reviewed.tar.gz', archive, None, (old, new))
+            self.assertEqual(report['review_binding']['candidate_archive_sha256'], expected)
+            self.assertEqual(report['requires_review'], ['src/lib.rs'])
+
     def test_advance_rewrites_the_pin_and_the_manifest_stays_loadable(self):
         from datetime import date
         import fetch
+        for disposition in ('ported', 'inapplicable', 'intentional_divergence'):
+            with self.subTest(disposition=disposition), tempfile.TemporaryDirectory() as folder:
+                def decide(data):
+                    return dict(data, paths=[dict(data['paths'][0], disposition=disposition)])
+                code, pins, report = self.run_flow(folder, advance=True, decisions=decide)
+                self.assertEqual(code, 0)
+                data = json.loads(pins.read_text())
+                entry = data['sources']['sdk']
+                self.assertEqual(entry['revision'], NEW_REVISION)
+                self.assertEqual(entry['archive']['url'],
+                                 f'https://codeload.github.com/example/sdk/tar.gz/{NEW_REVISION}')
+                self.assertEqual(entry['root'], 'sdk-' + NEW_REVISION)
+                self.assertEqual(entry['review']['advanced_from'], OLD_REVISION)
+                self.assertEqual(entry['review']['advanced_on'], date.today().isoformat())
+                self.assertEqual(entry['review']['report_sha256'], hashlib.sha256(report.read_bytes()).hexdigest())
+                self.assertEqual(json.loads(report.read_text())['review_decisions'],
+                                 [dict(path='src/lib.rs', disposition=disposition, evidence='qualification run 123')])
+                # The rewritten manifest must load and validate exactly like a
+                # hand-reviewed pin bump would.
+                fetch.load_manifest(pins)
+
+    def test_ci_rebuilds_the_report_instead_of_trusting_manifest_bookkeeping(self):
         with tempfile.TemporaryDirectory() as folder:
-            code, pins, report = self.run_flow(folder, advance=True)
+            base_path = Path(folder)
+            code, pins, report = self.run_flow(folder, advance=True, decisions=lambda data: data)
             self.assertEqual(code, 0)
-            data = json.loads(pins.read_text())
-            entry = data['sources']['sdk']
-            self.assertEqual(entry['revision'], NEW_REVISION)
-            self.assertEqual(entry['archive']['url'],
-                             f'https://codeload.github.com/example/sdk/tar.gz/{NEW_REVISION}')
-            self.assertEqual(entry['root'], 'sdk-' + NEW_REVISION)
-            self.assertEqual(entry['review']['advanced_from'], OLD_REVISION)
-            self.assertEqual(entry['review']['advanced_on'], date.today().isoformat())
-            # The rewritten manifest must load and validate exactly like a
-            # hand-reviewed pin bump would.
-            fetch.load_manifest(pins)
+            candidate = json.loads(pins.read_text())
+            new = candidate['sources']['sdk']
+            old = dict(new, revision=OLD_REVISION, root='sdk-' + OLD_REVISION,
+                       archive=dict(new['archive'], digest=hashlib.sha256((base_path / 'reviewed.tar.gz').read_bytes()).hexdigest()))
+            base = {'sources': {'sdk': old}}
+            receipt = base_path / f'sdk-{NEW_REVISION}.json'
+            report.rename(receipt)
+            cache = base_path / 'cache'
+            (cache / 'downloads' / (NEW_REVISION + '.tar.gz')).write_bytes((base_path / 'candidate.tar.gz').read_bytes())
+            with patch.object(drift, 'CACHE', cache):
+                self.assertEqual(check_pin_reviews.verify_advancements(base, candidate, base_path, None, offline=True), ['sdk'])
+                self.assertEqual(check_pin_reviews.verify_advancements(base, base, base_path, None, offline=True), [])
+                original = receipt.read_bytes()
+                altered = json.loads(original)
+                altered['requires_review'] = []
+                altered['review_decisions'] = []
+                receipt.write_text(json.dumps(altered))
+                new['review']['report_sha256'] = hashlib.sha256(receipt.read_bytes()).hexdigest()
+                with self.assertRaisesRegex(ValueError, 'unresolved drift paths: src/lib.rs'):
+                    check_pin_reviews.verify_advancements(base, candidate, base_path, None, offline=True)
+                receipt.unlink()
+                with self.assertRaisesRegex(ValueError, 'missing advancement report'):
+                    check_pin_reviews.verify_advancements(base, candidate, base_path, None, offline=True)
 
     # Data-driven over the fail-closed binding controls: every refused flow must
     # leave pins.json byte-identical and write no report at all.
@@ -440,7 +552,7 @@ class DriftPinFlowTests(unittest.TestCase):
             report = Path(folder) / 'report.json'
             argv = ['--source', 'sdk', '--old', str(old_tree), '--new', str(new_tree),
                     '--pins', str(pins), '--new-revision', NEW_REVISION, '--archive', str(archive),
-                    '--report', str(report), '--advance']
+                    '--report', str(report), '--advance', '--decisions', self.decision_file(folder, archive, lambda data: data)]
             with patch.object(drift, 'CACHE', cache):
                 self.assertEqual(drift.main_with_args(argv), 0)
             self.assertTrue((Path(folder) / 'report.json').exists())
