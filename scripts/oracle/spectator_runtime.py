@@ -7,12 +7,13 @@ next-frame boundary maps to the model's last-played frame. Synthetic sync steps
 supply the model's handshake precondition; they do not establish runtime sync parity.
 """
 from copy import deepcopy
+from functools import partial
 import json
 from pathlib import Path
 import subprocess
 
-from spectator_model import UPSTREAM, SPEC
-from fetch import digest, load_manifest
+from spectator_model import SPEC
+from fetch import digest
 from replay_launch import verified_engine
 
 VARIABLES = ('sessionState', 'currentFrame', 'lastRecvFrame', 'inputBuffer', 'inputFrames',
@@ -119,11 +120,11 @@ def validate_bundle(value):
     return value
 
 
-def run_trace(trace, output, jar, label, expect_ok=True, deadlock_cursor=None, aligned=False, hide_startup=False):
+def run_trace(trace, output, jar, label, expect_ok=True, deadlock_cursor=None, aligned=False, hide_startup=False, *, upstream):
     directory = output / label
     directory.mkdir(parents=True, exist_ok=True)
     source = directory / 'SpectatorSession.tla'
-    model = (UPSTREAM / SPEC).read_text()
+    model = (upstream / SPEC).read_text()
     if aligned:
         from spectator_startup import repair_model
         model = repair_model(model)
@@ -170,10 +171,10 @@ def illegal_advance(trace):
     return mutant, target, deadlock_cursor
 
 
-def check(engine, output, jar, root):
+def check(engine, output, jar, root, *, manifest, upstream):
     output.mkdir(parents=True, exist_ok=True)
     command = [str(engine), '--headless', '--path', str(root), '--script', 'res://tests/oracle/spectator_trace.gd']
-    engine_pin, engine_hash = verified_engine(Path(engine), load_manifest(), False)
+    engine_pin, engine_hash = verified_engine(Path(engine), manifest, False)
     version = subprocess.check_output([str(engine), '--version'], text=True, encoding='utf-8', timeout=20).strip()
     if not version.startswith(engine_pin + '.stable'):
         raise ValueError('unsupported spectator engine profile')
@@ -191,21 +192,22 @@ def check(engine, output, jar, root):
         raise ValueError('runtime spectator traces do not repeat')
     (output / 'observed.json').write_text(json.dumps(traces[0], indent=2) + '\n')
     from spectator_startup import check_rust, check_delay
-    rust = check_rust(traces[0], output)
-    delayed = check_delay(engine, output / 'delayed')
+    observe_rust = partial(check_rust, manifest=manifest, upstream=upstream)
+    rust = observe_rust(traces[0], output)
+    delayed = check_delay(engine, output / 'delayed', observe_rust)
     from spectator_roster import check as check_roster
-    roster = check_roster(engine, output / 'roster')
+    roster = check_roster(engine, output / 'roster', observe_rust)
     from spectator_status import check as check_status
-    statuses = check_status(engine, output / 'statuses')
+    statuses = check_status(engine, output / 'statuses', observe_rust)
     from spectator_reordered import check as check_reordered
-    reordered = check_reordered(engine, output / 'reordered')
+    reordered = check_reordered(engine, output / 'reordered', observe_rust)
     evidence = []
     for trace in traces[0]:
         label = ('preplay-' if trace['preplay'] else 'started-') + str(trace['capacity']) + '-speed-' + str(trace['speed'])
-        positive = run_trace(trace, output, jar, label + '-aligned', aligned=True)
+        positive = run_trace(trace, output, jar, label + '-aligned', aligned=True, upstream=upstream)
         item = {'capacity': trace['capacity'], 'speed': trace['speed'], 'aligned': positive}
         if trace['preplay']:
-            rejected = run_trace(trace, output, jar, label + '-pinned', False, 3)
+            rejected = run_trace(trace, output, jar, label + '-pinned', False, 3, upstream=upstream)
             full = [item for item in trace['observations'] if item['current'] == -1 and item['backlog'] == trace['capacity']]
             if len(full) != 1 or full[0]['advice'] != trace['speed'] or not full[0]['catchup']:
                 raise ValueError('missing original preplay full-ring catchup witness')
@@ -214,13 +216,13 @@ def check(engine, output, jar, root):
                 raise ValueError('unexpected first preplay model divergence')
             rejected['difference'] = {'field': 'framesBehind', 'observed': 1, 'model': 0, 'currentFrame': -1, 'lastRecvFrame': 0, 'deadlock_cursor': 3}
             item.update(preplay_divergence=rejected, full_ring=full[0], hidden_startup=run_trace(
-                trace, output, jar, label + '-hidden-startup', False, 3, aligned=True, hide_startup=True))
+                trace, output, jar, label + '-hidden-startup', False, 3, aligned=True, hide_startup=True, upstream=upstream))
         elif trace['speed'] == 1:
             if not any(state['current'] >= 0 and state['backlog'] == trace['capacity'] and state['catchup'] for state in trace['observations']):
                 raise ValueError('missing poststartup full-ring catchup witness')
-            item['positive'] = run_trace(trace, output, jar, label + '-pinned')
+            item['positive'] = run_trace(trace, output, jar, label + '-pinned', upstream=upstream)
             mutant, target, deadlock_cursor = illegal_advance(trace)
-            negative = run_trace(mutant, output, jar, label + '-illegal-advance', False, deadlock_cursor)
+            negative = run_trace(mutant, output, jar, label + '-illegal-advance', False, deadlock_cursor, upstream=upstream)
             negative.update(observation_index=target, deadlock_cursor=deadlock_cursor)
             item['illegal_advance'] = negative
         evidence.append(item)
@@ -229,7 +231,7 @@ def check(engine, output, jar, root):
     return {'complete': True, 'traces': evidence, 'rust': rust, 'delayed': delayed, 'roster': roster, 'statuses': statuses, 'reordered': reordered, 'repetitions': 2,
             'engine_version': version,
             'engine_sha256': engine_hash, 'observations_sha256': digest(output / 'observed.json'),
-            'pinned_runtime_sha256': digest(UPSTREAM / 'src/sessions/p2p_spectator_session.rs'),
+            'pinned_runtime_sha256': digest(upstream / 'src/sessions/p2p_spectator_session.rs'),
             'limitations': ['Preplay backlog diverges from the pinned model at its NULL frame sentinel; see issue #203.',
                             'The runtime-aligned model changes two NULL-frame backlog predicates and checks one-request microsteps.',
                             'Formal playback projection covers two-player binary input; source service cycles also cover changing 2–8-player rows.',

@@ -12,7 +12,7 @@ import tempfile
 from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust, git_identity, require_unchanged
 from engine_path import resolve_engine
 from fetch import retain_verified_tree
-from receipt_arguments import ReceiptParser
+from receipt_arguments import OwnedReceiptParser
 from queue_contract import compare, validate_bundle
 from queue_corpus import bundle
 from source_build import manifest_for_source, source_build_environment, upstream_inventory
@@ -114,18 +114,23 @@ def startup_divergence(binary, game_command, output, revision):
 
 
 def main():
-    parser = ReceiptParser(description=__doc__, receipt='receipt.json')
+    parser = OwnedReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/queue')
     args = parser.parse_args()
+    with parser.claim_output(args.output):
+        return run(args)
+
+
+def run(args):
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'receipt.json'
     receipt.unlink(missing_ok=True)
     identity = git_identity()
     source_paths = sorted(list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')) + list((ROOT / 'scripts/oracle').glob('queue_*.py'))
                           + [ROOT / 'scripts/reference/engine_path.py', ROOT / 'scripts/oracle/rust/src/bin/queue.rs',
-                             ROOT / 'tests/oracle/queue_trace.gd', ROOT / 'scripts/reference/receipt_arguments.py',
+                             ROOT / 'tests/oracle/queue_trace.gd', ROOT / 'scripts/reference/receipt_arguments.py', ROOT / 'scripts/reference/local_ownership.py',
                              ROOT / 'scripts/oracle/source_build.py', ROOT / 'scripts/oracle/source_wire.py',
                              ROOT / 'docs/reference/pins.json', ORACLE / 'Cargo.toml', ORACLE / 'Cargo.lock',
                              ORACLE / 'src/source_revision.rs'])

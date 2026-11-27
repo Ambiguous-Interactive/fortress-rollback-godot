@@ -73,6 +73,8 @@
 
 ### Changed
 
+- Upgrade the optional upstream-native addon to Fortress protocol v6. Use matching addon packages on every peer in a native room. [Native setup](experiments/gdextension/README.md)
+
 - **Keep PLAN.md a map, not a log**: cap the plan at 180 lines and remove its duplicated status, evidence and history, which now point to GitHub issues, `docs/`, retrospectives and `progress/`; the harness now fails when the plan grows past its budget. Rationale and routing live in `.llm/knowledge/plan-hygiene.md`.
 
 - **Bound the install journal's diagnostic tail by read, lines and bytes, and carry it to the publication-exhaustion summary (#249)**: the tail printed at a failed install loads only the file's newest 256 KiB (a planted oversized file can no longer exhaust memory), keeps at most the last 40 lines and 16 KiB of encoded UTF-8 output with every cut named (the budget counts bytes, not characters, redacts each line before its size counts — a short query grows into the longer ?<redacted> — and charges the truncation marker's own bytes to it, dropping the oldest kept line until the marker fits), drops the partial line a window cut lands inside, removes the journal only after a successful merged install so a later successful metadata lookup cannot delete a failed attempt's evidence mid-retry, and the terminal `publication retry budget exhausted` failure now prints the same retained-tail-plus-retention-path shape as any other failed install instead of only the per-attempt streams. Red-green: the byte-budget, bounded-read and exhaustion-summary assertions fail on the pre-fix helper and pass now.

@@ -22,7 +22,7 @@ import tempfile
 from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust, git_identity, require_unchanged
 from engine_path import resolve_engine
 from fetch import retain_verified_tree
-from receipt_arguments import ReceiptParser
+from receipt_arguments import OwnedReceiptParser
 from source_build import manifest_for_source, source_build_environment, upstream_inventory
 from source_wire import RECOVERY_REVISION, REVIEWED_REVISION
 from sync_floor_contract import compare, first_acceptance_divergence
@@ -298,11 +298,16 @@ def artifact_control(scenario_data, mutate, name, binary, game_command, output):
 
 
 def main():
-    parser = ReceiptParser(description=__doc__, receipt='receipt.json')
+    parser = OwnedReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/sync-floor')
     args = parser.parse_args()
+    with parser.claim_output(args.output):
+        return run(args)
+
+
+def run(args):
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'receipt.json'
     receipt.unlink(missing_ok=True)
@@ -314,7 +319,7 @@ def main():
         + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd'))
         + [ROOT / 'scripts/reference/fetch.py', ROOT / 'scripts/reference/run.py',
            ROOT / 'scripts/reference/owned_process.py', ROOT / 'scripts/reference/engine_path.py',
-           ROOT / 'scripts/reference/receipt_arguments.py', ROOT / 'scripts/oracle/rust/Cargo.toml',
+           ROOT / 'scripts/reference/receipt_arguments.py', ROOT / 'scripts/reference/local_ownership.py', ROOT / 'scripts/oracle/rust/Cargo.toml',
            ROOT / 'scripts/oracle/rust/Cargo.lock', ROOT / 'docs/reference/pins.json'])
     source_hashes = {str(path.relative_to(ROOT)): digest(path) for path in source_paths}
     engine = resolve_engine(args.godot)

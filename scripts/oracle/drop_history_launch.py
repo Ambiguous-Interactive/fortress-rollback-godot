@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
 from fetch import CACHE, ROOT, digest, load_manifest, sources
-from receipt_arguments import ReceiptParser
+from receipt_arguments import OwnedReceiptParser
 from run import setup_rust, rust_environment
 from engine_path import resolve_engine
 from launch import execute, git_identity, require_unchanged
@@ -239,13 +239,18 @@ def build_observer(tool_paths, output, source_tree, source_revision, offline, *,
 
 
 def main():
-    parser = ReceiptParser(description=__doc__, receipt='receipt.json', variants={'--coordinator-failover': drop_failover_run.RECEIPT})
+    parser = OwnedReceiptParser(description=__doc__, receipt='receipt.json', variants={'--coordinator-failover': drop_failover_run.RECEIPT})
     parser.add_argument('--godot', required=True)
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--coordinator-failover', action='store_true', help='qualify the v6 candidate on the shared five-peer silence schedule')
     parser.add_argument('--source-revision', choices=(REVISION, RECOVERY_REVISION), help='select an exact registered Fortress source revision')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/drop-history')
     args = parser.parse_args()
+    with parser.claim_output(args.output):
+        return run(args)
+
+
+def run(args):
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / (drop_failover_run.RECEIPT if args.coordinator_failover else 'receipt.json')
     receipt.unlink(missing_ok=True)

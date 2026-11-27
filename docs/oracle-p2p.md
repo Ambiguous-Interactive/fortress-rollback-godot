@@ -24,9 +24,9 @@ python3 scripts/oracle/p2p_validate.py --source --source-revision "$source_sha" 
     --scenario scenario.json < source.json
 ```
 
-Use the SHA of the source used to build the observer. The default selects the
-reviewed version-2 source. The validator also recognizes the exact version-6
-candidate tracked in [#546](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/546).
+Use the SHA of the source used to build the observer. The standalone validator
+defaults to the historical version-2 source. The runtime launcher selects the
+reviewed version-6 source from the pin manifest.
 It checks the reported revision and every raw header before comparing packet
 semantics. Version 6 requires a checksum basis token as an exact unsigned
 64-bit integer. The fixed-membership oracle requires a zero token. Post-drop

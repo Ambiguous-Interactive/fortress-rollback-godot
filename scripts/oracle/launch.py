@@ -19,7 +19,7 @@ from controls import negative_controls  # noqa: E402
 from session_compare import compare_result, negative_controls as session_negative_controls  # noqa: E402
 from engine_path import resolve_engine  # noqa: E402
 from fetch import CACHE, digest, load_manifest, sources  # noqa: E402
-from receipt_arguments import ReceiptParser  # noqa: E402
+from receipt_arguments import OwnedReceiptParser  # noqa: E402
 from run import rust_environment, setup_rust  # noqa: E402
 
 
@@ -153,23 +153,28 @@ def versioned_controls(binary, engine, control_cases, output):
 
 
 def main():
-    parser = ReceiptParser(description=__doc__, receipt='receipt.json')
+    parser = OwnedReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--jobs', default='4', help='independent scenario workers (default: 4)')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/oracle')
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=True)
-    receipt = args.output / 'receipt.json'
-    receipt.unlink(missing_ok=True)
     try:
         args.jobs = int(args.jobs)
     except ValueError:
         parser.error('workers must be an integer in 1..8')
     if not 1 <= args.jobs <= 8:
         parser.error('workers must be an integer in 1..8')
+    with parser.claim_output(args.output):
+        return run(args)
+
+
+def run(args):
+    args.output.mkdir(parents=True, exist_ok=True)
+    receipt = args.output / 'receipt.json'
+    receipt.unlink(missing_ok=True)
     identity = git_identity()
-    source_paths = sorted(list((ROOT / 'scripts/oracle').rglob('*.py')) + [ROOT / 'scripts/reference/receipt_arguments.py',
+    source_paths = sorted(list((ROOT / 'scripts/oracle').rglob('*.py')) + [ROOT / 'scripts/reference/receipt_arguments.py', ROOT / 'scripts/reference/local_ownership.py',
                           ROOT / 'scripts/reference/engine_path.py'] + list((ROOT / 'scripts/oracle/rust/src').glob('*.rs'))
                           + list((ROOT / 'tests/oracle').glob('*.gd')) + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd'))
                           + [ROOT / 'docs/reference/pins.json', ROOT / 'scripts/reference/fetch.py', ROOT / 'scripts/reference/run.py',

@@ -1,8 +1,8 @@
 # Reference attribution
 
 The Fortress source-family ledger includes source excerpts from
-[Fortress Rollback](https://github.com/wallstop/fortress-rollback), a fork of GGRS,
-revision `f13cd5c0f2815926785a395947e18da0dbea0dd8`.
+[Fortress Rollback](https://github.com/wallstop/fortress-rollback), a fork of GGRS.
+The ledger records the exact revision for each source excerpt.
 The upstream is dual licensed under the [MIT license](licenses/fortress-LICENSE-MIT)
 or [Apache License 2.0](licenses/fortress-LICENSE-APACHE), at your option.
 Both notices are reproduced verbatim from the pinned archive. The ledger is a

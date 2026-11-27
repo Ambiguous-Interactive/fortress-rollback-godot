@@ -21,6 +21,12 @@ executed.
 | macOS, Windows | Not qualified | Native state-byte equality for those platforms is release work, not done |
 | Rust, C#, GDExtension | Not required | The addon is GDScript only; Rust is a development oracle |
 
+The optional upstream-native experiment has its own installation and qualification
+contract. Its wire-v6 packages passed on both Godot pins across Linux, macOS,
+Windows, Android, iOS Simulator, and Web. Peers in a native room must use matching
+source profiles. [Native experiment](experiments/upstream-binding.md) ·
+[Package qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/46072793492)
+
 ## Browsers
 
 | Browser | Supported | Evidence |

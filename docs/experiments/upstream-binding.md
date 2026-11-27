@@ -59,9 +59,9 @@ observes a native reply to a sampled report, `last_replied_report` records that 
 for raw receipt, inbox acceptance and reply send. The reply proves processing of that quality report.
 The witness omits attribution when a retained or discarded report could share the echoed token.
 Other accepted traffic can refresh the native deadline.
-The [pinned wire vectors](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/network/wire_golden_v2.rs#L34-L45)
+The [historical version-2 wire vectors](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/network/wire_golden_v2.rs#L34-L45)
 show the eight-byte header and four-byte body tags. The 16-byte room prefix brings the report and reply to 46 and 44 bytes.
-The witness samples timestamps whose two low bits are zero. The [pinned protocol](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/network/protocol/mod.rs#L2992-L2997)
+The witness samples timestamps whose two low bits are zero. The [version-2 protocol](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/network/protocol/mod.rs#L2992-L2997)
 echoes each accepted report's little-endian timestamp in the reply.
 The direct and relay cells hold input datagrams while control traffic continues, then release the held originals.
 Each peer records its arm, first ready sample and release start on its page clock under `wire.hold_boundaries`.

@@ -8,7 +8,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-fortress-rollback = { path = "../../.cache/reference/fortress-rollback-d124c89080004d96971a629bb0427056ee1805e3", default-features = false }
+fortress-rollback = { path = "../../.cache/reference/fortress-rollback-25e8020d1a5fd40c4f16b37f97b5ec5329a8566d", default-features = false }
 godot = { version = "=0.5.5", default-features = false, features = ["api-4-3"], optional = true }
 serde_json = { version = "1", optional = true }
 

@@ -1,5 +1,6 @@
 """Invalidate only the selected launcher receipt when argument parsing or validation fails."""
 import argparse
+from contextlib import nullcontext
 from pathlib import Path
 import sys
 
@@ -24,13 +25,16 @@ class StrictHelp(argparse.Action):
 class ReceiptParser(argparse.ArgumentParser):
     """Use `receipt` in the last named `--output`, its default, or a fixed `output`; `variants` maps flags to other receipt names."""
 
-    def __init__(self, *args, receipt, output=None, variants=None, **kwargs):
+    def __init__(self, *args, receipt, output=None, variants=None, **kwargs) -> None:
         kwargs['allow_abbrev'] = False
         kwargs['add_help'] = False
         super().__init__(*args, **kwargs)
         self.add_argument('-h', '--help', action=StrictHelp, nargs='?', const=True, default=argparse.SUPPRESS,
                           help='show this help message and exit')
         self.receipt, self.fixed_output, self.variants, self.receipt_preview = receipt, output, variants or {}, None
+
+    def claim_output(self, directory):
+        return nullcontext()
 
     def parse_args(self, args=None, namespace=None):
         arguments = list(sys.argv[1:] if args is None else args)
@@ -55,8 +59,18 @@ class ReceiptParser(argparse.ArgumentParser):
         receipt = self.selected_receipt()
         if receipt is not None:
             try:
-                receipt.parent.mkdir(parents=True, exist_ok=True)
-                receipt.write_text('{"passed": false, "failure": "invalid_arguments"}\n', encoding='utf-8')
-            except OSError:
-                message += '; unable to invalidate the selected receipt'
+                with self.claim_output(receipt.parent):
+                    receipt.parent.mkdir(parents=True, exist_ok=True)
+                    receipt.write_text('{"passed": false, "failure": "invalid_arguments"}\n', encoding='utf-8')
+            except (OSError, ValueError) as error:
+                message += f'; unable to invalidate the selected receipt: {error}'
         super().error(message)
+
+
+class OwnedReceiptParser(ReceiptParser):
+    """Protect the entire output directory for cooperating oracle launchers."""
+
+    def claim_output(self, directory):
+        from local_ownership import claim
+
+        return claim('.oracle-output', directory=Path(directory).resolve())

@@ -2046,7 +2046,7 @@ async function leaveWithReceipt(page, trace) {
 
 async function run(root, endpoint, mode, players, browserPair, control) {
   const reviewedRevision = 'd124c89080004d96971a629bb0427056ee1805e3';
-  const sourceRevision = process.env.FORTRESS_NATIVE_SOURCE_REVISION ?? reviewedRevision;
+  const sourceRevision = process.env.FORTRESS_NATIVE_SOURCE_REVISION ?? require('../../../docs/reference/pins.json').sources.fortress.revision;
   const wireVersion = new Map([[reviewedRevision, 2], ['25e8020d1a5fd40c4f16b37f97b5ec5329a8566d', 6]]).get(sourceRevision);
   assert.ok(wireVersion, 'unsupported native source revision');
   const nativeProfile = `fortress-native-${sourceRevision.slice(0, 8)}-v${wireVersion === 2 ? 1 : wireVersion}-u32`;

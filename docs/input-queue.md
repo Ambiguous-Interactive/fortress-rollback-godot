@@ -1,6 +1,6 @@
 # Input queue and prediction contract
 
-This source audit scopes [C1](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/25)
+This historical source audit scopes [C1](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/25)
 and [C2](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/26)
 against Fortress `d124c89080004d96971a629bb0427056ee1805e3`.
 It contributes to [B2](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/13);
@@ -9,7 +9,7 @@ The [session ADR](contracts.md) remains authoritative for the Godot API boundary
 
 ## Source anchors
 
-These links bind contracts to the pinned source, rather than moving upstream branches.
+These links bind the audit to `d124c890`.
 Method names are the stable anchors; line numbers help locate this revision.
 
 | Source | Audited anchors |

@@ -10,7 +10,7 @@ a simple GDScript byte-codec probe. This is prerequisite evidence for
 
 Host: Linux aarch64, Ubuntu 24.04, Python 3.12.3, Node 22.23.3, npm 10.9.9.
 Rust: 1.94.0, Cargo 1.94.0, rustup 1.29.1. All source revisions and archive
-integrity checks passed; [pins.json](pins.json) records the exact values.
+integrity checks passed. The result receipts below record the exact values.
 
 | Command selection | Observed result | Contract |
 | --- | --- | --- |

@@ -1,5 +1,7 @@
 //! Observe actual pinned host/spectator sessions through fake, bounded delivery.
 #![forbid(unsafe_code)]
+#[path = "../source_revision.rs"]
+mod source_revision;
 use fortress_rollback::{Config, FortressRequest, InputStatus, Message, NonBlockingSocket,
     PlayerType, ProtocolConfig, SessionBuilder, SpectatorConfig, SyncConfig};
 use serde_json::{json, Value};
@@ -144,7 +146,8 @@ fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool
     Ok(result)
 }
 fn main() {
-    let result = (|| -> Result<Vec<Value>, String> {
+    let result = (|| -> Result<Value, String> {
+        let revision = source_revision::compiled()?;
         let mut traces = Vec::new();
         let reordered = std::env::args().any(|argument| argument == "--reordered");
         let statuses = std::env::args().any(|argument| argument == "--statuses");
@@ -156,8 +159,8 @@ fn main() {
             let delay = if delayed { if preplay { 1 } else { capacity - 1 } } else { 0 };
             traces.push(run(capacity, preplay, speed, delay, delayed, players, roster, statuses, reserved_slot, reordered)?);
         } } } } }
-        Ok(traces)
+        Ok(json!({"format": 1, "upstream_revision": revision, "traces": traces}))
     })();
-    match result { Ok(value) => println!("{}", json!({"format": 1, "traces": value})),
+    match result { Ok(value) => println!("{value}"),
         Err(error) => { eprintln!("{error}"); std::process::exit(1); } }
 }

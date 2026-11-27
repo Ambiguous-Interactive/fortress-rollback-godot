@@ -136,6 +136,16 @@ python3 scripts/reference/drift.py --source fortress --old REVIEWED_TREE --new O
 
 ### Observation and advancement
 
+The reviewed Fortress baseline is `25e8020d1a5fd40c4f16b37f97b5ec5329a8566d`.
+The advance from `d124c890` records 320 path decisions. The exact candidate
+passed the paired source oracles on Godot 4.3 and 4.7.2. The native package
+rehearsal at `fc9d3f9e` used the same Fortress archive, extension source,
+extension lockfile, and workflow as this advance. All 12 platform and editor
+cells passed. The pin manifest also records the SDK and server identities.
+[Archive report](pin-reviews/fortress-25e8020d1a5fd40c4f16b37f97b5ec5329a8566d.json) ·
+[Path evidence](pin-reviews/fortress-v6-evidence.md) ·
+[Native package qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/46072793492)
+
 The pin flow binds the compared trees to the archives you supply before any
 bookkeeping is recorded: the candidate archive is digested, extracted and
 required to match the compared tree byte for byte, and `--old` must byte-match
@@ -170,7 +180,7 @@ before merge. Extract both trees and run the tool under the same umask to
 match file modes. The operator comparison uses the supplied archive bytes.
 Gate fetches the manifest archives and verifies the recorded digests.
 
-The P2P, handshake, sync-test, queue, sync-floor, and replay launchers use
+The P2P, handshake, spectator, sync-test, queue, sync-floor, and replay launchers use
 the Fortress source selected in the manifest. The Cargo dependency must resolve
 to that archive's verified tree and use the expected features. The source
 observers that carry a wire profile check their linked wire version before

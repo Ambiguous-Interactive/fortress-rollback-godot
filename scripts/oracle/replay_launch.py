@@ -13,7 +13,7 @@ import zipfile
 from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust
 from engine_path import resolve_engine
 from fetch import fetch
-from receipt_arguments import ReceiptParser
+from receipt_arguments import OwnedReceiptParser
 from source_build import prepare_source_build, source_build_environment, upstream_inventory
 from source_wire import RECOVERY_REVISION, REVIEWED_REVISION
 
@@ -340,7 +340,7 @@ def fingerprints():
         pending.extend(ROOT / match[6:] for match in re.findall(r'(?:preload|load)\("(res://[^"\n]+\.gd)"\)', path.read_text()))
     paths += list(scripts)
     paths += [ROOT / 'scripts/oracle/launch.py', ROOT / 'scripts/reference/fetch.py',
-              ROOT / 'scripts/reference/run.py', ROOT / 'scripts/reference/receipt_arguments.py']
+              ROOT / 'scripts/reference/run.py', ROOT / 'scripts/reference/receipt_arguments.py', ROOT / 'scripts/reference/local_ownership.py']
     return {str(path.relative_to(ROOT)): digest(path) for path in sorted(set(paths))}
 
 
@@ -389,11 +389,16 @@ def verified_engine(engine, manifest, offline):
 
 
 def main():
-    parser = ReceiptParser(description=__doc__, receipt='replay.json')
+    parser = OwnedReceiptParser(description=__doc__, receipt='replay.json')
     parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/replay')
     parser.add_argument('--offline', action='store_true')
     args = parser.parse_args()
+    with parser.claim_output(args.output):
+        return run(args)
+
+
+def run(args):
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'replay.json'
     receipt.unlink(missing_ok=True)

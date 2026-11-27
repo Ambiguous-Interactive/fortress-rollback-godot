@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run actual pinned upstream P2P handshake and production Godot byte endpoint twice."""
 import json
+import hashlib
 from pathlib import Path
 import subprocess
 from copy import deepcopy
@@ -8,9 +9,10 @@ import sys
 
 from handshake_contract import compare, project, negative_controls, raw_negative_controls
 from launch import ROOT, execute, git_identity, require_unchanged
-from handshake_formal import check as check_formal, ensure_jar
-from fetch import digest, load_manifest, sources
-from receipt_arguments import ReceiptParser
+from handshake_formal import check as check_formal
+from tlc_artifact import ARTIFACT, ensure_jar
+from fetch import digest, parse_manifest, sources
+from receipt_arguments import OwnedReceiptParser
 from run import CACHE, setup_rust, rust_environment
 from engine_path import resolve_engine
 from source_build import prepare_source_build, source_build_environment, upstream_inventory
@@ -72,7 +74,7 @@ def malformed_controls(fixture, engine, output):
 
 
 def main():
-    parser = ReceiptParser(description=__doc__, receipt='receipt.json')
+    parser = OwnedReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--tlc-jar', type=Path, default=CACHE / 'tla2tools.jar')
     parser.add_argument('--offline', action='store_true')
@@ -81,21 +83,36 @@ def main():
                              ' formal_skipped for the tier that owns the model evidence elsewhere')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/handshake-oracle')
     args = parser.parse_args()
+    with parser.claim_output(args.output):
+        run(args)
+
+
+def run(args):
     args.output.mkdir(parents=True, exist_ok=True)
-    receipt = args.output / 'receipt.json'; receipt.unlink(missing_ok=True)
+    receipt = args.output / 'receipt.json'
+    receipt.unlink(missing_ok=True)
     identity = git_identity()
     engine = resolve_engine(args.godot)
     formal_on = args.formal == 'on'
-    if formal_on:
-        ensure_jar(args.tlc_jar, args.offline)
     files = [* (ROOT / 'addons/fortress_rollback/protocol').glob('*.gd'), ROOT / 'tests/oracle/handshake_trace.gd',
              *Path(__file__).parent.glob('*.py'), ROOT / 'scripts/oracle/rust/src/bin/handshake.rs',
              ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock',
-             ROOT / 'scripts/oracle/rust/src/source_revision.rs', ROOT / 'docs/reference/pins.json',
+             ROOT / 'scripts/oracle/rust/src/source_revision.rs',
              ROOT / 'scripts/oracle/contract.py', ROOT / 'scripts/oracle/launch.py',
              *(ROOT / 'scripts/reference').glob('*.py')]
     source_hashes = {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)}
-    manifest = load_manifest(); trees = sources(manifest, offline=args.offline)
+    manifest_path = ROOT / 'docs/reference/pins.json'
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = parse_manifest(manifest_bytes)
+    files.append(manifest_path)
+    source_hashes['docs/reference/pins.json'] = hashlib.sha256(manifest_bytes).hexdigest()
+    if formal_on:
+        artifact = manifest['artifacts'][ARTIFACT]
+        jar_source, jar_digest = ROOT / artifact['repository_path'], artifact['digest']
+        ensure_jar(args.tlc_jar, jar_source, jar_digest)
+        files.append(jar_source)
+        source_hashes[str(jar_source.relative_to(ROOT))] = jar_digest
+    trees = sources(manifest, offline=args.offline)
     source_revision = manifest['sources']['fortress']['revision']
     cargo_manifest = prepare_source_build(ROOT / 'scripts/oracle/rust/Cargo.toml', trees['fortress'], source_revision, CACHE)
     environment = source_build_environment(cargo_manifest, trees['fortress'], source_revision)
@@ -133,10 +150,11 @@ def main():
             raise ValueError('Godot fresh process divergence')
         actual_path = args.output / f'{name}-actual.json'; actual_path.write_text(json.dumps(actuals[0], indent=2) + '\n')
         if name == 'model_matching' and formal_on:
-            formal = check_formal(actuals[0], args.output, args.tlc_jar.resolve())
-            mutant = deepcopy(actuals[0]); mutant['records'][0]['transitions'][0].update(remaining=0, state='running')
+            formal = check_formal(actuals[0], args.output, args.tlc_jar.resolve(), upstream=trees['fortress'], jar_digest=jar_digest)
+            mutant = deepcopy(actuals[0])
+            mutant['records'][0]['transitions'][0].update(remaining=0, state='running')
             try:
-                check_formal(mutant, args.output, args.tlc_jar.resolve())
+                check_formal(mutant, args.output, args.tlc_jar.resolve(), upstream=trees['fortress'], jar_digest=jar_digest)
             except ValueError as error:
                 if 'formal begin' not in str(error):
                     raise ValueError('formal initial control failed at unrelated boundary') from error
@@ -151,6 +169,8 @@ def main():
                          'Godot_repeat_equal': True, 'upstream_repeat_equal': True})
         print(f'{name}: actual upstream/Godot transitions, packets and events match twice', flush=True)
     malformed = malformed_controls(fixture, engine, args.output)
+    if formal_on:
+        ensure_jar(args.tlc_jar, jar_source, jar_digest)
     require_unchanged('local source inventory', source_hashes, {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)})
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
     require_unchanged('Cargo adapter inventory', adapter_hashes, upstream_inventory(cargo_manifest.parent))
@@ -158,7 +178,7 @@ def main():
     receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True,
         'upstream_revision': manifest['sources']['fortress']['revision'],
         'upstream_archive_sha256': manifest['sources']['fortress']['archive']['digest'], 'upstream_source_sha256': upstream_hashes,
-        'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'upstream_lock_sha256': digest(trees['fortress'] / 'Cargo.lock'),
+        'manifest_sha256': source_hashes['docs/reference/pins.json'], 'upstream_lock_sha256': upstream_hashes['Cargo.lock'],
         'commit': identity['commit'],
         'working_tree_dirty': identity['working_tree_dirty'],
         'engine': engine_version.strip(), 'cargo': cargo_version.strip(), 'rustc': rust_version.strip(),

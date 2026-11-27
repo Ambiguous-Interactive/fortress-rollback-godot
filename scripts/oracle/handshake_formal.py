@@ -3,25 +3,21 @@ import json
 from copy import deepcopy
 from pathlib import Path
 import subprocess
-import shutil
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
-from fetch import CACHE, ROOT, digest, load_manifest
+from fetch import digest
+from launch import require_unchanged
 from handshake_contract import strict_shape
 
-REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
-UPSTREAM = CACHE / ('fortress-rollback-' + REVISION)
-# Preserve the reviewed prerelease build: upstream replaces its version-labelled asset daily.
-JAR_PIN = load_manifest()['artifacts']['tla2tools-1.8.0.jar']
-JAR_SOURCE = ROOT / JAR_PIN['repository_path']
-JAR_SHA256 = JAR_PIN['digest']
-
-
-def check(actual, output, jar):
-    if digest(jar) != JAR_SHA256:
+def check(actual, output, jar, *, upstream, jar_digest):
+    if digest(jar) != jar_digest:
         raise ValueError('TLC artifact hash mismatch')
-    source = UPSTREAM / 'specs/tla/traces/sync-handshake-v1/matching.ndjson'
+    source = upstream / 'specs/tla/traces/sync-handshake-v1/matching.ndjson'
+    checker = upstream / 'scripts/verification/verify-sync-handshake-traces.py'
+    models = [upstream / name for name in ('specs/tla/SyncHandshakeV1.tla', 'specs/tla/SyncHandshakeV1Trace.tla')]
+    dependencies = [source, checker, *models]
+    before = {path: digest(path) for path in dependencies}
     scheduler = [json.loads(line) for line in source.read_text().splitlines()]
     rows = deepcopy(scheduler[:13])
     rows[0].update(trace='godot-observed-matching',
@@ -71,7 +67,7 @@ def check(actual, output, jar):
     negative.write_text(json.dumps({'schema': 1, 'trace': 'godot-observed-duplicate-decrement', 'expect': 'reject',
         'description': 'Mutate the observed ignored duplicate reply into another decrement.', 'derived_from': positive.name,
         'mutation': {'step': 9, 'variable': 'syncRemaining', 'peer': 'p1', 'from': 1, 'to': 0}}) + '\n')
-    command = ['python3', str(UPSTREAM / 'scripts/verification/verify-sync-handshake-traces.py'), '--jar', str(jar), str(positive), str(negative)]
+    command = ['python3', str(checker), '--jar', str(jar), str(positive), str(negative)]
     result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=120)
     (output / 'godot-observed-tlc.log').write_text(result.stdout + result.stderr)
     markers = ['PASS godot-observed-matching: accepted', 'PASS godot-observed-duplicate-decrement: rejected as required']
@@ -80,32 +76,13 @@ def check(actual, output, jar):
     java = subprocess.run(['java', '-version'], capture_output=True, text=True, encoding='utf-8', timeout=20)
     if java.returncode:
         raise ValueError('Java version probe failed')
-    dependencies = [UPSTREAM / 'specs/tla/SyncHandshakeV1.tla', UPSTREAM / 'specs/tla/SyncHandshakeV1Trace.tla']
-    dependencies = [p for p in dependencies if p.is_file()]
+    require_unchanged('handshake formal sources', before, {path: digest(path) for path in dependencies})
     return {'complete': True, 'java_version': java.stdout + java.stderr,
-            'model_sha256': {str(p.relative_to(UPSTREAM)): digest(p) for p in dependencies}, 'positive_sha256': digest(positive),
-            'negative_sha256': digest(negative), 'TLC_sha256': digest(jar),
+            'model_sha256': {str(path.relative_to(upstream)): before[path] for path in models}, 'positive_sha256': digest(positive),
+            'negative_sha256': digest(negative), 'TLC_sha256': jar_digest,
             'raw_token_mapping': bindings,
-            'scheduler_sha256': digest(source),
-            'checker_sha256': digest(UPSTREAM / 'scripts/verification/verify-sync-handshake-traces.py')}
-
-
-def ensure_jar(path, offline):
-    # Verify the authoritative fixture even when a valid cache already exists.
-    if not JAR_SOURCE.is_file() or digest(JAR_SOURCE) != JAR_SHA256:
-        raise ValueError('repository TLC artifact missing or hash mismatch')
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix('.download')
-        try:
-            shutil.copyfile(JAR_SOURCE, temporary)
-            if digest(temporary) != JAR_SHA256:
-                raise ValueError('copied TLC artifact hash mismatch')
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
-    if digest(path) != JAR_SHA256:
-        raise ValueError('cached TLC artifact hash mismatch')
+            'scheduler_sha256': before[source],
+            'checker_sha256': before[checker]}
 
 
 def validate_begin(value):

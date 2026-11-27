@@ -18,15 +18,10 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts/reference'))
 
-from fetch import CACHE, digest, load_manifest  # noqa: E402
+from fetch import digest  # noqa: E402
 
-REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
-UPSTREAM = CACHE / ('fortress-rollback-' + REVISION)
 SPEC = Path('specs/tla/SpectatorSession.tla')
 CONFIG = Path('specs/tla/SpectatorSession.cfg')
-JAR_PIN = load_manifest()['artifacts']['tla2tools-1.8.0.jar']
-JAR_SOURCE = ROOT / JAR_PIN['repository_path']
-JAR_SHA256 = JAR_PIN['digest']
 
 REQUIRED_INVARIANTS = ['TypeInvariant', 'SpectatorFrameBounded', 'BufferAccessValid', 'FramesBehindNonNegative', 'SafetyInvariant']
 
@@ -89,24 +84,6 @@ def _read_outcome(returncode, log, label, expect_ok):
             'violation': next(line.strip() for line in log.splitlines() if 'is violated' in line)}
 
 
-def ensure_jar(path):
-    """Verify the reviewed fixture in-repo, then seed the cache from it."""
-    if not JAR_SOURCE.is_file() or digest(JAR_SOURCE) != JAR_SHA256:
-        raise ValueError('repository TLC artifact missing or hash mismatch')
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix('.download')
-        try:
-            temporary.write_bytes(JAR_SOURCE.read_bytes())
-            if digest(temporary) != JAR_SHA256:
-                raise ValueError('copied TLC artifact hash mismatch')
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
-    if digest(path) != JAR_SHA256:
-        raise ValueError('cached TLC artifact hash mismatch')
-
-
 def _run(jar, spec, config, output, label, expect_ok):
     command = ['java', '-XX:+UseParallelGC', '-jar', str(jar), '-config', str(config),
                '-workers', 'auto', '-deadlock', '-metadir', str((output / (label + '-states')).resolve()), str(spec)]
@@ -116,12 +93,12 @@ def _run(jar, spec, config, output, label, expect_ok):
     return _read_outcome(result.returncode, log, label, expect_ok)
 
 
-def check(output, jar):
+def check(output, jar, *, upstream):
     """Verify the pinned spec, then require the unsafe mutant to be rejected."""
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    spec = UPSTREAM / SPEC
-    config = UPSTREAM / CONFIG
+    spec = upstream / SPEC
+    config = upstream / CONFIG
     if not spec.is_file() or not config.is_file():
         raise ValueError('pinned SpectatorSession model missing from verified tree')
     configure = config.read_text()

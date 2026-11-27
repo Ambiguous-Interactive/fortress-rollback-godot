@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
 from fetch import ROOT, CACHE, digest, load_manifest, sources
-from receipt_arguments import ReceiptParser
+from receipt_arguments import OwnedReceiptParser
 from run import setup_rust, rust_environment
 from launch import execute, git_identity, require_unchanged
 from engine_path import resolve_engine
@@ -545,7 +545,7 @@ def executable_identity(path):
 def main(wrap_only=False):
     """Run the differential gates; wrap_only scopes the corpus to the committed
     wrap-flood fixtures for the wave's separate wrap launcher."""
-    parser = ReceiptParser(description=__doc__, receipt='receipt.json')
+    parser = OwnedReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--offline', action='store_true')
     group = parser.add_mutually_exclusive_group()
@@ -559,6 +559,11 @@ def main(wrap_only=False):
     args = parser.parse_args()
     if wrap_only and args.include_lifecycle and args.wrap_part is None:
         parser.error('--include-lifecycle requires --wrap-part')
+    with parser.claim_output(args.output):
+        return run(args, wrap_only)
+
+
+def run(args, wrap_only):
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'receipt.json'; receipt.unlink(missing_ok=True)
     identity = git_identity()
