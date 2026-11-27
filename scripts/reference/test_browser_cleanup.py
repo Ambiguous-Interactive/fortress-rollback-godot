@@ -22,6 +22,9 @@ class BrowserCleanupTests(unittest.TestCase):
     def test_native_chromium_socket_joins_exact_carriers_and_preserves_unavailable_evidence(self):
         subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_chromium_socket.test.cjs')], check=True, timeout=10)
 
+    def test_native_firefox_frame_receipts_require_exact_frozen_recipient_and_carrier(self):
+        subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_firefox_frames.test.cjs')], check=True, timeout=10)
+
     def test_native_relay_hold_keeps_exact_receipt_when_final_read_times_out(self):
         subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_relay_hold.test.cjs')], check=True, timeout=10)
 
@@ -3725,9 +3728,16 @@ global.cleanupLog=value=>fs.appendFileSync(process.env.CLEANUP_LOG,value+'\n');
 const originalError=console.error;
 console.error=(...values)=>{
   if(process.env.FAIL_CUSTOM_INSPECT==='1'&&process.exitCode!==1)throw Error('CLI_EXIT_CODE_NOT_SET');
-  if(process.env.FAIL_NATIVE_HANG==='1' && typeof values[0]==='string' && values[0].startsWith('{"phase":'))cleanupLog('phase receipt');
   originalError(...values);
 };
+if(process.env.FAIL_NATIVE_HANG==='1'){
+  const write=process.stderr.write.bind(process.stderr);
+  process.stderr.write=(chunk,...rest)=>{
+    if(typeof chunk!=='string'||!chunk.startsWith('{"phase":'))return write(chunk,...rest);
+    const callback=rest.at(-1);
+    return write(chunk,error=>setImmediate(()=>{cleanupLog('phase receipt');if(typeof callback==='function')callback(error);}));
+  };
+}
 const create=http.createServer;
 http.createServer=function(...args){const server=create.apply(this,args);
   server.on('close',()=>cleanupLog('server closed'));return server;};
@@ -3751,7 +3761,7 @@ module.exports.chromium={launch:async()=>{
     const page={on(){},addInitScript:async()=>{},goto:async()=>{throw Error('PRIMARY_FAILURE');},evaluate:pending};
     const browser={browserType:()=>({name:()=> 'chromium'}),version:()=> 'fixture',
       close:async()=>cleanupLog('browser closed 0'),newContext:async()=>context};
-    const context={browser:()=>browser,newPage:async()=>page,close:pending};
+    const context={browser:()=>browser,newPage:async()=>page,close:()=>{cleanupLog('context close started');return pending();}};
     return browser;
   }
   const page={on(){},addInitScript:async()=>{},goto:async()=>{},evaluate:async()=>({})};
@@ -3768,6 +3778,7 @@ module.exports.chromium={launch:async()=>{
       waitForFunction:async()=>{if(process.env.FAIL_OWNERSHIP_DIAGNOSTIC==='1')throw Error('OWNERSHIP_WAIT_FAILURE');},
       evaluate:async()=>{if(process.env.FAIL_OWNERSHIP_DIAGNOSTIC==='1')throw Object.create(null);return{passed:true};}})};
 }};
+module.exports.firefox=module.exports.chromium;
 """, encoding='utf-8')
             certificate = directory / 'tls'
             certificate.write_text('', encoding='utf-8')
@@ -3780,13 +3791,17 @@ module.exports.chromium={launch:async()=>{
                      ('online-opaque', True, False, False), ('webrtc-opaque', True, False, False),
                      *[(name+'-inspect', True, False, False) for name in ['smoke', 'ownership', 'online', 'webrtc', 'spectator']],
                      ('ownership-diagnostic', False, False, False), ('ownership-diagnostic', False, True, True),
-                     ('native_online', True, False, False), ('native_online-trace', True, False, False)]
+                     ('native_online', True, False, False), ('native_online-chromium-trace', True, False, False),
+                     ('native_online-firefox-trace', True, False, False)]
             for name, primary, browser_failure, context_failure in cases:
                 opaque = name.endswith('-opaque')
                 custom_inspect = name.endswith('-inspect')
                 diagnostic = name.endswith('-diagnostic')
                 trace = name.endswith('-trace')
                 name = name.removesuffix('-opaque').removesuffix('-inspect').removesuffix('-diagnostic').removesuffix('-trace')
+                trace_browser = name.rsplit('-', 1)[-1] if trace else None
+                if trace:
+                    name = name.rsplit('-', 1)[0]
                 log.unlink(missing_ok=True)
                 environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_CHROMIUM_EXECUTABLE': '/fixture',
                                'FORTRESS_TLS_CERT': str(certificate), 'FORTRESS_TLS_KEY': str(certificate), 'CLEANUP_LOG': str(log),
@@ -3799,7 +3814,10 @@ module.exports.chromium={launch:async()=>{
                 command = ['node', '--require', str(preload), str(ROOT / 'scripts/reference/browser' / (name + '.cjs')), str(directory)]
                 command += [json.dumps(['res://tests/unit/test_alpha.gd'])] if name == 'ownership' else ['ws://127.0.0.1:12345/v3/ws']
                 if name == 'native_online':
-                    command += ['relay', '4', 'chromium', '--trace-chromium-socket'] if trace else ['mesh', '2']
+                    command += {
+                        'chromium': ['relay', '4', 'chromium', '--trace-chromium-socket'],
+                        'firefox': ['relay', '4', 'chromium-firefox', '--trace-firefox-frames'],
+                    }.get(trace_browser, ['mesh', '2'])
                     if trace:
                         environment.update(FORTRESS_RELAY_TRACE_SCOPE=str(directory / 'scope.json'),
                                            FORTRESS_RELAY_TRACE_OUTPUT=str(directory / 'trace.json'))
@@ -3846,15 +3864,20 @@ module.exports.chromium={launch:async()=>{
                         self.assertIn('native peer 0 diagnostics deadline', child.stderr)
                         self.assertIn('native context 0 close deadline', child.stderr)
                         cleanup = log.read_text().splitlines()
-                        self.assertLess(cleanup.index('phase receipt'), cleanup.index('browser closed 0'))
+                        self.assertLess(cleanup.index('phase receipt'), cleanup.index('context close started'))
                         phase = next(line for line in child.stderr.splitlines() if line.startswith('{"phase":'))
                         self.assertEqual(json.loads(phase)['primary_error'], 'PRIMARY_FAILURE')
                         if trace:
-                            followup = next(line for line in child.stderr.splitlines() if line.startswith('{"relaySocketFailure":'))
+                            receipt_key = 'relaySocketFailure' if trace_browser == 'chromium' else 'relayFirefoxFailure'
+                            followup = next(line for line in child.stderr.splitlines() if line.startswith('{"' + receipt_key + '":'))
                             self.assertEqual(json.loads(phase)['phase'], 'launch')
-                            evidence = json.loads(followup)['relaySocketFailure']
+                            evidence = json.loads(followup)[receipt_key]
                             self.assertEqual(evidence['failure_sha256'], hashlib.sha256(phase.encode()).hexdigest())
-                            self.assertEqual(evidence['status'], 'unavailable')
+                            if trace_browser == 'chromium':
+                                self.assertEqual(evidence['status'], 'unavailable')
+                            else:
+                                self.assertEqual(evidence['coverage'], 'debugger-callback-dependent')
+                                self.assertEqual((evidence['pages'], evidence['rows']), ([], []))
                     if not (primary or browser_failure or context_failure or diagnostic):
                         json.loads(child.stdout)
 
