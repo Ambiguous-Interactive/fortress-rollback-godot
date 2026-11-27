@@ -165,7 +165,7 @@ func _wide_mesh(context: RefCounted) -> Dictionary:
 	return _recording_mesh(context, 0, Callable())
 
 
-func _recording_mesh(context: RefCounted, replay_frames: int, game_factory: Callable) -> Dictionary:
+func _recording_mesh(context: RefCounted, replay_frames: int, game_factory: Callable, capacity: int = 0) -> Dictionary:
 	var peers: Array[Peer] = []
 	var games: Array[RefCounted] = []
 	for player: int in range(3):
@@ -178,7 +178,7 @@ func _recording_mesh(context: RefCounted, replay_frames: int, game_factory: Call
 		config.neutral_input.resize(_width)
 		config.neutral_input.fill(0)
 		config.max_prediction_frames = _window
-		config.queue_capacity = maxi(128, _window * 2 + 2)
+		config.queue_capacity = capacity if capacity > 0 else maxi(128, _window * 2 + 2)
 		config.history_slots = _window + 1
 		config.check_distance = 0
 		config.sync_test = false

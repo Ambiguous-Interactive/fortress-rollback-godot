@@ -329,9 +329,22 @@ trace comparison and the expanded live fault matrix remain in
 [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
 `CONTINUE` terminates a match when no eligible donor retains the required actual history.
-Asymmetric delivery tests preserve and recover the full original suffix before the survivors continue.
-A captured donor journal also survives physical source-ring reuse; a fresh journal refuses the same evicted range.
-These checks do not establish the remaining pinned-source comparison.
+In the supported predicting mesh, a donor includes each still-live recipient's actual
+receipt for the target slot in its confirmation limit. If a recipient has never received
+frame F, its receipt keeps that limit below F. The prediction window keeps the donor's
+rollback floor at or below F, even at startup. Reclamation releases rows below the floor
+and preserves the row at the floor if an append reuses its physical slot.
+This protection holds while the recipient stays in the confirmation fold and the target
+slot remains active. Incomplete donor coverage and participant loss have their own
+refusal paths.
+
+The minimum-capacity test uses an 18-row ring. The recipient misses target inputs from
+frame 8 while the donor receives through frame 22 and overwrites the old physical slot
+for frame 4. The donor still supplies the full original suffix from frame 8. Both survivors
+certify cut 22 and continue with matching canonical histories. The shorter control
+receives through frame 8 with no ring wrap. A separate test advances the real source
+past an old requested range. An already captured journal keeps the original bytes,
+and a fresh journal refuses that evicted range.
 The live missing-history receipt requires the proposer to open at confirmed
 frame 2 and the donor at frame 3. Withholding the donor's inputs from the departing
 page keeps its receipt for the donor's slot at 2. The departing page still reports
