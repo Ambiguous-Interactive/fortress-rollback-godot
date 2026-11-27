@@ -20,6 +20,10 @@ def ensure_jar(path, source, expected_digest):
             shutil.copyfile(source, temporary)
             if digest(temporary) != expected_digest:
                 raise ValueError('copied TLC artifact hash mismatch')
-            temporary.replace(path)
+            try:
+                path.hardlink_to(temporary)
+            except FileExistsError:
+                # Another invocation seeded the cache. Verify its bytes below.
+                pass
     if digest(path) != expected_digest:
         raise ValueError('cached TLC artifact hash mismatch')
