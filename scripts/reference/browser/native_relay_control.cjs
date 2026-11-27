@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const { createHash } = require('node:crypto');
 const { setTimeout: pause } = require('node:timers/promises');
+const { boundedRoom } = require('./webrtc_watchdog.cjs');
 
 function events(trace, stage, family) {
   return trace.streams[stage][family].events;
@@ -39,6 +40,14 @@ async function readRelayWireReceipt(page, links = []) {
     event.carrier_sha256 = digest(Buffer.from(event.bytes, 'base64'));
     delete event.bytes;
   }
+  return receipt;
+}
+
+async function readRelayWireDiagnostic(page, links, timeout, label) {
+  const started = performance.now();
+  const receipt = await boundedRoom(() => readRelayWireReceipt(page, links), timeout, label);
+  if (performance.now() >= started + timeout) throw new Error(`absolute ${label} deadline`);
+  if (receipt?.carriers) receipt.carrier_capture_started_ms = started;
   return receipt;
 }
 
@@ -431,4 +440,4 @@ function completeRelayRow(row) {
 }
 
 module.exports = { assertJoinedRelayControl, bindRelayServer, checkSameLinkRetention, createRelayServerReader, exerciseRelayDelivery,
-  exerciseRelayRetention, exerciseSameLinkRetention, joinRelayReceipts, readRelayWireReceipt, relayExpiryRows, validateRelayExpiryFrontier };
+  exerciseRelayRetention, exerciseSameLinkRetention, joinRelayReceipts, readRelayWireDiagnostic, readRelayWireReceipt, relayExpiryRows, validateRelayExpiryFrontier };

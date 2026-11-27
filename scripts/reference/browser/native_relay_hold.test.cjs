@@ -5,7 +5,7 @@ const { runInNewContext } = require('node:vm');
 const { instrumentNativeWire } = require('./native_online.cjs');
 const { createRelayWireTrace, decodeRelayDelivery } = require('./native_relay_trace.cjs');
 const { createRelayHold, RELAY_HOLD_PREFIX } = require('./native_relay_hold.cjs');
-const { readRelayWireReceipt } = require('./native_relay_control.cjs');
+const { readRelayWireDiagnostic, readRelayWireReceipt } = require('./native_relay_control.cjs');
 const { boundedRoom } = require('./webrtc_watchdog.cjs');
 
 const [room, first, second, other] = ['11', '22', '33', '44'].map(value => value.repeat(16));
@@ -268,4 +268,27 @@ test('relay wire receipt exports the exact retained bytes at the page cutoff', a
   record(report);
   assert.deepEqual(await pending, full);
   assert.equal((await readRelayWireReceipt(page)).streams.raw.quality.count, 132);
+});
+
+test('relay wire diagnostics enforce the clock cutoff after reading a page', async t => {
+  // Value: protects=absolute relay receipt deadline; fails_when=an overdue reply settles before its timer callback; seam=controller receipt
+  const previous = globalThis.performance;
+  t.after(() => { globalThis.performance = previous; });
+  let now = 100;
+  globalThis.performance = { now: () => now };
+  const text = JSON.stringify({ streams: {}, carriers: { events: [] } });
+  const read = elapsed => {
+    now = 100;
+    const page = { evaluate() {
+      return Promise.resolve().then(() => {
+        now += elapsed;
+        return text;
+      });
+    } };
+    return readRelayWireDiagnostic(page, [], 5000, 'native peer 6 relay wire receipt');
+  };
+  assert.equal((await read(4999)).carrier_capture_started_ms, 100);
+  for (const elapsed of [5000, 5001]) {
+    await assert.rejects(read(elapsed), { message: 'absolute native peer 6 relay wire receipt deadline' });
+  }
 });

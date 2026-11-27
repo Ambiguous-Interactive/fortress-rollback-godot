@@ -4,7 +4,7 @@ const { createRelayWireTrace, decodeRelayDelivery } = require('./native_relay_tr
 const { createRelayProxyTrace, joinRelayReceive } = require('./native_relay_proxy.cjs');
 const { createRelayHold, RELAY_HOLD_CAP, RELAY_HOLD_PREFIX, RELAY_HOLD_WINDOW_MS } = require('./native_relay_hold.cjs');
 const { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, exerciseSameLinkRetention,
-  joinRelayReceipts, readRelayWireReceipt, relayExpiryRows, validateRelayExpiryFrontier } = require('./native_relay_control.cjs');
+  joinRelayReceipts, readRelayWireDiagnostic, relayExpiryRows, validateRelayExpiryFrontier } = require('./native_relay_control.cjs');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
@@ -2122,12 +2122,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const observe = (group = pages) => Promise.all(group.map((page, index) => page.evaluate(index => ({
     index, ...window.fortressNative, wire: window.fortressNativeWire.status()
   }), index)));
-  const collectRelayWire = (links = []) => Promise.allSettled(pages.map(async (page, index) => {
-    const started = performance.now();
-    const receipt = await boundedRoom(() => readRelayWireReceipt(page, links), DIAGNOSTIC_MS, `native peer ${index} relay wire receipt`);
-    if (receipt?.carriers) receipt.carrier_capture_started_ms = started;
-    return receipt;
-  }));
+  const collectRelayWire = (links = []) => Promise.allSettled(pages.map((page, index) =>
+    readRelayWireDiagnostic(page, links, DIAGNOSTIC_MS, `native peer ${index} relay wire receipt`)));
   const collectRelayReceive = (joined, pages, serverReceipt) => relayProxy && joinRelayReceive(joined, relayProxy.snapshot(), pages, serverReceipt?.room);
   try {
     for (const name of browserPair) browsers.push(await playwright[name].launch(browserOptions(name)));
