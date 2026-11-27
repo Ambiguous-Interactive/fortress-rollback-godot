@@ -329,11 +329,12 @@ trace comparison and the expanded live fault matrix remain in
 [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
 `CONTINUE` terminates a match when no eligible donor retains the required actual history.
-In the supported predicting mesh, a donor includes each still-live recipient's actual
-receipt for the target slot in its confirmation limit. If a recipient has never received
-frame F, its receipt keeps that limit below F. The prediction window keeps the donor's
-rollback floor at or below F, even at startup. Reclamation releases rows below the floor
-and preserves the row at the floor if an append reuses its physical slot.
+In the supported predicting mesh, a donor includes each still-live recipient's highest
+contiguous actual receipt for the target slot in its confirmation limit. If the recipient
+has never received frame F, that receipt keeps the limit below F. The prediction window
+keeps the donor's rollback floor at or below F, even at startup. Reclamation releases
+rows below the floor. If an append reuses the floor row's physical slot, the queue keeps
+that row in separate owned storage.
 This protection holds while the recipient stays in the confirmation fold and the target
 slot remains active. Incomplete donor coverage and participant loss have their own
 refusal paths.
