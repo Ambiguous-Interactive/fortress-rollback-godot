@@ -1,3 +1,4 @@
+const { createChromiumCapture, proxySocketAddress } = require('./native_chromium_socket.cjs');
 const { createDepartureClock, CLOSE_HTTPS_PRE_SAMPLES } = require('./native_departure_clock.cjs');
 const { assertRecoveredRoom, OmittedReplacement, PHYSICAL_PAIRS, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace, decodeRelayDelivery } = require('./native_relay_trace.cjs');
@@ -451,14 +452,14 @@ function bindDepartureCheckpoints(peer, roster, local) {
   delete peer.unbound_lifetime;
 }
 
-function browserOptions(name) {
+function browserOptions(name, chromiumArgs = []) {
   const executablePath = process.env[`FORTRESS_${name.toUpperCase()}_EXECUTABLE`];
   if (!executablePath) throw new Error(`missing executable for ${name}`);
   switch (name) {
     case 'chromium':
       return { executablePath, headless: true,
         args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-          '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] };
+          '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', ...chromiumArgs] };
     case 'firefox':
       return { executablePath, headless: false,
         firefoxUserPrefs: { 'webgl.force-enabled': true, 'webgl.disabled': false, 'toolkit.shutdown.fastShutdownStage': 0 } };
@@ -2041,11 +2042,13 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const omitSecond = control === '--omit-second-replacement';
   const traceRetention = control === '--relay-retention-control';
   const traceSameLink = control === '--relay-same-link-control';
-  const traceRelayWire = control === '--trace-relay-wire' || traceRetention || traceSameLink;
+  const traceChromiumSocket = control === '--trace-chromium-socket';
+  const traceRelayWire = control === '--trace-relay-wire' || traceRetention || traceSameLink || traceChromiumSocket;
   const traceScopePath = traceRelayWire && process.env.FORTRESS_RELAY_TRACE_SCOPE;
   const traceReceiptPath = traceScopePath && process.env.FORTRESS_RELAY_TRACE_OUTPUT;
   const readRelayServer = traceReceiptPath && createRelayServerReader(traceReceiptPath);
-  const relayProxy = readRelayServer ? createRelayProxyTrace() : undefined;
+  if (traceChromiumSocket && !readRelayServer) throw new Error('Chromium socket tracing requires a relay trace server');
+  const relayProxy = readRelayServer ? createRelayProxyTrace(traceChromiumSocket ? proxySocketAddress : undefined) : undefined;
   const mixed = startup || liveClose || recovery;
   const route = mixed ? 'mesh' : mode;
   const traceWarmup = route === 'relay' && players === 8;
@@ -2073,6 +2076,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const browsers = [];
   const browserPeers = [];
   let result;
+  let failureReceipt;
+  let chromiumCapture;
   let omittedReplacement;
   let roomIdentities;
   let relayHold;
@@ -2147,7 +2152,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     readRelayWireDiagnostic(page, links, DIAGNOSTIC_MS, `native peer ${index} relay wire receipt`)));
   const collectRelayReceive = (joined, pages, serverReceipt) => relayProxy && joinRelayReceive(joined, relayProxy.snapshot(), pages, serverReceipt?.room);
   try {
-    for (const name of browserPair) browsers.push(await playwright[name].launch(browserOptions(name)));
+    if (traceChromiumSocket) chromiumCapture = await createChromiumCapture(root);
+    for (const name of browserPair) browsers.push(await playwright[name].launch(browserOptions(name, chromiumCapture?.args)));
     for (let index = 0; index < players; index++) {
       const started = performance.now();
       const browser = browsers[index % browsers.length];
@@ -2202,7 +2208,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     phase = 'lobby';
     function connect(page, index, room) {
-      return command(page, 'connect', { endpoint: socketEndpoint, name: `Player ${index}`, room, route, players,
+      const endpoint = traceChromiumSocket ? `${socketEndpoint}?trace_page=${index}` : socketEndpoint;
+      return command(page, 'connect', { endpoint, name: `Player ${index}`, room, route, players,
         wait_for_full_mesh: mode === 'mesh' || recovery, observe_recovery: recovery, trace_close: traceMeshDeparture, trace_warmup: traceWarmup });
     }
     await connect(pages[0], 0, '');
@@ -2589,7 +2596,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     const relayReceive = collectRelayReceive(relayJoined, relayWire, serverReceipt?.value);
     const expiries = observedExpiries();
-    console.error(JSON.stringify({
+    failureReceipt = {
       phase, target_frames: comparedFrames, historyEvidence: historyFailureEvidence(relayHistory, comparedFrames, roomIdentities),
       browser_peers: browserPeers, bootstrap_ms, errors, releaseDelay, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks, departureCommands, roomIdentities, ...closeReceipts(),
@@ -2613,7 +2620,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached,
         { frames: comparedFrames, departureCommands }),
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
-    }));
+    };
   } finally {
     releaseSignal?.cancel();
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
@@ -2625,6 +2632,13 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     failures.push(...await closeAll([server], owner => new Promise((resolve, reject) =>
       owner.close(error => error ? reject(error) : resolve())), 'host'));
   }
+  const receipt = failureReceipt ?? result;
+  if (chromiumCapture && receipt) {
+    const recipients = roomIdentities?.uuids.map(uuid => uuid.replaceAll('-', ''));
+    receipt.relaySocketReceive = await chromiumCapture.finish(new URL(origin).host, receipt.relayReceive, recipients)
+      .catch(() => ({ status: 'unavailable' }));
+  }
+  if (failureReceipt) console.error(JSON.stringify(failureReceipt));
   await flush();
   if (errors.length) failures.push(new Error(JSON.stringify(errors)));
   if (failures.length) throw new AggregateError(failures, `native online witness failed in ${phase}`);
@@ -2641,6 +2655,7 @@ if (require.main === module) {
   const validOverlap = overlap && (!control || control === '--omit-second-replacement');
   const validFault = size === '4' && (validOverlap || (!control && ['mesh-startup', 'mesh-close', 'mesh-recovery'].includes(route)));
   const relayControl = !control || control === '--trace-relay-wire'
+    || profile === 'chromium' && control === '--trace-chromium-socket'
     || (size === '8' && (['--relay-retention-control', '--relay-same-link-control'].includes(control)
       || profile === 'firefox' && RELEASE_DELAYS.has(control)));
   const validPlain = ['2', '4', '8'].includes(size) && (route === 'relay' ? relayControl : route === 'mesh' && !control);

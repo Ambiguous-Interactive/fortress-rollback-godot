@@ -33,7 +33,7 @@ async function createHost(root, endpoint, certificate, privateKey, port = 0, han
         headers += `${request.rawHeaders[index]}: ${request.rawHeaders[index + 1]}\r\n`;
       upstream.write(headers + '\r\n');
       if (head.length) upstream.write(head);
-      if (forwardUpstream) forwardUpstream(upstream, socket);
+      if (forwardUpstream) forwardUpstream(upstream, socket, request);
       else upstream.pipe(socket);
       socket.pipe(upstream);
     });

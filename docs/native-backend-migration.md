@@ -212,6 +212,20 @@ invalid proxy framing, or a TLS write after the browser read began.
 `first_unobserved` identifies a stage at the measured cutoff.
 Use the proxy and page timestamps within their respective clock domains.
 
+Add `--trace-chromium-socket` to an instrumented Chromium relay cell to
+record decrypted TLS reads before the page callback. The
+`relaySocketReceive` receipt matches the full addressed carrier digest
+on the proxy connection tagged for the frozen recipient. The observation
+records the NetLog socket source, proxy ordinal, and Chromium monotonic
+timestamp of the read that completed the message. Its clock is independent
+of the proxy, page and controller clocks.
+
+Chromium retains a rolling 32 MiB capture. The witness reads it after
+browser shutdown and discards the raw log. A retained exact observation
+can survive startup-log eviction. Unavailable, truncated and ambiguous
+observations leave delivery unresolved. Capture status does not determine
+the gameplay verdict.
+
 Keep `native-online.json` with the logs from the same run. After export, a
 room failure exits nonzero and can publish a receipt with `passed: false`.
 The receipt identifies the selected and attempted cells, the control, CPU

@@ -18,6 +18,9 @@ class BrowserCleanupTests(unittest.TestCase):
     def test_native_relay_proxy_preserves_carriers_and_distinguishes_observation_gaps(self):
         subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_relay_proxy.test.cjs')], check=True, timeout=20)
 
+    def test_native_chromium_socket_joins_exact_carriers_and_preserves_unavailable_evidence(self):
+        subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_chromium_socket.test.cjs')], check=True, timeout=10)
+
     def test_native_relay_hold_keeps_exact_receipt_when_final_read_times_out(self):
         subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_relay_hold.test.cjs')], check=True, timeout=10)
 
