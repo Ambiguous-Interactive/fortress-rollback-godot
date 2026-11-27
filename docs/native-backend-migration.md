@@ -124,7 +124,9 @@ snapshot. A superseded request has `published: false`.
 
 On deadline failure, the browser log retains `relayServerControllerTiming`
 and any `relayServerRecoveryTiming`. The matching generation may have opened
-before the deadline and then missed it during read, close, parse or selection.
+before the deadline and then missed it during read, close or parse.
+The reader checks its deadline before calling the selection predicate and
+records when that predicate returns.
 A timely open proves the atomically published snapshot was already available. A late open
 or an older generation alone leaves publication timing unresolved. Use the
 server row to locate time spent waiting for the snapshot lock, collecting the

@@ -107,6 +107,9 @@ function createRelayServerReader(path) {
               break;
             }
             const requested = pending.links;
+            completed = pending.generation;
+            pending = null;
+            timing.outcome = 'scope_error';
             assert.deepEqual(receipt.links, requested, 'relay server receipt selected different links');
             const matches = requested.length === links.length && requested.every((link, index) => link === links[index]);
             let result;
@@ -118,13 +121,7 @@ function createRelayServerReader(path) {
               } finally {
                 timing.selection_finished_ms = performance.now();
               }
-              if (timing.selection_finished_ms >= deadline) {
-                timing.outcome = 'late_selection';
-                break;
-              }
             }
-            completed = pending.generation;
-            pending = null;
             timing.outcome = result ? 'selected' : matches ? 'predicate_not_met' : 'superseded_selection';
             if (result) return result;
           }

@@ -101,12 +101,18 @@ async function respond() {
   await publish(4, [link]);
   assert.equal((await retry).request, 4);
   await Promise.all([
-    assert.rejects(read(undefined, 3000, [link]), /receipt selected different links/),
+    assert.rejects(read(undefined, 3000, [link]), error => {
+      assert.match(error.message, /receipt selected different links/);
+      assert.equal(error.receiptTiming.outcome, 'scope_error');
+      return true;
+    }),
     (async () => {
       while (await fs.readFile(path + '.request', 'utf8') !== '5\n' + link) await pause(5);
       await publish(5, [link.split('/').reverse().join('/')]);
     })(),
   ]);
+  await publish(6, [link]);
+  assert.equal((await read(undefined, 3000, [link])).request, 6);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         with tempfile.TemporaryDirectory() as directory:
@@ -181,19 +187,18 @@ Object.defineProperty(globalThis, 'performance', { value: { now: () => now } });
     assert.equal(error.receiptTiming.selection_finished_ms, 150);
     return true;
   });
+  await publish(3);
   await read(() => { throw null; }).then(
     () => assert.fail('selection should reject'), error => assert.equal(error, null));
-  await assert.rejects(read(candidate => {
+  await publish(4);
+  const selected = await read(candidate => {
     now = 151;
     return candidate;
-  }, 1), error => {
-    assert.match(error.message, /relay server receipt deadline/);
-    assert.equal(error.receiptTiming.parsed_ms, 150);
-    assert.equal(error.receiptTiming.selection_finished_ms, 151);
-    assert.equal(error.receiptTiming.outcome, 'late_selection');
-    return true;
-  });
-  assert.equal((await read()).request, 2);
+  }, 1);
+  assert.equal(selected.request, 4);
+  assert.equal(selected.controller_timing.parsed_ms, 150);
+  assert.equal(selected.controller_timing.selection_finished_ms, 151);
+  assert.equal(selected.controller_timing.outcome, 'selected');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         with tempfile.TemporaryDirectory() as directory:
