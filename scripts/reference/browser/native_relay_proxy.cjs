@@ -272,7 +272,8 @@ function relayExpiryTraffic(expiries, joined, pages, receive) {
         const partition = before => Object.fromEntries(Object.entries(events).map(([stage, marks]) =>
           [stage, marks.filter(mark => Number.isFinite(mark.at_ms) && (mark.at_ms < page_ms) === before).map(mark => mark.ordinal)]));
         const { lane, epoch, seq, kind, envelope_bytes, envelope_sha256 } = row;
-        return [{ lane, epoch, seq, kind, envelope_bytes, envelope_sha256, write, before_expiry: partition(true), at_or_after_expiry: partition(false) }];
+        return [{ lane, epoch, seq, kind, envelope_bytes, envelope_sha256, write, write_candidates: row.write,
+          observation_write_ambiguous: write.length !== row.write.length, before_expiry: partition(true), at_or_after_expiry: partition(false) }];
       });
       following_writes.sort((a, b) => a.write[0] - b.write[0]);
       const { lane, epoch, seq, envelope_sha256 } = packet;

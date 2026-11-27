@@ -71,6 +71,13 @@ test('expiry follow-up orders server writes separately from recipient observatio
   assert.equal(record.seq, '1');
   assert.deepEqual(record.before_expiry, { message: [17], raw: [31], sdk: [], native: [] });
   assert.deepEqual(record.at_or_after_expiry, { message: [], raw: [32], sdk: [43], native: [50] });
+  const acrossAnchor = { ...later, write: [19, 21] };
+  const [ambiguous] = relayExpiryTraffic([expiry], { rows: [accepted, acrossAnchor] }, [page], receive);
+  assert.deepEqual(ambiguous.following_writes[0].write, [21]);
+  assert.deepEqual(ambiguous.following_writes[0].write_candidates, [19, 21]);
+  assert.equal(ambiguous.following_writes[0].observation_write_ambiguous, true);
+  assert.deepEqual(record.write_candidates, [21]);
+  assert.equal(record.observation_write_ambiguous, false);
   const [missingPage] = relayExpiryTraffic([expiry], joined, [{ ...page, room: 'old-room' }], receive);
   assert.equal(missingPage.page_coverage, 'unavailable');
   assert.deepEqual(missingPage.following_writes[0].before_expiry, { message: [], raw: [], sdk: [], native: [] });

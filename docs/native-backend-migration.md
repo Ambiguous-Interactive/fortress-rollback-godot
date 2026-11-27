@@ -161,7 +161,9 @@ which message, decoder, SDK and native ordinals came strictly before expiry
 or at or after expiry, using the recipient's page clock. Inspect the joined
 receipt for the corresponding timestamps and native admission codes. Empty
 lists show the limits of retained evidence. Multiple possible anchor writes
-or an unavailable page are reported explicitly.
+or an unavailable page are reported explicitly. When a packet has possible
+writes on both sides of the anchor, the receipt preserves all candidates and
+marks its observation-to-write association ambiguous.
 
 During the traced gameplay hold, the `relayHold` receipt covers both directions
 between the first two UUIDs in the sorted frozen roster. Each page publishes its
