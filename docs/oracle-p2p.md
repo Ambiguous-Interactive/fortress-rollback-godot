@@ -842,3 +842,46 @@ acceptance remains
 under [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188),
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
 and [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
+
+### Coordinator silence on the version-6 candidate
+
+Run this once with each pinned Godot editor path and a distinct output
+directory. The launcher selects the exact
+archive-verified Fortress revision
+`25e8020d1a5fd40c4f16b37f97b5ec5329a8566d`.
+
+```sh
+python3 scripts/oracle/drop_history_launch.py --coordinator-failover \
+  --godot /path/to/pinned/godot-4.3 --output .cache/reference/results/failover-4.3
+python3 scripts/oracle/drop_history_launch.py --coordinator-failover \
+  --godot /path/to/pinned/godot-4.7.2 --output .cache/reference/results/failover-4.7.2
+```
+
+Both runtimes read the same five-endpoint schedule. After six gameplay frames,
+the router isolates target 4 without a graceful departure, holds follower
+READYs addressed to coordinator 0, and cuts off 0 at 5.450 s. Every eligible
+control travels through a 100 ms one-way link. The three surviving followers
+receive the original PREPARE at 5.110 s. The source followers receive direct
+coordinator INVENTORY at 5.110 s, and the Godot followers receive direct sibling
+INVENTORY at 5.210 s.
+
+Source endpoint 1 certifies cut 5 in terminal epoch 0 at 6.440 s, one second
+after it last receives control traffic from 0. The other two survivors apply
+the cut after receiving its COMMIT at 6.540 s. The supported Godot policy
+terminates the pending barrier at 7.010 s with `PROTOCOL_FAILED` and
+`peer_drop_unconfirmed/timeout`. All three survivors leave target 4 unfrozen.
+Both runtimes retain the same original five-slot inputs and canonical callback
+states through confirmed frame 4. The version-6 qualification records this
+availability difference as a policy boundary.
+
+Separate tests in a temporary copy of the candidate exercise fallback
+eligibility at 999,999, 1,000,000, and 1,000,001 µs. A controlled authoritative
+abort closes epoch 0. The test then replays the captured, addressed PREPARE
+and INVENTORY bytes while the same-target, same-sequence epoch 1 attempt is
+open. The live operation, cut, reports, frame frontiers, and membership stay
+as they were before replay.
+
+The launcher writes `coordinator-failover-receipt.json` after two matching
+runs of the shared schedule and the candidate tests. The receipt records
+the archive, tool and local source identities, outcomes, and SHA-256 digests of
+the logs containing the addressed emissions, receipts, and histories.
