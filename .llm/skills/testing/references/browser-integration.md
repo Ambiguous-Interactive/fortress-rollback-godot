@@ -246,8 +246,8 @@ For late publication, compare pre-rename server work against the controller wind
 Order writes by server ordinal and page observations by the recipient's clock.
 Stamp validated history synchronously in the console listener with the expiry's controller ordinal.
 Await the original failure write before browser cleanup. Bound the wait and handle both the write callback and stream error.
-Bind later socket evidence to the acknowledged failure line by digest.
-Track browser source timestamps separately from debugger callback receipt times. Record debugger gaps as unresolved even when cleanup succeeds.
+Bind supplemental socket evidence to the acknowledged failure line by digest, with one tagged socket per frozen recipient.
+Keep browser source clocks separate from callback times. Recheck proxy coverage after teardown and leave gaps or duplicates unresolved.
 Prove ordering between clocks by holding the original socket's FIFO until
 both exact raw stamps arrive and the controller reads their successful writes.
 Freeze native acceptance in the same page turn as the check. Reuse digests only
