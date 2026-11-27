@@ -160,6 +160,32 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
     expiryPins.get(sender).set(kind, { raw, sdk, native });
   }
 
+  function capture(links, mapPacket, mapCarrier) {
+    if (!Array.isArray(links) || links.length > 8) throw new Error('invalid relay wire link selection');
+    const selected = new Set(links);
+    if (selected.size !== links.length || [...selected].some(link => {
+      if (typeof link !== 'string') return true;
+      const [sender, recipient, extra] = link.split('/');
+      return extra !== undefined || sender === recipient || !roster?.has(sender) || !roster.has(recipient);
+    })) throw new Error('invalid relay wire link selection');
+    function retained(stage, family, peer, records) {
+      const link = stage === 'send' ? `${local}/${peer}` : `${peer}/${local}`;
+      if (selected.size && !selected.has(link)) return [];
+      return selected.size && family !== 'sync' ? records : records.slice(-cap);
+    }
+    const entries = Object.entries(streams).flatMap(([stage, groups]) => Object.entries(groups).map(([family, stream]) =>
+      ({ stage, family, count: stream.count, events: [...stream.links].flatMap(([peer, records]) =>
+        retained(stage, family, peer, records)).sort((a, b) => a.ordinal - b.ordinal) })));
+    const snapshot = { version: 1, clock: 'page.performance.now', room, local, streams: Object.fromEntries(Object.keys(streams).map(stage => [stage, {}])) };
+    for (const { stage, family, count, events } of entries)
+      snapshot.streams[stage][family] = { count, omitted: count - events.length, events: events.map(mapPacket) };
+    if (traceCarrier) {
+      const retained = carriers.filter(Boolean).sort((a, b) => a.ordinal - b.ordinal);
+      snapshot.carriers = { count: carrierCount, skipped: carrierSkipped, omitted: carrierCount - retained.length, events: retained.map(mapCarrier) };
+    }
+    return snapshot;
+  }
+
   const sha256 = async bytes => hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
   const unhex = value => Uint8Array.from(value.match(/../g) ?? [], byte => parseInt(byte, 16));
   return {
@@ -285,23 +311,11 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
       });
       return { counts, frontier };
     },
+    encodeReceipt(links, sockets) {
+      const encode = ({ bytes, carrierOpcode, ...event }) => ({ ...event, bytes: btoa(String.fromCharCode(...bytes)) });
+      return { ...capture(links, encode, encode), sockets };
+    },
     async freeze(links = []) {
-      if (!Array.isArray(links) || links.length > 8) throw new Error('invalid relay wire link selection');
-      const selected = new Set(links);
-      if (selected.size !== links.length || [...selected].some(link => {
-        if (typeof link !== 'string') return true;
-        const [sender, recipient, extra] = link.split('/');
-        return extra !== undefined || sender === recipient || !roster?.has(sender) || !roster.has(recipient);
-      })) throw new Error('invalid relay wire link selection');
-      function retained(stage, family, peer, records) {
-        const link = stage === 'send' ? `${local}/${peer}` : `${peer}/${local}`;
-        if (selected.size && !selected.has(link)) return [];
-        return selected.size && family !== 'sync' ? records : records.slice(-cap);
-      }
-      const entries = Object.entries(streams).flatMap(([stage, groups]) => Object.entries(groups).map(([family, stream]) =>
-        ({ stage, family, count: stream.count, events: [...stream.links].flatMap(([peer, records]) =>
-          retained(stage, family, peer, records)).sort((a, b) => a.ordinal - b.ordinal) })));
-      const snapshot = { version: 1, clock: 'page.performance.now', room, local, streams: Object.fromEntries(Object.keys(streams).map(stage => [stage, {}])) };
       // Only retained events can add entries, and the cache lives for one freeze.
       const stamped = new Map();
       const hashPacket = async bytes => ({
@@ -317,17 +331,12 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
         stamped.set(key, digests);
         return digests;
       }
-      const count = carrierCount;
-      const skipped = carrierSkipped;
-      const retainedCarriers = traceCarrier ? carriers.filter(Boolean).sort((a, b) => a.ordinal - b.ordinal) : null;
-      await Promise.all(entries.map(async ({ stage, family, count, events }) => {
-        snapshot.streams[stage][family] = { count, omitted: count - events.length, events: await Promise.all(events.map(async ({ bytes, carrierOpcode, ...event }) =>
-          ({ ...event, envelope_bytes: bytes.length, ...await packetDigests(event, bytes) }))) };
-      }));
-      if (retainedCarriers) {
-        snapshot.carriers = { count, skipped, omitted: count - retainedCarriers.length,
-          events: await Promise.all(retainedCarriers.map(async ({ bytes, ...event }) => ({ ...event, carrier_sha256: await sha256(bytes) }))) };
-      }
+      const snapshot = capture(links, async ({ bytes, carrierOpcode, ...event }) =>
+        ({ ...event, envelope_bytes: bytes.length, ...await packetDigests(event, bytes) }), async ({ bytes, ...event }) =>
+        ({ ...event, carrier_sha256: await sha256(bytes) }));
+      const reports = Object.values(snapshot.streams).flatMap(stage => Object.values(stage));
+      if (snapshot.carriers) reports.push(snapshot.carriers);
+      await Promise.all(reports.map(async report => { report.events = await Promise.all(report.events); }));
       return snapshot;
     },
   };

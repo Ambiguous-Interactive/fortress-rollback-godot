@@ -1073,10 +1073,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
       const bytes = Uint8Array.from(payload.match(/../g), value => parseInt(value, 16));
       recordWarmupInput(link, stage, link.sender, bytes, stage === 'native' ? code : null);
     },
-    async relayWireTrace(links) {
-      const sockets = resources.sockets.length;
-      return relayWireTrace && { ...await relayWireTrace.freeze(links), sockets };
-    },
+    relayWireTrace: links => relayWireTrace?.encodeReceipt(links, resources.sockets.length),
     relayExpiryFrontier: sender => relayWireTrace?.expiryFrontier(sender),
     holdRelayControl: delayRelayDelivery,
     releaseRelayControl: stamps => relayDelay?.releaseWhenHeld(stamps) ?? expiredRelayDelay,

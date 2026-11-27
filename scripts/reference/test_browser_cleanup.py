@@ -24,10 +24,12 @@ class BrowserCleanupTests(unittest.TestCase):
     def test_relay_wire_receipt_crosses_page_boundary_as_json_text(self):
         script = r"""
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const { readRelayWireReceipt } = require(process.argv[1]);
-const receipt = { sockets: 1, streams: { native: { quality: {
-  count: 130, omitted: 2, events: [{ seq: '18446744073709551615', kind: 4, code: 0 }],
-} } } };
+const envelope = Buffer.alloc(103, 0x5b);
+const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const metadata = { seq: '18446744073709551615', kind: 4, code: 0 };
+const receipt = event => ({ sockets: 1, streams: { native: { quality: { count: 130, omitted: 2, events: [{ ...metadata, ...event }] } } } });
 const links = ['11'.repeat(16) + '/' + '22'.repeat(16)];
 const page = { async evaluate(read, selected) {
   const transferred = await read(selected);
@@ -35,11 +37,12 @@ const page = { async evaluate(read, selected) {
   return transferred;
 } };
 (async () => {
-  globalThis.window = { fortressNativeWire: { async relayWireTrace(selected) {
+  globalThis.window = { fortressNativeWire: { relayWireTrace(selected) {
     assert.deepEqual(selected, links);
-    return receipt;
+    return receipt({ bytes: envelope.toString('base64') });
   } } };
-  assert.deepEqual(await readRelayWireReceipt(page, links), receipt);
+  assert.deepEqual(await readRelayWireReceipt(page, links),
+    receipt({ envelope_bytes: envelope.length, envelope_sha256: digest(envelope), payload_sha256: digest(envelope.subarray(57)) }));
   delete window.fortressNativeWire;
   assert.equal(await readRelayWireReceipt(page), undefined);
 })().catch(error => { console.error(error); process.exitCode = 1; });
@@ -2655,7 +2658,7 @@ function makePage() {
       holdConditions: () => [true, true],
       relayWireTrace(selected) {
         if (lateExpiry && index === 1) expire();
-        return { selected };
+        return { selected, streams: {} };
       },
       holdObservation: () => ({ ...hold(), control_round_trips: 1, buffered_bytes: 0, traffic: [] }),
       async release() {

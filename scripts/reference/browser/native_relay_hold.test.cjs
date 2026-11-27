@@ -218,3 +218,48 @@ test('relay hold keeps the first observations at capacity without changing the r
   assert.equal(sent.omitted, 2);
   assert.equal(Buffer.from(emitted.at(-1)).readUInt32LE(81), 2, 'held input sends only during release');
 });
+
+test('relay wire receipt exports the exact retained bytes at the page cutoff', async () => {
+  // Value: protects=full and scoped receipt digests and cutoff; fails_when=export needs page crypto or uses a stamp as packet identity; seam=page receipt
+  const realm = {
+    window: {}, WebSocket: class {}, RTCPeerConnection: class {}, ArrayBuffer, DataView, Uint8Array, performance, btoa,
+    crypto: globalThis.crypto,
+  };
+  runInNewContext(`(${instrumentNativeWire})(false, '', (${createRelayWireTrace})('', 512, 45000, (${decodeRelayDelivery}), true))`, realm);
+  const { fortressNativeWire: wire, fortressNativeRelayTrace: trace } = realm.window;
+  trace.bind(room, second, [first, second, other]);
+
+  const report = envelope(first, second, 4);
+  const conflict = envelope(first, second, 4, 'f0'.repeat(16));
+  function record(packet) {
+    const carrier = Buffer.concat([bytes('01'), delivered(packet, first, 7, 20)]);
+    trace.record('raw', carrier, null, trace.recordCarrier(carrier));
+    trace.recordEngine('sdk', first, packet.toString('hex'), 7, '20', -1, true);
+    trace.recordEngine('native', first, packet.subarray(57).toString('hex'), 7, '20', 0, true);
+    return carrier;
+  }
+  for (let index = 0; index < 130; index++) record(report);
+  const changedCarrier = record(conflict);
+
+  const links = [first + '/' + second];
+  const full = JSON.parse(JSON.stringify({ ...await trace.freeze(), sockets: 0 }));
+  const scoped = JSON.parse(JSON.stringify({ ...await trace.freeze(links), sockets: 0 }));
+  realm.crypto = { subtle: { digest() { throw new Error('page digest unavailable during relay receipt'); } } };
+  const page = { async evaluate(operation, selected) {
+    const reading = runInNewContext(`(${operation})(${JSON.stringify(selected)})`, realm);
+    return reading;
+  } };
+  assert.deepEqual(await readRelayWireReceipt(page), full);
+  assert.deepEqual(await readRelayWireReceipt(page, links), scoped);
+  assert.equal(full.streams.raw.quality.omitted, 3);
+  assert.equal(scoped.streams.raw.quality.omitted, 0);
+  const { events } = full.streams.raw.quality;
+  assert.equal(events.at(-2).envelope_sha256, sha256(report));
+  assert.equal(events.at(-1).envelope_sha256, sha256(conflict));
+  assert.equal(events.at(-1).payload_sha256, sha256(conflict.subarray(57)));
+  assert.equal(full.carriers.events.at(-1).carrier_sha256, sha256(changedCarrier));
+  const pending = readRelayWireReceipt(page);
+  record(report);
+  assert.deepEqual(await pending, full);
+  assert.equal((await readRelayWireReceipt(page)).streams.raw.quality.count, 132);
+});
