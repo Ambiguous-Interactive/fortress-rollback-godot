@@ -324,8 +324,8 @@ requires those events and their checksum pairs. When the recovery candidate
 `25e8020d` is selected, it refreshes checksums from corrected saved-state cells
 after executing the correction requests. Each decoded checksum in this workload
 then matches the independent original history and every playback event list is
-empty. The neutral workload
-continues to require zero corrections and zero playback events. See the historical
+empty. The neutral workload continues to require zero corrections and zero
+playback events. See the historical
 [checksum discrepancy](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253)
 and the [upstream checksum repair](https://github.com/wallstop/fortress-rollback/pull/381).
 
@@ -370,7 +370,7 @@ serializes, decodes and plays each incomplete export. Each export must stop at
 its independently computed received prefix of 256 versus 255 rows. Neither
 recording contains frame 256.
 
-The historical source has a different contract. Its final poll receives the
+With reviewed revision `d124c890`, the final poll receives the
 original inputs, then `advance_frame()` returns `MissingLocalInput` without new
 callbacks. Actual `into_replay()` exports 256 versus 255 rows with 128 versus
 170 playback mismatch events. The historical launcher still requires these
@@ -434,11 +434,12 @@ requests. It derives actual source INPUT/ACK/checksum traffic from the serviced 
 and prior confirmation; it does not repeat the earlier fixed-cadence message totals.
 
 Changing histories require corrections at both endpoints after queue reuse. Godot
-and Rust both recover at boundary 257 and validate all 257 decoded rows. The source
-already received input 256 before the final drain. Its changing workload still
-needs a LOAD at boundary 255 on endpoint zero. Endpoint one and both neutral
-endpoints need only the boundary SAVE. For historical comparison, the previous
-source exports 255 versus 256 rows with 113 versus 144 playback mismatch events.
+and the recovery candidate `25e8020d` recover at boundary 257 and validate all
+257 decoded rows. The candidate already received input 256 before the final
+drain. Its changing workload still needs a LOAD at boundary 255 on endpoint zero.
+Endpoint one and both neutral endpoints need only the boundary SAVE. The reviewed
+revision `d124c890` exports 255 versus 256 rows with 113 versus 144 playback
+mismatch events.
 
 Eight mutations reject omitted stalled attempts, resampled originals, changed post-wrap
 exports and delivery counts at their declared diagnostics. Actual withheld-delivery
