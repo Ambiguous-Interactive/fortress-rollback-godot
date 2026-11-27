@@ -1,0 +1,20 @@
+{
+  "history_frames": 40,
+  "leaves": 8,
+  "timely_read": {
+    "clock": "controller.performance",
+    "deadline_ms": 62362.653485,
+    "generation": 3,
+    "links": [],
+    "request_started_ms": 59362.68411,
+    "request_published_ms": 59382.56636,
+    "open_started_ms": 61428.339194,
+    "opened_ms": 61428.975361,
+    "read_ms": 61476.964361,
+    "parse_started_ms": 61477.286861,
+    "parsed_ms": 61494.086486,
+    "observed_generation": 3,
+    "outcome": "selected",
+    "selection_finished_ms": 61494.132444
+  }
+}

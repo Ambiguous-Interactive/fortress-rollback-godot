@@ -1,0 +1,43 @@
+{
+  "before": {
+    "engine": "4.3.stable.official.77dcf97d8",
+    "browser_pair": "firefox",
+    "cpu_affinity": [
+      0,
+      1,
+      2
+    ],
+    "passed": false,
+    "attempted_cells": [
+      "relay:8"
+    ],
+    "godot_source": "62b321b1965972900993f2f26849616501e1ea4a",
+    "trace_version": 2,
+    "generation": 3,
+    "browser_receipt_sha256": "655106acd3d7a941a254636298a67033b6fc3704b50639e41759b91b318d9d7f",
+    "trace_sha256": "5b10b6479190ab50034ce2379ac0f5c18e506be94e106a939f6c61237ee3e086",
+    "gzip_sha256": "37201fb2070ac120902668dbda00dd0f520d1277b012096e0ca76c3cca03cde7",
+    "log_sha256": "55846a0b26235603918c487bc5c694d6f450d0d554ca96236309f1e27f6e0ee9"
+  },
+  "after": {
+    "engine": "4.3.stable.official.77dcf97d8",
+    "browser_pair": "firefox",
+    "cpu_affinity": [
+      0,
+      1,
+      2
+    ],
+    "passed": true,
+    "attempted_cells": [
+      "relay:4",
+      "relay:8"
+    ],
+    "godot_source": "f81e49ccf4950c8ff9f5dff7a8e8d700f8dba68b",
+    "trace_version": 2,
+    "generation": 3,
+    "browser_receipt_sha256": "6bd6541969adaf88b701595a533dd620b9b0f1d8760f83059f5c4e29a05699fa",
+    "trace_sha256": "36d7f4244dd6d1b4a924ae3b40967b020c4c1a778db68bd24a73b177b8c59aa0",
+    "gzip_sha256": "ef0d378bf0a3cdb12185eaf3ca4fa5044a1472a00dd5fff89cbd3f84d91ae762",
+    "log_sha256": "e4072e803b75831b8dd6cf0c0c4e8573cc378f19b984644c131d1c31ac6c9a61"
+  }
+}

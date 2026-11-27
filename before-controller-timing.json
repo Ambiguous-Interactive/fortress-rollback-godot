@@ -1,0 +1,37 @@
+{
+  "source_failure_sha256": "9287572905de473670561ec6106098ce15d41ada2398861c46cca34515cea001",
+  "phase": "relay wire receipt",
+  "history_frames": 40,
+  "leaves": 8,
+  "timely_read": {
+    "clock": "controller.performance",
+    "deadline_ms": 99614.61621,
+    "generation": 3,
+    "links": [],
+    "request_started_ms": 96614.648418,
+    "request_published_ms": 96651.911543,
+    "open_started_ms": 99595.732253,
+    "opened_ms": 99600.53442,
+    "read_ms": 99607.66217,
+    "parse_started_ms": 99609.549128,
+    "parsed_ms": 99610.437086,
+    "observed_generation": 2,
+    "outcome": "generation_not_observed"
+  },
+  "recovery_read": {
+    "clock": "controller.performance",
+    "deadline_ms": 105241.268378,
+    "generation": 3,
+    "links": [],
+    "request_started_ms": 96614.648418,
+    "request_published_ms": 96651.911543,
+    "open_started_ms": 101709.956921,
+    "opened_ms": 101719.642587,
+    "read_ms": 102609.314963,
+    "parse_started_ms": 102614.257754,
+    "parsed_ms": 102675.623588,
+    "observed_generation": 3,
+    "outcome": "selected",
+    "selection_finished_ms": 102675.740713
+  }
+}
