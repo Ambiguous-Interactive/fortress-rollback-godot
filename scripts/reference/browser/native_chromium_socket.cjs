@@ -32,7 +32,7 @@ async function createChromiumCapture(root) {
   try {
     directory = await mkdtemp(join(dirname(root), '.chromium-netlog-'));
   } catch {
-    return { args: [], finish: () => ({ status: 'unavailable' }) };
+    return { finish: async () => ({ status: 'unavailable' }) };
   }
   const path = join(directory, 'netlog.json');
   return {
@@ -64,7 +64,7 @@ function joinChromiumSocket(log, status, host, receive, recipients = []) {
   const capture = supported || status === 'truncated' ? status : 'unavailable';
   const socketPlans = (receive?.sockets ?? []).map(socket => ({ socket, carriers: new Map() }));
   const rows = (receive?.rows ?? []).map(({ proxy, message, first_unobserved, coverage_gap, ...stamp }) => {
-    const result = { ...stamp, status: capture === 'truncated' ? 'truncated' : 'unavailable' };
+    const result = { ...stamp, status: 'unavailable' };
     if (proxy.length > 1) result.status = 'ambiguous';
     if (proxy.length !== 1 || proxy[0].outlet_ms === null) return { result };
     const candidate = proxy[0];

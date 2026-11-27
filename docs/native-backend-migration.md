@@ -224,7 +224,10 @@ Chromium retains a rolling 32 MiB capture. The witness reads it after
 browser shutdown and discards the raw log. A retained exact observation
 can survive startup-log eviction. Unavailable, truncated and ambiguous
 observations leave delivery unresolved. Capture status does not determine
-the gameplay verdict.
+the gameplay verdict. On failure, the browser log publishes the original phase
+receipt before cleanup and can append a `relaySocketFailure` receipt after
+Chromium closes. Its `failure_sha256` hashes the exact original JSON line
+without its newline.
 
 Keep `native-online.json` with the logs from the same run. After export, a
 room failure exits nonzero and can publish a receipt with `passed: false`.

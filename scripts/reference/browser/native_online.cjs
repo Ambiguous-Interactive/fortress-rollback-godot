@@ -7,7 +7,7 @@ const { createRelayHold, RELAY_HOLD_CAP, RELAY_HOLD_PREFIX, RELAY_HOLD_WINDOW_MS
 const { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, exerciseSameLinkRetention,
   joinRelayReceipts, readRelayWireDiagnostic, relayExpiryRows, validateRelayExpiryFrontier } = require('./native_relay_control.cjs');
 const assert = require('node:assert/strict');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
 const { createHost } = require('./online_host.cjs');
 const { placeFirefox } = require('./webrtc_display.cjs');
@@ -2596,7 +2596,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     const relayReceive = collectRelayReceive(relayJoined, relayWire, serverReceipt?.value);
     const expiries = observedExpiries();
-    failureReceipt = {
+    const failure = JSON.stringify({
       phase, target_frames: comparedFrames, historyEvidence: historyFailureEvidence(relayHistory, comparedFrames, roomIdentities),
       browser_peers: browserPeers, bootstrap_ms, errors, releaseDelay, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks, departureCommands, roomIdentities, ...closeReceipts(),
@@ -2620,7 +2620,9 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached,
         { frames: comparedFrames, departureCommands }),
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
-    };
+    });
+    console.error(failure);
+    if (chromiumCapture) failureReceipt = { sha256: createHash('sha256').update(failure).digest('hex'), receive: relayReceive };
   } finally {
     releaseSignal?.cancel();
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
@@ -2632,13 +2634,13 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     failures.push(...await closeAll([server], owner => new Promise((resolve, reject) =>
       owner.close(error => error ? reject(error) : resolve())), 'host'));
   }
-  const receipt = failureReceipt ?? result;
-  if (chromiumCapture && receipt) {
+  if (chromiumCapture && (failureReceipt || result)) {
     const recipients = roomIdentities?.uuids.map(uuid => uuid.replaceAll('-', ''));
-    receipt.relaySocketReceive = await chromiumCapture.finish(new URL(origin).host, receipt.relayReceive, recipients)
+    const observed = await chromiumCapture.finish(new URL(origin).host, failureReceipt?.receive ?? result?.relayReceive, recipients)
       .catch(() => ({ status: 'unavailable' }));
+    if (failureReceipt) console.error(JSON.stringify({ relaySocketFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
+    else result.relaySocketReceive = observed;
   }
-  if (failureReceipt) console.error(JSON.stringify(failureReceipt));
   await flush();
   if (errors.length) failures.push(new Error(JSON.stringify(errors)));
   if (failures.length) throw new AggregateError(failures, `native online witness failed in ${phase}`);

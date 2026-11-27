@@ -1,4 +1,5 @@
 """Value: browser cleanup preserves causes and releases every owned server and browser."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -3720,6 +3721,7 @@ global.cleanupLog=value=>fs.appendFileSync(process.env.CLEANUP_LOG,value+'\n');
 const originalError=console.error;
 console.error=(...values)=>{
   if(process.env.FAIL_CUSTOM_INSPECT==='1'&&process.exitCode!==1)throw Error('CLI_EXIT_CODE_NOT_SET');
+  if(process.env.FAIL_NATIVE_HANG==='1' && typeof values[0]==='string' && values[0].startsWith('{"phase":'))cleanupLog('phase receipt');
   originalError(...values);
 };
 const create=http.createServer;
@@ -3774,12 +3776,13 @@ module.exports.chromium={launch:async()=>{
                      ('online-opaque', True, False, False), ('webrtc-opaque', True, False, False),
                      *[(name+'-inspect', True, False, False) for name in ['smoke', 'ownership', 'online', 'webrtc', 'spectator']],
                      ('ownership-diagnostic', False, False, False), ('ownership-diagnostic', False, True, True),
-                     ('native_online', True, False, False)]
+                     ('native_online', True, False, False), ('native_online-trace', True, False, False)]
             for name, primary, browser_failure, context_failure in cases:
                 opaque = name.endswith('-opaque')
                 custom_inspect = name.endswith('-inspect')
                 diagnostic = name.endswith('-diagnostic')
-                name = name.removesuffix('-opaque').removesuffix('-inspect').removesuffix('-diagnostic')
+                trace = name.endswith('-trace')
+                name = name.removesuffix('-opaque').removesuffix('-inspect').removesuffix('-diagnostic').removesuffix('-trace')
                 log.unlink(missing_ok=True)
                 environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_CHROMIUM_EXECUTABLE': '/fixture',
                                'FORTRESS_TLS_CERT': str(certificate), 'FORTRESS_TLS_KEY': str(certificate), 'CLEANUP_LOG': str(log),
@@ -3792,7 +3795,10 @@ module.exports.chromium={launch:async()=>{
                 command = ['node', '--require', str(preload), str(ROOT / 'scripts/reference/browser' / (name + '.cjs')), str(directory)]
                 command += [json.dumps(['res://tests/unit/test_alpha.gd'])] if name == 'ownership' else ['ws://127.0.0.1:12345/v3/ws']
                 if name == 'native_online':
-                    command += ['mesh', '2']
+                    command += ['relay', '4', 'chromium', '--trace-chromium-socket'] if trace else ['mesh', '2']
+                    if trace:
+                        environment.update(FORTRESS_RELAY_TRACE_SCOPE=str(directory / 'scope.json'),
+                                           FORTRESS_RELAY_TRACE_OUTPUT=str(directory / 'trace.json'))
                 with self.subTest(name=name, primary=primary, browser_failure=browser_failure, context_failure=context_failure):
                     # Match sibling Node controls: allow hosted startup scheduling while still bounding hangs.
                     child = subprocess.run(command, env=environment, capture_output=True, encoding='utf-8', timeout=10)
@@ -3835,7 +3841,14 @@ module.exports.chromium={launch:async()=>{
                     if name == 'native_online':
                         self.assertIn('native peer 0 diagnostics deadline', child.stderr)
                         self.assertIn('native context 0 close deadline', child.stderr)
-                        self.assertIn('browser closed 0', log.read_text())
+                        cleanup = log.read_text().splitlines()
+                        self.assertLess(cleanup.index('phase receipt'), cleanup.index('browser closed 0'))
+                        if trace:
+                            phase, followup = (line for line in child.stderr.splitlines() if line.startswith('{'))
+                            self.assertEqual(json.loads(phase)['phase'], 'launch')
+                            evidence = json.loads(followup)['relaySocketFailure']
+                            self.assertEqual(evidence['failure_sha256'], hashlib.sha256(phase.encode()).hexdigest())
+                            self.assertEqual(evidence['status'], 'unavailable')
                     if not (primary or browser_failure or context_failure or diagnostic):
                         json.loads(child.stdout)
 

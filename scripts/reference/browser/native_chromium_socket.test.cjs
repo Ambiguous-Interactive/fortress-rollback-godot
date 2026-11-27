@@ -44,17 +44,35 @@ test('missing, truncated, duplicate and unbound socket evidence do not imply non
   const complete = incoming(7, 70, Buffer.concat([handshake, frame]));
   assert.equal(collect([complete]).status, 'unavailable');
   assert.equal(collect([connection(7), { ...complete, params: { byte_count: 999 } }]).status, 'truncated');
-  assert.equal(collect([], receive, [recipient], 'truncated').status, 'truncated');
+  const rolled = joinChromiumSocket({ constants, events: [complete] }, 'truncated', host, receive, [recipient]);
+  assert.equal(rolled.status, 'truncated');
+  assert.equal(rolled.rows[0].status, 'unavailable');
   assert.equal(collect([connection(7), connection(8), complete]).status, 'ambiguous');
   assert.equal(collect([connection(7), complete, incoming(7, 90, frame)]).status, 'ambiguous');
   assert.equal(collect([connection(7), complete], { ...receive, rows: [{ ...row, proxy: [carrierMatch, carrierMatch] }] }).status, 'ambiguous');
   assert.equal(collect([connection(7), complete], { ...receive, sockets: [address, address] }).status, 'ambiguous');
 });
 
+test('raw capture read is bounded and identifies unfinished or oversized logs', async () => {
+  const { mkdtemp, rm, truncate, writeFile } = require('node:fs/promises');
+  const { tmpdir } = require('node:os');
+  const { join } = require('node:path');
+  const directory = await mkdtemp(join(tmpdir(), 'fortress-socket-limit-'));
+  const path = join(directory, 'netlog.json');
+  try {
+    await writeFile(path, '{"events":[');
+    assert.deepEqual(await readChromiumLog(path), { status: 'truncated' });
+    await truncate(path, 37 * 1024 * 1024);
+    assert.deepEqual(await readChromiumLog(path), { status: 'truncated' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('Chromium TLS receive leads the busy page callback on the same NetLog clock',
   { skip: process.env.FORTRESS_TEST_CHROMIUM_SOCKET !== '1', timeout: 20000 }, async () => {
     const { execFileSync } = require('node:child_process');
-    const { mkdtemp, readFile, rm } = require('node:fs/promises');
+    const { mkdir, mkdtemp, readFile, rm } = require('node:fs/promises');
     const { createServer } = require('node:https');
     const { tmpdir } = require('node:os');
     const { join } = require('node:path');
@@ -95,7 +113,9 @@ test('Chromium TLS receive leads the busy page callback on the same NetLog clock
       });
       await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
       const endpoint = `127.0.0.1:${server.address().port}`;
-      const capture = await createChromiumCapture(join(directory, 'web'));
+      const exportParent = join(directory, 'long-export-path-'.repeat(6));
+      await mkdir(exportParent);
+      const capture = await createChromiumCapture(join(exportParent, 'web'));
       const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
       browser = await chromium.launch({ executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE, args: capture.args });
       const page = await browser.newPage({ ignoreHTTPSErrors: true });
