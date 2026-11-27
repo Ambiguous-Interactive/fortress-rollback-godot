@@ -38,12 +38,18 @@ async function createChromiumCapture(root) {
   return {
     args: [`--log-net-log=${path}`, '--net-log-capture-mode=Everything', `--net-log-max-size-mb=${LOG_MIB}`],
     async finish(host, receive, recipients) {
+      let receipt;
       try {
         const { status, log } = await readChromiumLog(path);
-        return joinChromiumSocket(log, status, host, receive, recipients);
+        receipt = joinChromiumSocket(log, status, host, receive, recipients);
       } finally {
-        await rm(directory, { recursive: true, force: true });
+        try {
+          await rm(directory, { recursive: true, force: true });
+        } catch {
+          if (receipt) receipt.cleanup_failed = true;
+        }
       }
+      return receipt;
     },
   };
 }
@@ -66,7 +72,7 @@ function joinChromiumSocket(log, status, host, receive, recipients = []) {
   const rows = (receive?.rows ?? []).map(({ proxy, message, first_unobserved, coverage_gap, ...stamp }) => {
     const result = { ...stamp, status: 'unavailable' };
     if (proxy.length > 1) result.status = 'ambiguous';
-    if (proxy.length !== 1 || proxy[0].outlet_ms === null) return { result };
+    if (proxy.length !== 1) return { result };
     const candidate = proxy[0];
     const plan = socketPlans[candidate.socket];
     if (!plan?.socket?.browser_endpoint || recipients[plan.socket.page_index] !== stamp.recipient) return { result };
@@ -107,6 +113,7 @@ function collectSocketCarriers(events, types, socketType, end, host, plans) {
     }
     plan.source = event.source.id;
     plan.reader = createFrameReader();
+    plan.last_ms = -1;
     sources.set(plan.source, plan);
   }
   for (const event of events) {
@@ -116,10 +123,11 @@ function collectSocketCarriers(events, types, socketType, end, host, plans) {
     const { bytes, byte_count } = event.params ?? {};
     const at_ms = typeof event.time === 'string' && /^\d+$/.test(event.time) ? Number(event.time) : NaN;
     const data = typeof bytes === 'string' ? Buffer.from(bytes, 'base64') : null;
-    if (!data || data.length !== byte_count || !Number.isSafeInteger(at_ms) || at_ms < 0) {
+    if (!data || data.length !== byte_count || data.toString('base64') !== bytes || !Number.isSafeInteger(at_ms) || at_ms < 0 || at_ms < plan.last_ms) {
       plan.truncated = true;
       continue;
     }
+    plan.last_ms = at_ms;
     for (const carrier of plan.reader.push(data)) {
       const match = plan.carriers.get(createHash('sha256').update(carrier).digest('hex'));
       if (!match) continue;

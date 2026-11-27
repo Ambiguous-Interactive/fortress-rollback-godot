@@ -418,7 +418,7 @@ function relayReleaseEvidence(peers, uuids, correctionDeadlineReached, { frames,
     const room_checkpoints = {
       release_completed_pages: peers.flatMap((peer, index) => peer.release_completed?.controller_order < expiry.controller_order ? [index] : []),
       history_received_pages: peers.flatMap(({ history_received: history }, index) =>
-        history?.frames === frames && history.controller_ms < expiry.controller_ms ? [index] : []),
+        history?.frames === frames && history.controller_order < expiry.controller_order ? [index] : []),
       local_history_published_before_expiry: localHistory?.frames === frames && localHistory.page_ms !== expiry.page_ms
         ? localHistory.page_ms < expiry.page_ms : null,
     };
@@ -1622,7 +1622,7 @@ function historyThrough(peers) {
   return frames;
 }
 
-async function readConfirmedHistory(page, frames, id, players) {
+async function readConfirmedHistory(page, frames, id, players, onReceipt) {
   assert.ok(Number.isSafeInteger(id) && id > 0, 'native history request ID must be a positive safe integer');
   assert.ok(Number.isSafeInteger(frames) && frames > 0, 'native history frame count must be a positive safe integer');
   let receipt;
@@ -1648,8 +1648,10 @@ async function readConfirmedHistory(page, frames, id, players) {
         if (!Array.isArray(row) || row.length !== players || !row.every(Number.isSafeInteger)
           || typeof snapshot !== 'string' || !CANONICAL_SNAPSHOT.test(snapshot)) return false;
       }
-      if (performance.now() >= deadline) return false;
+      const receivedAt = performance.now();
+      if (receivedAt >= deadline) return false;
       receipt = { frames, rows, snapshots };
+      onReceipt?.(receipt, receivedAt);
       return true;
     },
   });
@@ -2364,15 +2366,14 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
     phase = 'confirmed history capture';
-    const captures = await Promise.allSettled(pages.map(async (page, index) => {
-      const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence, players), PAGE_WAIT_MS,
-        `native peer ${index} confirmed history capture`);
-      if (relayHistory) {
+    const captures = await Promise.allSettled(pages.map((page, index) => {
+      const onReceipt = relayHistory && ((receipt, controller_ms) => {
         const { slot, uuid, session_id, room_id } = stalled[index];
         relayHistory[index] = { ...receipt, index, slot, uuid, session_id, room_id };
-        postRelease[index].history_received = { frames: receipt.frames, controller_ms: performance.now() };
-      }
-      return receipt;
+        postRelease[index].history_received = { frames: receipt.frames, controller_ms, controller_order: ++postReleaseOrder };
+      });
+      return boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence, players, onReceipt), PAGE_WAIT_MS,
+        `native peer ${index} confirmed history capture`);
     }));
     const captureFailure = captures.find(result => result.status === 'rejected');
     if (captureFailure) throw captureFailure.reason;
@@ -2598,6 +2599,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     const expiries = observedExpiries();
     const failure = JSON.stringify({
       phase, target_frames: comparedFrames, historyEvidence: historyFailureEvidence(relayHistory, comparedFrames, roomIdentities),
+      primary_error: error instanceof Error ? error.message : typeof error === 'string' ? error : undefined,
       browser_peers: browserPeers, bootstrap_ms, errors, releaseDelay, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks, departureCommands, roomIdentities, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],

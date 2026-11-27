@@ -2398,10 +2398,11 @@ record(2, {kind: 'history_published', page_ms: 90, state: 'playing', turns: 28, 
 record(0, {kind: 'history_published', page_ms: 4, state: 'playing', turns: 28, frame: 41, confirmed: 40, restores: 1, frames: 39}, 147);
 record(3, {kind: 'sdk_departure', endpoint: 8, uuid: uuids[6], page_ms: 11}, 150);
 record(0, {kind: 'sdk_departure', endpoint: 8, uuid: uuids[6], page_ms: 6}, 150);
-peers[1].history_received = {frames: 40, controller_ms: 119};
-peers[2].history_received = {frames: 40, controller_ms: 120};
-peers[4].history_received = {frames: 39, controller_ms: 118};
-peers[5].history_received = {frames: 40, controller_ms: 131};
+const firstExpiry = peers[2].native_expiry;
+peers[1].history_received = {frames: 40, controller_ms: 120, controller_order: firstExpiry.controller_order - 1};
+peers[2].history_received = {frames: 40, controller_ms: 120, controller_order: firstExpiry.controller_order + 1};
+peers[4].history_received = {frames: 39, controller_ms: 118, controller_order: firstExpiry.controller_order - 1};
+peers[5].history_received = {frames: 40, controller_ms: 131, controller_order: peers[0].native_expiry.controller_order + 1};
 const report = relayReleaseEvidence(peers, uuids, false, {
   frames: 40, departureCommands: [{phase: 'departure', controller_dispatch_ms: 160}, {phase: 'teardown', controller_dispatch_ms: 170}],
 });
@@ -2626,6 +2627,7 @@ async function run() {
   let now = 100;
   global.performance = { now: () => now };
   global.window = {};
+  let acceptance;
   function fixture(id, outcome) {
     let predicate, complete, reject;
     return {
@@ -2651,6 +2653,7 @@ async function run() {
             return;
           }
           assert.equal(predicate(message({ ...fresh, id })), true);
+          if (outcome === 'pending') assert.deepEqual(acceptance, { value: fresh, receivedAt: 100 });
           assert.equal(predicate(message({ ...fresh, id })), false, 'repeat publication');
           complete();
         });
@@ -2659,7 +2662,8 @@ async function run() {
       },
     };
   }
-  assert.deepEqual(await readConfirmedHistory(fixture(18, 'pending'), 2, 18, 2), fresh);
+  const onReceipt = (value, receivedAt) => { acceptance = { value, receivedAt }; };
+  assert.deepEqual(await readConfirmedHistory(fixture(18, 'pending'), 2, 18, 2, onReceipt), fresh);
   assert.deepEqual(await readConfirmedHistory(fixture(19, 'rejected'), 2, 19, 2), fresh);
   await assert.rejects(readConfirmedHistory(fixture(20, 'late'), 2, 20, 2), /history receipt timed out/);
 
@@ -3843,8 +3847,10 @@ module.exports.chromium={launch:async()=>{
                         self.assertIn('native context 0 close deadline', child.stderr)
                         cleanup = log.read_text().splitlines()
                         self.assertLess(cleanup.index('phase receipt'), cleanup.index('browser closed 0'))
+                        phase = next(line for line in child.stderr.splitlines() if line.startswith('{"phase":'))
+                        self.assertEqual(json.loads(phase)['primary_error'], 'PRIMARY_FAILURE')
                         if trace:
-                            phase, followup = (line for line in child.stderr.splitlines() if line.startswith('{'))
+                            followup = next(line for line in child.stderr.splitlines() if line.startswith('{"relaySocketFailure":'))
                             self.assertEqual(json.loads(phase)['phase'], 'launch')
                             evidence = json.loads(followup)['relaySocketFailure']
                             self.assertEqual(evidence['failure_sha256'], hashlib.sha256(phase.encode()).hexdigest())

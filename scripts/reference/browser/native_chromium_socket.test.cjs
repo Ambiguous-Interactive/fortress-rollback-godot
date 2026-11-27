@@ -35,6 +35,7 @@ test('socket receipt reassembles exact carrier and keeps completion on the NetLo
   assert.deepEqual(result.observation, { socket: 0, proxy_ordinal: 3, carrier_sha256: digest, netlog_source: 7, at_ms: 80 });
   assert.equal(result.seq, '42');
   assert.equal(result.recipient, recipient);
+  assert.equal(collect(events, { ...receive, rows: [{ ...row, proxy: [{ ...carrierMatch, outlet_ms: null }] }] }).status, 'observed');
   assert.equal(collect(events, { ...receive, rows: [{ ...row, proxy: [{ ...carrierMatch, carrier_sha256: 'other' }] }] }).status, 'unavailable');
   assert.equal(collect(events, receive, ['wrong-recipient']).status, 'unavailable');
 });
@@ -44,6 +45,10 @@ test('missing, truncated, duplicate and unbound socket evidence do not imply non
   const complete = incoming(7, 70, Buffer.concat([handshake, frame]));
   assert.equal(collect([complete]).status, 'unavailable');
   assert.equal(collect([connection(7), { ...complete, params: { byte_count: 999 } }]).status, 'truncated');
+  const malformed = { ...complete, params: { ...complete.params, bytes: '@' + complete.params.bytes } };
+  assert.equal(collect([connection(7), malformed]).status, 'truncated');
+  assert.equal(collect([connection(7), incoming(7, 80, Buffer.concat([handshake, frame.subarray(0, 5)])),
+    incoming(7, 70, frame.subarray(5))]).status, 'truncated');
   const rolled = joinChromiumSocket({ constants, events: [complete] }, 'truncated', host, receive, [recipient]);
   assert.equal(rolled.status, 'truncated');
   assert.equal(rolled.rows[0].status, 'unavailable');
@@ -66,6 +71,30 @@ test('raw capture read is bounded and identifies unfinished or oversized logs', 
     assert.deepEqual(await readChromiumLog(path), { status: 'truncated' });
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('capture cleanup failure preserves the matched socket observation', async t => {
+  const fs = require('node:fs/promises');
+  const { tmpdir } = require('node:os');
+  const { join } = require('node:path');
+  const directory = await fs.mkdtemp(join(tmpdir(), 'fortress-socket-cleanup-'));
+  const remove = fs.rm;
+  const source = require.resolve('./native_chromium_socket.cjs');
+  const original = require.cache[source];
+  try {
+    t.mock.method(fs, 'rm', async () => { throw new Error('controlled cleanup failure'); });
+    delete require.cache[source];
+    const { createChromiumCapture } = require(source);
+    const capture = await createChromiumCapture(join(directory, 'web'));
+    const path = capture.args[0].slice('--log-net-log='.length);
+    await fs.writeFile(path, JSON.stringify({ constants, events: [connection(7), incoming(7, 70, Buffer.concat([handshake, frame]))] }));
+    const result = await capture.finish(host, receive, [recipient]);
+    assert.equal(result.rows[0].status, 'observed');
+    assert.equal(result.cleanup_failed, true);
+  } finally {
+    require.cache[source] = original;
+    await remove(directory, { recursive: true, force: true });
   }
 });
 
