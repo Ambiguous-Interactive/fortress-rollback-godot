@@ -137,7 +137,8 @@ def donor_timeout_evidence(engine, binary, output):
         results.append({'source': source, 'godot': godot, 'godot_delivery_control': delivered})
     require(same(*results), 'donor timeout fresh-process repeat mismatch')
     result = results[0]
-    return result, check_timeout(result['source'], result['godot']), timeout_controls(result['source'], result['godot'])
+    source, godot, delivered = (result[key] for key in ('source', 'godot', 'godot_delivery_control'))
+    return result, check_timeout(source, godot), timeout_controls(source, godot, delivered)
 
 
 

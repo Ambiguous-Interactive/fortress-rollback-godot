@@ -22,7 +22,7 @@ impl Config for Profile { type Input = [u8; 4]; type State = Game; type Address 
 #[derive(Default)]
 struct Buffers {
     incoming: Vec<(String, Message, Option<Value>)>, outgoing: Vec<(String, Message, Option<usize>)>,
-    received: Vec<Value>, order: Arc<Mutex<usize>>
+    received: Vec<Value>, timed_publications: Vec<(usize, u64)>, order: Arc<Mutex<usize>>
 }
 fn next_order(order: &Arc<Mutex<usize>>) -> usize {
     let mut value = order.lock().unwrap();
@@ -30,17 +30,25 @@ fn next_order(order: &Arc<Mutex<usize>>) -> usize {
     *value += 1;
     *value
 }
-struct Socket(Arc<Mutex<Buffers>>);
+struct Socket {
+    buffers: Arc<Mutex<Buffers>>,
+    clock: Option<Arc<Mutex<u64>>>,
+}
 impl NonBlockingSocket<String> for Socket {
     fn send_to(&mut self, message: &Message, address: &String) {
-        let mut queue = self.0.lock().unwrap();
+        let mut queue = self.buffers.lock().unwrap();
         let raw = serde_json::to_value(message).unwrap();
         let control = raw["body"].as_object().is_some_and(|body| body.keys().any(|kind| kind.starts_with("Drop")));
         let order = control.then(|| next_order(&queue.order));
+        if let (Some(clock), Some(order)) = (&self.clock, order) {
+            if raw["body"].get("DropBackfill").is_some() || raw["body"].get("DropAbort").is_some() {
+                queue.timed_publications.push((order, *clock.lock().unwrap()));
+            }
+        }
         queue.outgoing.push((address.clone(), message.clone(), order));
     }
     fn receive_all_messages(&mut self) -> Vec<(String, Message)> {
-        let mut queue = self.0.lock().unwrap();
+        let mut queue = self.buffers.lock().unwrap();
         let messages = std::mem::take(&mut queue.incoming);
         let order = queue.order.clone();
         queue.received.extend(messages.iter().filter_map(|(_, message, control)| control.as_ref().map(|record| {
@@ -188,7 +196,8 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
             builder = builder.add_player(kind, PlayerHandle::new(slot)).map_err(|error| format!("{error:?}"))?;
         }
         let queue = Arc::new(Mutex::new(Buffers { order: order.clone(), ..Default::default() }));
-        sessions.push(builder.start_p2p_session(Socket(queue.clone())).map_err(|error| format!("{error:?}"))?);
+        sessions.push(builder.start_p2p_session(Socket { buffers: queue.clone(), clock: drop_all_history.then(|| clock.clone()) })
+            .map_err(|error| format!("{error:?}"))?);
         buffers.push(queue);
     }
     let mut control = Vec::new();
@@ -336,6 +345,7 @@ fn exposed_rows(session: &P2PSession<Profile>, first: i32, frontier: i32) -> Res
 fn donor_timeout(sessions: &mut [P2PSession<Profile>], games: &mut [Game], histories: &mut [BTreeMap<i32, Value>],
     buffers: &[Arc<Mutex<Buffers>>], clock: &Arc<Mutex<u64>>, control: &mut Vec<Value>, fault: &mut Fault, before: Vec<Value>) -> Result<Value, String> {
     let target = PlayerHandle::new(4);
+    let started_us = *clock.lock().unwrap();
     let mut survivors = Vec::new();
     for (peer, session) in sessions.iter_mut().take(2).enumerate() {
         let frontier = session.confirmed_frame().as_i32();
@@ -375,8 +385,11 @@ fn donor_timeout(sessions: &mut [P2PSession<Profile>], games: &mut [Game], histo
             .collect::<Vec<_>>());
     }
     let received = buffers.iter().take(2).flat_map(|queue| queue.lock().unwrap().received.clone()).collect::<Vec<_>>();
+    let mut timed: Vec<_> = buffers.iter().take(2).flat_map(|queue| queue.lock().unwrap().timed_publications.clone()).collect();
+    timed.sort_unstable();
+    let timed_publications: Vec<_> = timed.into_iter().map(|(order, at_us)| json!({"order":order,"at_us":at_us})).collect();
     Ok(json!({"upstream_revision":REVISION, "before":before, "controls":control, "received_controls":received,
-        "lost_history":fault.dropped, "survivors":survivors}))
+        "started_us":started_us, "timed_publications":timed_publications, "lost_history":fault.dropped, "survivors":survivors}))
 }
 
 fn peer_dropped(session: &mut P2PSession<Profile>) -> Vec<Value> {

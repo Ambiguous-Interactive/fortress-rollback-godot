@@ -2,7 +2,7 @@
 import copy
 
 from drop_history_contract import (
-    REVISION, check_before, check_delivery, check_godot_packet, check_godot_prepare, check_rows, check_source_content, check_source_operation,
+    REVISION, check_before, check_delivery, check_godot_commit, check_godot_packet, check_godot_prepare, check_rows, check_source_content, check_source_operation,
     fields, history_bytes, integer, original_history, require, same,
 )
 from drop_history_inventory_controls import check_godot_inventory, check_godot_observation_order, check_source_observation_order
@@ -47,7 +47,22 @@ def check_source_packets(source):
     require(len(history) >= 2 and same(source['lost_history'], history), label + ' discarded original retries')
     require(same(sorted([packet['from'], packet['to']] for packet in aborts), [[0, 1], [1, 0]])
             and min(packet['order'] for packet in aborts) > history[-1]['order'], label + ' both abort after donor retries')
-    check_delivery(emissions, history, receipts, 'source donor timeout', grouped=True)
+    started = source['started_us']
+    integer(started, 13_000, 13_000, label + ' barrier start')
+    expiry = started + 2_000_000
+    timed = source['timed_publications']
+    require(type(timed) is list and len(timed) == len(history) + len(aborts), label + ' timed publications')
+    expected_orders = sorted(packet['order'] for packet in history + aborts)
+    for observation, order in zip(timed, expected_orders):
+        fields(observation, 'at_us order', label + ' timed publication')
+        integer(observation['at_us'], started, expiry, label + ' publication clock')
+        require(same(observation['order'], order), label + ' timed publication identity')
+    clocks = {observation['order']: observation['at_us'] for observation in timed}
+    rounds = [clocks[packet['order']] for packet in history]
+    require(all((at - started) % 50_000 == 0 for at in rounds) and rounds[-1] < expiry
+            and rounds == sorted(set(rounds)), label + ' distinct retry rounds before expiry')
+    require(all(clocks[packet['order']] == expiry for packet in aborts), label + ' abort at expiry')
+    check_delivery(emissions, history, receipts, label, grouped=True)
     check_source_observation_order(source)
     entering = [packet for packet in receipts if packet['order'] < history[0]['order']]
     require(any('DropPrepare' in packet['body'] and packet['from'] == 0 for packet in entering), label + ' delivered coordinator prepare')
@@ -91,8 +106,7 @@ def check_godot_negotiation(godot):
         for packet in emissions:
             validate(packet)
             require(same([packet['from'], packet['to']], [0, 1] if kind == 'prepare' else [1, 0]), label + ' negotiation route')
-    observations = {**godot, 'ack_emissions': [], 'ack_receipts': [], 'commit_receipts': []}
-    check_godot_observation_order(observations)
+    check_godot_observation_order(godot)
     all_orders = [packet['order'] for key in ('prepare_emissions', 'prepare_receipts', 'inventory_emissions', 'inventory_receipts', 'history_publications')
                   for packet in godot[key]]
     require(len(set(all_orders)) == len(all_orders), label + ' unique negotiation and publication order')
@@ -113,7 +127,9 @@ def check_godot_packets(godot):
         fields(packet, 'from to bytes packet emission', label + ' packet')
         require(same([packet['from'], packet['to'], packet['bytes']], [1, 0, history_bytes(4, 2).hex()]), label + ' donor route or bytes')
         check_godot_packet(packet['packet'], 4, 2)
-    require(same(godot['commit_emissions'], []) and same(godot['drop_events'], {}), label + ' no commit or drop event')
+    require(all(same(godot['commit_' + action], []) for action in ('emissions', 'receipts')), label + ' no COMMIT traffic')
+    require(all(same(godot['ack_' + action], []) for action in ('emissions', 'receipts')), label + ' no COMMITTED ACK traffic')
+    require(same(godot['drop_events'], {}), label + ' no drop event')
     require(same(godot['failures'], []), label + ' fixture assertions')
     times = check_godot_history_publications(godot)
     check_godot_negotiation(godot)
@@ -121,9 +137,10 @@ def check_godot_packets(godot):
 
 
 def check_timeout(source, godot):
-    fields(source, 'upstream_revision before controls received_controls lost_history survivors', 'source donor timeout')
+    fields(source, 'upstream_revision before controls received_controls lost_history survivors started_us timed_publications', 'source donor timeout')
     fields(godot, 'before survivors terminal_events drop_events history_emissions history_receipts lost_history commit_emissions failures '
-           'prepare_emissions prepare_receipts inventory_emissions inventory_receipts history_publications history_routing', 'Godot donor timeout')
+           'prepare_emissions prepare_receipts inventory_emissions inventory_receipts history_publications history_routing '
+           'commit_receipts ack_emissions ack_receipts', 'Godot donor timeout')
     require(source['upstream_revision'] == REVISION, 'source donor timeout revision')
     check_before(source['before'], 'source', 4, 2, True)
     check_before(godot['before'], 'Godot', 4, 2, True)
@@ -137,10 +154,10 @@ def check_timeout(source, godot):
         require(type(trace['survivors']) is list and len(trace['survivors']) == 2, label + ' donor timeout survivors')
         for peer, row in enumerate(trace['survivors']):
             fields(row, 'peer rows_before rows_after frame_before frame_after game_before game_after advance target_receipts '
-                   + ('state dropped connected' if label == 'source' else 'lifecycle cuts confirmed_after started_us'), label + ' donor timeout survivor')
+                   + ('state dropped connected' if label == 'source' else 'lifecycle cuts confirmed_before confirmed_after started_us terminal'), label + ' donor timeout survivor')
             require(same(row['peer'], peer), label + ' donor timeout survivor identity')
             expected = [{'frame': r['frame'], 'inputs': r['inputs']} for r in original[3 - peer:5 + peer]] if label == 'source' else [
-                {'frame': r['frame'], 'inputs': r['state']['inputs'], 'state': r['state']} for r in original[:5 + peer]]
+                {'frame': r['frame'], 'inputs': r['state']['inputs'], 'state': r['state']} for r in original[:6]]
             require(same(row['rows_before'], expected) and same(row['rows_after'], expected), label + ' donor timeout original exposed history')
             require(same([row['frame_before'], row['frame_after']], [7 - peer] * 2)
                     and same(row['game_before'], row['game_after'])
@@ -152,20 +169,27 @@ def check_timeout(source, godot):
                 require(same([row['state'], row['advance'], row['dropped'], row['connected']],
                              ['Synchronizing', 'not_synchronized', [], [True, True]]), label + ' donor timeout fail-closed state')
             else:
-                require(same([row['lifecycle'], row['advance'], row['cuts'], row['confirmed_after']], [1, 19, [-1, -1], 5]),
+                require(same([row['lifecycle'], row['advance'], row['cuts'], row['confirmed_before'], row['confirmed_after']], [1, 19, [-1, -1], 5, 5]),
                         label + ' donor timeout fail-closed state')
                 started = row['started_us']
                 integer(started, 1, 800000, label + ' donor timeout barrier clock')
                 require(godot_times[0] > started and godot_times[-1] < started + 250_000, label + ' donor timeout donor retries before expiry')
-                require(same(terminals[1 - peer], {'peer': peer, 'target': '0300000000000000', 'reason': 'timeout', 'at_us': started + 250_000}),
-                        label + ' donor timeout exact terminal attribution')
+    # The donor expires on poll. The coordinator consumes its ABORT in the same tick,
+    # and the harness drains the resulting queued event on the following tick.
+    timeout_us = godot['survivors'][1]['started_us'] + 250_000
+    require(godot['survivors'][0]['started_us'] + 249_000 == timeout_us, 'Godot donor timeout distinct survivor deadlines')
+    for peer, row in enumerate(godot['survivors']):
+        receive = {'from': 1, 'phase': 5, 'reason': 5} if peer == 0 else None
+        require(same(row['terminal'], {'at_us': timeout_us, 'receive': receive}), 'Godot donor timeout terminal transition')
+        expected_event = {'peer': peer, 'target': '0300000000000000', 'reason': 'timeout', 'at_us': timeout_us + (1 - peer) * 1000}
+        require(same(terminals[1 - peer], expected_event), 'Godot donor timeout exact terminal attribution')
     return {'source': source_retries, 'godot': len(godot_times)}
 
 
 def check_delivery_control(delivered, timeout):
     label = 'Godot donor delivery control'
     require(same(delivered['failures'], []) and same(delivered['before'], timeout['before']), label + ' same retained inventory')
-    opening = [{key: survivor[key] for key in ('peer', 'rows_before', 'frame_before', 'game_before')} for survivor in timeout['survivors']]
+    opening = [{key: survivor[key] for key in ('peer', 'rows_before', 'confirmed_before', 'frame_before', 'game_before')} for survivor in timeout['survivors']]
     require(same(delivered['opening'], opening), label + ' same exposed history and game state')
     history = delivered['history_emissions']
     require(same(delivered['lost_history'], []) and bool(delivered['history_receipts']), label + ' original donor delivered')
@@ -174,6 +198,11 @@ def check_delivery_control(delivered, timeout):
         require(same([packet['from'], packet['to'], packet['bytes']], [1, 0, history_bytes(4, 2).hex()]), label + ' donor route or bytes')
         check_godot_packet(packet['packet'], 4, 2)
     require(same(delivered['cuts'], [[11, 11], [11, 11]]), label + ' both original cutoff rows froze')
+    commits = delivered['commit_emissions']
+    require(same(delivered['lost_commit'], []), label + ' original COMMIT delivered')
+    check_delivery(commits, [], delivered['commit_receipts'], label + ' COMMIT', observed=True)
+    for packet in commits:
+        check_godot_commit(packet, 4, 2, unequal=True)
     check_godot_history_publications(delivered)
     check_godot_negotiation(delivered)
     check_rows(delivered['survivors'], label, 4, 2, True)
@@ -199,7 +228,7 @@ def clone_godot_routing(trace):
     trace['history_routing'].append({**trace['history_routing'][-1], 'emission': clone['emission']})
 
 
-def timeout_controls(source, godot):
+def timeout_controls(source, godot, delivered):
     # Value: protects=the uninstalled original suffix can expire without rewriting exposed rows; fails_when=terminal receipts accept omissions or rewrites;
     # why_new=deadline tests hold the decision after history transfer, and loss tests subsequently deliver a retry; seam=none
     cases = {
@@ -213,6 +242,15 @@ def timeout_controls(source, godot):
             row['history_routing'][1].update(at_us=row['history_routing'][0]['at_us']))),
         'godot_early_terminal_event': ('Godot', 'exact terminal attribution',
                                        lambda row: row['terminal_events'][0].update(at_us=row['terminal_events'][0]['at_us'] - 1)),
+        'godot_drain_tick_as_transition': ('Godot', 'terminal transition',
+                                          lambda row: row['survivors'][0]['terminal'].update(at_us=row['terminal_events'][1]['at_us'])),
+        'source_same_round_retry': ('source', 'distinct retry rounds before expiry',
+                                    lambda row: row['timed_publications'][1].update(at_us=row['timed_publications'][0]['at_us'])),
+        'godot_terminal_ack': ('Godot', 'no COMMITTED ACK traffic', lambda row: row.update(
+            ack_emissions=delivered['ack_emissions'], ack_receipts=delivered['ack_receipts'])),
+        'godot_terminal_commit_receipt': ('Godot', 'no COMMIT traffic',
+                                          lambda row: row.update(commit_receipts=delivered['commit_receipts'])),
+        'godot_delivery_missing_commit_receipt': ('delivery', 'COMMIT emission/loss/receipt accounting', lambda row: row['commit_receipts'].clear()),
         'source_missing_retry': ('source', 'discarded original retries', lambda row: row['lost_history'].pop()),
         'source_restored_retry': ('source', 'dropped history received', lambda row: row['received_controls'].append(row['lost_history'][0])),
         'source_wrong_abort_reason': ('source', 'abort reason', lambda row: next(
@@ -226,12 +264,16 @@ def timeout_controls(source, godot):
         'godot_advanced_callbacks': ('Godot', 'no gameplay advance', lambda row: row['survivors'][0].update(game_after='00')),
     }
     for name, (runtime, diagnostic, mutate) in cases.items():
-        candidate = copy.deepcopy(source if runtime == 'source' else godot)
+        candidate = copy.deepcopy({'source': source, 'Godot': godot, 'delivery': delivered}[runtime])
         mutate(candidate)
+        label = 'Godot donor delivery control' if runtime == 'delivery' else f'{runtime} donor timeout'
         try:
-            check_timeout(candidate, godot) if runtime == 'source' else check_timeout(source, candidate)
+            if runtime == 'delivery':
+                check_delivery_control(candidate, godot)
+            else:
+                check_timeout(candidate, godot) if runtime == 'source' else check_timeout(source, candidate)
         except ValueError as error:
-            require(str(error) == f'drop history: {runtime} donor timeout {diagnostic}', name + ' unrelated failure: ' + str(error))
+            require(str(error) == f'drop history: {label} {diagnostic}', name + ' unrelated failure: ' + str(error))
         else:
             raise ValueError('drop history: negative control survived: ' + name)
     return list(cases)

@@ -122,7 +122,7 @@ func observe(
 			expired_original_rows.append(mesh.peers[peer]._core._queues[2 * _slots].confirmed_input(0).code == Queue.Code.NO_CONFIRMED_INPUT)
 	var opening: Array[Dictionary] = []
 	if not donor_timeout_case.is_empty():
-		opening = _donor_opening(context, mesh, before)
+		opening = _donor_opening(context, mesh)
 		if _drop_all_history:
 			return _donor_timeout(context, mesh, before, opening)
 	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
@@ -208,7 +208,7 @@ func _exposed_rows(context: RefCounted, peer: Peer, game: ObservedGame, frontier
 	return rows
 
 
-func _donor_opening(context: RefCounted, mesh: Dictionary, before: Array[Dictionary]) -> Array[Dictionary]:
+func _donor_opening(context: RefCounted, mesh: Dictionary) -> Array[Dictionary]:
 	var survivors: Array[Dictionary] = []
 	for index: int in range(2):
 		var result: Driver.StepResult = mesh.peers[index].recover(mesh.now)
@@ -216,20 +216,22 @@ func _donor_opening(context: RefCounted, mesh: Dictionary, before: Array[Diction
 	_deliver(context, mesh, _without_peer(_drain(mesh), 2))
 	for index: int in range(2):
 		var peer: Peer = mesh.peers[index]
-		survivors.append({"peer": index, "rows_before": _exposed_rows(context, peer, mesh.games[index], before[index].confirmed),
-			"frame_before": peer.status().current_frame, "game_before": mesh.games[index].bytes().hex_encode()})
+		var status: Types.Status = peer.status()
+		survivors.append({"peer": index, "rows_before": _exposed_rows(context, peer, mesh.games[index], status.confirmed_frame),
+			"confirmed_before": status.confirmed_frame, "frame_before": status.current_frame, "game_before": mesh.games[index].bytes().hex_encode()})
 	return survivors
 
 
 func _donor_timeout(context: RefCounted, mesh: Dictionary, before: Array[Dictionary], survivors: Array[Dictionary]) -> Dictionary:
 	mesh.drop_failures = []
+	mesh.terminal_ticks = {}
 	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
 	for index: int in range(2):
 		var peer: Peer = mesh.peers[index]
 		var result: Dictionary = survivors[index]
 		var advanced: Driver.StepResult = peer.step(mesh.now, _inputs(mesh, index))
 		var status: Types.Status = peer.status()
-		result.rows_after = _exposed_rows(context, peer, mesh.games[index], before[index].confirmed)
+		result.rows_after = _exposed_rows(context, peer, mesh.games[index], result.confirmed_before)
 		result.confirmed_after = status.confirmed_frame
 		result.frame_after = status.current_frame
 		result.game_after = mesh.games[index].bytes().hex_encode()
@@ -237,6 +239,7 @@ func _donor_timeout(context: RefCounted, mesh: Dictionary, before: Array[Diction
 		result.lifecycle = status.lifecycle
 		result.target_receipts = Array(peer._core.received_frames()).slice(2 * _slots)
 		result.started_us = peer._drops.barrier(_id(2).hex_encode()).started_us
+		result.terminal = mesh.terminal_ticks.get(index, {})
 		var cuts: Array[int] = []
 		for slot: int in range(2 * _slots, 3 * _slots):
 			cuts.append(peer._core.frozen_frame(slot))
@@ -247,7 +250,20 @@ func _donor_timeout(context: RefCounted, mesh: Dictionary, before: Array[Diction
 		"inventory_emissions": _inventory_emissions, "inventory_receipts": _inventory_receipts,
 		"history_publications": _observation.history_publications, "history_routing": _history_routing,
 		"history_emissions": _history_emissions, "history_receipts": _history_receipts, "lost_history": _lost_history,
-		"commit_emissions": _commit_emissions, "failures": context.failures}
+		"commit_emissions": _commit_emissions, "commit_receipts": _commit_receipts,
+		"ack_emissions": _ack_emissions, "ack_receipts": _ack_receipts, "failures": context.failures}
+
+
+func _drain(mesh: Dictionary) -> Array[Dictionary]:
+	if mesh.has("terminal_ticks"):
+		for index: int in range(2):
+			_observe_terminal(mesh, index)
+	return super._drain(mesh)
+
+
+func _observe_terminal(mesh: Dictionary, index: int, receive: Variant = null) -> void:
+	if not mesh.terminal_ticks.has(index) and mesh.peers[index].status().lifecycle == Types.Lifecycle.TERMINATED:
+		mesh.terminal_ticks[index] = {"at_us": mesh.now, "receive": receive}
 
 
 func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], terminated: bool = false) -> void:
@@ -327,9 +343,15 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 			history_emission.bytes = decoded.message.bytes.hex_encode()
 			history_emission.packet = packet.bytes.hex_encode()
 		var receipt_order: int = -1
-		if not inventory_emission.is_empty() or not commit_emission.is_empty() or not ack_emission.is_empty() 			or (_observation.track_history and not prepare_emission.is_empty()):
+		if not inventory_emission.is_empty() or not commit_emission.is_empty() or not ack_emission.is_empty() \
+			or (_observation.track_history and not prepare_emission.is_empty()):
 			receipt_order = _next_order(context)
 		var code: int = mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now)
+		if mesh.has("terminal_ticks"):
+			var receive: Dictionary = {"from": packet.from}
+			if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+				receive.merge({"phase": decoded.message.phase, "reason": decoded.message.reason})
+			_observe_terminal(mesh, packet.to, receive)
 		if terminated and code == I.Code.TERMINATED:
 			continue
 		context.equal(code, I.Code.OK, "deliver actual encoded packet")
