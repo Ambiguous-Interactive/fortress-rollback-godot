@@ -132,6 +132,15 @@ A later expiry can fall outside the upstream link
 selection. Its receipt identifies that scope, and its original browser
 observations remain available independently of the general relay trace.
 
+For each pinned packet with a unique retained server write, `relayExpiryTraffic`
+lists subsequent retained writes on the same directed link and packet family.
+The server write ordinals order those writes. The browser observations list
+which message, decoder, SDK and native ordinals came strictly before expiry
+or at or after expiry, using the recipient's page clock. Inspect the joined
+receipt for the corresponding timestamps and native admission codes. Empty
+lists show the limits of retained evidence. Multiple possible anchor writes
+or an unavailable page are reported explicitly.
+
 During the traced gameplay hold, the `relayHold` receipt covers both directions
 between the first two UUIDs in the sorted frozen roster. Each page publishes its
 first 512 quality sends and raw arrivals per stage in console batches. Capture

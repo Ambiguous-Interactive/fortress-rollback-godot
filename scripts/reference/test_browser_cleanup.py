@@ -2820,6 +2820,8 @@ runMain();
                             self.assertEqual([peer.get('checkpoint_error') for peer in report['postRelease']], [None, None])
                             self.assertEqual([(f"{row['sender']}/{row['recipient']}", row['upstream_scope']) for row in report['relayExpiryRows']],
                                              [(link, 'focused'), ('/'.join(reversed(link.split('/'))), 'outside-focus')])
+                            self.assertEqual([(row['anchor_write'], row['page_coverage'], row['following_writes']) for row in report['relayExpiryTraffic']],
+                                             [(None, 'unavailable', []), (None, 'unavailable', [])])
                         if control == 'history staggered':
                             self.assertLess(reporter['native_expiry']['controller_order'],
                                             report['postRelease'][1]['history_published']['controller_order'])

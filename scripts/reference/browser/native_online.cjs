@@ -1,7 +1,7 @@
 const { createDepartureClock, CLOSE_HTTPS_PRE_SAMPLES } = require('./native_departure_clock.cjs');
 const { assertRecoveredRoom, OmittedReplacement, PHYSICAL_PAIRS, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace, decodeRelayDelivery } = require('./native_relay_trace.cjs');
-const { createRelayProxyTrace, joinRelayReceive } = require('./native_relay_proxy.cjs');
+const { createRelayProxyTrace, joinRelayReceive, relayExpiryTraffic } = require('./native_relay_proxy.cjs');
 const { createRelayHold, RELAY_HOLD_CAP, RELAY_HOLD_PREFIX, RELAY_HOLD_WINDOW_MS } = require('./native_relay_hold.cjs');
 const { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, exerciseSameLinkRetention,
   joinRelayReceipts, readRelayWireDiagnostic, relayExpiryRows, validateRelayExpiryFrontier } = require('./native_relay_control.cjs');
@@ -2565,6 +2565,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         relayJoinError = String(joinError);
       }
     }
+    const relayReceive = collectRelayReceive(relayJoined, relayWire, serverReceipt?.value);
+    const expiries = observedExpiries();
     console.error(JSON.stringify({
       phase, target_frames: comparedFrames, historyEvidence: historyFailureEvidence(relayHistory, comparedFrames, roomIdentities),
       browser_peers: browserPeers, bootstrap_ms, errors, releaseDelay, closeErrors: [...physicalCloseErrors, ...departureErrors],
@@ -2580,8 +2582,9 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       warmupInputErrors: warmupBarrier?.inputErrors, warmupAckErrors: warmupBarrier?.ackErrors, warmupNativeErrors: warmupBarrier?.nativeErrors,
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
-      relayReceive: collectRelayReceive(relayJoined, relayWire, serverReceipt?.value),
-      relayExpiryRows: traceRelayWire ? relayExpiryRows(observedExpiries(), relayJoined, expiryLinks) : undefined,
+      relayReceive,
+      relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined, expiryLinks) : undefined,
+      relayExpiryTraffic: traceRelayWire ? relayExpiryTraffic(expiries, relayJoined, relayWire, relayReceive) : undefined,
       relayHold: holdReceipt,
       releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
