@@ -41,9 +41,15 @@ def walk_entries(root):
     return sorted(found)
 
 
-def inventory(paths):
+def file_identity(status):
+    return status.st_dev, status.st_ino, status.st_mode, status.st_size, status.st_mtime_ns, status.st_ctime_ns
+
+
+def inventory(paths, *, identities=None):
     result = {}
     for name, path in paths.items():
+        if identities is not None:
+            identities[path] = file_identity(path.lstat())
         if path.is_symlink():
             raise ValueError('evidence source is symlinked')
         if not path.is_dir():
@@ -58,6 +64,8 @@ def inventory(paths):
         while pending:
             with os.scandir(pending.pop()) as scan:
                 for entry in scan:
+                    if identities is not None:
+                        identities[Path(entry.path)] = file_identity(entry.stat(follow_symlinks=False))
                     if entry.is_symlink():
                         raise ValueError('evidence source is symlinked')
                     if entry.is_dir(follow_symlinks=False):

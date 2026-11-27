@@ -20,7 +20,7 @@ from godot_smoke import prepare_editor, run
 from online_install import create_project, install_sdk, server_config
 from receipt_arguments import ReceiptParser
 from run import begin_results
-from signalfish_probe import inventory
+from signalfish_probe import file_identity, inventory
 
 sys.path.insert(0, str(ROOT / 'scripts'))
 import host_capacity  # noqa: E402
@@ -137,7 +137,7 @@ def validate_cell(evidence, mode, players, browser_pair):
         raise ValueError(f'wrong browser composition: {mode}:{players}')
 
 
-def play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server, control=None, trace_server=False):
+def play_cells(cells, attempted_cells, export, environment, server_source, server_binary, output, browser_pair, stun_server, control, trace_server):
     results = []
     routes = {route: [cell for cell in cells if cell.split(':')[0].split('-')[0] == route] for route in ('mesh', 'relay')}
     groups = [('relay', [cell]) for cell in routes['relay']] if trace_server else [(route, selected) for route, selected in routes.items() if selected]
@@ -163,6 +163,7 @@ def play_cells(cells, export, environment, server_source, server_binary, output,
                                '-'.join(browser_pair)]
                     if control:
                         command.append(control)
+                    attempted_cells.append(cell)
                     evidence = json.loads(run_browser(command, browser_environment, output / f'{mode}-{players}.log', rooms=1))
                     validate_cell(evidence, mode, int(players), browser_pair)
                     results.append(evidence)
@@ -183,6 +184,22 @@ def validate_trace_build(receipt, revision, frozen):
         raise ValueError('relay trace server build receipt does not match the current pin manifest')
     if not isinstance(inputs, dict) or any(inputs.get(name) != frozen['relay_trace_' + name] for name in ('patch', 'module')):
         raise ValueError('relay trace server build receipt does not match the current trace sources')
+
+
+def publish_room_receipt(receipt, logs, evidence, files, export, outcome):
+    existing_logs = {name: receipt.parent / name for name in logs if (receipt.parent / name).is_file()}
+    report = {**evidence, **outcome, 'logs': inventory(existing_logs)}
+    pending = receipt.with_suffix('.json.next')
+    try:
+        pending.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+        identities = {}
+        if (inventory(files, identities=identities) != evidence['inputs']
+                or inventory({'export': export}, identities=identities) != evidence['export']
+                or any(file_identity(path.lstat()) != identity for path, identity in identities.items())):
+            raise ValueError('native browser witness inputs changed during execution')
+        pending.replace(receipt)
+    finally:
+        pending.unlink(missing_ok=True)
 
 
 def main():
@@ -208,8 +225,8 @@ def main():
     logs += ['mesh-server.log', 'relay-server.log', 'import.log', 'export.log', 'version.log', 'tls.log', 'stun.log']
     trace_files = ('.log', '-scope.json', '-scope.json.new', '-trace.json', '-trace.json.request', '-trace.json.request.next')
     logs += [f'relay-{players}-server{suffix}' for players in (2, 4, 8) for suffix in trace_files]
-    begin_results(output, REPORT, logs)
     receipt = output / REPORT
+    begin_results(output, REPORT, [*logs, receipt.with_suffix('.json.next').name])
     manifest_bytes = MANIFEST.read_bytes()
     manifest = parse_manifest(manifest_bytes)
     versions = (manifest['godot']['minimum'], manifest['godot']['current_stable'])
@@ -256,6 +273,7 @@ def main():
     files = {'pins': MANIFEST, 'editor': editor, 'templates': templates, 'addon': addon, 'server': server_binary,
              'server_config': server_source / 'config.example.json', **{name: Path(environment[var]) for name, var in tools.items()},
              'runner': Path(__file__), 'editor_setup': BROWSER.parent / 'godot_smoke.py', 'artifact_helper': BROWSER.parent / 'fetch.py',
+             'inventory_helper': BROWSER.parent / 'signalfish_probe.py',
              'client': BROWSER / 'native_online.cjs', 'host': BROWSER / 'online_host.cjs', 'display': BROWSER / 'webrtc_display.cjs',
              'watchdog': BROWSER / 'webrtc_watchdog.cjs', 'recovery': BROWSER / 'native_recovery.cjs', 'local_stun': BROWSER / 'local_stun.py',
              'relay_proxy': BROWSER / 'native_relay_proxy.cjs',
@@ -289,24 +307,42 @@ def main():
         if not actual.startswith(args.version + '.stable.'):
             raise ValueError(f'unexpected Godot version: {actual}')
         export, staged = stage_export(root, output, editor, templates, sdk, addon, environment, trace_wire)
-        exported = inventory({'export': export})
-        if not host_capacity.acquire_when_free('native-online-witness', 600):
-            raise ValueError('development host stayed busy')
+        affinity = getattr(os, 'sched_getaffinity', None)
+        attempted_cells = []
+        evidence = {'engine': actual, 'cells': cells, 'browser_pair': args.browser_pair, 'control': control,
+                    'attempted_cells': attempted_cells, 'cpu_affinity': sorted(affinity(0)) if affinity else None, 'inputs': frozen, 'staged': staged,
+                    'export': inventory({'export': export})}
         try:
-            stun = local_stun(stun_tool, root, output / 'stun.log') if stun_tool is not None else nullcontext(None)
-            with stun as stun_server:
-                results = play_cells(cells, export, environment, server_source, server_binary, output, browser_pair, stun_server, control, trace_build is not None)
-        finally:
-            host_capacity.release()
-        if inventory(files) != frozen or inventory({'export': export}) != exported:
-            raise ValueError('native browser witness inputs changed during execution')
-    if args.omit_second_replacement:
-        raise ValueError('overlapping recovery passed with the second replacement omitted')
-    if args.release_delay and any(room.get('releaseDelay') != args.release_delay for room in results):
-        raise ValueError('missing release delay control evidence')
-    receipt.write_text(json.dumps({'passed': True, 'engine': actual, 'cells': cells, 'browser_pair': args.browser_pair,
-                                   'stun_server': stun_server, 'inputs': frozen,
-                                   'staged': staged, 'export': exported, 'results': results}, indent=2) + '\n', encoding='utf-8')
+            if not host_capacity.acquire_when_free('native-online-witness', 600):
+                raise ValueError('development host stayed busy')
+            room_error = None
+            try:
+                stun = local_stun(stun_tool, root, output / 'stun.log') if stun_tool is not None else nullcontext(None)
+                with stun as stun_server:
+                    evidence['stun_server'] = stun_server
+                    results = play_cells(cells, attempted_cells, export, environment, server_source, server_binary,
+                                         output, browser_pair, stun_server, control, trace_build is not None)
+            except BaseException as failure:
+                room_error = failure
+                raise
+            finally:
+                try:
+                    host_capacity.release()
+                except OSError as release_error:
+                    if room_error is None:
+                        raise
+                    room_error.add_note(f'Could not release the native browser host: {release_error}')
+            if args.omit_second_replacement:
+                raise ValueError('overlapping recovery passed with the second replacement omitted')
+            if args.release_delay and any(room.get('releaseDelay') != args.release_delay for room in results):
+                raise ValueError('missing release delay control evidence')
+        except Exception as error:
+            try:
+                publish_room_receipt(receipt, logs, evidence, files, export, {'passed': False})
+            except (OSError, ValueError) as receipt_error:
+                error.add_note(f'Could not publish native browser failure receipt: {receipt_error}')
+            raise
+        publish_room_receipt(receipt, logs, evidence, files, export, {'passed': True, 'results': results})
 
 
 if __name__ == '__main__':
