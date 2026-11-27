@@ -252,9 +252,9 @@ The comparison assumes the host wall clock stays continuous between the frame
 and the service turn. Each exact carrier on the expired directed link can
 report signed `min_gap_ms` and `max_gap_ms` relative to that turn. An entirely
 negative interval establishes frame receipt before expiry. An entirely positive
-interval establishes receipt after expiry. Overlap and invalid samples leave
-the order unresolved. Use the original phase receipt to check subsequent page
-message, decoder, SDK, and native observations.
+interval establishes receipt after expiry. Overlap, invalid samples, and
+evicted frame candidates leave the order unresolved. Use the original phase
+receipt to check subsequent page message, decoder, SDK, and native observations.
 
 Use `--trace-mixed-receive --browser-pair chromium-firefox` with the trace
 server to collect both receipts in one relay room. Each engine observes

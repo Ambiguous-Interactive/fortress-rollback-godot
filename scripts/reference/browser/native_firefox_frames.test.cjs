@@ -44,7 +44,9 @@ test('Firefox frame receipts bind exact observed carriers to the frozen recipien
 
   const join = (input = receive, roster = [, recipient], failurePublishedMs = 0) => joinFirefoxFrames(observers, input, roster, failurePublishedMs);
   const result = join();
-  assert.deepEqual(result.pages, [{ index: 1, recipient, supported: true, sockets: 1, count: 3, omitted: 1, rejected: 3, proxy: [0] }]);
+  const [{ omitted_through_ms, ...pageCoverage }] = result.pages;
+  assert.deepEqual(pageCoverage, { index: 1, recipient, supported: true, sockets: 1, count: 3, omitted: 1, rejected: 3, proxy: [0] });
+  assert.ok(Number.isFinite(omitted_through_ms));
   assert.equal(result.coverage, 'debugger-callback-dependent');
   const row = result.rows[0];
   assert.equal(row.status, 'observed');
@@ -101,8 +103,28 @@ test('expiry clock bounds stay on the reporting page, expired sender and exact c
   assert.equal(join([, bounds(120)]).observation, undefined);
 });
 
+test('evicted callback candidates leave expiry order unresolved', () => {
+  const { page, socket } = fakePage();
+  const snapshot = observeFirefoxFrames(page, endpoint, 1);
+  const frame = socket();
+  frame(carrier.toString('base64'), 98);
+  const evictedCallback = snapshot().frames[0].controller_ms;
+  frame(carrier.toString('base64'), 100);
+  const firefox_clock = firefoxExpiryWindow([
+    { wall_ms: 120, page_before_ms: 10, page_after_ms: 10 }, { wall_ms: 130, page_before_ms: 20, page_after_ms: 20 },
+  ], 25);
+  const expiry = { uuid: 'cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd', page_ms: 25, firefox_clock };
+  const joined = inlet_ms => {
+    const input = { ...receive, rows: [{ ...packet, proxy: [{ ...proxy, inlet_ms }] }] };
+    return joinFirefoxFrames([, snapshot], input, [, recipient], 0, [, expiry]).rows[0];
+  };
+  assert.equal(joined(0).status, 'observed');
+  assert.deepEqual(joined(0).observation.expiry_timing, { order: 'unresolved', reason: 'frame_candidates_evicted' });
+  assert.equal(joined(evictedCallback).observation.expiry_timing.order, 'before');
+});
+
 // Value: protects=Gecko-to-native ordering despite callback delay; fails_when=callback time or overlapping bounds decide order; why_new=real Firefox; seam=loopback.
-test('Gecko source frames bracket expiry even when Firefox delays the debugger callback',
+test('Gecko source frames bracket expiry even when the debugger callback is delayed',
   { skip: process.env.FORTRESS_TEST_FIREFOX_FRAMES !== '1', timeout: 20000 }, async () => {
     const { createServer } = require('node:http');
     const { setTimeout: pause } = require('node:timers/promises');
@@ -122,26 +144,26 @@ test('Gecko source frames bracket expiry even when Firefox delays the debugger c
         ws.binaryType = 'arraybuffer';
         ws.onopen = () => {
           trace.bindDeparture(${JSON.stringify(local)}, ${JSON.stringify([local, sender])});
-          const start = performance.now();
-          ws.send('ready');
-          while (performance.now() < start + 400) {}
-          trace.beginNativeService();
-          while (performance.now() < start + 850) {}
-          trace.recordDeparture('native_expiry', 2, ${JSON.stringify(JSON.stringify(nativeEvidence))}, true);
-          while (performance.now() < start + 1100) {}
+          console.debug('relay socket opened');
         };
         ws.onmessage = event => {
           const index = ${JSON.stringify(carriers.map(bytes => [...bytes].join(',')))}.indexOf(new Uint8Array(event.data).join(','));
-          if (index !== -1) ws.send('handled carrier ' + index);
+          if (index === 0) setTimeout(() => {
+            trace.beginNativeService();
+            console.debug('native service began');
+          }, 300);
+          if (index === 1) setTimeout(() => {
+            trace.recordDeparture('native_expiry', 2, ${JSON.stringify(JSON.stringify(nativeEvidence))}, true);
+          }, 40);
         };
       </script>`);
     });
     let browser;
     let socket;
     let expiryCallbackMs;
-    let firstCallbackWallMs;
+    let heldFrame;
+    let firstArrivalMs;
     const inlet = [];
-    const sent = [];
     const reporter = {};
     const send = index => {
       if (socket.destroyed) return;
@@ -154,10 +176,6 @@ test('Gecko source frames bracket expiry even when Firefox delays the debugger c
         socket = upgraded;
         const token = createHash('sha1').update(request.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
         socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + token + '\r\n\r\n');
-        socket.once('data', () => {
-          setTimeout(send, 80, 0).unref();
-          setTimeout(send, 560, 1).unref();
-        });
       });
       server.listen(0, '127.0.0.1');
       await once(server, 'listening');
@@ -166,31 +184,43 @@ test('Gecko source frames bracket expiry even when Firefox delays the debugger c
       browser = await firefox.launch({ executablePath: process.env.FORTRESS_FIREFOX_EXECUTABLE });
       const page = await browser.newPage();
       const target = `ws://${host}/v3/ws?trace_page=1`;
-      const snapshot = observeFirefoxFrames(page, target);
+      const debuggerDelivery = fakePage();
+      const snapshot = observeFirefoxFrames(debuggerDelivery.page, target);
       await page.addInitScript(`(${instrumentPostRelease})(${JSON.stringify(prefix)}, 40, ${readFirefoxClock});`);
       page.on('console', message => {
         const text = message.text();
+        if (text === 'relay socket opened') send(0);
+        if (text === 'native service began') setTimeout(send, 40, 1).unref();
         if (!text.startsWith(prefix)) return;
         expiryCallbackMs = performance.now();
         postReleaseCheckpoint(reporter, text, { controller_ms: expiryCallbackMs, controller_order: 1 }, [local, sender], local);
+        heldFrame?.();
         setTimeout(send, 40, 2).unref();
       });
-      const handled = new Promise(resolve => {
+      const observed = new Promise(resolve => {
+        const complete = () => {
+          if (snapshot().count === carriers.length) resolve();
+        };
         page._connection.toImpl(page).on('websocket', ws => {
           if (ws.url() !== target) return;
-          ws.on('framereceived', ({ opcode, data }) => {
-            if (opcode === 2 && data === carrier.toString('base64')) firstCallbackWallMs = Date.now();
-          });
-          ws.on('framesent', ({ opcode, data, wallTimeMs }) => {
-            const index = typeof data === 'string' ? /^handled carrier ([012])$/.exec(data)?.[1] : undefined;
-            if (opcode !== 1 || index === undefined) return;
-            sent[index] = wallTimeMs;
-            if (carriers.every((_, index) => Number.isFinite(sent[index]))) resolve();
+          const record = debuggerDelivery.socket(ws.url());
+          ws.on('framereceived', ({ opcode, data, wallTimeMs }) => {
+            if (opcode !== 2) return;
+            const deliver = () => { record(data, wallTimeMs); complete(); };
+            if (data === carrier.toString('base64')) {
+              // Retain the actual Firefox event until the expiry receipt arrives.
+              firstArrivalMs = performance.now();
+              if (expiryCallbackMs === undefined) {
+                heldFrame = deliver;
+                return;
+              }
+            }
+            deliver();
           });
         });
       });
       await page.goto(`http://${host}`);
-      await Promise.race([handled, pause(8000, null, { ref: false }).then(() => { throw new Error('missing exact carrier acknowledgements'); })]);
+      await Promise.race([observed, pause(8000, null, { ref: false }).then(() => { throw new Error('missing exact Firefox frames'); })]);
       await browser.close();
       browser = undefined;
       assert.ok(reporter.native_expiry, reporter.checkpoint_error);
@@ -198,21 +228,17 @@ test('Gecko source frames bracket expiry even when Firefox delays the debugger c
         ...packet, seq: String(3 + index), proxy: [{ ...proxy, ordinal: 6 + index, inlet_ms: inlet[index], carrier_sha256 }],
       })) };
       const result = joinFirefoxFrames([, snapshot], input, [, recipient], expiryCallbackMs, [, reporter.native_expiry]);
-      const expiryWindow = result.pages[0].native_expiry;
-      assert.equal(expiryWindow.status, 'bounded');
-      assert.ok(firstCallbackWallMs > expiryWindow.max_gecko_ms, 'the first debugger notification must follow the expiry window');
+      assert.equal(result.pages[0].native_expiry.status, 'bounded');
       const samples = result.rows.map(({ status, observation }) => {
         assert.equal(status, 'observed');
         return observation;
       });
       assert.deepEqual(samples.map(sample => sample.expiry_timing.order), ['before', 'unresolved', 'after']);
-      const earlier = sent[0] - samples[0].gecko_ms;
-      const callbackDelay = samples[0].controller_ms - inlet[0];
-      assert.ok(earlier >= 300, `handling followed the frame by only ${earlier} ms`);
-      assert.ok(callbackDelay >= 300, `debugger notification followed the write by only ${callbackDelay} ms`);
+      assert.equal(samples[0].callback_after_failure_publication, true);
       assert.equal(samples[2].callback_after_failure_publication, true);
       console.log(JSON.stringify({ carrier_timing: samples.map(sample => sample.expiry_timing),
-        first_frame_to_handler_ms: earlier, first_write_to_debugger_ms: callbackDelay }));
+        debugger_delivery_after_firefox_event_ms: samples[0].controller_ms - firstArrivalMs,
+        debugger_delivery_after_expiry_receipt_ms: samples[0].controller_ms - expiryCallbackMs }));
     } finally {
       await browser?.close();
       socket?.destroy();

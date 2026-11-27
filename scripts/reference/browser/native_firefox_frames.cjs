@@ -49,6 +49,7 @@ function observeFirefoxFrames(page, endpoint, capacity = FRAME_CAP) {
   let sockets = 0;
   let count = 0;
   let rejected = 0;
+  let omittedThroughMs;
   source.on('websocket', socket => {
     if (socket.url() !== endpoint || ++sockets !== 1) return;
     socket.on('framereceived', ({ opcode, data, wallTimeMs }) => {
@@ -63,11 +64,14 @@ function observeFirefoxFrames(page, endpoint, capacity = FRAME_CAP) {
         return;
       }
       if (bytes[0] !== 1) return;
-      frames[count % capacity] = { ordinal: ++count, gecko_ms: wallTimeMs, controller_ms: performance.now(),
+      const slot = count % capacity;
+      omittedThroughMs = frames[slot]?.controller_ms ?? omittedThroughMs;
+      frames[slot] = { ordinal: ++count, gecko_ms: wallTimeMs, controller_ms: performance.now(),
         carrier_sha256: createHash('sha256').update(bytes).digest('hex') };
     });
   });
-  return () => ({ supported: true, sockets, count, omitted: count - frames.length, rejected, frames: [...frames] });
+  return () => ({ supported: true, sockets, count, omitted: count - frames.length, rejected,
+    ...(omittedThroughMs !== undefined && { omitted_through_ms: omittedThroughMs }), frames: [...frames] });
 }
 
 function joinFirefoxFrames(observers, receive, recipients = [], failurePublishedMs, nativeExpiries = []) {
@@ -107,8 +111,12 @@ function joinFirefoxFrames(observers, receive, recipients = [], failurePublished
         const [frame] = matching;
         const expiry = stream.native_expiry;
         observation = { proxy_ordinal: write.ordinal, ...frame,
-          callback_after_failure_publication: failurePublishedMs === undefined ? undefined : frame.controller_ms > failurePublishedMs,
-          ...(expiry && expiry.sender === packet.sender && { expiry_timing: expiryTiming(expiry, frame.gecko_ms) }) };
+          callback_after_failure_publication: failurePublishedMs === undefined ? undefined : frame.controller_ms > failurePublishedMs };
+        if (expiry && expiry.sender === packet.sender) {
+          observation.expiry_timing = stream.omitted && !(stream.omitted_through_ms <= write.inlet_ms)
+            ? { order: 'unresolved', reason: 'frame_candidates_evicted' }
+            : expiryTiming(expiry, frame.gecko_ms);
+        }
       }
     }
     return [{ ...packet, status, observation }];
