@@ -2045,8 +2045,9 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const omitSecond = control === '--omit-second-replacement';
   const traceRetention = control === '--relay-retention-control';
   const traceSameLink = control === '--relay-same-link-control';
-  const traceChromiumSocket = control === '--trace-chromium-socket';
-  const traceFirefoxFrames = control === '--trace-firefox-frames';
+  const traceMixedReceive = control === '--trace-mixed-receive';
+  const traceChromiumSocket = traceMixedReceive || control === '--trace-chromium-socket';
+  const traceFirefoxFrames = traceMixedReceive || control === '--trace-firefox-frames';
   const traceBrowserReceive = traceChromiumSocket || traceFirefoxFrames;
   const traceRelayWire = control === '--trace-relay-wire' || traceRetention || traceSameLink || traceBrowserReceive;
   const traceScopePath = traceRelayWire && process.env.FORTRESS_RELAY_TRACE_SCOPE;
@@ -2070,7 +2071,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     departureClock?.handle ?? releaseSignal?.handle, relayProxy?.forward);
   const origin = `https://127.0.0.1:${server.address().port}`;
   const socketEndpoint = `wss://127.0.0.1:${server.address().port}/v3/ws`;
-  const pageEndpoint = (index, name) => traceChromiumSocket || traceFirefoxFrames && name === 'firefox'
+  const pageEndpoint = (index, name) => (traceChromiumSocket && name === 'chromium') || (traceFirefoxFrames && name === 'firefox')
     ? `${socketEndpoint}?trace_page=${index}` : socketEndpoint;
   const pages = [];
   const bootstrap_ms = [];
@@ -2655,7 +2656,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       owner.close(error => error ? reject(error) : resolve())), 'host'));
   }
   if (chromiumCapture && (failureReceipt || result)) {
-    const recipients = roomIdentities?.uuids.map(uuid => uuid.replaceAll('-', ''));
+    const recipients = roomIdentities?.uuids.map((uuid, index) => browserPeers[index]?.name === 'chromium' ? uuid.replaceAll('-', '') : null);
     const observed = await chromiumCapture.finish(new URL(origin).host, failureReceipt?.receive ?? result?.relayReceive, recipients)
       .catch(() => ({ status: 'unavailable' }));
     if (failureReceipt?.published_ms !== undefined) console.error(JSON.stringify({ relaySocketFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
@@ -2685,6 +2686,7 @@ if (require.main === module) {
   const relayControl = !control || control === '--trace-relay-wire'
     || profile === 'chromium' && control === '--trace-chromium-socket'
     || browserPair.includes('firefox') && control === '--trace-firefox-frames'
+    || profile === 'chromium-firefox' && control === '--trace-mixed-receive'
     || (size === '8' && (['--relay-retention-control', '--relay-same-link-control'].includes(control)
       || profile === 'firefox' && RELEASE_DELAYS.has(control)));
   const validPlain = ['2', '4', '8'].includes(size) && (route === 'relay' ? relayControl : route === 'mesh' && !control);
