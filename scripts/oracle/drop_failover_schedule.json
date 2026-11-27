@@ -1,0 +1,13 @@
+{
+  "peers": 5,
+  "warmup": 6,
+  "target": 4,
+  "coordinator": 0,
+  "target_silence_us": 0,
+  "tick_us": 10000,
+  "delay_us": 100000,
+  "disconnect_us": 5000000,
+  "deadline_us": 2000000,
+  "coordinator_silence_us": 5450000,
+  "through_us": 7500000
+}

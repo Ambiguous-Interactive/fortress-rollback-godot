@@ -20,6 +20,7 @@ from drop_history_contract import history_bytes, compare, negative_controls, los
 from drop_history_contract import same, wrapped_evidence_controls
 from drop_history_deadline import check_commit_deadline, deadline_controls
 from drop_history_timeout import check_delivery_control, check_timeout, timeout_controls
+import drop_failover_run
 from drop_history_ack_controls import controls as ack_loss_evidence_controls
 from drop_history_inventory_controls import controls as inventory_loss_evidence_controls
 from source_wire import RECOVERY_REVISION, decode_trace
@@ -29,7 +30,8 @@ PREFIX = 'FORTRESS_DROP_HISTORY_RESULT '
 
 def inventory():
     files = [*source_files(), ROOT / 'project.godot', ROOT / 'scripts/oracle/rust/src/bin/drop_history.rs',
-             *(ROOT / 'tests/unit').glob('*.gd'), *(ROOT / 'tests/runner').glob('*.gd')]
+             *(ROOT / 'tests/unit').glob('*.gd'), *(ROOT / 'tests/runner').glob('*.gd'),
+             drop_failover_run.SCHEDULE, drop_failover_run.PROBES, drop_failover_run.RUST_OBSERVER]
     return {str(path.relative_to(ROOT)): digest(path) for path in sorted(set(files))}
 
 
@@ -220,9 +222,11 @@ def select_source(manifest, source_revision, offline):
     return tree, archive['digest']
 
 
-def build_observer(tool_paths, output, reviewed_root, source_tree, source_revision, offline):
+def build_observer(tool_paths, output, reviewed_root, source_tree, source_revision, offline, *, coordinator_failover=False):
     oracle = ROOT / 'scripts/oracle/rust'
     command = [str(tool_paths['cargo']), 'build', '--locked', '--bin', 'drop_history']
+    if coordinator_failover:
+        command += ['--features', 'coordinator-failover']
     if offline:
         command.append('--offline')
     target = CACHE / 'target'
@@ -245,20 +249,23 @@ def build_observer(tool_paths, output, reviewed_root, source_tree, source_revisi
 
 
 def main():
-    parser = ReceiptParser(description=__doc__, receipt='receipt.json')
+    parser = ReceiptParser(description=__doc__, receipt='receipt.json', variants={'--coordinator-failover': drop_failover_run.RECEIPT})
     parser.add_argument('--godot', required=True)
     parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--coordinator-failover', action='store_true', help='qualify the v6 candidate on the shared five-peer silence schedule')
     parser.add_argument('--source-revision', choices=(REVISION, RECOVERY_REVISION), help='select an exact registered Fortress source revision')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/drop-history')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    receipt = args.output / 'receipt.json'
+    receipt = args.output / (drop_failover_run.RECEIPT if args.coordinator_failover else 'receipt.json')
     receipt.unlink(missing_ok=True)
     identity = git_identity()
     local_sources = inventory()
     manifest = load_manifest()
     pin = manifest['sources']['fortress']
-    source_revision = args.source_revision or pin['revision']
+    source_revision = args.source_revision or (RECOVERY_REVISION if args.coordinator_failover else pin['revision'])
+    if args.coordinator_failover:
+        require(source_revision == RECOVERY_REVISION, 'coordinator failover requires the exact v6 candidate')
     source_tree, archive_digest = select_source(manifest, source_revision, args.offline)
     pinned_sources = upstream_inventory(source_tree)
     engine = resolve_engine(args.godot)
@@ -273,9 +280,37 @@ def main():
     if not engine_version.startswith(('4.3.stable', '4.7.2.stable')):
         raise ValueError('drop history: unsupported engine profile')
     verify_tools(tool_paths, tool_identities)
-    binary = build_observer(tool_paths, args.output, pin['root'], source_tree, source_revision, args.offline)
+    binary = build_observer(tool_paths, args.output, pin['root'], source_tree, source_revision, args.offline,
+                            coordinator_failover=args.coordinator_failover)
     verify_tools(tool_paths, tool_identities)
     binary_identity = executable_identity(binary)
+
+    def verify_identity():
+        require_unchanged('local source inventory', local_sources, inventory())
+        require_unchanged('upstream source inventory', pinned_sources, upstream_inventory(source_tree))
+        require_unchanged('Godot executable', engine_identity, executable_identity(engine))
+        require_unchanged('drop oracle executable', binary_identity, executable_identity(binary))
+        require_unchanged('repository identity', identity, git_identity())
+        verify_tools(tool_paths, tool_identities)
+
+    def provenance():
+        return {'format': 1, 'complete': True, 'passed': True, 'upstream_revision': source_revision,
+            'upstream_archive_sha256': archive_digest,
+            'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'upstream_source_sha256': pinned_sources,
+            'source_sha256': local_sources, 'commit': identity['commit'],
+            'working_tree_dirty': identity['working_tree_dirty'],
+            'engine': engine_version.strip(), 'engine_identity': engine_identity, 'binary_identity': binary_identity,
+            'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'tool_identities': tool_identities, 'default_features': False, 'features': [],
+            'execution_identities_unchanged': True}
+
+    if args.coordinator_failover:
+        observation = drop_failover_run.observe(engine, binary, args.output, parse_godot, tool_paths, source_tree, args.offline)
+        verify_identity()
+        receipt.write_text(json.dumps({**provenance(), 'observer_features': ['coordinator-failover'], **observation}, indent=2) + '\n')
+        print('coordinator failover: source endpoint 1 certified cut 5; three Godot survivors timed out; all preserved rows 0–4, twice', flush=True)
+        print('coordinator failover: exact grace boundary and addressed stale PREPARE and INVENTORY replay passed, twice', flush=True)
+        return
+
     observed = []
     evidence = {}
     controls = []
@@ -348,22 +383,10 @@ def main():
     controls.extend(rejected_deadlines)
     timeout, timeout_summary, rejected_timeouts = donor_timeout_evidence(engine, binary, args.output, source_revision)
     controls.extend(rejected_timeouts)
-    require_unchanged('local source inventory', local_sources, inventory())
-    require_unchanged('upstream source inventory', pinned_sources, upstream_inventory(source_tree))
-    require_unchanged('Godot executable', engine_identity, executable_identity(engine))
-    require_unchanged('drop oracle executable', binary_identity, executable_identity(binary))
-    require_unchanged('repository identity', identity, git_identity())
-    verify_tools(tool_paths, tool_identities)
+    verify_identity()
     records = args.output / 'comparison.json'
     records.write_text(json.dumps({**observed[0], 'commit-deadline': deadline, 'donor-timeout': timeout}, indent=2) + '\n')
-    receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True, 'upstream_revision': source_revision,
-        'upstream_archive_sha256': archive_digest,
-        'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'upstream_source_sha256': pinned_sources,
-        'source_sha256': local_sources, 'commit': identity['commit'],
-        'working_tree_dirty': identity['working_tree_dirty'],
-        'engine': engine_version.strip(), 'engine_identity': engine_identity, 'binary_identity': binary_identity,
-        'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'tool_identities': tool_identities, 'default_features': False, 'features': [],
-        'execution_identities_unchanged': True, 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),
+    receipt.write_text(json.dumps({**provenance(), 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),
         'evidence': evidence, 'commit_deadline': {offset: outcome['advance'] for offset, outcome in deadline['source'].items()},
         'donor_timeout_retries_discarded': timeout_summary, 'negative_controls': controls,
         'scope': ('Paired one/four-row single-target and four-row two-target clean/lost-first-history three-endpoint original-history/cut scenarios: source explicit removal; '

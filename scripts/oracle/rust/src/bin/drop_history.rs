@@ -5,6 +5,10 @@ use fortress_rollback::{Config, DisconnectBehavior, FortressError, FortressEvent
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::{Arc, Mutex}, time::Duration};
 
+#[cfg(feature = "coordinator-failover")]
+#[path = "drop_history/failover.rs"]
+mod failover;
+
 const REVISION: &str = match option_env!("FORTRESS_DROP_ORACLE_REVISION") {
     Some(revision) => revision,
     None => "d124c89080004d96971a629bb0427056ee1805e3",
@@ -28,15 +32,16 @@ struct Buffers {
     incoming: Vec<(String, Message, Option<Value>)>, outgoing: Vec<(String, Message, Option<usize>)>,
     received: Vec<Value>, checksums: Vec<Value>, timed_publications: Vec<(usize, u64)>, order: Arc<Mutex<usize>>
 }
-fn next_order(order: &Arc<Mutex<usize>>) -> usize {
+fn next_order(order: &Arc<Mutex<usize>>, limit: usize) -> usize {
     let mut value = order.lock().unwrap();
-    assert!(*value < 8192, "bounded control observation order");
+    assert!(*value < limit, "bounded control observation order");
     *value += 1;
     *value
 }
 struct Socket {
     buffers: Arc<Mutex<Buffers>>,
     clock: Option<Arc<Mutex<u64>>>,
+    order_limit: usize,
 }
 impl NonBlockingSocket<String> for Socket {
     fn send_to(&mut self, message: &Message, address: &String) {
@@ -47,7 +52,7 @@ impl NonBlockingSocket<String> for Socket {
             queue.checksums.push(json!({"to":address,"raw":raw}));
         }
         let control = raw["body"].as_object().is_some_and(|body| body.keys().any(|kind| kind.starts_with("Drop")));
-        let order = control.then(|| next_order(&queue.order));
+        let order = control.then(|| next_order(&queue.order, self.order_limit));
         if let (Some(clock), Some(order)) = (&self.clock, order) {
             if raw["body"].get("DropBackfill").is_some() || raw["body"].get("DropAbort").is_some() {
                 queue.timed_publications.push((order, *clock.lock().unwrap()));
@@ -61,7 +66,7 @@ impl NonBlockingSocket<String> for Socket {
         let order = queue.order.clone();
         queue.received.extend(messages.iter().filter_map(|(_, message, control)| control.as_ref().map(|record| {
             let mut received = record.clone();
-            received["order"] = json!(next_order(&order));
+            received["order"] = json!(next_order(&order, self.order_limit));
             received["body"] = serde_json::to_value(message).unwrap()["body"].clone();
             received
         })));
@@ -207,7 +212,7 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
             builder = builder.add_player(kind, PlayerHandle::new(slot)).map_err(|error| format!("{error:?}"))?;
         }
         let queue = Arc::new(Mutex::new(Buffers { order: order.clone(), ..Default::default() }));
-        sessions.push(builder.start_p2p_session(Socket { buffers: queue.clone(), clock: drop_all_history.then(|| clock.clone()) })
+        sessions.push(builder.start_p2p_session(Socket { buffers: queue.clone(), clock: drop_all_history.then(|| clock.clone()), order_limit: 8192 })
             .map_err(|error| format!("{error:?}"))?);
         buffers.push(queue);
     }
@@ -422,6 +427,18 @@ fn peer_dropped(session: &mut P2PSession<Profile>) -> Vec<Value> {
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if let [mode, offset] = arguments.as_slice() {
+        if mode == "--coordinator-failover" {
+            #[cfg(feature = "coordinator-failover")]
+            {
+                failover::run(offset);
+                return;
+            }
+            #[cfg(not(feature = "coordinator-failover"))]
+            {
+                eprintln!("drop history: coordinator failover requires the v6 observer build");
+                std::process::exit(2);
+            }
+        }
         if mode == "--commit-deadline" {
             let offset = match offset.as_str() {
                 "-1" => -1, "0" => 0, "1" => 1,

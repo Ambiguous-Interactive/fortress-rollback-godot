@@ -36,7 +36,7 @@ def require_unchanged(label, original, current):
         raise ValueError('evidence identity changed: ' + label + '; rerun')
 
 
-def execute(command, log, input_text=None, timeout=120):
+def execute(command, log, input_text=None, timeout=120, *, environment=None):
     """Run one bounded engine or oracle step whose descendant tree stays owned.
 
     The started command, any terminated escapees and a timeout marker land in
@@ -44,8 +44,10 @@ def execute(command, log, input_text=None, timeout=120):
     output a deadline captured still travels with the raised TimeoutExpired.
     """
     log.write_text('COMMAND_STARTED: ' + repr(command) + '\n')
+    if environment is None:
+        environment = rust_environment()
     try:
-        returncode, stdout, stderr = owned_process.run_split(command, rust_environment(), log, timeout,
+        returncode, stdout, stderr = owned_process.run_split(command, environment, log, timeout,
                                                              cwd=ROOT, input_text=input_text)
     except subprocess.TimeoutExpired:
         raise  # The owned path recorded the partial output and timeout marker; the Linux fallback does not log.
