@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
 
 from engine_path import resolve_engine
-from receipt_arguments import ReceiptParser
+from receipt_arguments import OwnedReceiptParser
 
 ORACLE = Path(__file__).resolve().parent
 
@@ -231,23 +231,28 @@ class ResolvedPathUseTest(unittest.TestCase):
                     self.assertIn(expression, source)
 
 
-class FormalOutputOwnershipTest(unittest.TestCase):
-    # Value: protects=one formal receipt writer; fails_when=a second process corrupts a live receipt; why_new=engine failure tests run serially; seam=CLI
-    def test_formal_launchers_cannot_write_an_owned_output(self):
+class OracleOutputOwnershipTest(unittest.TestCase):
+    # Value: protects=one oracle receipt writer; fails_when=a second process corrupts a live receipt; why_new=engine failure tests run serially; seam=CLI
+    def test_oracle_launchers_cannot_write_an_owned_output(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'evidence'
             output.mkdir()
             receipt = output / 'receipt.json'
-            receipt.write_text('{"passed":true}')
-            parser = ReceiptParser(receipt='receipt.json', output_owner='formal-oracle')
+            replay_receipt = output / 'replay.json'
+            for path in (receipt, replay_receipt):
+                path.write_text('{"passed":true}')
+            parser = OwnedReceiptParser(receipt='receipt.json')
             with parser.claim_output(output):
-                for name, arguments in (('spectator_launch.py', ['--invalid']), ('handshake_launch.py', ['--godot', 'absent'])):
-                    with self.subTest(launcher=name):
-                        result = subprocess.run([sys.executable, str(ORACLE / name), '--output', str(output), *arguments],
-                                                capture_output=True, text=True, timeout=20)
-                        self.assertNotEqual(result.returncode, 0)
-                        self.assertIn('owned by another local run', result.stderr)
-                        self.assertEqual(receipt.read_text(), '{"passed":true}')
+                for name in ('spectator_launch.py', 'handshake_launch.py', 'launch.py', 'queue_launch.py',
+                             'p2p_launch.py', 'sync_floor_launch.py', 'drop_history_launch.py', 'replay_launch.py'):
+                    for arguments in (['--invalid'], ['--godot', 'absent']):
+                        with self.subTest(launcher=name, arguments=arguments):
+                            result = subprocess.run([sys.executable, str(ORACLE / name), '--output', str(output), *arguments],
+                                                    capture_output=True, text=True, timeout=20, check=False)
+                            self.assertNotEqual(result.returncode, 0)
+                            self.assertIn('owned by another local run', result.stderr)
+                            self.assertEqual(receipt.read_text(), '{"passed":true}')
+                            self.assertEqual(replay_receipt.read_text(), '{"passed":true}')
 
 
 if __name__ == '__main__':

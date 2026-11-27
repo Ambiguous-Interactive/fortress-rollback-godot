@@ -12,7 +12,7 @@ from launch import ROOT, execute, git_identity, require_unchanged
 from handshake_formal import check as check_formal
 from tlc_artifact import ARTIFACT, ensure_jar
 from fetch import digest, parse_manifest, sources
-from receipt_arguments import ReceiptParser
+from receipt_arguments import OwnedReceiptParser
 from run import CACHE, setup_rust, rust_environment
 from engine_path import resolve_engine
 from source_build import prepare_source_build, source_build_environment, upstream_inventory
@@ -74,7 +74,7 @@ def malformed_controls(fixture, engine, output):
 
 
 def main():
-    parser = ReceiptParser(description=__doc__, receipt='receipt.json', output_owner='formal-oracle')
+    parser = OwnedReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--tlc-jar', type=Path, default=CACHE / 'tla2tools.jar')
     parser.add_argument('--offline', action='store_true')
@@ -89,7 +89,8 @@ def main():
 
 def run(args):
     args.output.mkdir(parents=True, exist_ok=True)
-    receipt = args.output / 'receipt.json'; receipt.unlink(missing_ok=True)
+    receipt = args.output / 'receipt.json'
+    receipt.unlink(missing_ok=True)
     identity = git_identity()
     engine = resolve_engine(args.godot)
     formal_on = args.formal == 'on'
@@ -150,7 +151,8 @@ def run(args):
         actual_path = args.output / f'{name}-actual.json'; actual_path.write_text(json.dumps(actuals[0], indent=2) + '\n')
         if name == 'model_matching' and formal_on:
             formal = check_formal(actuals[0], args.output, args.tlc_jar.resolve(), upstream=trees['fortress'], jar_digest=jar_digest)
-            mutant = deepcopy(actuals[0]); mutant['records'][0]['transitions'][0].update(remaining=0, state='running')
+            mutant = deepcopy(actuals[0])
+            mutant['records'][0]['transitions'][0].update(remaining=0, state='running')
             try:
                 check_formal(mutant, args.output, args.tlc_jar.resolve(), upstream=trees['fortress'], jar_digest=jar_digest)
             except ValueError as error:

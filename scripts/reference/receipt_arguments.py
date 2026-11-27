@@ -26,22 +26,16 @@ class StrictHelp(argparse.Action):
 class ReceiptParser(argparse.ArgumentParser):
     """Use `receipt` in the last named `--output`, its default, or a fixed `output`; `variants` maps flags to other receipt names."""
 
-    def __init__(self, *args, receipt, output=None, variants=None, output_owner=None, **kwargs):
+    def __init__(self, *args, receipt, output=None, variants=None, **kwargs) -> None:
         kwargs['allow_abbrev'] = False
         kwargs['add_help'] = False
         super().__init__(*args, **kwargs)
         self.add_argument('-h', '--help', action=StrictHelp, nargs='?', const=True, default=argparse.SUPPRESS,
                           help='show this help message and exit')
         self.receipt, self.fixed_output, self.variants, self.receipt_preview = receipt, output, variants or {}, None
-        self.output_owner = output_owner
 
     def claim_output(self, directory):
-        if self.output_owner is None:
-            return nullcontext()
-        from local_ownership import claim
-        output = Path(directory).resolve()
-        key = hashlib.sha256(str(output).encode()).hexdigest()
-        return claim(f'.{self.output_owner}-{key}', directory=output.parent)
+        return nullcontext()
 
     def parse_args(self, args=None, namespace=None):
         arguments = list(sys.argv[1:] if args is None else args)
@@ -72,3 +66,14 @@ class ReceiptParser(argparse.ArgumentParser):
             except (OSError, ValueError) as error:
                 message += f'; unable to invalidate the selected receipt: {error}'
         super().error(message)
+
+
+class OwnedReceiptParser(ReceiptParser):
+    """Protect the entire output directory for cooperating oracle launchers."""
+
+    def claim_output(self, directory):
+        from local_ownership import claim
+
+        output = Path(directory).resolve()
+        key = hashlib.sha256(str(output).encode()).hexdigest()
+        return claim(f'.oracle-output-{key}', directory=output.parent)

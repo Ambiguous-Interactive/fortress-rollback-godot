@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / 'scripts/reference'))
 
 from fetch import CACHE, digest, parse_manifest, sources  # noqa: E402
 from launch import git_identity, require_unchanged  # noqa: E402
-from receipt_arguments import ReceiptParser  # noqa: E402
+from receipt_arguments import OwnedReceiptParser  # noqa: E402
 from source_build import upstream_inventory  # noqa: E402
 from source_wire import wire_version  # noqa: E402
 from spectator_model import CONFIG, SPEC, check  # noqa: E402
@@ -25,7 +25,7 @@ from tlc_artifact import ARTIFACT, ensure_jar  # noqa: E402
 
 
 def main():
-    parser = ReceiptParser(description=__doc__, receipt='receipt.json', output_owner='formal-oracle')
+    parser = OwnedReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', help='also replay production Godot observations through the pinned model')
     parser.add_argument('--tlc-jar', type=Path, default=CACHE / 'tla2tools.jar')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/spectator-model')
