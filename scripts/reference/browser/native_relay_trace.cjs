@@ -311,7 +311,7 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
       });
       return { counts, frontier };
     },
-    encodeReceipt(links, sockets) {
+    encodeReceipt(links = [], sockets) {
       const encode = ({ bytes, carrierOpcode, ...event }) => ({ ...event, bytes: btoa(String.fromCharCode(...bytes)) });
       return { ...capture(links, encode, encode), sockets };
     },

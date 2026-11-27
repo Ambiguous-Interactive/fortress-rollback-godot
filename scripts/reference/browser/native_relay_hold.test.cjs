@@ -238,6 +238,10 @@ test('relay wire receipt exports the exact retained bytes at the page cutoff', a
     trace.recordEngine('native', first, packet.subarray(57).toString('hex'), 7, '20', 0, true);
     return carrier;
   }
+  const extraCarrier = Buffer.alloc(2049);
+  extraCarrier[0] = 1;
+  assert.equal(trace.recordCarrier(extraCarrier.subarray(0, 2048)), 1);
+  assert.equal(trace.recordCarrier(extraCarrier), undefined);
   for (let index = 0; index < 130; index++) record(report);
   const changedCarrier = record(conflict);
 
@@ -245,9 +249,9 @@ test('relay wire receipt exports the exact retained bytes at the page cutoff', a
   const full = JSON.parse(JSON.stringify({ ...await trace.freeze(), sockets: 0 }));
   const scoped = JSON.parse(JSON.stringify({ ...await trace.freeze(links), sockets: 0 }));
   realm.crypto = { subtle: { digest() { throw new Error('page digest unavailable during relay receipt'); } } };
+  assert.deepEqual(wire.relayWireTrace(), wire.relayWireTrace([]));
   const page = { async evaluate(operation, selected) {
-    const reading = runInNewContext(`(${operation})(${JSON.stringify(selected)})`, realm);
-    return reading;
+    return runInNewContext(`(${operation})(${JSON.stringify(selected)})`, realm);
   } };
   assert.deepEqual(await readRelayWireReceipt(page), full);
   assert.deepEqual(await readRelayWireReceipt(page, links), scoped);
@@ -257,6 +261,8 @@ test('relay wire receipt exports the exact retained bytes at the page cutoff', a
   assert.equal(events.at(-2).envelope_sha256, sha256(report));
   assert.equal(events.at(-1).envelope_sha256, sha256(conflict));
   assert.equal(events.at(-1).payload_sha256, sha256(conflict.subarray(57)));
+  assert.equal(full.carriers.skipped, 1);
+  assert.equal(full.carriers.events[0].carrier_sha256, sha256(extraCarrier.subarray(0, 2048)));
   assert.equal(full.carriers.events.at(-1).carrier_sha256, sha256(changedCarrier));
   const pending = readRelayWireReceipt(page);
   record(report);
