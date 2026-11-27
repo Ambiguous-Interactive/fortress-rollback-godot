@@ -1,6 +1,7 @@
 """Value: remote recording acceptance requires real correction beside a no-correction green control; seam=none."""
 import copy
 import json
+from tempfile import TemporaryDirectory
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -8,6 +9,7 @@ from unittest.mock import patch
 import replay_remote
 import replay_asymmetric
 import replay_corruption
+from replay_recovery import withheld_receipt_controls
 from replay_launch import encoded
 
 
@@ -125,6 +127,34 @@ class AsymmetricRecordingTest(unittest.TestCase):
                 self.assertEqual([len(peer['frames']) for peer in actual['peers']], [256, 255])
                 self.assertEqual([len(peer['playback']['events']) for peer in actual['peers']], [128, 170])
                 self.assertEqual([row['round'] for row in actual['deliveries'] if row['messages'] == 14], [65, 125, 185, 245])
+
+    # Value: protects=withholding an actual final receipt also bounds both decoded exports; fails_when=an incomplete run appends a phantom input;
+    # why_new=the exit code and receipt diagnostic alone miss incorrect replay exports; seam=none
+    def test_withheld_final_input_rejects_phantom_rows_from_either_peer(self):
+        scratch = Path(__file__).resolve().parents[2] / '.cache/scratch'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(prefix='test-replay-withheld-', dir=scratch) as directory:
+            for phantom_peer in (None, 0, 1):
+                def execute(command, log):
+                    neutral = '-neutral-' in command[-1]
+                    actual = replay_asymmetric.expected(True, neutral, source_recovery=True, omit_final=True)
+                    if phantom_peer is not None:
+                        actual['peers'][phantom_peer]['frames'].append([0, 0])
+                    log.write_text(json.dumps(actual) + '\nError: "source final original input unavailable: peer=0 frame=256"\n')
+                    raise ValueError('process failed (1)')
+
+                with self.subTest(phantom_peer=phantom_peer):
+                    if phantom_peer is not None:
+                        with self.assertRaisesRegex(ValueError, 'asymmetric.withheld.exported_rows'):
+                            withheld_receipt_controls(Path('example'), Path(directory), execute, replay_asymmetric.expected, recovery=True)
+                    else:
+                        receipt = withheld_receipt_controls(Path('example'), Path(directory), execute, replay_asymmetric.expected, recovery=True)
+                        self.assertEqual(receipt['negative_controls'], ['rust-missing-final-receipt', 'rust-neutral-missing-final-receipt'])
+                        for case in ('corrected', 'neutral'):
+                            rows = receipt['withheld_exports'][case]
+                            self.assertEqual([peer['exported_rows'] for peer in rows], [256, 255])
+                            self.assertEqual([peer['last_playback_frame'] for peer in rows], [255, 254])
+                            self.assertEqual([peer['final_input_received'] for peer in rows], [False, False])
 
     # Value: protects=workload reduction cannot self-certify; fails_when=changed expectation removes actual exercised boundaries;
     # why_new=trace equality alone can agree with a shortened corpus; seam=none

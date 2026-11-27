@@ -1,6 +1,9 @@
 """Value: rejects false floor parity; schedule mutations and the canonical-bundle gate."""
 import copy
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from contract import checksum
 from sync_floor_contract import (
@@ -17,6 +20,23 @@ class SyncFloorCorpusTests(unittest.TestCase):
         self.bundle = bundle()
         self.scenario = self.bundle['scenario']
         self.baseline = [bytes.fromhex(state) for state in self.bundle['baseline']]
+
+    # Value: protects=clean adapter provenance; fails_when=leftover Cargo build script survives; seam=staging
+    def test_adapter_reconciles_expected_files_before_build(self):
+        import sync_floor_launch
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tree = root / 'verified'
+            tree.mkdir()
+            with patch.object(sync_floor_launch, 'CACHE', root / 'cache'):
+                manifest, original = sync_floor_launch.write_adapter('clean', tree, 'sync_floor')
+                injected = manifest.with_name('build.rs')
+                injected.write_text('fn main() {}')
+                rebuilt, staged = sync_floor_launch.write_adapter('clean', tree, 'sync_floor')
+            self.assertEqual(rebuilt, manifest)
+            self.assertEqual(staged, original)
+            self.assertFalse(injected.exists())
 
     def test_schedule_shape_and_flags(self):
         self.assertEqual(validate_bundle(self.bundle), self.bundle)

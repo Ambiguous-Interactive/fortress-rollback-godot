@@ -4,7 +4,7 @@ import struct
 from contract import REVISION
 
 
-def _scenarios():
+def _scenarios(source_revision):
     for players in range(2, 9):
         for distance, delay in ((0, 0), (2, 2), (7, 7)):
             operations = [{'kind': 'events'}, {'kind': 'advance'},
@@ -19,13 +19,13 @@ def _scenarios():
                                        'bytes': struct.pack('<I', value).hex()})
                 operations.extend([{'kind': 'advance'}, {'kind': 'events'}])
             yield f'players-{players}-distance-{distance}-delay-{delay}', {
-                'format': 1, 'upstream_revision': REVISION, 'players': players,
+                'format': 1, 'upstream_revision': source_revision, 'players': players,
                 'input_width': 4, 'check_distance': distance, 'input_delay': delay,
                 'operations': operations}
 
 
-def scenarios():
-    for name, scenario in _scenarios():
+def scenarios(*, source_revision=REVISION):
+    for name, scenario in _scenarios(source_revision):
         yield name, scenario
         yield 'stateful-' + name, dict(scenario, format=2)
 

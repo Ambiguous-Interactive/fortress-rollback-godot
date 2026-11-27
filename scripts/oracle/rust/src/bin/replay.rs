@@ -1,5 +1,7 @@
 //! Development-only observation of the unchanged pinned ReplaySession public API.
 #![forbid(unsafe_code)]
+#[path = "../source_revision.rs"]
+mod source_revision;
 
 use fortress_rollback::replay::{Replay, ReplayMetadata};
 use fortress_rollback::sessions::replay_session::ReplaySession;
@@ -225,14 +227,19 @@ fn recording(case: RecordingCase, extract: bool) -> Result<Value, String> {
 }
 
 fn main() -> Result<(), String> {
+    source_revision::compiled()?;
+    if cfg!(feature = "replay-recovery") != (fortress_rollback::PROTOCOL_VERSION == 6) {
+        return Err("replay recovery feature differs from the linked Fortress source".into());
+    }
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if arguments.len() == 1 && ["--remote-recording", "--remote-recording-withhold", "--remote-recording-neutral",
         "--remote-recording-long", "--remote-recording-neutral-long", "--remote-recording-asymmetric",
         "--remote-recording-pressure", "--remote-recording-pressure-neutral", "--remote-recording-pressure-withhold",
         "--remote-recording-asymmetric-neutral", "--remote-recording-asymmetric-withhold",
         "--remote-recording-asymmetric-final-missing", "--remote-recording-asymmetric-neutral-final-missing"].contains(&arguments[0].as_str()) {
-        println!("{}", remote::run(&arguments[0])?);
-        return Ok(());
+        let (observation, missing_final) = remote::run(&arguments[0])?;
+        println!("{observation}");
+        return missing_final.map_or(Ok(()), Err);
     }
     let mut input = String::new();
     io::stdin().take(2_097_153).read_to_string(&mut input).map_err(|e| e.to_string())?;

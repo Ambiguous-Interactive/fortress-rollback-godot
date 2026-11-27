@@ -3,7 +3,7 @@ import copy
 import json
 import re
 
-from contract import fields, integer, validate_trace
+from contract import REVISION, fields, integer, validate_trace
 
 PREFIX = 'FORTRESS_ORACLE_SESSION_RESULT '
 
@@ -28,7 +28,7 @@ def error_category(error, production, player=None, players=None):
     raise ValueError('session: unrecognized error projection: ' + str(error))
 
 
-def compare_result(stdout, stderr, expected):
+def compare_result(stdout, stderr, expected, *, source_revision=REVISION):
     if any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
         raise ValueError('session: Godot engine error')
     records = [line[len(PREFIX):] for line in stdout.splitlines() if line.startswith(PREFIX)]
@@ -42,9 +42,9 @@ def compare_result(stdout, stderr, expected):
     if not isinstance(value['engine_version'], str) or not value['engine_version']:
         raise ValueError('session: missing engine identity')
     scenario = expected['scenario']
-    validate_trace(expected, scenario)
+    validate_trace(expected, scenario, source_revision=source_revision)
     # Validate independently before equality: bool/float aliases must not pass.
-    actual = validate_trace(value['trace'], scenario)
+    actual = validate_trace(value['trace'], scenario, source_revision=source_revision)
     for index, (observed, reference) in enumerate(zip(actual['operations'], expected['operations'])):
         source = scenario['operations'][index]
         if error_category(observed['error'], True) != error_category(
@@ -58,7 +58,7 @@ def compare_result(stdout, stderr, expected):
     return value
 
 
-def negative_controls(value, expected):
+def negative_controls(value, expected, *, source_revision=REVISION):
     """Production evidence cannot pass after omitted callbacks or altered input/state."""
     advance = next(op for op in value['trace']['operations'] if op['requests'])
     operation_index = advance['index']
@@ -75,7 +75,7 @@ def negative_controls(value, expected):
         changed = copy.deepcopy(value)
         mutate(changed)
         try:
-            compare_result(PREFIX + json.dumps(changed), '', expected)
+            compare_result(PREFIX + json.dumps(changed), '', expected, source_revision=source_revision)
         except ValueError as error:
             if name == 'wrong_input_status' and f'operation {operation_index}: requests mismatch' not in str(error):
                 raise ValueError('session status control failed outside request comparison') from error

@@ -15,7 +15,8 @@ def generation_inputs():
     oracle = root / 'scripts/oracle'
     # The corpus builders and source trace validators share this adapter and locked build.
     paths = ('contract.py', 'p2p_capacity.py', 'p2p_contract.py', 'p2p_launch.py', 'p2p_lifecycle.py',
-             'p2p_lifecycle_corpus.py', 'p2p_recovery.py', 'p2p_schedule.py', 'rust/src/bin/p2p.rs',
+             'p2p_lifecycle_corpus.py', 'p2p_recovery.py', 'p2p_schedule.py', 'source_build.py', 'source_wire.py',
+             'rust/src/bin/p2p.rs', 'rust/src/bin/p2p/unique_json.rs', 'rust/src/source_revision.rs',
              'rust/Cargo.lock', 'rust/Cargo.toml', 'rust/rust-toolchain.toml')
     inputs = {str((oracle / path).relative_to(root)): hashlib.sha256((oracle / path).read_bytes()).hexdigest() for path in paths}
     pin_path = 'docs/reference/pins.json'
@@ -63,7 +64,9 @@ def write_hints(cases):
 
 
 if __name__ == '__main__':
-    from p2p_launch import corpus
+    from p2p_launch import corpus, load_manifest
     parser = argparse.ArgumentParser(description='Regenerate the optional schedule hints from the pinned P2P oracle.')
     parser.add_argument('--binary', required=True, type=Path)
-    write_hints(corpus(parser.parse_args().binary.resolve(strict=True), hints={}))
+    binary = parser.parse_args().binary.resolve(strict=True)
+    revision = load_manifest()['sources']['fortress']['revision']
+    write_hints(corpus(binary, hints={}, source_revision=revision))

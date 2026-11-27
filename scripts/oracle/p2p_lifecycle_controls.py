@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 from launch import execute
-from p2p_contract import compare, validate
+from p2p_contract import REVISION, compare, validate
 from controls import reject
 from run import rust_environment
 
@@ -107,12 +107,12 @@ def mutations_for(actual, expected):
     return mutations
 
 
-def controls(actual, expected, scenario):
+def controls(actual, expected, scenario, *, source_revision=REVISION):
     mutations = mutations_for(actual, expected)
     for name, (mutate, diagnostic) in mutations.items():
         mutant = deepcopy(actual); mutate(mutant)
         try:
-            compare(mutant, expected, scenario)
+            compare(mutant, expected, scenario, source_revision=source_revision)
         except ValueError as error:
             if not str(error).startswith(diagnostic):
                 raise ValueError('lifecycle control wrong boundary: ' + name + ': ' + str(error)) from error
@@ -121,7 +121,7 @@ def controls(actual, expected, scenario):
     return list(mutations)
 
 
-def wire_controls(binary, engine, scenarios, directory):
+def wire_controls(binary, engine, scenarios, directory, *, source_revision=REVISION):
     root = Path(__file__).resolve().parents[2]
     observer = (root / 'tests/oracle/p2p_trace.gd').read_text(encoding='utf-8')
     boundary = '\tvar message: T.Message = result.message\n'
@@ -160,7 +160,7 @@ def wire_controls(binary, engine, scenarios, directory):
         from p2p_launch import parse_godot
         actual = parse_godot(stdout, stderr); validate(actual, scenario)
         try:
-            compare(actual, expected, scenario)
+            compare(actual, expected, scenario, source_revision=source_revision)
         except ValueError as error:
             if not str(error).startswith(f'packet {index}: semantic mismatch'):
                 raise ValueError('lifecycle wire wrong rejection boundary') from error
@@ -173,7 +173,7 @@ def wire_controls(binary, engine, scenarios, directory):
     return result
 
 
-def wide_token_controls(binary, expected, directory, environment):
+def wide_token_controls(binary, expected, directory, environment, *, source_revision=REVISION):
     """Positive raw-message u128 boundaries and strict serde rejection controls."""
     result = []
     for kind, variant, field in [('quality_report', 'QualityReport', 'ping'), ('quality_reply', 'QualityReply', 'pong')]:
@@ -182,7 +182,7 @@ def wide_token_controls(binary, expected, directory, environment):
             trace = deepcopy(expected)
             trace['packets'][index]['raw']['body'][variant][field] = number
             trace['packets'][index]['semantic'][field] = f'{number:032x}'
-            validate(trace, trace['scenario'], True)
+            validate(trace, trace['scenario'], True, source_revision=source_revision)
             label = 'positive-p4-' + field + '-u128-' + str(number)
             payload = json.dumps(trace)
             (directory / (label + '.json')).write_text(payload + '\n', encoding='utf-8')
@@ -203,11 +203,11 @@ def wide_token_controls(binary, expected, directory, environment):
     return result
 
 
-def process_controls(binary, engine, scenarios, directory):
+def process_controls(binary, engine, scenarios, directory, *, source_revision=REVISION):
     root = Path(__file__).resolve().parents[2]; environment = rust_environment(); result = []
     if 'quality_echo_resume' in scenarios:
         expected = json.loads((directory / 'quality_echo_resume-source.json').read_text(encoding='utf-8'))
-        result.extend(wide_token_controls(binary, expected, directory, environment))
+        result.extend(wide_token_controls(binary, expected, directory, environment, source_revision=source_revision))
         original = scenarios['quality_echo_resume']
         mutant = deepcopy(original); mutant['lifecycle'] = None
         path = directory / 'control-p4-present-lifecycle-null.json'
@@ -233,11 +233,11 @@ def process_controls(binary, engine, scenarios, directory):
         actual = json.loads((directory / (case + '-actual.json')).read_text(encoding='utf-8'))
         expected = json.loads((directory / (case + '-source.json')).read_text(encoding='utf-8'))
         command = [sys.executable, str(Path(__file__).with_name('p2p_validate.py')), '--scenario',
-                   str(directory / (case + '-scenario.json')), '--expected', str(directory / (case + '-source.json'))]
+                   str(directory / (case + '-scenario.json')), '--expected', str(directory / (case + '-source.json')), '--source-revision', source_revision]
         for name, (mutate, diagnostic) in mutations_for(actual, expected).items():
             mutant = deepcopy(actual); mutate(mutant)
             try:
-                compare(mutant, expected, scenario)
+                compare(mutant, expected, scenario, source_revision=source_revision)
             except ValueError as error:
                 if not str(error).startswith(diagnostic):
                     raise ValueError('lifecycle process control wrong boundary: ' + name + ': ' + str(error)) from error
@@ -254,16 +254,16 @@ def process_controls(binary, engine, scenarios, directory):
         expected = json.loads((directory / 'control_boundaries-source.json').read_text())
         for trace in (actual, expected):
             trace.update(scenario=deepcopy(short), records=trace['records'][:1], packets=[])
-        compare(actual, expected, short)
+        compare(actual, expected, short, source_revision=source_revision)
         submitted = directory / 'control-p4-vacuous-scenario.json'; submitted.write_text(json.dumps(short))
         reference = directory / 'control-p4-vacuous-source.json'; reference.write_text(json.dumps(expected))
         payload = json.dumps(actual)
         (directory / 'control-p4-vacuous-actual.json').write_text(payload)
         for case, (observations, _) in CORPUS_REQUIREMENTS.items():
             command = [sys.executable, str(Path(__file__).with_name('p2p_validate.py')), '--scenario', str(submitted),
-                       '--expected', str(reference), '--corpus-case', case]
+                       '--expected', str(reference), '--corpus-case', case, '--source-revision', source_revision]
             diagnostic = 'p2p validation: corpus ' + case + ': missing required source observation ' + observations.split()[0]
             reject(command, directory / ('control-p4-vacuous-' + case + '.log'), environment, payload, diagnostic, 2)
             result.append('named_corpus_' + case + '_vacuous_rejected')
-    result.extend(wire_controls(binary, engine, scenarios, directory))
+    result.extend(wire_controls(binary, engine, scenarios, directory, source_revision=source_revision))
     return result

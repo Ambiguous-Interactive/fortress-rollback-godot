@@ -28,10 +28,10 @@ def checksum(data):
     return f'{low ^ ((1 << 64) - 1):016x}{low:016x}'
 
 
-def validate_scenario(value):
+def validate_scenario(value, *, source_revision=REVISION):
     fields(value, 'format upstream_revision players input_width check_distance input_delay operations', 'scenario')
     integer(value['format'], 1, 2, 'scenario version')
-    if value['upstream_revision'] != REVISION:
+    if value['upstream_revision'] != source_revision:
         raise ValueError('scenario: stale upstream revision')
     integer(value['players'], 2, 8, 'players')
     integer(value['input_width'], 4, 4, 'input width')
@@ -85,12 +85,12 @@ def state(value, players, frame_key='frame', bytes_key='bytes', version=1):
     return data
 
 
-def validate_trace(value, scenario):
-    validate_scenario(scenario)
+def validate_trace(value, scenario, *, source_revision=REVISION):
+    validate_scenario(scenario, source_revision=source_revision)
     fields(value, 'format upstream_revision scenario operations final_state', 'trace')
-    validate_scenario(value['scenario'])
+    validate_scenario(value['scenario'], source_revision=source_revision)
     integer(value['format'], scenario['format'], scenario['format'], 'trace version')
-    if value['upstream_revision'] != REVISION or value['scenario'] != scenario:
+    if value['upstream_revision'] != source_revision or value['scenario'] != scenario:
         raise ValueError('trace: stale revision or mismatched scenario')
     operations = value['operations']
     if not isinstance(operations, list) or len(operations) != len(scenario['operations']):

@@ -11,7 +11,7 @@ def sample(slot, frame, neutral=False):
     return 0 if neutral else (0xffffffff + frame * 1234567 + slot * 0x1020304) & 0xffffffff
 
 
-def expected(rust, neutral=False, long=False):
+def expected(rust, neutral=False, long=False, *, recovery=False):
     rounds = 257 if long else 9
     rows = [[sample(slot, frame, neutral) for slot in range(2)] for frame in range(rounds)]
     initial = (0, 0xffffffff, 0xffffffff, 0)
@@ -48,8 +48,9 @@ def expected(rust, neutral=False, long=False):
             save()
             simulate(turn, False)
             services.append(dict(round=turn, before=turn, after=turn + 1, requests=[row['kind'] for row in records[first:]]))
-        # Source records newly confirmed rows before executing the correction's returned SAVE requests.
-        checksums = [first_saved[frame] if rust else state_bytes(canonical[frame]).hex() for frame in range(rounds - 1)]
+        # The reviewed source samples checksums before correction SAVE callbacks.
+        # The recovery revision waits for the corrected saved-state cells.
+        checksums = [first_saved[frame] if rust and not recovery else state_bytes(canonical[frame]).hex() for frame in range(rounds - 1)]
         playback = playback_expected(dict(name=f'remote-{peer}', players=2, seed=0xffffffff, validate=True,
                                           frames=rows[:-1], checksums=checksums), rust)
         peers.append(dict(peer=peer, current_frame=rounds, bytes=state_bytes(state).hex(), records=records,
@@ -61,8 +62,8 @@ def expected(rust, neutral=False, long=False):
     return dict(format=1, peers=peers, deliveries=deliveries)
 
 
-def validate(actual, rust, neutral=False, long=False):
-    compare(actual, expected(rust, neutral, long), 'remote.' + ('rust' if rust else 'godot'))
+def validate(actual, rust, neutral=False, long=False, *, recovery=False):
+    compare(actual, expected(rust, neutral, long, recovery=recovery), 'remote.' + ('rust' if rust else 'godot'))
     # Keep the exercised correction boundary independent of the generated complete expectation.
     for peer in actual['peers']:
         if long:
@@ -72,12 +73,12 @@ def validate(actual, rust, neutral=False, long=False):
         loads = [record['frame'] for record in peer['records'] if record['kind'] == 'load']
         compare(loads, [] if neutral else list(range(0, 256 if long else 8, 2)), 'remote.required_loads')
         if rust:
-            compare([event['frame'] for event in peer['playback']['events']], [] if neutral else list(range(1, 256 if long else 8, 2)), 'remote.source_checksum_events')
+            compare([event['frame'] for event in peer['playback']['events']], [] if neutral or recovery else list(range(1, 256 if long else 8, 2)), 'remote.source_checksum_events')
         else:
             compare(peer['playback']['failure_frame'], -1, 'remote.godot_playback_healthy')
 
 
-def controls(observed):
+def controls(observed, *, recovery=False):
     names = []
     for runtime in ('rust', 'godot'):
         for fault in ('omitted-load', 'original-input', 'original-state', 'recorded-input', 'checksum', 'playback-state'):
@@ -103,7 +104,7 @@ def controls(observed):
                 peer['playback']['records'][5]['bytes'] = '00' * 16
                 field = 'playback.records[5].bytes'
             try:
-                validate(changed, runtime == 'rust')
+                validate(changed, runtime == 'rust', recovery=recovery)
             except ValueError as error:
                 if not str(error).startswith(f'remote.{runtime}.peers[0].{field}'):
                     raise ValueError(f'{fault}: wrong remote rejection: {error}') from error
@@ -113,7 +114,7 @@ def controls(observed):
     return names
 
 
-def long_controls(observed):
+def long_controls(observed, *, recovery=False):
     """The second ring's original history, corrections, export and playback are independently required."""
     names = []
     for runtime in ('rust', 'godot'):
@@ -141,7 +142,7 @@ def long_controls(observed):
             if fault != 'post-wrap-delivery':
                 field = 'peers[0].' + field
             try:
-                validate(changed, runtime == 'rust', long=True)
+                validate(changed, runtime == 'rust', long=True, recovery=recovery)
             except ValueError as error:
                 if not str(error).startswith(f'remote.{runtime}.{field}'):
                     raise ValueError(f'{fault}: wrong long remote rejection: {error}') from error
@@ -184,7 +185,7 @@ def delivery_control(engine, root, output, execute):
     return ['godot-measured-duplicate-delivery']
 
 
-def observe(binary, engine, root, output, execute):
+def observe(binary, engine, root, output, execute, *, recovery=False):
     combined = {}
     for neutral, long in ((False, False), (True, False), (False, True), (True, True)):
         mode = ('--remote-recording-neutral' if neutral else '--remote-recording') + ('-long' if long else '')
@@ -203,7 +204,7 @@ def observe(binary, engine, root, output, execute):
                 elif stderr.strip():
                     raise ValueError('unexpected remote source stderr')
                 result[runtime] = json.loads(stdout)
-                validate(result[runtime], runtime == 'rust', neutral, long)
+                validate(result[runtime], runtime == 'rust', neutral, long, recovery=recovery)
             rounds.append(result)
         compare(rounds[0], rounds[1], 'remote.repeat')
         combined[('neutral' if neutral else 'corrected') + ('_long' if long else '')] = rounds[0]
@@ -224,9 +225,10 @@ def observe(binary, engine, root, output, execute):
         else:
             raise ValueError(f'{runtime}: missing remote receipts did not stop gameplay')
     from replay_pressure import observe as observe_pressure
-    pressure = observe_pressure(binary, engine, root, output, execute)
+    pressure = observe_pressure(binary, engine, root, output, execute, recovery=recovery)
     from replay_asymmetric import observe as observe_asymmetric
-    asymmetric = observe_asymmetric(binary, engine, root, output, execute)
+    asymmetric = observe_asymmetric(binary, engine, root, output, execute, recovery=recovery)
     return dict(repeat_equal=True, observations=combined, asymmetric=asymmetric, pressure=pressure,
-                negative_controls=controls(combined['corrected']) + long_controls(combined['corrected_long']), standalone_rejections=refused,
+                negative_controls=controls(combined['corrected'], recovery=recovery) + long_controls(combined['corrected_long'], recovery=recovery),
+                standalone_rejections=refused,
                 delivery_controls=delivery_control(engine, root, output, execute))

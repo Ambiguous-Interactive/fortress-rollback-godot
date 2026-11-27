@@ -14,8 +14,11 @@ from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_r
 from engine_path import resolve_engine
 from fetch import fetch
 from receipt_arguments import ReceiptParser
+from source_build import prepare_source_build, source_build_environment, upstream_inventory
+from source_wire import RECOVERY_REVISION, REVIEWED_REVISION
 
-REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
+# Preserve the original source label in portable fixtures and serialized controls.
+REVISION = REVIEWED_REVISION
 
 
 def state_bytes(state):
@@ -302,7 +305,7 @@ def expert_controls(observed, wanted):
     ))
 
 
-def reject_mutations(observed, wanted, mutations):
+def reject_mutations(observed, wanted, mutations, *, compare_result=compare, prefix='result'):
     controls = []
     for name, path, replacement in mutations:
         changed = copy.deepcopy(observed)
@@ -310,9 +313,9 @@ def reject_mutations(observed, wanted, mutations):
         for key in path[:-1]:
             target = target[key]
         target[path[-1]] = replacement
-        diagnostic = 'result' + ''.join(f'[{key}]' if isinstance(key, int) else '.' + key for key in path)
+        diagnostic = prefix + ''.join(f'[{key}]' if isinstance(key, int) else '.' + key for key in path)
         try:
-            compare(changed, wanted)
+            compare_result(changed, wanted)
         except ValueError as error:
             if not str(error).startswith(diagnostic + ':'):
                 raise ValueError(f'{name}: rejected at unintended boundary: {error}') from error
@@ -396,20 +399,28 @@ def main():
     receipt.unlink(missing_ok=True)
     engine = resolve_engine(args.godot)
     manifest = load_manifest()
-    if manifest['sources']['fortress']['revision'] != REVISION:
+    revision = manifest['sources']['fortress']['revision']
+    if revision not in (REVISION, RECOVERY_REVISION):
         raise ValueError('replay adapter revision differs from pinned source')
     trees = sources(manifest, args.offline)
     version, engine_hash = verified_engine(engine, manifest, args.offline)
     frozen = fingerprints()
     cargo, _ = setup_rust(manifest, args.offline)
+    cargo_manifest = prepare_source_build(ROOT / 'scripts/oracle/rust/Cargo.toml', trees['fortress'], revision, CACHE)
+    environment = source_build_environment(cargo_manifest, trees['fortress'], revision)
+    source_hashes = upstream_inventory(trees['fortress'])
+    adapter_hashes = upstream_inventory(cargo_manifest.parent)
+    recovery = revision == RECOVERY_REVISION
     command = [str(cargo), '+' + manifest['rust']['version'], 'build', '--locked', '--bin', 'replay',
-               '--manifest-path', str(ROOT / 'scripts/oracle/rust/Cargo.toml')]
+               '--manifest-path', str(cargo_manifest)]
+    if recovery:
+        command.extend(['--features', 'replay-recovery'])
     if args.offline:
         command.append('--offline')
-    execute(command, args.output / 'build.log', timeout=600)
+    execute(command, args.output / 'build.log', timeout=600, environment=environment)
     test_command = list(command)
     test_command[2] = 'test'
-    execute(test_command, args.output / 'observer-tests.log', timeout=600)
+    execute(test_command, args.output / 'observer-tests.log', timeout=600, environment=environment)
     binary = CACHE / 'target/debug/replay'
     binary_hash = digest(binary)
     cases = corpus()
@@ -450,17 +461,23 @@ def main():
     from replay_recording import observe as observe_recording
     recording = observe_recording(binary, engine, ROOT, args.output, execute)
     from replay_remote import observe as observe_remote
-    remote_recording = observe_remote(binary, engine, ROOT, args.output, execute)
+    remote_recording = observe_remote(binary, engine, ROOT, args.output, execute, recovery=recovery)
+    if adapter_hashes != upstream_inventory(cargo_manifest.parent):
+        raise ValueError('staged Cargo adapter changed during replay observation')
+    if source_hashes != upstream_inventory(trees['fortress']):
+        raise ValueError('upstream source changed during replay observation')
     if fingerprints() != frozen or digest(engine) != engine_hash or digest(binary) != binary_hash:
         raise ValueError('source or tool changed during replay observation')
     receipt.write_text(json.dumps(dict(format=1, passed=True, repeat_equal=True, engine=version,
         engine_sha256=engine_hash, engine_path=str(engine), binary_sha256=binary_hash, upstream_revision=manifest['sources']['fortress']['revision'],
-        upstream_lock_sha256=digest(trees['fortress'] / 'Cargo.lock'), source_sha256=frozen,
+        upstream_lock_sha256=source_hashes['Cargo.lock'], source_sha256=frozen,
+        upstream_archive_sha256=manifest['sources']['fortress']['archive']['digest'], upstream_source_sha256=source_hashes,
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
         acceptance_workloads=acceptance, terminal_acceptance_workloads=terminal_acceptance, width_acceptance_workloads=width_acceptance,
         width_negative_controls=width_negative, negative_controls=negative,
         standalone_rejections=rejected, observations=observations[0], recording=recording, remote_recording=remote_recording,
-        limitations=['All-local and two-peer symmetric/asymmetric recording; pinned source cannot repair/export final rows without new local input.',
+        limitations=[('All-local and two-peer symmetric/asymmetric recording; source final recovery covered in asymmetric and pressure schedules.'
+                      if recovery else 'All-local and two-peer symmetric/asymmetric recording; pinned source cannot repair/export final rows without new local input.'),
                      'Native sequential version-4/version-5/version-6 replay; browser replay coverage is in ownership and online probes.',
                      'Godot callback and expert playback check only present checksums and stop before mismatching advances.',
                      'No snapshot seek acceleration or network-fault replay.']), indent=2) + '\n')

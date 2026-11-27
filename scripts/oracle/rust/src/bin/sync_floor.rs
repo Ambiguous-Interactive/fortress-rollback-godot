@@ -21,7 +21,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{self, Read};
 
-const REVISION: &str = "d124c89080004d96971a629bb0427056ee1805e3";
+#[path = "../source_revision.rs"]
+mod source_revision;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -253,7 +254,7 @@ fn frontier(connect: &[ConnectionStatus]) -> i32 {
 
 fn run(original: Value) -> Result<Value, String> {
     let scenario: Scenario = serde_json::from_value(original).map_err(|error| error.to_string())?;
-    if scenario.format != 1 || scenario.upstream_revision != REVISION {
+    if scenario.format != 1 || scenario.upstream_revision != source_revision::compiled()? {
         return Err("unsupported format or upstream revision".into());
     }
     if !(2..=8).contains(&scenario.players)

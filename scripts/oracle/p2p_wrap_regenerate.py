@@ -9,6 +9,7 @@ The launchers never invoke this: they load the committed schedules and run
 the full differential gates against them.
 """
 import argparse
+from functools import partial
 import hashlib
 import json
 from pathlib import Path
@@ -21,7 +22,8 @@ import p2p_wrap
 from fetch import CACHE, load_manifest, sources
 from run import setup_rust, rust_environment
 from launch import execute, git_identity
-from p2p_contract import validate, REVISION
+from p2p_contract import validate
+from source_build import prepare_source_build, source_build_environment
 from p2p_launch import FIXTURES, source, wrap_fixture
 
 BINARY = CACHE / 'target/debug/p2p'
@@ -36,12 +38,15 @@ def main():
     manifest = load_manifest()
     # The oracle manifest resolves fortress-rollback through a cache path, so the
     # pinned upstream tree must exist before the build, exactly like the launchers.
-    sources(manifest, args.offline)
+    trees = sources(manifest, args.offline)
+    source_revision = manifest['sources']['fortress']['revision']
     cargo, _ = setup_rust(manifest, args.offline)
     version = manifest['rust']['version']
-    rust_dir = Path(__file__).resolve().parents[1] / 'oracle/rust/Cargo.toml'
+    rust_dir = prepare_source_build(Path(__file__).resolve().parents[1] / 'oracle/rust/Cargo.toml', trees['fortress'], source_revision, CACHE)
+    build_environment = source_build_environment(rust_dir, trees['fortress'], source_revision)
     execute([str(cargo), '+' + version, 'build', '--locked', '--offline', '--manifest-path',
-        str(rust_dir), '--bin', 'p2p'], CACHE / 'results/wrap-regenerate-build.log', timeout=600)
+        str(rust_dir), '--bin', 'p2p'], CACHE / 'results/wrap-regenerate-build.log', timeout=600, environment=build_environment)
+    observe = partial(source, source_revision=source_revision)
     digests = {}
     provenance_path = FIXTURES / 'MANIFEST.json'
     if args.only is not None:
@@ -58,6 +63,8 @@ def main():
                 or not isinstance(committed_manifest.get('provenance'), dict):
             raise ValueError('--only needs a well-formed committed wrap-flood manifest '
                              '(fixtures and provenance objects); regenerate without --only first')
+        if committed_manifest['provenance'].get('upstream_revision') != source_revision:
+            raise ValueError('--only requires the original wrap fixture source revision')
         committed = committed_manifest['fixtures']
         for name in p2p_wrap.NAMES:
             if name != args.only and name + '.json' in committed:
@@ -65,17 +72,17 @@ def main():
     for name, (players, capacity, rounds, window, delays, layout, width) in p2p_wrap.PROFILES.items():
         if args.only is not None and name != args.only:
             continue
-        scenario = p2p_wrap.build(str(BINARY), source, players, capacity, rounds, window, delays=delays,
+        scenario = p2p_wrap.build(str(BINARY), observe, players, capacity, rounds, window, delays=delays,
                                   layout=layout, width=width)
         run = subprocess.run([str(BINARY)], input=json.dumps(scenario), capture_output=True,
                              encoding='utf-8', timeout=60, check=True, env=rust_environment())
-        validate(json.loads(run.stdout), scenario, True)
+        validate(json.loads(run.stdout), scenario, True, source_revision=source_revision)
         path = FIXTURES / (name + '.json')
         path.write_text(json.dumps(scenario, indent=2) + '\n', encoding='utf-8')
         digests[name + '.json'] = hashlib.sha256(path.read_bytes()).hexdigest()
     if args.only is None or not provenance_path.exists():
         provenance = {'format': 1, 'fixtures': digests, 'provenance': {
-            'builder': 'scripts/oracle/p2p_wrap.py build()', 'upstream_revision': REVISION,
+            'builder': 'scripts/oracle/p2p_wrap.py build()', 'upstream_revision': source_revision,
             'commit': identity['commit'], 'oracle_binary_sha256': hashlib.sha256(BINARY.read_bytes()).hexdigest(),
             'regenerate_with': 'python3 scripts/oracle/p2p_wrap_regenerate.py'}}
     else:
@@ -83,7 +90,7 @@ def main():
         # refreshes only the provenance fields that describe this rebuild.
         provenance = json.loads(provenance_path.read_text(encoding='utf-8'))
         provenance['fixtures'].update(digests)
-        provenance['provenance'].update({'upstream_revision': REVISION, 'commit': identity['commit'],
+        provenance['provenance'].update({'upstream_revision': source_revision, 'commit': identity['commit'],
             'oracle_binary_sha256': hashlib.sha256(BINARY.read_bytes()).hexdigest()})
     provenance_path.write_text(json.dumps(provenance, indent=2) + '\n', encoding='utf-8')
     # Every committed schedule must still match the launcher's load-time contract;

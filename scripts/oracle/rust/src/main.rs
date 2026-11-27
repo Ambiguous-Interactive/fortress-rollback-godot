@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{self, Read};
 
-const REVISION: &str = "d124c89080004d96971a629bb0427056ee1805e3";
+mod source_revision;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -88,8 +88,9 @@ fn state_fields(kind: &str, frame: i32, game: &Game, inputs: Value) -> Value {
 }
 
 fn run(original: Value) -> Result<Value, String> {
+    let revision = source_revision::compiled()?;
     let scenario: Scenario = serde_json::from_value(original.clone()).map_err(|error| error.to_string())?;
-    if !(1..=2).contains(&scenario.format) || scenario.upstream_revision != REVISION {
+    if !(1..=2).contains(&scenario.format) || scenario.upstream_revision != revision {
         return Err("unsupported format or upstream revision".into());
     }
     if !(2..=8).contains(&scenario.players) || scenario.input_width != 4 || scenario.check_distance > 7 || scenario.input_delay > 7 {
@@ -179,7 +180,7 @@ fn run(original: Value) -> Result<Value, String> {
         records.push(json!({"index":index,"kind":kind,"result":if error.is_some(){"error"}else{"ok"},"error":error,
             "frame_before":before,"frame_after":session.current_frame().as_i32(),"confirmed_frame":null,"requests":requests,"events":events}));
     }
-    Ok(json!({"format":scenario.format,"upstream_revision":REVISION,"scenario":original,"operations":records,
+    Ok(json!({"format":scenario.format,"upstream_revision":revision,"scenario":original,"operations":records,
         "final_state":{"frame":game.frame,"bytes":hex(&game.bytes()),"checksum":format!("{:032x}",game.checksum())}}))
 }
 

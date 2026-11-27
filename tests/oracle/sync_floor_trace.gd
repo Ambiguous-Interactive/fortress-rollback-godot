@@ -10,7 +10,8 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const SnapshotStatus = preload("res://addons/fortress_rollback/core/snapshot_status.gd")
 const PREFIX: String = "FORTRESS_SYNC_FLOOR_RESULT "
-const REVISION: String = "d124c89080004d96971a629bb0427056ee1805e3"
+const RECOVERY_REVISION: String = "25e8020d1a5fd40c4f16b37f97b5ec5329a8566d"
+const REVIEWED_REVISION: String = "d124c89080004d96971a629bb0427056ee1805e3"
 const KIND_FIELDS: Dictionary = {
 	"receive": ["player", "frame", "bytes"],
 	"submit": ["player", "frame", "bytes"],
@@ -75,9 +76,16 @@ var _error: String = ""
 
 func _initialize() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
+	var revision: String = REVIEWED_REVISION
+	if args.size() == 4 and args[0] == "--source-revision":
+		revision = args[1]
+		args = args.slice(2)
 	if args.size() != 2 or args[0] != "--artifact":
-		_error = "expected --artifact PATH"
+		_error = "expected [--source-revision SHA] --artifact PATH"
 		_fail(_error)
+		return
+	if revision not in [REVIEWED_REVISION, RECOVERY_REVISION]:
+		_fail("unsupported source revision")
 		return
 	var file: FileAccess = FileAccess.open(args[1], FileAccess.READ)
 	if file == null:
@@ -89,7 +97,7 @@ func _initialize() -> void:
 		_error = "artifact is not a JSON object"
 		_fail(_error)
 		return
-	_execute(parser.data)
+	_execute(parser.data, revision)
 	if _error.is_empty():
 		print(PREFIX + JSON.stringify({"format": 1, "operations": _operations}))
 		quit(0)
@@ -97,8 +105,8 @@ func _initialize() -> void:
 		_fail(_error)
 
 
-func _execute(source: Dictionary) -> void:
-	var problem: String = _artifact_problem(source)
+func _execute(source: Dictionary, revision: String) -> void:
+	var problem: String = _artifact_problem(source, revision)
 	if not problem.is_empty():
 		_error = problem
 		return
@@ -127,11 +135,11 @@ func _execute(source: Dictionary) -> void:
 			return
 
 
-func _artifact_problem(source: Dictionary) -> String:
+func _artifact_problem(source: Dictionary, revision: String) -> String:
 	for field: String in ["upstream_revision", "players", "max_prediction", "queue_capacity", "input_width", "input_delay", "operations"]:
 		if not source.has(field):
 			return "artifact missing " + field
-	if source["upstream_revision"] != REVISION:
+	if source["upstream_revision"] != revision:
 		return "stale upstream revision"
 	if (
 		not _whole(source["players"])

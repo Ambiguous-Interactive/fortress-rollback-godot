@@ -3,10 +3,8 @@
 import copy
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
-from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
 from fetch import CACHE, ROOT, digest, load_manifest, sources
@@ -23,6 +21,7 @@ from drop_history_timeout import check_delivery_control, check_timeout, timeout_
 import drop_failover_run
 from drop_history_ack_controls import controls as ack_loss_evidence_controls
 from drop_history_inventory_controls import controls as inventory_loss_evidence_controls
+from source_build import prepare_source_build
 from source_wire import RECOVERY_REVISION, decode_trace
 
 PREFIX = 'FORTRESS_DROP_HISTORY_RESULT '
@@ -222,30 +221,21 @@ def select_source(manifest, source_revision, offline):
     return tree, archive['digest']
 
 
-def build_observer(tool_paths, output, reviewed_root, source_tree, source_revision, offline, *, coordinator_failover=False):
-    oracle = ROOT / 'scripts/oracle/rust'
-    command = [str(tool_paths['cargo']), 'build', '--locked', '--bin', 'drop_history']
+def build_observer(tool_paths, output, source_tree, source_revision, offline, *, coordinator_failover=False):
+    base = ROOT / 'scripts/oracle/rust/Cargo.toml'
+    manifest = prepare_source_build(base, source_tree, source_revision, CACHE)
+    adapter_hashes = upstream_inventory(manifest.parent)
+    command = [str(tool_paths['cargo']), 'build', '--locked', '--bin', 'drop_history', '--manifest-path', str(manifest)]
     if coordinator_failover:
         command += ['--features', 'coordinator-failover']
     if offline:
         command.append('--offline')
     target = CACHE / 'target'
-    if source_tree.name == reviewed_root:
-        build(command + ['--manifest-path', str(oracle / 'Cargo.toml')], output / 'build.log', tool_paths['rustc'], source_revision)
-    else:
+    if manifest != base:
         target = target / ('drop-history-' + source_revision)
-        with TemporaryDirectory(dir=CACHE, prefix='drop-observer-') as temporary:
-            project = Path(temporary)
-            manifest = (oracle / 'Cargo.toml').read_text()
-            reviewed_path = json.dumps('../../../.cache/reference/' + reviewed_root)
-            require(manifest.count(reviewed_path) == 1, 'reviewed Cargo source path')
-            candidate_path = Path('..') / source_tree.relative_to(CACHE)
-            (project / 'Cargo.toml').write_text(manifest.replace(reviewed_path, json.dumps(candidate_path.as_posix())))
-            shutil.copyfile(oracle / 'Cargo.lock', project / 'Cargo.lock')
-            shutil.copytree(oracle / 'src', project / 'src')
-            build(command + ['--manifest-path', str(project / 'Cargo.toml'), '--target-dir', str(target)],
-                  output / 'build.log', tool_paths['rustc'], source_revision)
-    return target / 'debug/drop_history'
+        command += ['--target-dir', str(target)]
+    build(command, output / 'build.log', tool_paths['rustc'], source_revision)
+    return target / 'debug/drop_history', manifest.parent, adapter_hashes
 
 
 def main():
@@ -280,14 +270,16 @@ def main():
     if not engine_version.startswith(('4.3.stable', '4.7.2.stable')):
         raise ValueError('drop history: unsupported engine profile')
     verify_tools(tool_paths, tool_identities)
-    binary = build_observer(tool_paths, args.output, pin['root'], source_tree, source_revision, args.offline,
-                            coordinator_failover=args.coordinator_failover)
+    binary, adapter, adapter_hashes = build_observer(
+        tool_paths, args.output, source_tree, source_revision, args.offline,
+        coordinator_failover=args.coordinator_failover)
     verify_tools(tool_paths, tool_identities)
     binary_identity = executable_identity(binary)
 
     def verify_identity():
         require_unchanged('local source inventory', local_sources, inventory())
         require_unchanged('upstream source inventory', pinned_sources, upstream_inventory(source_tree))
+        require_unchanged('Cargo adapter inventory', adapter_hashes, upstream_inventory(adapter))
         require_unchanged('Godot executable', engine_identity, executable_identity(engine))
         require_unchanged('drop oracle executable', binary_identity, executable_identity(binary))
         require_unchanged('repository identity', identity, git_identity())

@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts/reference'))
 
 import owned_process  # noqa: E402
-from contract import fields, integer, validate_scenario, validate_trace  # noqa: E402
+from contract import REVISION, fields, integer, validate_scenario, validate_trace  # noqa: E402
+from source_build import prepare_source_build, source_build_environment, upstream_inventory  # noqa: E402
 from corpus import scenarios, validate_history  # noqa: E402
 from controls import negative_controls  # noqa: E402
 from session_compare import compare_result, negative_controls as session_negative_controls  # noqa: E402
@@ -60,10 +61,10 @@ def execute(command, log, input_text=None, timeout=120, *, environment=None):
     return stdout, stderr
 
 
-def oracle_result(stdout, stderr, scenario):
+def oracle_result(stdout, stderr, scenario, *, source_revision=REVISION):
     if stderr.strip():
         raise ValueError('oracle emitted unexpected stderr')
-    return validate_trace(json.loads(stdout), scenario)
+    return validate_trace(json.loads(stdout), scenario, source_revision=source_revision)
 
 
 def game_result(stdout, stderr, trace):
@@ -99,14 +100,14 @@ def game_result(stdout, stderr, trace):
     return value
 
 
-def run_scenario(name, scenario, binary, engine, output):
-    validate_scenario(scenario)
+def run_scenario(name, scenario, binary, engine, output, *, source_revision=REVISION):
+    validate_scenario(scenario, source_revision=source_revision)
     fixture = output / f'{name}-scenario.json'
     fixture.write_text(json.dumps(scenario, indent=2) + '\n')
     runs = []
     for repeat in (1, 2):
         stdout, stderr = execute([str(binary)], output / f'{fixture.stem}-rust-{repeat}.log', fixture.read_text())
-        runs.append(oracle_result(stdout, stderr, scenario))
+        runs.append(oracle_result(stdout, stderr, scenario, source_revision=source_revision))
     if runs[0] != runs[1]:
         raise ValueError(f'{fixture.name}: upstream fresh-process trace divergence')
     validate_history(runs[0], scenario)
@@ -125,10 +126,10 @@ def run_scenario(name, scenario, binary, engine, output):
         stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
             'res://tests/oracle/session_trace.gd', '--', '--trace', str(trace_path.resolve())],
             output / f'{fixture.stem}-session-{repeat}.log')
-        session_runs.append(compare_result(stdout, stderr, runs[0]))
+        session_runs.append(compare_result(stdout, stderr, runs[0], source_revision=source_revision))
     if session_runs[0] != session_runs[1]:
         raise ValueError(f'{fixture.name}: production session fresh-process divergence')
-    session_controls = session_negative_controls(session_runs[0], runs[0])
+    session_controls = session_negative_controls(session_runs[0], runs[0], source_revision=source_revision)
     result = {'scenario': fixture.name, 'scenario_sha256': digest(fixture),
                   'trace_sha256': digest(trace_path), 'operations': len(runs[0]['operations']),
                   'requests': sum(len(op['requests']) for op in runs[0]['operations']),
@@ -170,25 +171,32 @@ def main():
     identity = git_identity()
     source_paths = sorted(list((ROOT / 'scripts/oracle').rglob('*.py')) + [ROOT / 'scripts/reference/receipt_arguments.py',
                           ROOT / 'scripts/reference/engine_path.py'] + list((ROOT / 'scripts/oracle/rust/src').glob('*.rs'))
-                          + list((ROOT / 'tests/oracle').glob('*.gd')) + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')))
+                          + list((ROOT / 'tests/oracle').glob('*.gd')) + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd'))
+                          + [ROOT / 'docs/reference/pins.json', ROOT / 'scripts/reference/fetch.py', ROOT / 'scripts/reference/run.py',
+                             ROOT / 'scripts/reference/owned_process.py', ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock'])
     source_hashes = {str(path.relative_to(ROOT)): digest(path) for path in source_paths}
     engine = resolve_engine(args.godot)
     manifest = load_manifest()
     trees = sources(manifest, args.offline)
+    source_revision = manifest['sources']['fortress']['revision']
+    cargo_manifest = prepare_source_build(ROOT / 'scripts/oracle/rust/Cargo.toml', trees['fortress'], source_revision, CACHE)
+    environment = source_build_environment(cargo_manifest, trees['fortress'], source_revision)
+    adapter_hashes = upstream_inventory(cargo_manifest.parent)
+    upstream_hashes = upstream_inventory(trees['fortress'])
     cargo, _ = setup_rust(manifest, args.offline)
     version, _ = execute([str(cargo), '+' + manifest['rust']['version'], '--version'], args.output / 'cargo-version.log')
     command = [str(cargo), '+' + manifest['rust']['version'], 'build', '--locked', '--bin', 'fortress-development-oracle',
-               '--manifest-path', str(ROOT / 'scripts/oracle/rust/Cargo.toml')]
+               '--manifest-path', str(cargo_manifest)]
     if args.offline:
         command.append('--offline')
-    execute(command, args.output / 'build.log', timeout=600)
+    execute(command, args.output / 'build.log', timeout=600, environment=environment)
     binary = CACHE / 'target/debug/fortress-development-oracle'
     engine_version, _ = execute([str(engine), '--version'], args.output / 'engine-version.log')
     cases = []
     control_cases = {}
-    inventory = list(scenarios())
+    inventory = list(scenarios(source_revision=source_revision))
     with ThreadPoolExecutor(max_workers=args.jobs) as workers:
-        results = workers.map(lambda case: run_scenario(*case, binary, engine, args.output), inventory)
+        results = workers.map(lambda case: run_scenario(*case, binary, engine, args.output, source_revision=source_revision), inventory)
         try:
             for (_, scenario), (result, trace) in zip(inventory, results):
                 cases.append(result)
@@ -200,11 +208,13 @@ def main():
     controls = versioned_controls(binary, engine, control_cases, args.output)
     require_unchanged('local source inventory', source_hashes,
                       {str(path.relative_to(ROOT)): digest(path) for path in source_paths})
+    require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
+    require_unchanged('Cargo adapter inventory', adapter_hashes, upstream_inventory(cargo_manifest.parent))
     require_unchanged('repository identity', identity, git_identity())
     report = {'format': 1, 'passed': True, 'commit': identity['commit'],
         'working_tree_dirty': identity['working_tree_dirty'],
-        'upstream_revision': manifest['sources']['fortress']['revision'],
-        'upstream_lock_sha256': digest(trees['fortress'] / 'Cargo.lock'),
+        'upstream_revision': source_revision, 'upstream_archive_sha256': manifest['sources']['fortress']['archive']['digest'],
+        'upstream_source_sha256': upstream_hashes, 'upstream_lock_sha256': upstream_hashes['Cargo.lock'],
         'oracle_lock_sha256': digest(ROOT / 'scripts/oracle/rust/Cargo.lock'),
         'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'cargo': version.strip(),
         'binary_sha256': digest(binary), 'engine': engine_version.strip(), 'engine_sha256': digest(engine),

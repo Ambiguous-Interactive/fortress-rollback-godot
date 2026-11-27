@@ -13,6 +13,7 @@ from fetch import digest, load_manifest, sources
 from receipt_arguments import ReceiptParser
 from run import CACHE, setup_rust, rust_environment
 from engine_path import resolve_engine
+from source_build import prepare_source_build, source_build_environment, upstream_inventory
 from source_wire import REVIEWED_REVISION, decode_trace, wire_version
 
 
@@ -89,12 +90,17 @@ def main():
         ensure_jar(args.tlc_jar, args.offline)
     files = [* (ROOT / 'addons/fortress_rollback/protocol').glob('*.gd'), ROOT / 'tests/oracle/handshake_trace.gd',
              *Path(__file__).parent.glob('*.py'), ROOT / 'scripts/oracle/rust/src/bin/handshake.rs',
-             ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock', ROOT / 'docs/reference/pins.json',
+             ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock',
+             ROOT / 'scripts/oracle/rust/src/source_revision.rs', ROOT / 'docs/reference/pins.json',
              ROOT / 'scripts/oracle/contract.py', ROOT / 'scripts/oracle/launch.py',
              *(ROOT / 'scripts/reference').glob('*.py')]
     source_hashes = {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)}
     manifest = load_manifest(); trees = sources(manifest, offline=args.offline)
-    upstream_hashes = {str(p.relative_to(trees['fortress'])): digest(p) for p in sorted(trees['fortress'].rglob('*.rs'))}
+    source_revision = manifest['sources']['fortress']['revision']
+    cargo_manifest = prepare_source_build(ROOT / 'scripts/oracle/rust/Cargo.toml', trees['fortress'], source_revision, CACHE)
+    environment = source_build_environment(cargo_manifest, trees['fortress'], source_revision)
+    adapter_hashes = upstream_inventory(cargo_manifest.parent)
+    upstream_hashes = upstream_inventory(trees['fortress'])
     cargo, _ = setup_rust(manifest, args.offline)
     cargo_version, _ = execute([str(cargo), '+' + manifest['rust']['version'], '--version'], args.output / 'cargo-version.log')
     rust_version, _ = execute([str(cargo.with_name('rustc')), '+' + manifest['rust']['version'], '--version'], args.output / 'rustc-version.log')
@@ -102,10 +108,10 @@ def main():
     if not engine_version.startswith(('4.3.stable', '4.7.2.stable')):
         raise ValueError('unsupported handshake engine profile')
     execute([str(cargo), '+' + manifest['rust']['version'], 'build', '--locked', '--offline', '--manifest-path',
-             str(ROOT / 'scripts/oracle/rust/Cargo.toml'), '--bin', 'handshake', '--features', 'handshake-oracle'], args.output / 'build.log', timeout=600)
+             str(cargo_manifest), '--bin', 'handshake', '--features', 'handshake-oracle'], args.output / 'build.log', timeout=600, environment=environment)
     binary = CACHE / 'target/debug/handshake'
     evidence = []; formal = None
-    for name, scenario in scenarios().items():
+    for name, scenario in scenarios(source_revision=source_revision).items():
         submitted = args.output / f'{name}-scenario.json'; submitted.write_text(json.dumps(scenario, indent=2) + '\n')
         outputs = []
         for repeat in (1, 2):
@@ -115,7 +121,7 @@ def main():
             outputs.append(decode_trace(stdout))
         if outputs[0] != outputs[1]:
             raise ValueError('upstream fresh process divergence')
-        fixture, expected = project(outputs[0], scenario)
+        fixture, expected = project(outputs[0], scenario, source_revision=source_revision)
         raw_path = args.output / f'{name}-upstream.json'; raw_path.write_text(json.dumps(outputs[0], indent=2) + '\n')
         fixture_path = args.output / f'{name}-godot.json'; fixture_path.write_text(json.dumps(fixture, indent=2) + '\n')
         actuals = []
@@ -140,11 +146,14 @@ def main():
         evidence.append({'name': name, 'operations': len(fixture['operations']), 'scenario_sha256': digest(submitted),
                         
                          'upstream_sha256': digest(raw_path), 'Godot_fixture_sha256': digest(fixture_path), 'actual_sha256': digest(actual_path),
-                         'negative_controls': negative_controls(actuals[0], expected), 'raw_negative_controls': raw_negative_controls(outputs[0], scenario),
+                         'negative_controls': negative_controls(actuals[0], expected),
+                         'raw_negative_controls': raw_negative_controls(outputs[0], scenario, source_revision=source_revision),
                          'Godot_repeat_equal': True, 'upstream_repeat_equal': True})
         print(f'{name}: actual upstream/Godot transitions, packets and events match twice', flush=True)
     malformed = malformed_controls(fixture, engine, args.output)
     require_unchanged('local source inventory', source_hashes, {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)})
+    require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
+    require_unchanged('Cargo adapter inventory', adapter_hashes, upstream_inventory(cargo_manifest.parent))
     require_unchanged('repository identity', identity, git_identity())
     receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True,
         'upstream_revision': manifest['sources']['fortress']['revision'],

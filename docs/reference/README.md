@@ -170,6 +170,15 @@ before merge. Extract both trees and run the tool under the same umask to
 match file modes. The operator comparison uses the supplied archive bytes.
 Gate fetches the manifest archives and verifies the recorded digests.
 
+The P2P, handshake, sync-test, queue, sync-floor, and replay launchers use
+the Fortress source selected in the manifest. The Cargo dependency must resolve
+to that archive's verified tree and use the expected features. The source
+observers that carry a wire profile check their linked wire version before
+reporting a revision. Historical protocol-v2 receipts and saved schedules
+remain associated with the revision that produced them. Standalone P2P
+validation accepts `--source-revision` with `--source` or `--expected` and
+checks the corresponding raw fields before comparing Godot observations.
+
 ### Weekly reporting
 
 The scheduled/manual cadence and its deduplicated issue reporting are M2

@@ -560,11 +560,14 @@ class P2PContractTests(unittest.TestCase):
                  patch.object(p2p_wrap_regenerate, 'wrap_fixture', loader), \
                  patch.object(p2p_wrap_regenerate, 'BINARY', stub_binary), \
                  patch.object(p2p_wrap_regenerate, 'git_identity', lambda: {'commit': 'committed'}), \
-                 patch.object(p2p_wrap_regenerate, 'load_manifest', lambda: {'rust': {'version': '1.99.1'}}), \
-                 patch.object(p2p_wrap_regenerate, 'sources', lambda manifest, offline: None), \
+                 patch.object(p2p_wrap_regenerate, 'load_manifest', lambda: {
+                     'rust': {'version': '1.99.1'}, 'sources': {'fortress': {'revision': REVISION}}}), \
+                 patch.object(p2p_wrap_regenerate, 'sources', lambda manifest, offline: {'fortress': fixtures}), \
                  patch.object(p2p_wrap_regenerate, 'setup_rust', lambda manifest, offline: ('cargo', None)), \
-                 patch.object(p2p_wrap_regenerate, 'execute', lambda command, log, timeout=0: None), \
-                 patch.object(p2p_wrap_regenerate, 'validate', lambda value, scenario, raw: None), \
+                 patch.object(p2p_wrap_regenerate, 'prepare_source_build', side_effect=lambda manifest, *_args: manifest), \
+                 patch.object(p2p_wrap_regenerate, 'source_build_environment', return_value={}), \
+                 patch.object(p2p_wrap_regenerate, 'execute', return_value=None), \
+                 patch.object(p2p_wrap_regenerate, 'validate', return_value=None), \
                  patch('p2p_wrap.build', lambda binary, observe, players, capacity, rounds,
                        window, delays=None, layout=None, width=None: {
                            'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': window,
@@ -588,7 +591,7 @@ class P2PContractTests(unittest.TestCase):
             # repairs a committed corpus entry, it only adds names the manifest lacks.
             partial = Path(root) / 'partial'; partial.mkdir()
             (partial / 'MANIFEST.json').write_text(json.dumps(
-                {'format': 1, 'fixtures': {'mesh_2_wrap_flood.json': 'sibling'}, 'provenance': {}}), encoding='utf-8')
+                {'format': 1, 'fixtures': {'mesh_2_wrap_flood.json': 'sibling'}, 'provenance': {'upstream_revision': REVISION}}), encoding='utf-8')
             with self.assertRaisesRegex(OSError, 'mesh_2_wrap_flood.json'):
                 run_main(partial, 'mesh_4_wrap_flood_window_8')
             # A valid committed corpus gains the genuinely new profile without
@@ -616,7 +619,7 @@ class P2PContractTests(unittest.TestCase):
                 digests[name + '.json'] = hashlib.sha256(path.read_bytes()).hexdigest()
             manifest_path = committed / 'MANIFEST.json'
             manifest_path.write_text(json.dumps({'format': 1, 'fixtures': digests,
-                                                 'provenance': {'builder': 'b', 'commit': 'old'}}), encoding='utf-8')
+                                                 'provenance': {'builder': 'b', 'commit': 'old', 'upstream_revision': REVISION}}), encoding='utf-8')
             run_main(committed, 'mesh_4_wrap_flood_window_8')
             merged = json.loads(manifest_path.read_text(encoding='utf-8'))
             self.assertEqual(merged['fixtures']['mesh_2_wrap_flood.json'], digests['mesh_2_wrap_flood.json'])
@@ -1057,6 +1060,9 @@ class P2PContractTests(unittest.TestCase):
             upstream = tree / 'upstream'; upstream.mkdir()
             for name in ('lib.rs', 'Cargo.toml', 'Cargo.lock'):
                 (upstream / name).write_text('original', encoding='utf-8')
+            cargo_manifest = tree / 'scripts/oracle/rust/Cargo.toml'; cargo_manifest.parent.mkdir(parents=True)
+            cargo_manifest.write_text('[dependencies]\nfortress-rollback = { path = "../../../upstream", default-features = false }\n')
+            cargo_manifest.with_name('Cargo.lock').write_text('')
             engine = tree / 'godot'; engine.write_bytes(b'engine'); engine.chmod(0o755)
             binary = tree / 'target/debug/p2p'; binary.parent.mkdir(parents=True)
             def execute(command, *_args, **_kwargs):
@@ -1064,8 +1070,9 @@ class P2PContractTests(unittest.TestCase):
                     binary.write_bytes(b'binary')
                     (upstream / 'Cargo.lock').write_text('changed during build', encoding='utf-8')
                 return ('4.3.stable.test' if command[0] == str(engine) else 'tool version', '')
-            with patch.multiple(p2p_launch, CACHE=tree, source_files=lambda: [],
-                                load_manifest=lambda: {'rust': {'version': '1'}},
+            manifest = {'rust': {'version': '1'}, 'sources': {'fortress': {'revision': REVISION}}}
+            with patch.multiple(p2p_launch, ROOT=tree, CACHE=tree, source_files=lambda: [],
+                                load_manifest=lambda: manifest,
                                 sources=lambda *_a, **_k: {'fortress': upstream},
                                 setup_rust=lambda *_a, **_k: (tree / 'cargo', None), execute=execute), \
                     patch('sys.argv', ['p2p_launch.py', '--godot', str(engine), '--output', str(output)]):

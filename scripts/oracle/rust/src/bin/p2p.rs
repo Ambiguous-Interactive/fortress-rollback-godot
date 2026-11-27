@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::{io::{self, Read}, sync::{Arc, Mutex}, collections::BTreeMap, time::Duration};
-const REVISION: &str = "d124c89080004d96971a629bb0427056ee1805e3";
+#[path = "../source_revision.rs"]
+mod source_revision;
+#[path = "p2p/unique_json.rs"]
+mod unique_json;
 /// Configured input widths the adapter monomorphizes over; an omitted field stays four bytes.
 const WIDTHS: [usize; 3] = [1, 4, 32];
 #[derive(Deserialize)]
@@ -371,7 +374,7 @@ where [u8; N]: Copy + Clone + PartialEq + Eq + Default + Serialize + Deserialize
   }).collect::<Vec<_>>();record["metrics"]=json!({"frames_ahead":sessions[peer].frames_ahead(),"peers":stats});}
   records.push(record);
  }
- Ok(json!({"format":1,"complete":true,"upstream_revision":REVISION,"scenario":original,"records":records,"packets":packet_values}))
+ Ok(json!({"format":1,"complete":true,"upstream_revision":source_revision::compiled()?,"scenario":original,"records":records,"packets":packet_values}))
 }
 /// Validated packet endpoints; a hostile machine index fails the replay cleanly.
 fn packet_endpoints(packet:&Value,slots_of:&[Vec<usize>])->Result<(usize,usize),String>{
@@ -401,8 +404,16 @@ fn replay_scenario_slots(scenario:&Value)->Result<Vec<Vec<usize>>,String>{
  Ok(slots_of(players,&layout))}
 fn read_input<R:Read>(mut reader:R)->Result<String,String>{let mut input=String::new();reader.take(32000001).read_to_string(&mut input).map_err(|e|e.to_string())?;
  if input.len()>32000000{return Err("input bounds".into());}Ok(input)}
-fn main(){let result=(||{let input=read_input(io::stdin())?;let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
- if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--validate-trace"] {
+fn main(){let result=(||{
+ let compiled_revision=source_revision::compiled()?;
+ let input=read_input(io::stdin())?;
+ let validate_raw = std::env::args().skip(1).collect::<Vec<_>>() == ["--validate-trace"];
+ if validate_raw {
+    serde_json::from_str::<unique_json::UniqueJson>(&input).map_err(|error| error.to_string())?;
+ }
+ let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
+ if validate_raw {
+   if value["upstream_revision"] != compiled_revision {return Err("raw trace source revision".into());}
    let slots_of=replay_scenario_slots(&value["scenario"])?;let width=replay_scenario_width(&value["scenario"])?;
    let mut references=MeshReferences::new(&slots_of,width);let packets=value["packets"].as_array().ok_or("packets")?;
   let operations=value["scenario"]["operations"].as_array().ok_or("operations")?;
@@ -421,6 +432,7 @@ fn main(){let result=(||{let input=read_input(io::stdin())?;let value:Value=serd
     visited[packet_id]=true;
     let packet=&packets[packet_id];
     let raw=&packet["raw"];let _:Message=serde_json::from_value(raw.clone()).map_err(|e|e.to_string())?;
+    if raw["header"]["protocol_version"] != fortress_rollback::PROTOCOL_VERSION {return Err("raw trace wire version".into());}
     let (from,to)=packet_endpoints(packet,&slots_of)?;
     let semantic=project_packet(raw,from,to,&mut references,&slots_of)?;
     if semantic!=packet["semantic"] {return Err("raw compressed semantic mismatch".into());}

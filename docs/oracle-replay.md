@@ -4,10 +4,13 @@ Run `make replay-probes GODOT=/path/to/pinned/godot` to compare the actual pinne
 Rust `ReplaySession` and both shipped `FortressReplayPlayer` interfaces.
 CI runs both engine pins. The receipt and raw logs go to `.cache/reference/results/replay/`.
 
-The probe invokes public APIs from unchanged fortress-rollback revision
-`d124c89080004d96971a629bb0427056ee1805e3`. Relevant upstream source:
-[`src/sessions/replay_session.rs`](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/sessions/replay_session.rs)
-and [`src/replay.rs`](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/replay.rs).
+The probe invokes public APIs from the Fortress source selected in
+`docs/reference/pins.json`. The current reviewed revision is
+`d124c89080004d96971a629bb0427056ee1805e3`. The candidate rehearsal uses
+`25e8020d1a5fd40c4f16b37f97b5ec5329a8566d`. The receipt identifies the source
+used for each run. The candidate implementations are in
+[`src/sessions/replay_session.rs`](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sessions/replay_session.rs)
+and [`src/replay.rs`](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/replay.rs).
 This is gameplay replay applicability, separate from network fault-trace replay.
 
 ## Observed contract
@@ -54,11 +57,11 @@ as these sparse workloads.
 Seed `4294967295` exercises unsigned input/state boundaries. Ordered integer
 updates include a PRNG state and pending value in canonical 16-byte snapshots.
 
-Eight additional 64-frame workloads use actual pinned `ReplaySession<u8>` and `ReplaySession<u16>` inputs,
+Eight additional 64-frame workloads use `ReplaySession<u8>` and `ReplaySession<u16>` from the selected source,
 with two/eight players and sparse checksums or a frame-32 mismatch. Values exercise each width's full range.
 All three Godot file versions and both playback interfaces must report the decoded width and original canonical history.
 An actual high-byte edit in a 16-bit sample must stop every Godot path at frame 32 with `input_digest`.
-The pinned-source controls reject unsupported widths and values outside the selected input type.
+The source controls reject unsupported widths and values outside the selected input type.
 The receipt binds these workloads separately from the original 32-bit acceptance inventory.
 
 Python generates original inputs and independently computes every canonical
@@ -74,16 +77,14 @@ runs through callback playback and separately through `configure_expert`,
 against 63 pinned Rust scenarios. The corpus uses confirmed player statuses;
 Godot's finalized disconnected-status playback has separate deterministic
 coverage in `tests/unit/test_replay_drop.gd`. This comparison does not establish
-upstream status-sensitive recording parity. At the pinned revision,
-`Replay<I>` stores only input vectors (`src/replay.rs`, lines 109–132), and
-`ReplaySession::advance_frame` assigns `InputStatus::Confirmed` to every input
-(`src/sessions/replay_session.rs`, line 737). Disconnected-status preservation
-is a Godot format extension, not a missing status field that this corpus can
-supply to the unchanged upstream replay API.
+upstream status-sensitive recording parity. The upstream `Replay<I>` stores
+input vectors, and `ReplaySession::advance_frame` assigns `InputStatus::Confirmed`
+to every recorded input. Disconnected-status preservation is a Godot format
+extension.
 
 Every frame of the version-5 or version-6 file carries the digest of its input bytes and
 player statuses. Version 4 retains its byte-only digest and defaults every
-player status to `CONFIRMED`. Those digests are a Godot-side integrity extension: the pinned upstream session owns the
+player status to `CONFIRMED`. Those digests are a Godot-side integrity extension. The selected upstream session owns the
 input history and stores no such digest, so the corpus compares only the
 upstream-owned behaviour and never claims parity for the digests.
 
@@ -269,8 +270,7 @@ to the original target with every original callback and canonical state compared
 against independently calculated delayed inputs. The observer retains empty
 lockstep service attempts too; a reported final frame alone cannot qualify.
 
-The pinned source explicitly disables recording after `take_replay()`
-(`p2p_session.rs`, lines 8398–8427). A second extraction must return the structured
+Both source revisions disable recording after `take_replay()`. A second extraction must return the structured
 `NotSupported` error. Godot's `Session.replay()` deliberately returns an owned
 snapshot without disabling recording. A later Godot export must contain the
 complete finalized simulated history, serialize/decode successfully, and replay
@@ -316,21 +316,18 @@ altered original input/state, altered recorded rows/checksums and corrupt playba
 A duplicate-receipt control preserves all neutral gameplay evidence while requiring
 the measured delivery count to reject the extra successful calls.
 
-This experiment exposes a pinned-source difference. The Rust recording retains
-the first, speculative checksum at odd boundaries 1, 3, 5 and 7. Those rows later
-carry corrected actual inputs, so actual source playback emits `ReplayDesync`
-at each odd boundary and continues. Expected and actual checksum bytes remain
-in the source observation; the comparison requires these events rather than
-normalizing or hiding them. Godot records the repaired checksums and its decoded
-playback validates every boundary cleanly. Both original corrected histories
-match the independently calculated canonical prefix. Upstream has since confirmed
-and fixed this ordering defect in wallstop/fortress-rollback#380 through #381
-(merged 2026-11-10): recording now refreshes speculative checksums from the
-saved-state ring after the correction requests execute and omits checksums for
-rows whose cell is no longer buffered, while every recorded input row stays
-available. The reviewed pin predates that fix, so the observed
-discrepancy above remains the committed evidence at this pin; advancing the pin
-and re-running this probe at the fixed source is #53's reviewed upgrade.
+The historical `d124c89080004d96971a629bb0427056ee1805e3` recording retained
+the first speculative checksum at odd boundaries 1, 3, 5 and 7. The actual
+source playback emitted `ReplayDesync` at each of those boundaries because
+the recording already contained corrected original inputs. Historical validation
+requires those events and their checksum pairs. When the recovery candidate
+`25e8020d` is selected, it refreshes checksums from corrected saved-state cells
+after executing the correction requests. Each decoded checksum in this workload
+then matches the independent original history and every playback event list is
+empty. The neutral workload continues to require zero corrections and zero
+playback events. See the historical
+[checksum discrepancy](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253)
+and the [upstream checksum repair](https://github.com/wallstop/fortress-rollback/pull/381).
 
 The same gate retains those nine-frame cases and adds paired 257-frame changing-input
 and neutral-input runs. Each endpoint advances beyond two default 128-row queue capacities,
@@ -341,21 +338,10 @@ Every original request, input/status, saved byte and resulting state remains ind
 including the history on both sides of queue reuse. Ten additional controls remove the correction
 at boundary 128 or change the original input, exported input, playback state or delivered count after reuse.
 Each must fail at its named observation; the short corpus cannot satisfy the long-run acceptance gate.
-The unchanged source's default 60-frame checksum schedule contributes two additional reports at delivery
+The source's default 60-frame checksum schedule contributes two additional reports at delivery
 rounds 63, 123, 183 and 243. Exact delivery counts retain that traffic; it is not disabled or ignored.
 Both pins run every mode twice in fresh processes. This extends the existing two-peer delivery cadence;
 it does not qualify coordinated-drop recording or browser source comparison.
-
-At the pinned revision, `P2PSession::advance_frame` assembles correction requests
-and then calls `record_confirmed_inputs` before the application executes those
-requests (`src/sessions/p2p_session.rs`, lines 3090–3134).
-`record_confirmed_inputs` reads the existing saved-cell checksum and advances
-`last_recorded_frame` (lines 8433–8491); later correction SAVE callbacks do not
-replace the already exported checksum. The neutral control isolates this
-ordering from the serializer or replay comparator. This is a named source
-recording discrepancy tracked in [#253](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253),
-not proof of a Godot replay mismatch or complete remote recording parity. Peer drop, exported-browser source
-comparison and the remaining release matrix stay open under #45.
 
 ### Asymmetric delivery and final recovery
 
@@ -371,31 +357,33 @@ another local sample. Godot's actual `Driver.recover()` repairs one versus two p
 frames, stays at boundary 257, and exports all 257 canonical rows. Each decoded export
 then validates through production playback. The neutral control has no correction.
 
-The unchanged source has no equivalent public recovery-only entry point. Its final
-poll receives the original inputs, but `advance_frame()` without a new local sample
-returns `MissingLocalInput` before repair or recording. Actual `into_replay()` exports
-the previously recorded 256 versus 255 rows. Their corrected original inputs remain
-exact; speculative saved checksums still produce 128 versus 170 `ReplayDesync` events
-under #253. Neither final polling nor export repairs the original speculative game state.
-These source outcomes remain explicit observations, rather than normalized parity.
+The recovery candidate calls `P2PSession::recover_confirmed_inputs()` with no new
+local sample. Endpoint zero loads boundary 256 and endpoint one loads boundary
+255. Each replays through boundary 257 using the original confirmed inputs. Both
+endpoints report receipt and confirmation through frame 256, retain the original
+final input row, and export all 257 rows. Their decoded histories match every
+original state and checksum, with zero `ReplayDesync` events. The neutral control
+returns no LOAD. A repeat at the same boundary issues only the current-state SAVE.
+Withholding the final asymmetric delivery fails the final-input read for both
+changing and neutral workloads. Before returning that error, the source observer
+serializes, decodes and plays each incomplete export. Each export must stop at
+its independently computed received prefix of 256 versus 255 rows. Neither
+recording contains frame 256.
 
-After the final asymmetric delivery, the source witness also reads the public
-confirmation and remote-receipt frontiers and the actual original final input row.
-It checks that the rejected no-sample call leaves the public frame unchanged and
-executes no game callbacks. Omitting that delivery fails the final-input read for
-both changing and neutral workloads. The pressure schedule already received its
-final inputs before draining its remaining control messages; that drain does not
-qualify delayed final-input recovery. Neither observation supplies the missing
-source recovery-only recording API.
+With reviewed revision `d124c890`, the final poll receives the
+original inputs, then `advance_frame()` returns `MissingLocalInput` without new
+callbacks. Actual `into_replay()` exports 256 versus 255 rows with 128 versus
+170 playback mismatch events. The historical launcher still requires these
+counts and exact transcripts when built against that archive.
 
 Ten mutations reject a symmetric history relabeled as asymmetric, omitted corrections,
 missing final delivery, altered post-wrap exports and corrupted decoded playback at
 specific diagnostics. An actual withheld-receipt control lets endpoint zero advance to
 frame five while endpoint one stalls at its four-frame prediction bound. Both engines
 run each changing/neutral workload twice with source/tool fingerprints and bounded
-processes. This advances #256 without qualifying source recovery-only recording,
-coordinated drop, browser transports or the complete #45 release gate.
-
+processes. The source recovery witness uses in-memory sockets and fixed membership.
+Coordinated drop, browser transport and the remaining #45 release checks have
+separate witnesses.
 
 The asymmetric gate also copies the actual Godot observer three times and changes one
 serialized byte at frame 129 before production decoding. An altered input keeps its
@@ -424,9 +412,9 @@ both terminal workloads with complete callback and delivery inventories.
 A copied observer changes exactly one byte in the final serialized checksum for endpoint
 one. The control independently reconstructs the complete original file and requires all
 257 inputs to play before DESYNC at boundary 257; no further ADVANCE is allowed.
-The endpoint zero control remains healthy. This qualifies Godot terminal capture after
-unequal remote correction, while the unchanged source's missing recovery-only API and
-speculative checksum discrepancy above remain explicit.
+The endpoint zero control remains healthy. Godot terminal capture validates
+boundary 257 separately from the upstream recording, which stores checksums on
+its input rows through frame 256.
 
 ### Repeated prediction stalls and resumed recording
 
@@ -445,20 +433,22 @@ The model preserves these different receipt policies and Rust's extra stalled SA
 requests. It derives actual source INPUT/ACK/checksum traffic from the serviced frames
 and prior confirmation; it does not repeat the earlier fixed-cadence message totals.
 
-Changing histories require corrections at both endpoints after queue reuse. Godot's
-final recovery stays at boundary 257 and its decoded recordings validate all 257 rows.
-The unchanged source exports 255 versus 256 original rows and retains its observed
-speculative recording checksums under #253, including 113 versus 144 replay mismatch
-events. No new local sample is supplied to repair those source recordings.
+Changing histories require corrections at both endpoints after queue reuse. Godot
+and the recovery candidate `25e8020d` recover at boundary 257 and validate all
+257 decoded rows. The candidate already received input 256 before the final
+drain. Its changing workload still needs a LOAD at boundary 255 on endpoint zero.
+Endpoint one and both neutral endpoints need only the boundary SAVE. The reviewed
+revision `d124c890` exports 255 versus 256 rows with 113 versus 144 playback
+mismatch events.
 
 Eight mutations reject omitted stalled attempts, resampled originals, changed post-wrap
 exports and delivery counts at their declared diagnostics. Actual withheld-delivery
 processes stop endpoint one at frame four while endpoint zero reaches five. A separate
 copied Godot observer deliberately resamples by service turn and must refuse the changed
 retry; the unchanged frame-based workload is its green control. Each workload runs twice
-on both engine pins. This advances #256's stalled/resumed recording evidence; transport
-send refusal, source recovery-only recording, coordinated drop and browser acceptance
-remain outside this witness.
+on both engine pins. This source comparison covers stalled service and recovery
+in memory. Transport send refusal, coordinated drop and browser acceptance use
+separate coverage.
 
 The pressure gate now repeats both histories with actual final-boundary capture after
 recovery. Each endpoint retains its 257 original rows, adds exactly one SAVE at
@@ -466,8 +456,8 @@ boundary 257, and decodes its version-6 recording through final checksum validat
 The full 285/286 service-attempt and 28/29 stall inventories remain required. Separate
 copied observers omit each endpoint's capture, or corrupt exactly one serialized
 terminal-checksum byte; all three controls reject the claimed terminal evidence.
-This combines resumed recording with final-state verification on both engine pins.
-It does not add source recovery-only recording or transport send-refusal coverage.
+This combines Godot resumed recording with final-state verification on both
+engine pins. Upstream recording continues to store checksums on input rows.
 
 ### Manual and callback recording equivalence
 
@@ -512,10 +502,8 @@ python3 scripts/run_godot_tests.py --godot godot \
 
 The schedule has a 1,000-turn gameplay bound and 256 final recovery turns; each turn
 advances injected time by one millisecond. Final service includes the endpoint's
-200 ms retry interval. This is native injected SDK refusal, not actual SignalFish
-server sockets or browser transport. Those release gates and unchanged-source
-recovery-only recording remain open in #256; #253 preserves the source checksum
-ordering discrepancy.
+200 ms retry interval. The unit test injects refusal at the native SDK boundary.
+SignalFish server sockets and browser transport are separate [#256](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/256) gates.
 
 ## Exported mixed-path recordings
 
@@ -550,11 +538,8 @@ addressed SDK receipt. Each endpoint corrects the final frame with one LOAD
 while staying at boundary 257. Both decoded recordings contain every finalized
 input/status row and all 258 original checksum boundaries.
 
-These are Godot browser witnesses, not source-runtime comparisons. Buffer pressure
-is injected; physical relay congestion, the complete asymmetric delivery/stall
-schedule, neutral and withheld-delivery browser controls, and unchanged-source
-recovery remain open in #256. #253 retains the source's speculative checksum
-discrepancy at this pin. Upstream #381 fixes checksum refresh for recorded rows.
-That revision still requires a local sample for `advance_frame()`; recording
-newly confirmed rows during recovery without a forward step remains open.
-The pin advance is #53's reviewed upgrade.
+These witnesses exercise Godot's browser runtime with injected buffer pressure.
+Physical relay congestion and the complete asymmetric delivery, stall, neutral
+and withheld-delivery browser controls remain open in #256. The in-memory
+[source recovery witness](#asymmetric-delivery-and-final-recovery) covers the
+upstream API separately.

@@ -23,10 +23,11 @@ from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_r
 from engine_path import resolve_engine
 from fetch import retain_verified_tree
 from receipt_arguments import ReceiptParser
+from source_build import manifest_for_source, source_build_environment, upstream_inventory
+from source_wire import RECOVERY_REVISION, REVIEWED_REVISION
 from sync_floor_contract import compare, first_acceptance_divergence
 from sync_floor_corpus import bundle, validate_bundle
 
-REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
 SYNC_LAYER_SOURCE = Path('src/sync_layer/mod.rs')
 QUEUE_SOURCE = Path('src/input_queue/mod.rs')
 FAST_FLOOR_SEARCH = """    fn rollback_window_floor(&self) -> Frame {
@@ -160,8 +161,9 @@ def publish_tree(source, destination, edits):
         shutil.copytree(source, expected)
         for relative, content in edits.items():
             (expected / relative).write_bytes(content)
+        inventory = upstream_inventory(expected)
         retain_verified_tree(expected, destination)
-    return destination
+    return destination, inventory
 
 
 def observed_source(tree):
@@ -184,7 +186,8 @@ def observed_source(tree):
         receipt[f'{stem}_observed_sha256'] = hashlib.sha256(hooked).hexdigest()
         receipt['original_source_unmodified'] &= (tree / relative).read_bytes() == original
     receipt['confirm_anchor_sha256'] = [hashlib.sha256(anchor.encode()).hexdigest() for anchor in CONFIRM_ANCHORS]
-    upstream = publish_tree(tree, CACHE / 'sync-floor-observation' / 'fortress', edits)
+    upstream, inventory = publish_tree(tree, CACHE / 'sync-floor-observation' / 'fortress', edits)
+    receipt['observed_source_sha256'] = inventory
     return upstream / 'Cargo.toml', receipt
 
 
@@ -197,7 +200,7 @@ def mutant_source(tree):
     hooked = original.replace(FAST_FLOOR_SEARCH.encode(), FAST_FLOOR_REPLACE.encode(), 1) + OBSERVATION_HOOK.encode()
     queue_original = (tree / QUEUE_SOURCE).read_bytes()
     queue_hooked = queue_original + QUEUE_MUTANT_HOOK.encode() + QUEUE_RETAINED_HOOK.encode()
-    upstream = publish_tree(tree, CACHE / 'sync-floor-observation' / 'fortress-mutant', {
+    upstream, inventory = publish_tree(tree, CACHE / 'sync-floor-observation' / 'fortress-mutant', {
         SYNC_LAYER_SOURCE: hooked, QUEUE_SOURCE: queue_hooked})
     receipt = {
         'method': 'rollback_window_floor replaced with the fast player\'s local high-water in isolated copy',
@@ -206,28 +209,25 @@ def mutant_source(tree):
         'mutant_sync_hook_sha256': hashlib.sha256(OBSERVATION_HOOK.encode()).hexdigest(),
         'mutant_queue_hook_sha256': hashlib.sha256((QUEUE_MUTANT_HOOK + QUEUE_RETAINED_HOOK).encode()).hexdigest(),
         'original_source_unmodified': (tree / SYNC_LAYER_SOURCE).read_bytes() == original,
+        'observed_source_sha256': inventory,
     }
     return upstream / 'Cargo.toml', receipt
 
 
-def build_manifest(observed_cargo_toml, binary_name):
-    """Rewrite the dependency anchor to the given observed tree and add the binary."""
-    original = (ROOT / 'scripts/oracle/rust/Cargo.toml').read_text()
-    old = '../../../.cache/reference/fortress-rollback-' + 'd124c89080004d96971a629bb0427056ee1805e3'
-    if original.count(old) != 1:
-        raise ValueError('floor adapter dependency anchor changed')
-    manifest = original.replace(old, str(observed_cargo_toml.parent))
-    manifest += '\n[[bin]]\nname = ' + json.dumps(binary_name) + '\npath = ' + \
-        json.dumps(str(ROOT / 'scripts/oracle/rust/src/bin/sync_floor.rs')) + '\n'
-    return manifest
-
-
-def write_adapter(name, manifest):
+def write_adapter(name, upstream, binary_name):
     adapter = CACHE / 'sync-floor-observation' / name
-    adapter.mkdir(parents=True, exist_ok=True)
-    (adapter / 'Cargo.toml').write_text(manifest)
-    shutil.copyfile(ROOT / 'scripts/oracle/rust/Cargo.lock', adapter / 'Cargo.lock')
-    return adapter / 'Cargo.toml'
+    adapter.parent.mkdir(parents=True, exist_ok=True)
+    manifest = adapter / 'Cargo.toml'
+    contents = manifest_for_source(ROOT / 'scripts/oracle/rust/Cargo.toml', manifest, upstream)
+    binary = ROOT / 'scripts/oracle/rust/src/bin/sync_floor.rs'
+    contents += '\n[[bin]]\nname = ' + json.dumps(binary_name) + '\npath = ' + json.dumps(str(binary), ensure_ascii=False) + '\n'
+    with tempfile.TemporaryDirectory(dir=adapter.parent) as temporary:
+        expected = Path(temporary)
+        (expected / 'Cargo.toml').write_text(contents)
+        shutil.copyfile(ROOT / 'scripts/oracle/rust/Cargo.lock', expected / 'Cargo.lock')
+        inventory = upstream_inventory(expected)
+        retain_verified_tree(expected, adapter)
+    return manifest, inventory
 
 
 def engine_artifact(scenario_data):
@@ -283,7 +283,7 @@ def artifact_control(scenario_data, mutate, name, binary, game_command, output):
     artifact.write_text(json.dumps(bad))
     for implementation, command, stdin in [
             ('rust', [str(binary)], json.dumps(bad)),
-            ('godot', game_command + ['--', '--artifact', str(artifact.resolve())], None)]:
+            ('godot', game_command + ['--artifact', str(artifact.resolve())], None)]:
         try:
             execute(command, output / f'control-{name}-{implementation}.log', stdin)
         except ValueError as error:
@@ -314,67 +314,93 @@ def main():
         + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd'))
         + [ROOT / 'scripts/reference/fetch.py', ROOT / 'scripts/reference/run.py',
            ROOT / 'scripts/reference/owned_process.py', ROOT / 'scripts/reference/engine_path.py',
-           ROOT / 'scripts/reference/receipt_arguments.py', ROOT / 'scripts/oracle/rust/Cargo.toml'])
+           ROOT / 'scripts/reference/receipt_arguments.py', ROOT / 'scripts/oracle/rust/Cargo.toml',
+           ROOT / 'scripts/oracle/rust/Cargo.lock', ROOT / 'docs/reference/pins.json'])
     source_hashes = {str(path.relative_to(ROOT)): digest(path) for path in source_paths}
     engine = resolve_engine(args.godot)
     manifest = load_manifest()
+    pin = manifest['sources']['fortress']
+    revision = pin['revision']
+    if pin['root'] != 'fortress-rollback-' + revision:
+        raise ValueError('floor oracle pinned tree root differs from its revision')
     trees = sources(manifest, args.offline)
+    source_hashes_before = upstream_inventory(trees['fortress'])
     observed_manifest, observation = observed_source(trees['fortress'])
     mutant_manifest, mutant_receipt = mutant_source(trees['fortress'])
     cargo, _ = setup_rust(manifest, args.offline)
-    clean_adapter = write_adapter('adapter-clean', build_manifest(observed_manifest, 'sync_floor'))
-    mutant_adapter = write_adapter('adapter-mutant', build_manifest(mutant_manifest, 'sync_floor_mutant'))
-    clean_binary_identity = None
-    for name, adapter, binary in [('sync_floor', clean_adapter, 'sync_floor'),
-                                  ('sync_floor_mutant', mutant_adapter, 'sync_floor_mutant')]:
+    clean_adapter, observation['adapter_sha256'] = write_adapter('adapter-clean', observed_manifest.parent, 'sync_floor')
+    mutant_adapter, mutant_receipt['adapter_sha256'] = write_adapter('adapter-mutant', mutant_manifest.parent, 'sync_floor_mutant')
+    variants = [('sync_floor', clean_adapter, observed_manifest.parent, observation),
+                ('sync_floor_mutant', mutant_adapter, mutant_manifest.parent, mutant_receipt)]
+    for name, adapter, tree, evidence in variants:
+        build_environment = source_build_environment(adapter, tree, revision)
+        require_unchanged(name + ' Cargo adapter', evidence['adapter_sha256'], upstream_inventory(adapter.parent))
+        require_unchanged(name + ' observed source', evidence['observed_source_sha256'], upstream_inventory(tree))
         command = [str(cargo), '+' + manifest['rust']['version'], 'build', '--locked',
-                   '--manifest-path', str(adapter), '--bin', binary]
+                   '--manifest-path', str(adapter), '--bin', name]
         if args.offline:
             command.append('--offline')
-        execute(command, args.output / f'build-{name}.log', timeout=600)
-        if name == 'sync_floor':
-            clean_binary_identity = digest(CACHE / 'target/debug/sync_floor')
+        execute(command, args.output / f'build-{name}.log', timeout=600, environment=build_environment)
+        evidence['binary_sha256'] = digest(CACHE / 'target/debug' / name)
     clean_binary = CACHE / 'target/debug/sync_floor'
     mutant_binary = CACHE / 'target/debug/sync_floor_mutant'
-    scenario_bundle = validate_bundle(bundle())
+    scenario_bundle = validate_bundle(bundle(revision), revision)
     scenario_data = scenario_bundle['scenario']
     baseline = [bytes.fromhex(state) for state in scenario_bundle['baseline']]
     artifact = args.output / 'scenario.json'
     artifact.write_text(json.dumps(engine_artifact(scenario_data)))
     artifact_text = artifact.read_text()
     game_command = [str(engine), '--headless', '--path', str(ROOT),
-                    '--script', 'res://tests/oracle/sync_floor_trace.gd']
+                    '--script', 'res://tests/oracle/sync_floor_trace.gd', '--', '--source-revision', revision]
     rust_runs, godot_runs = [], []
     for repetition in (1, 2):
         stdout, stderr = execute([str(clean_binary)], args.output / f'rust-{repetition}.log', artifact_text)
         if stderr.strip():
             raise ValueError('floor oracle emitted unexpected stderr')
         rust_runs.append(json.loads(stdout))
-        stdout, stderr = execute(game_command + ['--', '--artifact', str(artifact.resolve())],
+        stdout, stderr = execute(game_command + ['--artifact', str(artifact.resolve())],
                                  args.output / f'godot-{repetition}.log')
         godot_runs.append(parse_godot(stdout, stderr))
         compare(rust_runs[-1], godot_runs[-1], scenario_data, baseline)
     if rust_runs[0] != rust_runs[1] or godot_runs[0] != godot_runs[1]:
         raise ValueError('sync floor: fresh-process repeat mismatch')
     controls = ['fast_local_high_water_floor']
-    run_mutant_control(mutant_binary, rust_runs[0], scenario_data, args.output)
+    mutant_receipt.update(run_mutant_control(mutant_binary, rust_runs[0], scenario_data, args.output))
+    other_revision = RECOVERY_REVISION if revision == REVIEWED_REVISION else REVIEWED_REVISION
     for name, mutate in [
-            ('stale', lambda x: x.update(upstream_revision='stale')),
+            ('stale', lambda x: x.update(upstream_revision=other_revision)),
             ('unknown', lambda x: x['operations'][0].update(unknown=1)),
             ('float', lambda x: x.update(players=3.5)),
             ('width', lambda x: x['operations'][0].update(bytes='fff')),
             ('kind', lambda x: x['operations'][0].update(kind='quit'))]:
         artifact_control(engine_artifact(scenario_data), mutate, name, clean_binary, game_command, args.output)
         controls.append(name)
+    unsupported = args.output / 'control-unknown-source-revision.json'
+    unsupported.write_text(json.dumps(dict(engine_artifact(scenario_data), upstream_revision='0' * 40)))
+    unknown_command = game_command[:-1] + ['0' * 40, '--artifact', str(unsupported.resolve())]
+    log = args.output / 'control-unknown-source-revision-godot.log'
+    try:
+        execute(unknown_command, log)
+    except ValueError as error:
+        if 'process failed (2)' not in str(error) or 'sync floor oracle: unsupported source revision' not in log.read_text():
+            raise
+    else:
+        raise ValueError('Godot accepted an unknown source revision')
+    controls.append('unknown_source_revision')
     version, _ = execute([str(engine), '--version'], args.output / 'engine-version.log')
     (args.output / 'rust-trace.json').write_text(json.dumps(rust_runs[0], indent=2) + '\n')
     (args.output / 'godot-trace.json').write_text(json.dumps(godot_runs[0], indent=2) + '\n')
     require_unchanged('local source inventory', source_hashes,
                       {str(path.relative_to(ROOT)): digest(path) for path in source_paths})
-    require_unchanged('floor oracle binary', clean_binary_identity, digest(clean_binary))
-    require_unchanged('oracle lockfile', digest(ROOT / 'scripts/oracle/rust/Cargo.lock'), digest(CACHE / 'sync-floor-observation/adapter-clean/Cargo.lock'))
+    require_unchanged('upstream source inventory', source_hashes_before, upstream_inventory(trees['fortress']))
+    for name, adapter, tree, evidence in variants:
+        require_unchanged(name + ' observed source', evidence['observed_source_sha256'], upstream_inventory(tree))
+        require_unchanged(name + ' Cargo adapter', evidence['adapter_sha256'], upstream_inventory(adapter.parent))
+        require_unchanged(name + ' executable', evidence['binary_sha256'], digest(CACHE / 'target/debug' / name))
     require_unchanged('repository identity', identity, git_identity())
-    result = {'format': 1, 'passed': True, 'upstream_revision': REVISION,
+    result = {'format': 1, 'passed': True, 'upstream_revision': revision,
+              'upstream_archive': pin['archive'],
+              'upstream_lock_sha256': source_hashes_before['Cargo.lock'], 'upstream_source_sha256': source_hashes_before,
               'commit': identity['commit'],
               'working_tree_dirty': identity['working_tree_dirty'],
               'engine': version.strip(), 'engine_sha256': digest(engine), 'engine_path': str(engine),
@@ -382,7 +408,7 @@ def main():
               'operations': len(scenario_data['operations']), 'repeat_equal': True,
               'controls': controls, 'observation': observation, 'mutant': mutant_receipt,
               'binary_sha256': digest(clean_binary), 'mutant_binary_sha256': digest(mutant_binary),
-              'oracle_lock_sha256': digest(ROOT / 'scripts/oracle/rust/Cargo.lock'),
+              'oracle_lock_sha256': source_hashes['scripts/oracle/rust/Cargo.lock'],
               'scenario_sha256': digest(artifact),
               'rust_trace_sha256': digest(args.output / 'rust-trace.json'),
               'godot_trace_sha256': digest(args.output / 'godot-trace.json'),

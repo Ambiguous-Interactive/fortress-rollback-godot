@@ -12,13 +12,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scenario', required=True, type=Path)
     parser.add_argument('--source', action='store_true')
-    parser.add_argument('--source-revision', help='select the exact upstream revision for a standalone --source trace')
+    parser.add_argument('--source-revision', help='select the exact upstream revision for a --source trace or --expected receipt')
     parser.add_argument('--expected', type=Path)
     parser.add_argument('--corpus-case')
     args = parser.parse_args()
     try:
-        if args.source_revision is not None and (not args.source or args.expected is not None):
-            raise ValueError('--source-revision requires standalone --source validation')
+        if args.source_revision is not None and not (args.source or args.expected is not None):
+            raise ValueError('--source-revision requires --source or --expected')
+        if args.source and args.expected is not None:
+            raise ValueError('--source and --expected are mutually exclusive')
         if args.corpus_case is not None and args.expected is None:
             raise ValueError('--corpus-case requires --expected')
         if args.corpus_case is not None:
@@ -38,11 +40,11 @@ def main():
         validate(value, scenario, args.source, source_revision=source_revision)
         if args.expected is not None:
             expected = decode_trace(args.expected.read_text(encoding='utf-8'))
-            compare(value, expected, scenario)
+            compare(value, expected, scenario, source_revision=source_revision)
             if args.corpus_case is not None:
                 from p2p_lifecycle import corpus_evidence
                 from p2p_lifecycle_controls import controls
-                corpus_evidence(args.corpus_case, expected, controls(value, expected, scenario))
+                corpus_evidence(args.corpus_case, expected, controls(value, expected, scenario, source_revision=source_revision))
     except (ValueError, OSError) as error:
         print('p2p validation: ' + str(error), file=sys.stderr)
         return 2
