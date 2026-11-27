@@ -56,6 +56,12 @@ class TraceServerBuildTest(unittest.TestCase):
     def change_manifest(self):
         self.manifest.write_bytes(self.manifest.read_bytes() + b'\n')
 
+    def test_build_runs_the_recorded_optimized_trace_command(self):
+        report = self.build()
+        command = report['commands'][-1]
+        self.assertIn('profile.dev.package.signal-fish-server.opt-level=1', command)
+        self.assertEqual(builder.subprocess.run.call_args.args[0], command)
+
     # Value: protects=the build binds the pin used for fetch; fails_when=fetch or copy accepts a changed pin; why_new=existing controls cover the normal builder; seam=none
     def test_rejects_manifest_drift_through_publication(self):
         stable = self.build()

@@ -108,6 +108,8 @@ gh workflow run gdextension-experiment.yml -f qualification=firefox -f cell=rela
 ```
 
 The traced run builds the pinned server with receipt hooks on each Godot pin.
+Its build command sets optimization level 1 for the instrumented server crate
+to reduce the time spent encoding a full receipt.
 The job artifact includes the build receipt and log, the browser log, and any
 published server scope and packet snapshot. Pair each traced run with a stock
 run at the same revision, browser profile, and room size to measure overhead.
