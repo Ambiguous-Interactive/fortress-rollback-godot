@@ -96,7 +96,7 @@ class LauncherTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn('workers must be an integer in 1..8', result.stderr)
                 self.assertEqual(json.loads(receipt.read_text()), {'passed': False, 'failure': 'invalid_arguments'})
-                self.assertEqual(list(Path(directory).iterdir()), [receipt])
+                self.assertEqual({path.name for path in Path(directory).iterdir()}, {receipt.name, '.oracle-output.lock'})
 
     def test_game_controls_cannot_pass_at_schema_failure_or_wrong_boundary(self):
         prefix = 'FORTRESS_ORACLE_GAME_RESULT '
