@@ -144,10 +144,11 @@ and delay two; and loss, reorder/duplicate, prediction stall/recovery and retry
 cases for 2, 4 and 8 peers. Loss drops the first input and ACK flight. Retry
 checks exactly 200000 microseconds versus 200001, then drops ACKs and checks the
 next exact interval and interval-plus-one. Duplicate packets do not manufacture
-new input progress. Two additional two-peer scenarios exercise windows 2 and 3.
+new input progress. Five two-peer scenarios exercise windows 2, 3, 5, 6 and 7.
 Each stalls at the configured frame before confirmation and again after frame
-zero is confirmed. Releasing the held flights triggers rollback loads and both
-peers resume confirmation. Four additional scenarios hold the maximum compared
+zero is confirmed. The stalled retry submits the same bytes and sends no new
+input packet. Releasing the held flights triggers rollback loads and both peers
+resume confirmation. Four additional scenarios hold the maximum compared
 prediction window eight: `mesh_2_window_8`, `mesh_4_window_8` and
 `mesh_8_window_8` compare ordinary schedules at the deepest configured rollback
 boundary, and `mesh_2_window_8_stall` runs the stall schedule that exceeds

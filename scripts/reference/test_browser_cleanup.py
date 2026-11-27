@@ -24,10 +24,12 @@ class BrowserCleanupTests(unittest.TestCase):
     def test_relay_wire_receipt_crosses_page_boundary_as_json_text(self):
         script = r"""
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const { readRelayWireReceipt } = require(process.argv[1]);
-const receipt = { sockets: 1, streams: { native: { quality: {
-  count: 130, omitted: 2, events: [{ seq: '18446744073709551615', kind: 4, code: 0 }],
-} } } };
+const envelope = Buffer.alloc(103, 0x5b);
+const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const metadata = { seq: '18446744073709551615', kind: 4, code: 0 };
+const receipt = event => ({ sockets: 1, streams: { native: { quality: { count: 130, omitted: 2, events: [{ ...metadata, ...event }] } } } });
 const links = ['11'.repeat(16) + '/' + '22'.repeat(16)];
 const page = { async evaluate(read, selected) {
   const transferred = await read(selected);
@@ -35,11 +37,12 @@ const page = { async evaluate(read, selected) {
   return transferred;
 } };
 (async () => {
-  globalThis.window = { fortressNativeWire: { async relayWireTrace(selected) {
+  globalThis.window = { fortressNativeWire: { relayWireTrace(selected) {
     assert.deepEqual(selected, links);
-    return receipt;
+    return receipt({ bytes: envelope.toString('base64') });
   } } };
-  assert.deepEqual(await readRelayWireReceipt(page, links), receipt);
+  assert.deepEqual(await readRelayWireReceipt(page, links),
+    receipt({ envelope_bytes: envelope.length, envelope_sha256: digest(envelope), payload_sha256: digest(envelope.subarray(57)) }));
   delete window.fortressNativeWire;
   assert.equal(await readRelayWireReceipt(page), undefined);
 })().catch(error => { console.error(error); process.exitCode = 1; });
@@ -757,8 +760,21 @@ for (const [change, diagnostic] of [
       return { jsonValue: async () => value, dispose: async () => {} };
     },
   });
-  const sourcePage = page({ pressureRelayLink: () => ordinals, relayWireTrace: () => source });
-  const reporterPage = page({ blockRelayLink: () => before, relayWireTrace: () => reporter, resumeBlockedRelay(stamps) {
+  function receiptBytes(receipt) {
+    const encoded = structuredClone(receipt);
+    for (const groups of Object.values(encoded.streams)) {
+      for (const { events } of Object.values(groups)) {
+        for (const packet of events) {
+          packet.bytes = packetBytes(packet.kind).toString('base64');
+          delete packet.envelope_bytes;
+          delete packet.envelope_sha256;
+        }
+      }
+    }
+    return encoded;
+  }
+  const sourcePage = page({ pressureRelayLink: () => ordinals, relayWireTrace: () => receiptBytes(source) });
+  const reporterPage = page({ blockRelayLink: () => before, relayWireTrace: () => receiptBytes(reporter), resumeBlockedRelay(stamps) {
     assert.equal(stamps.length, 1040);
     assert.equal(stamps.filter(stamp => stamp.kind === 4).length, 520);
     return resumed;
@@ -2655,7 +2671,7 @@ function makePage() {
       holdConditions: () => [true, true],
       relayWireTrace(selected) {
         if (lateExpiry && index === 1) expire();
-        return { selected };
+        return { selected, streams: {} };
       },
       holdObservation: () => ({ ...hold(), control_round_trips: 1, buffered_bytes: 0, traffic: [] }),
       async release() {
@@ -2797,7 +2813,7 @@ runMain();
                         if control == 'history late trace':
                             link = '00000000000000000000000000000002/00000000000000000000000000000001'
                             self.assertEqual(report['expiryLinks'], [link])
-                            self.assertEqual(report['relayWire'], [{'selected': [link]}] * 2)
+                            self.assertEqual(report['relayWire'], [{'selected': [link], 'streams': {}}] * 2)
                             self.assertNotIn('relayJoinError', report)
                             self.assertEqual(report['relayJoined']['joined'], ['00000000-0000-0000-0000-000000000002'])
                             self.assertEqual(report['postRelease'][1]['native_expiry']['uuid'], '00000000-0000-0000-0000-000000000001')

@@ -217,10 +217,12 @@ def missing_evidence():
         'dropped': 3, 'from': 4, 'through': 6, 'frames': [4, 5, 6], 'overlaps': 0, 'slot': 2, 'unsupported': 0}
     proposer = value['records'][0]['peers'][0]['result']['records'][0]
     follower = value['records'][0]['peers'][1]['result']['records'][0]
-    proposer.update(operation=9, history_donor=follower['slot'], history_first=4, history_cut=proposer['freeze_frame'],
+    proposer.update(opening_frontier=3, pending_events=1, operation=9, history_donor=follower['slot'],
+                    history_first=4, history_cut=proposer['freeze_frame'],
                     history_installed=True, history_dropped=0, history_resends=0, history_drop_chunk=-1,
                     history_drop_operation=-1, history_drop_count=0)
-    follower.update(operation=9, history_donor=follower['slot'], history_first=4, history_cut=follower['freeze_frame'],
+    follower.update(opening_frontier=4, pending_events=1, operation=9, history_donor=follower['slot'],
+                    history_first=4, history_cut=follower['freeze_frame'],
                     history_installed=False, history_dropped=1, history_resends=1, history_drop_chunk=0,
                     history_drop_operation=9, history_drop_count=1)
     return value
@@ -434,6 +436,29 @@ class CommitLossEvidence(unittest.TestCase):
 
 
 class MissingHistoryEvidence(unittest.TestCase):
+    # Value: protects=both opening confirmation frames; fails_when=an omitted or raised frontier admits a cut; why_new=donor checks ignore pending events; seam=none
+    def test_live_missing_history_cut_covers_both_opening_frontiers(self):
+        original = missing_evidence()
+        self.assertIs(validate_drop_browser(original, missing_history=True), original)
+        for peer in (0, 1):
+            for frontier in (None, -1, True, 3.0, 7):
+                value = copy.deepcopy(original)
+                row = value['records'][0]['peers'][peer]['result']['records'][0]
+                if frontier is None:
+                    del row['opening_frontier']
+                else:
+                    row['opening_frontier'] = frontier
+                with self.subTest(peer=peer, frontier=frontier), self.assertRaisesRegex(ValueError, 'opening frontier'):
+                    validate_drop_browser(value, missing_history=True)
+            duplicate = copy.deepcopy(original)
+            duplicate['records'][0]['peers'][peer]['result']['records'][0]['pending_events'] = 2
+            with self.subTest(peer=peer), self.assertRaisesRegex(ValueError, 'opening frontier missing or invalid'):
+                validate_drop_browser(duplicate, missing_history=True)
+        boundary = copy.deepcopy(original)
+        follower = boundary['records'][0]['peers'][1]['result']['records'][0]
+        follower['opening_frontier'] = follower['freeze_frame']
+        self.assertIs(validate_drop_browser(boundary, missing_history=True), boundary)
+
     def test_live_missing_history_requires_withholding_and_transfer(self):
         original = missing_evidence()
         self.assertIs(validate_drop_browser(original, missing_history=True), original)

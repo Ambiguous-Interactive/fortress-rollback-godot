@@ -373,12 +373,16 @@ func run(host: Node, count: int) -> bool:
 	var dropped_frames: Dictionary = {}
 	var dropped_count: int = 0
 	var pending_events: int = 0
+	var opening_frontier: int = -1
+	var departing_key: String = departing_identity.hex_encode()
 	for event: Dictionary in events:
 		if event.kind == "peer_dropped":
 			dropped_count += 1
 			dropped_frames[event.peer.hex_encode()] = event.frame
 		elif event.kind == "peer_drop_pending":
 			pending_events += 1
+			if event.peer == departing_identity and not dropped_frames.has(departing_key):
+				opening_frontier = event.frame
 	var history: Dictionary = host.transports[0].history_report() if host.transports[0].has_method("history_report") else {}
 	var commit: Dictionary = host.transports[0].commit_report() if host.transports[0].has_method("commit_report") else {}
 	var row: Dictionary = {
@@ -445,6 +449,11 @@ func run(host: Node, count: int) -> bool:
 		"direct": host._transport_totals(),
 		"mixed": host.mixed.report() if host.mixed_enabled else {}
 	}
+	if missing_history:
+		if pending_events != 1 or opening_frontier != barrier.upper or dropped_frames.get(departing_key, -1) != cut:
+			host.errors.append("peer_drop_missing_opening_frontier")
+			return false
+		row["opening_frontier"] = opening_frontier
 	if second_departure and host.local_index == 1:
 		for frame: int in range(1, 11):
 			if host.games[0].history.get(frame) != expected(host, frame, count, cuts):

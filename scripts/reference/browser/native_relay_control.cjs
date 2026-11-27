@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const { createHash } = require('node:crypto');
 const { setTimeout: pause } = require('node:timers/promises');
+const { boundedRoom } = require('./webrtc_watchdog.cjs');
 
 function events(trace, stage, family) {
   return trace.streams[stage][family].events;
@@ -16,8 +17,38 @@ const sameEnvelope = (a, b) => a.envelope_bytes === b.envelope_bytes && a.envelo
 
 async function readRelayWireReceipt(page, links = []) {
   // Send one string through Playwright instead of encoding each field as a remote value.
-  const text = await page.evaluate(async selected => JSON.stringify(await window.fortressNativeWire?.relayWireTrace(selected)), links);
-  return text === undefined ? undefined : JSON.parse(text);
+  const text = await page.evaluate(selected => JSON.stringify(window.fortressNativeWire?.relayWireTrace(selected)), links);
+  if (text === undefined) return undefined;
+  const receipt = JSON.parse(text);
+  const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+  const exactEnvelopes = new Map();
+  for (const groups of Object.values(receipt.streams)) {
+    for (const { events } of Object.values(groups)) {
+      for (const event of events) {
+        let digests = exactEnvelopes.get(event.bytes);
+        if (!digests) {
+          const bytes = Buffer.from(event.bytes, 'base64');
+          digests = { envelope_bytes: bytes.length, envelope_sha256: digest(bytes), payload_sha256: digest(bytes.subarray(57)) };
+          exactEnvelopes.set(event.bytes, digests);
+        }
+        delete event.bytes;
+        Object.assign(event, digests);
+      }
+    }
+  }
+  for (const event of receipt.carriers?.events ?? []) {
+    event.carrier_sha256 = digest(Buffer.from(event.bytes, 'base64'));
+    delete event.bytes;
+  }
+  return receipt;
+}
+
+async function readRelayWireDiagnostic(page, links, timeout, label) {
+  const started = performance.now();
+  const receipt = await boundedRoom(() => readRelayWireReceipt(page, links), timeout, label);
+  if (performance.now() >= started + timeout) throw new Error(`absolute ${label} deadline`);
+  if (receipt?.carriers) receipt.carrier_capture_started_ms = started;
+  return receipt;
 }
 
 async function readServerReceipt(path) {
@@ -409,4 +440,4 @@ function completeRelayRow(row) {
 }
 
 module.exports = { assertJoinedRelayControl, bindRelayServer, checkSameLinkRetention, createRelayServerReader, exerciseRelayDelivery,
-  exerciseRelayRetention, exerciseSameLinkRetention, joinRelayReceipts, readRelayWireReceipt, relayExpiryRows, validateRelayExpiryFrontier };
+  exerciseRelayRetention, exerciseSameLinkRetention, joinRelayReceipts, readRelayWireDiagnostic, readRelayWireReceipt, relayExpiryRows, validateRelayExpiryFrontier };

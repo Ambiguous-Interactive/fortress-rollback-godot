@@ -885,6 +885,12 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         if commit_loss:
             _validate_commit_loss(survivors)
         if missing_history:
+            for row in survivors:
+                if (type(row.get('pending_events')) is not int or row['pending_events'] != 1
+                        or type(row.get('opening_frontier')) is not int or row['opening_frontier'] < 0):
+                    raise ValueError('peer-drop missing-history opening frontier missing or invalid')
+                if row['opening_frontier'] > row['freeze_frame']:
+                    raise ValueError('peer-drop missing-history cut precedes an opening frontier')
             departed = records[0]['peers'][2]['result']['records'][0]
             report = departed.get('missing_inputs')
             if (not isinstance(report, dict) or set(report) != {'dropped', 'from', 'through', 'frames', 'overlaps', 'slot', 'unsupported'}

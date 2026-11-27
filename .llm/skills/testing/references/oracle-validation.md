@@ -118,6 +118,11 @@ source and locked build. Compare hinted and unhinted scenarios with the same
 live oracle and record subprocess counts and canonical hashes. Revalidate the
 whole hint and use its observations only for an exact matching prefix.
 
+At a prediction cap, record both the first blocked call and an identical
+retry. The first call can stage and send the current sample. The retry must
+hold the frame without sending another sample. After actual input arrives,
+compare earlier rollback callbacks separately from forward frame progress.
+
 Receipt and snapshot tooling binds the working tree at run start and refuses
 drift at the end (`launch.require_unchanged` over `source_files()`,
 `native_source_snapshot` over `git ls-files --others`, plus commit and dirty

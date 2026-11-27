@@ -96,8 +96,9 @@ def case_builders(binary, observe=source):
     for players in (2, 4, 8):
         for mode in ('loss', 'reorder', 'stall', 'retry'):
             builders[f'mesh_{players}_{mode}'] = partial(build_case, binary, players, 0, mode, observe=observe)
-    for window in (2, 3):
-        builders[f'mesh_2_window_{window}_stall'] = partial(build_case, binary, 2, 0, 'stall', window=window, observe=observe)
+    for window in (2, 3, 5, 6, 7):
+        builders[f'mesh_2_window_{window}_stall'] = partial(
+            build_case, binary, 2, 0, 'stall', window=window, opening_steps=max(6, window + 2), observe=observe)
     # The maximum comparable prediction window: the ordinary cases hold the deepest configured
     # rollback boundary, and the stall schedule that exceeds window four instead recovers through
     # a six-frame prediction run, so both the threshold refusal and the deep recovery path compare.
@@ -284,7 +285,7 @@ def build_layout_case(binary, layout, mode, delays=None, *, observe=source):
     return scenario
 
 
-def build_case(binary, players, delay, mode, window=4, width=4, delays=None, *, observe=source):
+def build_case(binary, players, delay, mode, window=4, width=4, delays=None, *, opening_steps=6, observe=source):
     scenario = {'format': 1, 'players': players, 'input_delay': delay, 'max_prediction': window, 'operations': []}
     if width != 4:
         scenario['input_width'] = width
@@ -326,7 +327,7 @@ def build_case(binary, players, delay, mode, window=4, width=4, delays=None, *, 
                 append('deliver', refresh=False, packet=p['id'])
             latest = observe(binary, scenario)
     if mode in {'stall', 'delay_stall'}:
-        for _ in range(6):
+        for _ in range(opening_steps):
             step(0)
             if mode == 'delay_stall' and latest['records'][-1]['frame_before'] == latest['records'][-1]['frame_after']:
                 change(0, 2)
