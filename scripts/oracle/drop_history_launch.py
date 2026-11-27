@@ -3,8 +3,10 @@
 import copy
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
 from fetch import CACHE, ROOT, digest, load_manifest, sources
@@ -20,6 +22,7 @@ from drop_history_deadline import check_commit_deadline, deadline_controls
 from drop_history_timeout import check_delivery_control, check_timeout, timeout_controls
 from drop_history_ack_controls import controls as ack_loss_evidence_controls
 from drop_history_inventory_controls import controls as inventory_loss_evidence_controls
+from source_wire import RECOVERY_REVISION, decode_trace
 
 PREFIX = 'FORTRESS_DROP_HISTORY_RESULT '
 
@@ -36,11 +39,11 @@ def parse_godot(stdout, stderr, prefix=PREFIX):
     records = [line[len(prefix):] for line in stdout.splitlines() if line.startswith(prefix)]
     if len(records) != 1:
         raise ValueError('drop history: missing/duplicate Godot completion')
-    return json.loads(records[0])
+    return decode_trace(records[0])
 
 
 
-def observation_controls(engine, output, source):
+def observation_controls(engine, output, source, source_revision):
     controls = []
     for status, observed_status in [('none', 'none'), ('predicted', 'predicted'), ('unknown', None)]:
         result = subprocess.run([str(engine), '--headless', '--path', str(ROOT), '--script',
@@ -61,9 +64,9 @@ def observation_controls(engine, output, source):
         if status == 'unknown':
             require(godot['survivors'][0]['rows'][0]['inputs'] == [], 'observer malformed row must not expose input bytes')
             unaffected['survivors'][0]['rows'][0]['inputs'] = source['survivors'][0]['rows'][0]['inputs']
-        compare(source, unaffected)
+        compare(source, unaffected, source_revision=source_revision)
         try:
-            compare(source, godot)
+            compare(source, godot, source_revision=source_revision)
         except ValueError as error:
             require(str(error) == comparison_failure, 'observer control unrelated comparison failure')
         else:
@@ -88,7 +91,7 @@ def prepare_publication_control(engine, output):
     return 'observed_unrouted_prepare'
 
 
-def interior_history_control(engine, output, source, target_slots=1):
+def interior_history_control(engine, output, source, target_slots=1, *, source_revision):
     result = subprocess.run([str(engine), '--headless', '--path', str(ROOT), '--script',
         'res://tests/oracle/drop_history_trace.gd', '--', '--multi-row-history', '--corrupt-interior-history',
         *(['--multiple-target-slots'] if target_slots == 2 else [])],
@@ -109,7 +112,7 @@ def interior_history_control(engine, output, source, target_slots=1):
     require(all(survivor['rows'][-1]['state']['bytes'] == expected_final for survivor in godot['survivors']),
             'interior control must preserve original final canonical state')
     try:
-        compare(source, godot, False, 4, target_slots)
+        compare(source, godot, False, 4, target_slots, source_revision=source_revision)
     except ValueError as error:
         require(str(error) == 'drop history: Godot original rows, statuses or canonical states', 'interior control unrelated comparison failure')
     else:
@@ -118,17 +121,17 @@ def interior_history_control(engine, output, source, target_slots=1):
 
 
 
-def donor_timeout_evidence(engine, binary, output):
+def donor_timeout_evidence(engine, binary, output, source_revision):
     results = []
     for repeat in (1, 2):
         stdout, stderr = execute([str(binary), '--drop-all-history'], output / f'source-donor-timeout-{repeat}.log')
         require(not stderr.strip(), 'source donor timeout stderr')
-        source = json.loads(stdout)
+        source = decode_trace(stdout)
         stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
                                   'res://tests/oracle/drop_history_trace.gd', '--', '--drop-all-history'],
                                   output / f'godot-donor-timeout-{repeat}.log')
         godot = parse_godot(stdout, stderr)
-        check_timeout(source, godot)
+        check_timeout(source, godot, source_revision=source_revision)
         stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
                                   'res://tests/oracle/drop_history_trace.gd', '--', '--deliver-all-history'],
                                   output / f'godot-donor-delivery-control-{repeat}.log')
@@ -138,19 +141,20 @@ def donor_timeout_evidence(engine, binary, output):
     require(same(*results), 'donor timeout fresh-process repeat mismatch')
     result = results[0]
     source, godot, delivered = (result[key] for key in ('source', 'godot', 'godot_delivery_control'))
-    return result, check_timeout(source, godot), timeout_controls(source, godot, delivered)
+    return (result, check_timeout(source, godot, source_revision=source_revision),
+            timeout_controls(source, godot, delivered, source_revision=source_revision))
 
 
 
-def deadline_evidence(engine, binary, output):
+def deadline_evidence(engine, binary, output, source_revision):
     cases = {}
     for offset in (-1, 0, 1):
         case = []
         for repeat in (1, 2):
             stdout, stderr = execute([str(binary), '--commit-deadline', str(offset)], output / f'source-commit-deadline-{offset}-{repeat}.log')
             require(not stderr.strip(), 'source COMMIT deadline stderr')
-            observed = json.loads(stdout)
-            check_commit_deadline(observed, offset)
+            observed = decode_trace(stdout)
+            check_commit_deadline(observed, offset, source_revision=source_revision)
             case.append(observed)
         require(same(*case), 'source COMMIT deadline fresh-process repeat mismatch')
         cases[str(offset)] = case[0]
@@ -164,12 +168,13 @@ def deadline_evidence(engine, binary, output):
             and len(record.get('runs', [])) == 2 and same(*record['runs'])
             and record['runs'][0].get('assertions', 0) > 0 and record['runs'][0].get('failures') == [], 'Godot COMMIT deadline repeat')
 
-    return {'source': cases, 'godot': record}, deadline_controls(cases)
+    return {'source': cases, 'godot': record}, deadline_controls(cases, source_revision=source_revision)
 
 
-def build(command, log, rustc):
+def build(command, log, rustc, source_revision):
     environment = rust_environment()
     environment['RUSTC'] = str(rustc)
+    environment['FORTRESS_DROP_ORACLE_REVISION'] = source_revision
     environment.pop('CARGO_BUILD_RUSTC', None)
     log.write_text('COMMAND_STARTED: ' + repr(command) + '\n')
     result = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True,
@@ -198,10 +203,52 @@ def verify_tools(paths, identities):
         require_unchanged(tool + ' executable', identities[tool], executable_identity(path))
 
 
+def select_source(manifest, source_revision, offline):
+    pin = manifest['sources']['fortress']
+    if source_revision == pin['revision']:
+        return sources(manifest, offline=offline)['fortress'], pin['archive']['digest']
+    require(source_revision == RECOVERY_REVISION, 'unsupported candidate revision')
+    candidate = copy.deepcopy(manifest)
+    candidate_pin = candidate['sources']['fortress']
+    candidate_pin.update(revision=source_revision, root='fortress-rollback-' + source_revision)
+    archive = {'url': pin['archive']['url'].rsplit('/', 1)[0] + '/' + source_revision, 'algorithm': 'sha256',
+               'digest': 'ae67b3b5be6f9061e53356cf1c1402c4d2c30991e0bd2aafd66c7d986df32856'}
+    candidate_pin['archive'] = archive
+    candidate['sources'] = {'fortress': candidate_pin}
+    candidate['rust']['lockfile_sha256'] = '2643529601aab0a25302bf8455b40ee352cd00576cc85c75256af22470e1caef'
+    tree = sources(candidate, offline=offline, cache=CACHE / ('drop-source-' + source_revision))['fortress']
+    return tree, archive['digest']
+
+
+def build_observer(tool_paths, output, reviewed_root, source_tree, source_revision, offline):
+    oracle = ROOT / 'scripts/oracle/rust'
+    command = [str(tool_paths['cargo']), 'build', '--locked', '--bin', 'drop_history']
+    if offline:
+        command.append('--offline')
+    target = CACHE / 'target'
+    if source_tree.name == reviewed_root:
+        build(command + ['--manifest-path', str(oracle / 'Cargo.toml')], output / 'build.log', tool_paths['rustc'], source_revision)
+    else:
+        target = target / ('drop-history-' + source_revision)
+        with TemporaryDirectory(dir=CACHE, prefix='drop-observer-') as temporary:
+            project = Path(temporary)
+            manifest = (oracle / 'Cargo.toml').read_text()
+            reviewed_path = json.dumps('../../../.cache/reference/' + reviewed_root)
+            require(manifest.count(reviewed_path) == 1, 'reviewed Cargo source path')
+            candidate_path = Path('..') / source_tree.relative_to(CACHE)
+            (project / 'Cargo.toml').write_text(manifest.replace(reviewed_path, json.dumps(candidate_path.as_posix())))
+            shutil.copyfile(oracle / 'Cargo.lock', project / 'Cargo.lock')
+            shutil.copytree(oracle / 'src', project / 'src')
+            build(command + ['--manifest-path', str(project / 'Cargo.toml'), '--target-dir', str(target)],
+                  output / 'build.log', tool_paths['rustc'], source_revision)
+    return target / 'debug/drop_history'
+
+
 def main():
     parser = ReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True)
     parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--source-revision', choices=(REVISION, RECOVERY_REVISION), help='select an exact registered Fortress source revision')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/drop-history')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -210,8 +257,10 @@ def main():
     identity = git_identity()
     local_sources = inventory()
     manifest = load_manifest()
-    trees = sources(manifest, offline=args.offline)
-    pinned_sources = upstream_inventory(trees['fortress'])
+    pin = manifest['sources']['fortress']
+    source_revision = args.source_revision or pin['revision']
+    source_tree, archive_digest = select_source(manifest, source_revision, args.offline)
+    pinned_sources = upstream_inventory(source_tree)
     engine = resolve_engine(args.godot)
     engine_identity = executable_identity(engine)
     cargo, _ = setup_rust(manifest, args.offline)
@@ -223,14 +272,9 @@ def main():
     engine_version, _ = execute([str(engine), '--version'], args.output / 'engine-version.log')
     if not engine_version.startswith(('4.3.stable', '4.7.2.stable')):
         raise ValueError('drop history: unsupported engine profile')
-    command = [str(tool_paths['cargo']), 'build', '--locked', '--manifest-path',
-               str(ROOT / 'scripts/oracle/rust/Cargo.toml'), '--bin', 'drop_history']
-    if args.offline:
-        command.append('--offline')
     verify_tools(tool_paths, tool_identities)
-    build(command, args.output / 'build.log', tool_paths['rustc'])
+    binary = build_observer(tool_paths, args.output, pin['root'], source_tree, source_revision, args.offline)
     verify_tools(tool_paths, tool_identities)
-    binary = CACHE / 'target/debug/drop_history'
     binary_identity = executable_identity(binary)
     observed = []
     evidence = {}
@@ -270,47 +314,50 @@ def main():
             stdout, stderr = execute([str(binary), *fault_args], args.output / f'source-{name}-{repeat}.log')
             if stderr.strip():
                 raise ValueError('drop history: unexpected source stderr')
-            source = json.loads(stdout)
+            source = decode_trace(stdout)
             stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
                                       'res://tests/oracle/drop_history_trace.gd', '--', *fault_args],
                                       args.output / f'godot-{name}-{repeat}.log')
             godot = parse_godot(stdout, stderr)
-            evidence[name] = compare(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup, prepare_loss)
+            evidence[name] = compare(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup, prepare_loss,
+                                     source_revision=source_revision)
             controls.extend(name + ':' + control for control in negative_controls(
-                source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup, prepare_loss))
+                source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup, prepare_loss,
+                source_revision=source_revision))
             scenarios[name] = {'source': source, 'godot': godot}
-        controls.extend(wrapped_evidence_controls(scenarios['unequal-clean'], scenarios['wrapped-clean']))
-        controls.extend(loss_evidence_controls(scenarios['clean'], scenarios['lost-history']))
-        controls.extend('multi:' + control for control in loss_evidence_controls(scenarios['multi-clean'], scenarios['multi-lost-history'], 4))
+        controls.extend(wrapped_evidence_controls(scenarios['unequal-clean'], scenarios['wrapped-clean'], source_revision=source_revision))
+        controls.extend(loss_evidence_controls(scenarios['clean'], scenarios['lost-history'], source_revision=source_revision))
+        controls.extend('multi:' + control for control in loss_evidence_controls(
+            scenarios['multi-clean'], scenarios['multi-lost-history'], 4, source_revision=source_revision))
         controls.extend('grouped:' + control for control in loss_evidence_controls(
-            scenarios['grouped-clean'], scenarios['grouped-lost-history'], 4, 2))
+            scenarios['grouped-clean'], scenarios['grouped-lost-history'], 4, 2, source_revision=source_revision))
         controls.extend('unequal:' + control for control in loss_evidence_controls(
-            scenarios['unequal-clean'], scenarios['unequal-lost-history'], 4, 2, True))
-        controls.extend(commit_loss_evidence_controls(scenarios['unequal-clean'], scenarios['unequal-lost-commit']))
-        controls.extend(ack_loss_evidence_controls(scenarios['unequal-clean'], scenarios['unequal-lost-ack']))
-        controls.extend(inventory_loss_evidence_controls(scenarios['unequal-clean'], scenarios['unequal-lost-inventory']))
+            scenarios['unequal-clean'], scenarios['unequal-lost-history'], 4, 2, True, source_revision=source_revision))
+        controls.extend(commit_loss_evidence_controls(scenarios['unequal-clean'], scenarios['unequal-lost-commit'], source_revision=source_revision))
+        controls.extend(ack_loss_evidence_controls(scenarios['unequal-clean'], scenarios['unequal-lost-ack'], source_revision=source_revision))
+        controls.extend(inventory_loss_evidence_controls(scenarios['unequal-clean'], scenarios['unequal-lost-inventory'], source_revision=source_revision))
         observed.append(scenarios)
     if observed[0] != observed[1]:
         raise ValueError('drop history: fresh-process repeat mismatch')
     controls = sorted(set(controls))
-    controls.extend(observation_controls(engine, args.output, observed[0]['clean']['source']))
+    controls.extend(observation_controls(engine, args.output, observed[0]['clean']['source'], source_revision))
     controls.append(prepare_publication_control(engine, args.output))
-    controls.append(interior_history_control(engine, args.output, observed[0]['multi-clean']['source']))
-    controls.append('grouped:' + interior_history_control(engine, args.output, observed[0]['grouped-clean']['source'], 2))
-    deadline, deadline_controls = deadline_evidence(engine, binary, args.output)
-    controls.extend(deadline_controls)
-    timeout, timeout_summary, rejected_timeouts = donor_timeout_evidence(engine, binary, args.output)
+    controls.append(interior_history_control(engine, args.output, observed[0]['multi-clean']['source'], source_revision=source_revision))
+    controls.append('grouped:' + interior_history_control(engine, args.output, observed[0]['grouped-clean']['source'], 2, source_revision=source_revision))
+    deadline, rejected_deadlines = deadline_evidence(engine, binary, args.output, source_revision)
+    controls.extend(rejected_deadlines)
+    timeout, timeout_summary, rejected_timeouts = donor_timeout_evidence(engine, binary, args.output, source_revision)
     controls.extend(rejected_timeouts)
     require_unchanged('local source inventory', local_sources, inventory())
-    require_unchanged('upstream source inventory', pinned_sources, upstream_inventory(trees['fortress']))
+    require_unchanged('upstream source inventory', pinned_sources, upstream_inventory(source_tree))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
     require_unchanged('drop oracle executable', binary_identity, executable_identity(binary))
     require_unchanged('repository identity', identity, git_identity())
     verify_tools(tool_paths, tool_identities)
     records = args.output / 'comparison.json'
     records.write_text(json.dumps({**observed[0], 'commit-deadline': deadline, 'donor-timeout': timeout}, indent=2) + '\n')
-    receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True, 'upstream_revision': REVISION,
-        'upstream_archive_sha256': manifest['sources']['fortress']['archive']['digest'],
+    receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True, 'upstream_revision': source_revision,
+        'upstream_archive_sha256': archive_digest,
         'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'upstream_source_sha256': pinned_sources,
         'source_sha256': local_sources, 'commit': identity['commit'],
         'working_tree_dirty': identity['working_tree_dirty'],

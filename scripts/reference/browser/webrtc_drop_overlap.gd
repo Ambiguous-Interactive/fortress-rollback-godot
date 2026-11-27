@@ -128,7 +128,8 @@ func run_overlap(host: Node, first: String) -> bool:
 	if not await host._wait(func() -> bool: return _recover_prefix(host), true):
 		return false
 	JavaScriptBridge.eval("document.body.dataset.fortressDropReady = 'true'")
-	if not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressDropGo || false"), true):
+	var released: Callable = func() -> bool: return bool(JavaScriptBridge.eval("window.fortressDropGo || false"))
+	if not await host._wait(_ready_to_start.bind(host, released), true):
 		return false
 	_first = first
 	var roster: PackedStringArray = _membership.roster()
@@ -168,6 +169,11 @@ func run_overlap(host: Node, first: String) -> bool:
 		"sent_at_end": int(JavaScriptBridge.eval("window.fortressRtc.sent")), "goodbyes_sent": _goodbyes_sent,
 	})
 	return complete
+
+
+func _ready_to_start(host: Node, released: Callable) -> bool:
+	# A locally ready peer can still owe another endpoint the latest receipt vector.
+	return _recover_prefix(host) and bool(released.call())
 
 
 func _recover_prefix(host: Node) -> bool:

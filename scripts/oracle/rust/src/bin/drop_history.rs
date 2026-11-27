@@ -5,7 +5,11 @@ use fortress_rollback::{Config, DisconnectBehavior, FortressError, FortressEvent
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::{Arc, Mutex}, time::Duration};
 
-const REVISION: &str = "d124c89080004d96971a629bb0427056ee1805e3";
+const REVISION: &str = match option_env!("FORTRESS_DROP_ORACLE_REVISION") {
+    Some(revision) => revision,
+    None => "d124c89080004d96971a629bb0427056ee1805e3",
+};
+const OBSERVE_CHECKSUMS: bool = fortress_rollback::PROTOCOL_VERSION == 6;
 
 #[derive(Clone)]
 struct Game { frame: i32, values: Vec<i64> }
@@ -22,7 +26,7 @@ impl Config for Profile { type Input = [u8; 4]; type State = Game; type Address 
 #[derive(Default)]
 struct Buffers {
     incoming: Vec<(String, Message, Option<Value>)>, outgoing: Vec<(String, Message, Option<usize>)>,
-    received: Vec<Value>, timed_publications: Vec<(usize, u64)>, order: Arc<Mutex<usize>>
+    received: Vec<Value>, checksums: Vec<Value>, timed_publications: Vec<(usize, u64)>, order: Arc<Mutex<usize>>
 }
 fn next_order(order: &Arc<Mutex<usize>>) -> usize {
     let mut value = order.lock().unwrap();
@@ -38,6 +42,10 @@ impl NonBlockingSocket<String> for Socket {
     fn send_to(&mut self, message: &Message, address: &String) {
         let mut queue = self.buffers.lock().unwrap();
         let raw = serde_json::to_value(message).unwrap();
+        if OBSERVE_CHECKSUMS && raw["body"].get("ChecksumReport").is_some() {
+            assert!(queue.checksums.len() < 4096, "bounded checksum observations");
+            queue.checksums.push(json!({"to":address,"raw":raw}));
+        }
         let control = raw["body"].as_object().is_some_and(|body| body.keys().any(|kind| kind.starts_with("Drop")));
         let order = control.then(|| next_order(&queue.order));
         if let (Some(clock), Some(order)) = (&self.clock, order) {
@@ -191,6 +199,9 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
             .with_max_prediction_window(8).with_disconnect_behavior(DisconnectBehavior::ContinueWithout)
             .with_protocol_config(protocol).with_sync_config(sync)
             .with_disconnect_timeout(Duration::from_secs(100)).with_disconnect_notify_delay(Duration::from_secs(50));
+        if OBSERVE_CHECKSUMS && deadline_offset.is_none() && !drop_all_history {
+            builder = builder.with_desync_detection_mode(fortress_rollback::DesyncDetection::On { interval: 1 });
+        }
         for slot in 0..3 * target_slots {
             let kind = if slot / target_slots == peer { PlayerType::Local } else { PlayerType::Remote((slot / target_slots).to_string()) };
             builder = builder.add_player(kind, PlayerHandle::new(slot)).map_err(|error| format!("{error:?}"))?;
@@ -331,6 +342,16 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
     if warmup > 0 {
         result["warmup"] = json!(warmup);
         result["expired_original_rows"] = json!(expired_original_rows);
+    }
+    if OBSERVE_CHECKSUMS {
+        let mut checksums = Vec::new();
+        for (from, buffer) in buffers.iter().enumerate() {
+            for mut packet in std::mem::take(&mut buffer.lock().unwrap().checksums) {
+                packet["from"] = json!(from);
+                checksums.push(packet);
+            }
+        }
+        result["checksums"] = json!(checksums);
     }
     Ok(result)
 }
