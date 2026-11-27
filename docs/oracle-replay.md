@@ -4,8 +4,11 @@ Run `make replay-probes GODOT=/path/to/pinned/godot` to compare the actual pinne
 Rust `ReplaySession` and both shipped `FortressReplayPlayer` interfaces.
 CI runs both engine pins. The receipt and raw logs go to `.cache/reference/results/replay/`.
 
-The probe invokes public APIs from unchanged fortress-rollback revision
-`25e8020d1a5fd40c4f16b37f97b5ec5329a8566d`. Relevant upstream source:
+The probe invokes public APIs from the Fortress source selected in
+`docs/reference/pins.json`. The current reviewed revision is
+`d124c89080004d96971a629bb0427056ee1805e3`. The candidate rehearsal uses
+`25e8020d1a5fd40c4f16b37f97b5ec5329a8566d`. The receipt identifies the source
+used for each run. The candidate implementations are in
 [`src/sessions/replay_session.rs`](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sessions/replay_session.rs)
 and [`src/replay.rs`](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/replay.rs).
 This is gameplay replay applicability, separate from network fault-trace replay.
@@ -54,11 +57,11 @@ as these sparse workloads.
 Seed `4294967295` exercises unsigned input/state boundaries. Ordered integer
 updates include a PRNG state and pending value in canonical 16-byte snapshots.
 
-Eight additional 64-frame workloads use actual pinned `ReplaySession<u8>` and `ReplaySession<u16>` inputs,
+Eight additional 64-frame workloads use `ReplaySession<u8>` and `ReplaySession<u16>` from the selected source,
 with two/eight players and sparse checksums or a frame-32 mismatch. Values exercise each width's full range.
 All three Godot file versions and both playback interfaces must report the decoded width and original canonical history.
 An actual high-byte edit in a 16-bit sample must stop every Godot path at frame 32 with `input_digest`.
-The pinned-source controls reject unsupported widths and values outside the selected input type.
+The source controls reject unsupported widths and values outside the selected input type.
 The receipt binds these workloads separately from the original 32-bit acceptance inventory.
 
 Python generates original inputs and independently computes every canonical
@@ -81,7 +84,7 @@ extension.
 
 Every frame of the version-5 or version-6 file carries the digest of its input bytes and
 player statuses. Version 4 retains its byte-only digest and defaults every
-player status to `CONFIRMED`. Those digests are a Godot-side integrity extension: the pinned upstream session owns the
+player status to `CONFIRMED`. Those digests are a Godot-side integrity extension. The selected upstream session owns the
 input history and stores no such digest, so the corpus compares only the
 upstream-owned behaviour and never claims parity for the digests.
 
@@ -267,8 +270,7 @@ to the original target with every original callback and canonical state compared
 against independently calculated delayed inputs. The observer retains empty
 lockstep service attempts too; a reported final frame alone cannot qualify.
 
-The pinned source explicitly disables recording after `take_replay()`
-(`p2p_session.rs`, lines 8398–8427). A second extraction must return the structured
+Both source revisions disable recording after `take_replay()`. A second extraction must return the structured
 `NotSupported` error. Godot's `Session.replay()` deliberately returns an owned
 snapshot without disabling recording. A later Godot export must contain the
 complete finalized simulated history, serialize/decode successfully, and replay
@@ -318,10 +320,11 @@ The historical `d124c89080004d96971a629bb0427056ee1805e3` recording retained
 the first speculative checksum at odd boundaries 1, 3, 5 and 7. The actual
 source playback emitted `ReplayDesync` at each of those boundaries because
 the recording already contained corrected original inputs. Historical validation
-requires those events and their checksum pairs. The pinned source now refreshes
-checksums from corrected saved-state cells after executing the correction requests.
-At the current pin, each decoded checksum in this workload matches the independent
-original history and every playback event list is empty. The neutral workload
+requires those events and their checksum pairs. When the recovery candidate
+`25e8020d` is selected, it refreshes checksums from corrected saved-state cells
+after executing the correction requests. Each decoded checksum in this workload
+then matches the independent original history and every playback event list is
+empty. The neutral workload
 continues to require zero corrections and zero playback events. See the historical
 [checksum discrepancy](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253)
 and the [upstream checksum repair](https://github.com/wallstop/fortress-rollback/pull/381).
@@ -354,7 +357,7 @@ another local sample. Godot's actual `Driver.recover()` repairs one versus two p
 frames, stays at boundary 257, and exports all 257 canonical rows. Each decoded export
 then validates through production playback. The neutral control has no correction.
 
-The pinned source calls `P2PSession::recover_confirmed_inputs()` with no new
+The recovery candidate calls `P2PSession::recover_confirmed_inputs()` with no new
 local sample. Endpoint zero loads boundary 256 and endpoint one loads boundary
 255. Each replays through boundary 257 using the original confirmed inputs. Both
 endpoints report receipt and confirmation through frame 256, retain the original

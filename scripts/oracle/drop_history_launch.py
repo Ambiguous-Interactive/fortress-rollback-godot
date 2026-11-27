@@ -224,6 +224,7 @@ def select_source(manifest, source_revision, offline):
 def build_observer(tool_paths, output, source_tree, source_revision, offline, *, coordinator_failover=False):
     base = ROOT / 'scripts/oracle/rust/Cargo.toml'
     manifest = prepare_source_build(base, source_tree, source_revision, CACHE)
+    adapter_hashes = upstream_inventory(manifest.parent)
     command = [str(tool_paths['cargo']), 'build', '--locked', '--bin', 'drop_history', '--manifest-path', str(manifest)]
     if coordinator_failover:
         command += ['--features', 'coordinator-failover']
@@ -234,7 +235,7 @@ def build_observer(tool_paths, output, source_tree, source_revision, offline, *,
         target = target / ('drop-history-' + source_revision)
         command += ['--target-dir', str(target)]
     build(command, output / 'build.log', tool_paths['rustc'], source_revision)
-    return target / 'debug/drop_history'
+    return target / 'debug/drop_history', manifest.parent, adapter_hashes
 
 
 def main():
@@ -269,14 +270,16 @@ def main():
     if not engine_version.startswith(('4.3.stable', '4.7.2.stable')):
         raise ValueError('drop history: unsupported engine profile')
     verify_tools(tool_paths, tool_identities)
-    binary = build_observer(tool_paths, args.output, source_tree, source_revision, args.offline,
-                            coordinator_failover=args.coordinator_failover)
+    binary, adapter, adapter_hashes = build_observer(
+        tool_paths, args.output, source_tree, source_revision, args.offline,
+        coordinator_failover=args.coordinator_failover)
     verify_tools(tool_paths, tool_identities)
     binary_identity = executable_identity(binary)
 
     def verify_identity():
         require_unchanged('local source inventory', local_sources, inventory())
         require_unchanged('upstream source inventory', pinned_sources, upstream_inventory(source_tree))
+        require_unchanged('Cargo adapter inventory', adapter_hashes, upstream_inventory(adapter))
         require_unchanged('Godot executable', engine_identity, executable_identity(engine))
         require_unchanged('drop oracle executable', binary_identity, executable_identity(binary))
         require_unchanged('repository identity', identity, git_identity())

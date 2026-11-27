@@ -315,7 +315,7 @@ def main():
         + [ROOT / 'scripts/reference/fetch.py', ROOT / 'scripts/reference/run.py',
            ROOT / 'scripts/reference/owned_process.py', ROOT / 'scripts/reference/engine_path.py',
            ROOT / 'scripts/reference/receipt_arguments.py', ROOT / 'scripts/oracle/rust/Cargo.toml',
-           ROOT / 'docs/reference/pins.json'])
+           ROOT / 'scripts/oracle/rust/Cargo.lock', ROOT / 'docs/reference/pins.json'])
     source_hashes = {str(path.relative_to(ROOT)): digest(path) for path in source_paths}
     engine = resolve_engine(args.godot)
     manifest = load_manifest()
@@ -408,7 +408,7 @@ def main():
               'operations': len(scenario_data['operations']), 'repeat_equal': True,
               'controls': controls, 'observation': observation, 'mutant': mutant_receipt,
               'binary_sha256': digest(clean_binary), 'mutant_binary_sha256': digest(mutant_binary),
-              'oracle_lock_sha256': digest(ROOT / 'scripts/oracle/rust/Cargo.lock'),
+              'oracle_lock_sha256': source_hashes['scripts/oracle/rust/Cargo.lock'],
               'scenario_sha256': digest(artifact),
               'rust_trace_sha256': digest(args.output / 'rust-trace.json'),
               'godot_trace_sha256': digest(args.output / 'godot-trace.json'),
