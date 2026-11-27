@@ -238,15 +238,17 @@ link. Report omitted records and preserve ambiguous stages. Capture the
 same acceptance across quiet-link pressure. For same-link pressure, freeze the
 accepted stamp in the gate-resume turn and require raw arrival before gate entry.
 Join new sends through raw, check SDK and native absence, and keep original ordinals and full-stream omissions for the selected link.
-Release a diagnostic delivery gate on its exact blocked stamps within the page deadline.
-Keep one server receipt request outstanding through timeout. Match both the returned generation and link selection.
+Release a diagnostic gate on its exact blocked stamps within the page deadline.
+Keep one server receipt request outstanding through timeout and match its generation and links.
+An on-time open only proves publication when the opened file contains that generation.
+For late publication, compare pre-rename server work against the controller window from before request publication.
+Order later writes by server ordinal and receipt stages around expiry on the same recipient page clock.
+Keep a missing or ambiguous anchor explicit and preserve the original failure when evidence is partial.
 Prove ordering between clocks by holding the original socket's FIFO until
 both exact raw stamps arrive and the controller reads their successful writes.
-Freeze the native acceptance receipt in the same page turn as the check.
-Reuse digests within a freeze only for byte-equal copies of the same stamp.
-Keep every occurrence and hash conflicting variants separately.
-Transfer complete large receipts as one JSON string through Playwright.
-Compare the decoded receipt with the original fixture, including exact stamps.
+Freeze native acceptance in the same page turn as the check. Reuse digests only
+for byte-equal copies of the same stamp. Keep every occurrence and hash conflicts separately.
+Transfer complete large Playwright receipts as one JSON string and compare all exact stamps to the fixture.
 Validate an optional hosted trace cell before setup. Pair stock and trace on the same checkout and room configuration.
 Bound OS dependency and browser installs separately. Run generic exported controls before installing additional room-only packages.
 Publish the trace build receipt and raw failure logs with the browser artifact.
@@ -278,9 +280,8 @@ Observe each page independently with one evaluation in flight per page; slower
 siblings must not block its next sample. Keep a persistent earliest-deadline timer
 active during inter-sample pauses, and test a fast advancing page behind a valid
 slow response that finishes just before its own deadline.
-Recheck the monotonic clock after awaited work, including receipt parsing and hashing.
-Rearm early deadline callbacks. Use an advancing fake clock to test completions
-just before, at, and after the threshold.
+Recheck the clock after awaited work, parsing and hashing. Rearm early callbacks.
+Use an advancing fake clock to test before, at and after the deadline.
 Deactivate an observation synchronously on every failure path. Resolve a sibling
 in the same turn as timeout/evaluation/validation rejection and prove it cannot
 sample or rearm after failure; an awaiting `finally` can run too late.
@@ -289,11 +290,6 @@ both lockstep and predictive advancement. Require healthy progress and nonzero
 actual comparisons for each peer, then inject a real game mismatch at that same
 capacity. Retained/send counts alone can pass while every comparison is skipped.
 
-Observe resource construction separately from child creation, so teardown checks
-also include abandoned connections that never created channels.
-
-In live rollback witnesses, keep the base history prefix and extend comparison
-through samples taken after the observed fault boundary. Bound retained history
-and reject a receipt if its comparison cannot cover every endpoint within that
-bound. After observing confirmation, require a successful advance before
-capturing corrected snapshots.
+Observe resource construction separately from child creation to cover connections that never created channels.
+Compare the original history and post-fault samples for every endpoint within
+the retention bound. Require a successful advance after confirmation before capturing corrected snapshots.
