@@ -64,7 +64,8 @@ For injected packet loss, retain emission identities and reconcile emitted minus
 A later equal payload cannot prove the first emission was lost. Reject a clean trace relabeled as loss and a restored discarded receipt.
 Require prerequisite receipts before the decisions they enable in every compared runtime; a retry received only after COMMIT cannot prove recovery.
 Capture action order at accepted publication and receipt. Bind each drained packet to that publication before counting distinct retry turns.
-For a selective-loss deadline, prove negotiation arrived and record each participant's first terminal event on its own clock.
+For selective loss, prove negotiation arrived. Record the first terminal transition separately from the event drain.
+When receipt of a peer's abort ends the operation, record that packet alongside the terminal transition.
 Validate the complete operation identity against the agreed operation before comparing retry payloads; matching malformed identities are insufficient.
 When control packets forward another participant’s certificate, sender direction cannot identify its owner.
 Select acknowledgement-loss faults by the actual participant certificate too, and retain emission/delivery order
