@@ -59,7 +59,7 @@ def check_source_packets(source):
         require(same(observation['order'], order), label + ' timed publication identity')
     clocks = {observation['order']: observation['at_us'] for observation in timed}
     rounds = [clocks[packet['order']] for packet in history]
-    require(all((at - started) % 50_000 == 0 for at in rounds) and rounds[-1] < expiry
+    require(started < rounds[0] and all((at - started) % 50_000 == 0 for at in rounds) and rounds[-1] < expiry
             and rounds == sorted(set(rounds)), label + ' distinct retry rounds before expiry')
     require(all(clocks[packet['order']] == expiry for packet in aborts), label + ' abort at expiry')
     check_delivery(emissions, history, receipts, label, grouped=True)
@@ -198,11 +198,13 @@ def check_delivery_control(delivered, timeout):
         require(same([packet['from'], packet['to'], packet['bytes']], [1, 0, history_bytes(4, 2).hex()]), label + ' donor route or bytes')
         check_godot_packet(packet['packet'], 4, 2)
     require(same(delivered['cuts'], [[11, 11], [11, 11]]), label + ' both original cutoff rows froze')
-    commits = delivered['commit_emissions']
-    require(same(delivered['lost_commit'], []), label + ' original COMMIT delivered')
-    check_delivery(commits, [], delivered['commit_receipts'], label + ' COMMIT', observed=True)
-    for packet in commits:
-        check_godot_commit(packet, 4, 2, unequal=True)
+    for kind, wire_name, acknowledgement in [('commit', 'COMMIT', False), ('ack', 'COMMITTED ACK', True)]:
+        emissions = delivered[kind + '_emissions']
+        require(same(delivered['lost_' + kind], []), label + ' original ' + wire_name + ' delivered')
+        check_delivery(emissions, [], delivered[kind + '_receipts'], label + ' ' + wire_name, observed=True)
+        for packet in emissions:
+            check_godot_commit(packet, 4, 2, acknowledgement=acknowledgement, unequal=True)
+    require(delivered['commit_receipts'][0]['order'] < delivered['ack_emissions'][0]['order'], label + ' COMMIT received before ACK publication')
     check_godot_history_publications(delivered)
     check_godot_negotiation(delivered)
     check_rows(delivered['survivors'], label, 4, 2, True)
@@ -246,11 +248,14 @@ def timeout_controls(source, godot, delivered):
                                           lambda row: row['survivors'][0]['terminal'].update(at_us=row['terminal_events'][1]['at_us'])),
         'source_same_round_retry': ('source', 'distinct retry rounds before expiry',
                                     lambda row: row['timed_publications'][1].update(at_us=row['timed_publications'][0]['at_us'])),
+        'source_retry_before_first_poll': ('source', 'distinct retry rounds before expiry',
+                                           lambda row: row['timed_publications'][0].update(at_us=row['started_us'])),
         'godot_terminal_ack': ('Godot', 'no COMMITTED ACK traffic', lambda row: row.update(
             ack_emissions=delivered['ack_emissions'], ack_receipts=delivered['ack_receipts'])),
         'godot_terminal_commit_receipt': ('Godot', 'no COMMIT traffic',
                                           lambda row: row.update(commit_receipts=delivered['commit_receipts'])),
         'godot_delivery_missing_commit_receipt': ('delivery', 'COMMIT emission/loss/receipt accounting', lambda row: row['commit_receipts'].clear()),
+        'godot_delivery_missing_ack_receipt': ('delivery', 'COMMITTED ACK emission/loss/receipt accounting', lambda row: row['ack_receipts'].clear()),
         'source_missing_retry': ('source', 'discarded original retries', lambda row: row['lost_history'].pop()),
         'source_restored_retry': ('source', 'dropped history received', lambda row: row['received_controls'].append(row['lost_history'][0])),
         'source_wrong_abort_reason': ('source', 'abort reason', lambda row: next(
