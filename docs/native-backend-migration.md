@@ -229,6 +229,20 @@ receipt before cleanup and can append a `relaySocketFailure` receipt after
 Chromium closes. Its `failure_sha256` hashes the exact original JSON line
 without its newline.
 
+Add `--trace-firefox-frames` to an instrumented relay cell with Firefox
+to collect Gecko frame timestamps through the pinned Playwright debugger.
+Each Firefox page retains 8,192 addressed carrier digests. Each match requires
+the exact carrier on the proxy connection tagged for that frozen recipient.
+The `relayFirefoxReceive` receipt records Gecko frame time and controller
+callback time on their own clocks. In mixed rooms it covers the Firefox pages.
+The debugger can deliver a frame late or lose its notification during teardown.
+Missing and ambiguous observations leave delivery unresolved.
+
+On failure, the witness waits for the original phase receipt write before
+browser cleanup. After cleanup, `relayFirefoxFailure` can supplement an
+acknowledged write. Match it to the original JSON line using `failure_sha256`.
+The callback marker uses the controller's acknowledgement of that write.
+
 Keep `native-online.json` with the logs from the same run. After export, a
 room failure exits nonzero and can publish a receipt with `passed: false`.
 The receipt identifies the selected and attempted cells, the control, CPU

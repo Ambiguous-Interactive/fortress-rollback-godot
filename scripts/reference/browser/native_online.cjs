@@ -1,5 +1,6 @@
 const { createChromiumCapture, proxySocketAddress } = require('./native_chromium_socket.cjs');
 const { createDepartureClock, CLOSE_HTTPS_PRE_SAMPLES } = require('./native_departure_clock.cjs');
+const { observeFirefoxFrames, joinFirefoxFrames } = require('./native_firefox_frames.cjs');
 const { assertRecoveredRoom, OmittedReplacement, PHYSICAL_PAIRS, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace, decodeRelayDelivery } = require('./native_relay_trace.cjs');
 const { createRelayProxyTrace, joinRelayReceive, relayExpiryTraffic } = require('./native_relay_proxy.cjs');
@@ -2045,12 +2046,15 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const traceRetention = control === '--relay-retention-control';
   const traceSameLink = control === '--relay-same-link-control';
   const traceChromiumSocket = control === '--trace-chromium-socket';
-  const traceRelayWire = control === '--trace-relay-wire' || traceRetention || traceSameLink || traceChromiumSocket;
+  const traceFirefoxFrames = control === '--trace-firefox-frames';
+  const traceBrowserReceive = traceChromiumSocket || traceFirefoxFrames;
+  const traceRelayWire = control === '--trace-relay-wire' || traceRetention || traceSameLink || traceBrowserReceive;
   const traceScopePath = traceRelayWire && process.env.FORTRESS_RELAY_TRACE_SCOPE;
   const traceReceiptPath = traceScopePath && process.env.FORTRESS_RELAY_TRACE_OUTPUT;
   const readRelayServer = traceReceiptPath && createRelayServerReader(traceReceiptPath);
   if (traceChromiumSocket && !readRelayServer) throw new Error('Chromium socket tracing requires a relay trace server');
-  const relayProxy = readRelayServer ? createRelayProxyTrace(traceChromiumSocket ? proxySocketAddress : undefined) : undefined;
+  if (traceFirefoxFrames && !readRelayServer) throw new Error('Firefox frame tracing requires a relay trace server');
+  const relayProxy = readRelayServer ? createRelayProxyTrace(traceBrowserReceive ? proxySocketAddress : undefined) : undefined;
   const mixed = startup || liveClose || recovery;
   const route = mixed ? 'mesh' : mode;
   const traceWarmup = route === 'relay' && players === 8;
@@ -2066,6 +2070,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     departureClock?.handle ?? releaseSignal?.handle, relayProxy?.forward);
   const origin = `https://127.0.0.1:${server.address().port}`;
   const socketEndpoint = `wss://127.0.0.1:${server.address().port}/v3/ws`;
+  const pageEndpoint = (index, name) => traceChromiumSocket || traceFirefoxFrames && name === 'firefox'
+    ? `${socketEndpoint}?trace_page=${index}` : socketEndpoint;
   const pages = [];
   const bootstrap_ms = [];
   const contexts = [];
@@ -2077,6 +2083,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const failures = [];
   const browsers = [];
   const browserPeers = [];
+  const firefoxObservers = [];
   let result;
   let failureReceipt;
   let chromiumCapture;
@@ -2165,6 +2172,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       contexts.push(context);
       const page = await context.newPage();
       pages.push(page);
+      if (traceFirefoxFrames && name === 'firefox') firefoxObservers[index] = observeFirefoxFrames(page, pageEndpoint(index, name));
       const display = name === 'firefox' ? await placeFirefox(page, index) : null;
       browserPeers.push({ index, name, version: browser.version(), display });
       page.on('pageerror', error => {
@@ -2210,8 +2218,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     phase = 'lobby';
     function connect(page, index, room) {
-      const endpoint = traceChromiumSocket ? `${socketEndpoint}?trace_page=${index}` : socketEndpoint;
-      return command(page, 'connect', { endpoint, name: `Player ${index}`, room, route, players,
+      return command(page, 'connect', { endpoint: pageEndpoint(index, browserPeers[index].name), name: `Player ${index}`, room, route, players,
         wait_for_full_mesh: mode === 'mesh' || recovery, observe_recovery: recovery, trace_close: traceMeshDeparture, trace_warmup: traceWarmup });
     }
     await connect(pages[0], 0, '');
@@ -2623,8 +2630,19 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         { frames: comparedFrames, departureCommands }),
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
     });
-    console.error(failure);
-    if (chromiumCapture) failureReceipt = { sha256: createHash('sha256').update(failure).digest('hex'), receive: relayReceive };
+    let published_ms;
+    // Node can emit a stream error as well as reporting it through the write callback.
+    const ignoreReportedWriteError = () => {};
+    process.stderr.once('error', ignoreReportedWriteError);
+    try {
+      published_ms = await boundedRoom(() => new Promise((resolve, reject) => {
+        process.stderr.write(failure + '\n', error => error ? reject(error) : resolve(performance.now()));
+      }), DIAGNOSTIC_MS, 'native failure receipt write');
+      process.stderr.off('error', ignoreReportedWriteError);
+    } catch (writeError) {
+      failures.push(writeError);
+    }
+    if (traceBrowserReceive) failureReceipt = { sha256: createHash('sha256').update(failure).digest('hex'), receive: relayReceive, published_ms };
   } finally {
     releaseSignal?.cancel();
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
@@ -2640,8 +2658,14 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     const recipients = roomIdentities?.uuids.map(uuid => uuid.replaceAll('-', ''));
     const observed = await chromiumCapture.finish(new URL(origin).host, failureReceipt?.receive ?? result?.relayReceive, recipients)
       .catch(() => ({ status: 'unavailable' }));
-    if (failureReceipt) console.error(JSON.stringify({ relaySocketFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
-    else result.relaySocketReceive = observed;
+    if (failureReceipt?.published_ms !== undefined) console.error(JSON.stringify({ relaySocketFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
+    else if (result) result.relaySocketReceive = observed;
+  }
+  if (traceFirefoxFrames && (failureReceipt?.published_ms !== undefined || result)) {
+    const recipients = roomIdentities?.uuids.map(uuid => uuid.replaceAll('-', ''));
+    const observed = joinFirefoxFrames(firefoxObservers, failureReceipt?.receive ?? result?.relayReceive, recipients, failureReceipt?.published_ms);
+    if (failureReceipt) console.error(JSON.stringify({ relayFirefoxFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
+    else result.relayFirefoxReceive = observed;
   }
   await flush();
   if (errors.length) failures.push(new Error(JSON.stringify(errors)));
@@ -2660,6 +2684,7 @@ if (require.main === module) {
   const validFault = size === '4' && (validOverlap || (!control && ['mesh-startup', 'mesh-close', 'mesh-recovery'].includes(route)));
   const relayControl = !control || control === '--trace-relay-wire'
     || profile === 'chromium' && control === '--trace-chromium-socket'
+    || browserPair.includes('firefox') && control === '--trace-firefox-frames'
     || (size === '8' && (['--relay-retention-control', '--relay-same-link-control'].includes(control)
       || profile === 'firefox' && RELEASE_DELAYS.has(control)));
   const validPlain = ['2', '4', '8'].includes(size) && (route === 'relay' ? relayControl : route === 'mesh' && !control);
