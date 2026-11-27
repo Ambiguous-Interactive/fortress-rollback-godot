@@ -59,9 +59,10 @@ test('expiry ordering requires a calibrated document and a unique carrier on the
   assert.equal(observe({ clocks: [{ ...calibration, end_ms: 59 }] }).observation.expiry_timing.order, 'unresolved');
   assert.equal(observe({ clocks: [] }).observation.expiry_timing.order, 'unresolved');
   const huge = { ...sample, page_ms: Number.MAX_VALUE };
-  assert.deepEqual(observe({ clocks: [{ ...calibration, start_ms: Number.MAX_VALUE, end_ms: Number.MAX_VALUE }],
-    expiries: [{ ...expiry, page_ms: huge.page_ms, chromium_service: { before: huge, after: huge } }] }).observation.expiry_timing,
-  { order: 'unresolved', reason: 'invalid' });
+  for (const badClock of [{ ...calibration, start_ms: Number.MAX_VALUE, end_ms: Number.MAX_VALUE }, { ...calibration, sample: huge }]) {
+    const badExpiry = { ...expiry, page_ms: huge.page_ms, chromium_service: { before: huge, after: huge } };
+    assert.deepEqual(observe({ clocks: [badClock], expiries: [badExpiry] }).observation.expiry_timing, { order: 'unresolved', reason: 'invalid' });
+  }
   assert.equal(observe({ expiries: [{ ...expiry, uuid: '44444444-4444-4444-4444-444444444444' }] }).observation.expiry_timing, undefined);
   assert.equal(observe({ input: { ...receive, rows: [{ ...row, proxy: [carrierMatch, carrierMatch] }] } }).observation, undefined);
 });

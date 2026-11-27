@@ -8,6 +8,7 @@ const LOG_LIMIT = LOG_MIB * 1024 * 1024;
 // Chromium uses a rolling file. Allow for its constants and final state in addition to event bytes.
 const READ_LIMIT = LOG_LIMIT + 4 * 1024 * 1024;
 const PAGE_CLOCK_PRECISION_MS = 2;
+const validClockMs = value => Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER;
 
 function readChromiumClock() {
   return { page_ms: performance.now(), time_origin_ms: performance.timeOrigin };
@@ -22,8 +23,7 @@ async function calibrateChromiumClock(page) {
 }
 
 function chromiumServiceSamples(samples) {
-  const project = sample => Number.isFinite(sample?.page_ms) && sample.page_ms >= 0
-    && Number.isFinite(sample.time_origin_ms) && sample.time_origin_ms > 0
+  const project = sample => validClockMs(sample?.page_ms) && validClockMs(sample.time_origin_ms) && sample.time_origin_ms > 0
     ? { page_ms: sample.page_ms, time_origin_ms: sample.time_origin_ms } : null;
   const [before, after] = Array.isArray(samples) && samples.length === 2 ? samples : [];
   return { before: project(before), after: project(after) };
@@ -33,9 +33,9 @@ function chromiumExpiryWindow(calibration, expiry) {
   const { start_ms, end_ms, sample } = calibration ?? {};
   const { before, after } = expiry.chromium_service ?? {};
   if (!calibration || !before || !after) return { status: 'unavailable' };
-  if (!Number.isFinite(start_ms) || !Number.isFinite(end_ms) || start_ms <= 0 || end_ms < start_ms
-    || !Number.isFinite(sample?.page_ms) || sample.page_ms < 0 || sample.page_ms > before.page_ms
-    || !Number.isFinite(expiry.page_ms) || before.page_ms > after.page_ms || after.page_ms > expiry.page_ms
+  const timestamps = [start_ms, end_ms, sample?.page_ms, sample?.time_origin_ms, before.page_ms, after.page_ms, expiry.page_ms];
+  if (!timestamps.every(validClockMs) || start_ms <= 0 || end_ms < start_ms || sample.time_origin_ms <= 0
+    || sample.page_ms > before.page_ms || before.page_ms > after.page_ms || after.page_ms > expiry.page_ms
     || before.time_origin_ms !== sample.time_origin_ms || after.time_origin_ms !== sample.time_origin_ms) return { status: 'invalid' };
   const min_netlog_ms = start_ms + (before.page_ms - sample.page_ms) - PAGE_CLOCK_PRECISION_MS;
   const max_netlog_ms = end_ms + (after.page_ms - sample.page_ms) + PAGE_CLOCK_PRECISION_MS;
