@@ -140,6 +140,9 @@ func service(host: Node) -> bool:
 	if host.recording_pressure and retried_inputs.size() < 2 and refused_input.is_empty() and host.peers[0].status().current_frame > 129:
 		blocked_reads = int(JavaScriptBridge.eval("window.fortressRtc.relayPostWrapBlockedReads"))
 	var result: Relay.Result = fallback.poll(host.transport_us, host._next_token)
+	if result.code not in [Relay.Code.OK, Relay.Code.BACKPRESSURE]:
+		host.errors.append("mixed_poll_%d_peer_%d" % [result.code, result.peer_code])
+		return false
 	if host.recording_pressure:
 		if not refused_head.is_empty() and relay._sent > 0:
 			pressure_retries += 1
@@ -156,9 +159,6 @@ func service(host: Node) -> bool:
 			if blocked_reads >= 0:
 				var current_reads: int = int(JavaScriptBridge.eval("window.fortressRtc.relayPostWrapBlockedReads"))
 				if current_reads == blocked_reads + 1: _capture_refused_input(host, current_reads)
-	if result.code not in [Relay.Code.OK, Relay.Code.BACKPRESSURE]:
-		host.errors.append("mixed_poll_%d_peer_%d" % [result.code, result.peer_code])
-		return false
 	host.sent_packets += result.sent
 	host.received_packets += result.received
 	var state: Dictionary = fallback.status()
