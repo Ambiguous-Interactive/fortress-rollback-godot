@@ -5124,7 +5124,7 @@
     {
       "path": "docs/reconnect-playbook.md",
       "disposition": "intentional_divergence",
-      "evidence": "fortress-v6-evidence.md#decision-102 SHA-256 aa73124723a0a5fc2ed82d46d71a8fe42efbdff2341607db86017c2dadcbbded"
+      "evidence": "fortress-v6-evidence.md#decision-102 SHA-256 4efe3de33358f5b9a0f41ca084f253ca08159976ec806c9e7a13c08e210823f0"
     },
     {
       "path": "docs/replay.md",
@@ -5139,7 +5139,7 @@
     {
       "path": "docs/specs/api-contracts.md",
       "disposition": "intentional_divergence",
-      "evidence": "fortress-v6-evidence.md#decision-105 SHA-256 911cdbce5990cf86224b2b568b0c4111e39f6ef7cec4a845de73ac03f3b9d130"
+      "evidence": "fortress-v6-evidence.md#decision-105 SHA-256 dca404df1904e2dc3b45432b07243e2fa8bc5db9e5d4198be5942b13c998d094"
     },
     {
       "path": "docs/specs/consensus-posture.md",
@@ -6134,7 +6134,7 @@
     {
       "path": "wiki/API-Contracts.md",
       "disposition": "intentional_divergence",
-      "evidence": "fortress-v6-evidence.md#decision-304 SHA-256 0ef5f1026b725b77757e1b5662a4ac52a6f4577ffcaebd057e037967681fd6ca"
+      "evidence": "fortress-v6-evidence.md#decision-304 SHA-256 87c45796d9f5bec3da61a38a16515b34cf794ff491ed6dfd1ed8c34b8159cc23"
     },
     {
       "path": "wiki/Consensus-Posture.md",
@@ -6179,7 +6179,7 @@
     {
       "path": "wiki/Reconnect-Playbook.md",
       "disposition": "intentional_divergence",
-      "evidence": "fortress-v6-evidence.md#decision-313 SHA-256 6b587fc6199d5d86cc8a392a1fe1f87cb0f9f66a69c28a01291dc1d884027dd7"
+      "evidence": "fortress-v6-evidence.md#decision-313 SHA-256 249ef6fc621509a011991d6b77ad92f5c21f6c1d4cedbf69d67b70b0a1fd7566"
     },
     {
       "path": "wiki/Replay.md",

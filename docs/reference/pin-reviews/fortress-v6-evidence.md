@@ -6,6 +6,8 @@ binds the paths and dispositions to both verified archives. Each evidence entry
 names its path and retains the underlying observations. Its report reference
 includes the SHA-256 of the evidence paragraph with lines joined by spaces.
 
+## Path decisions
+
 ### Decision 001
 
 `.agents/skills/adversarial-handoff/SKILL.md` · `inapplicable`
@@ -1104,8 +1106,10 @@ https://github.com/Ambiguous-Interactive/fortress-rollback/blob/25e8020d1a5fd40c
 
 The upstream playbook defines automatic strict-majority and witness admission, the explicit Rust removal and
 synchronization paths, an isolated-side one-way terminal tail bounded by prediction+1, and a rejected
-acknowledgement-floor experiment. Godot's automatic timeout matches the agreed-majority rule and its own
-witnessed-cut contract in docs/peer-lifecycle.md. Its callable surface keeps the explicit Goodbye fence and
+acknowledgement-floor experiment. Godot applies agreed-majority timeout admission with a
+last-survivor exception. When `_live_survivors() == 0`, verified local history can still permit a one-member
+timeout freeze. The source refuses further advance in witnessless two-endpoint and multi-handle one-remote
+cases. Matching that witness rule remains open in #48. The Godot witnessed-cut contract is in docs/peer-lifecycle.md. Its callable surface keeps the explicit Goodbye fence and
 excludes transparent reconnect (docs/supported.md#explicit-exclusions). A scratch deterministic production
 Godot peer probe used the same fixture with and without the target's outbound traffic. Both editor pins
 repeated the same result: target still received 66 addressed packets, peaked at confirmed frame 12, terminated
@@ -1158,7 +1162,10 @@ https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5e
 
 The upstream API now describes automatic strict-majority/witness admission, Rust explicit removal with
 source-epoch, provisional Ready, retry, abort and fallback rules, and zero-speed terminal spectator drain.
-Godot documents the matching automatic witness and protection of the agreed cut while retaining its own
+Godot applies agreed-majority timeout admission with a
+last-survivor exception. When `_live_survivors() == 0`, verified local history can still permit a one-member
+timeout freeze. The source refuses further advance in witnessless two-endpoint and multi-handle one-remote
+cases. Matching that witness rule remains open in #48. Godot protects the agreed cut with its own
 authority and all-survivor certificate, an era/roster-bound operation identity, a conservative timeout on
 coordinator loss, and a positive catch-up speed with clean END distinct from selected host loss. The port does
 not expose the Rust remove_player or zero-speed APIs. Scope and observed behavior are in
@@ -3783,8 +3790,11 @@ f449e79fbba3e967f374bc8e0bea6a0f8d4662fb1c6842534560771e7430ce9e and candidate
 
 Wiki mirror of docs/specs/api-contracts.md with the wiki link paths. The upstream API now describes automatic
 strict-majority/witness admission, Rust explicit removal with source-epoch, provisional Ready, retry, abort
-and fallback rules, and zero-speed terminal spectator drain. Godot documents the matching automatic witness
-and protection of the agreed cut while retaining its own authority and all-survivor certificate, an
+and fallback rules, and zero-speed terminal spectator drain. Godot applies agreed-majority timeout admission with a
+last-survivor exception. When `_live_survivors() == 0`, verified local history can still permit a one-member
+timeout freeze. The source refuses further advance in witnessless two-endpoint and multi-handle one-remote
+cases. Matching that witness rule remains open in #48. Godot protects the agreed cut with its own
+authority and all-survivor certificate, an
 era/roster-bound operation identity, a conservative timeout on coordinator loss, and a positive catch-up speed
 with clean END distinct from selected host loss. The port does not expose the Rust remove_player or zero-speed
 APIs. Scope and observed behavior are in docs/peer-lifecycle.md, docs/oracle-p2p.md and docs/spectators.md.
@@ -3946,9 +3956,10 @@ https://github.com/Ambiguous-Interactive/fortress-rollback/blob/25e8020d1a5fd40c
 
 Wiki mirror of docs/reconnect-playbook.md with the wiki link paths. The upstream playbook defines automatic
 strict-majority and witness admission, the explicit Rust removal and synchronization paths, an isolated-side
-one-way terminal tail bounded by prediction+1, and a rejected acknowledgement-floor experiment. Godot's
-automatic timeout matches the agreed-majority rule and its own witnessed-cut contract in
-docs/peer-lifecycle.md. Its callable surface keeps the explicit Goodbye fence and excludes transparent
+one-way terminal tail bounded by prediction+1, and a rejected acknowledgement-floor experiment. Godot applies agreed-majority timeout admission with a
+last-survivor exception. When `_live_survivors() == 0`, verified local history can still permit a one-member
+timeout freeze. The source refuses further advance in witnessless two-endpoint and multi-handle one-remote
+cases. Matching that witness rule remains open in #48. The Godot witnessed-cut contract is in docs/peer-lifecycle.md. Its callable surface keeps the explicit Goodbye fence and excludes transparent
 reconnect (docs/supported.md#explicit-exclusions). A scratch deterministic production Godot peer probe used
 the same fixture with and without the target's outbound traffic. Both editor pins repeated the same result:
 target still received 66 addressed packets, peaked at confirmed frame 12, terminated for missing_quorum, and

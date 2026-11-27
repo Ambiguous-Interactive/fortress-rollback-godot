@@ -14,7 +14,7 @@
       "review": {
         "observed_revision": "25e8020d1a5fd40c4f16b37f97b5ec5329a8566d",
         "observed_on": "2026-11-27",
-        "report_sha256": "b5b4130279dc727b044ec541ae742413ca5ef865b0049e1f6b30ad510c2ca171",
+        "report_sha256": "41edc16e3a519495e672ea58b8a8b48537228ef963cc15ccae18370441a75ee6",
         "archive_sha256": "ae67b3b5be6f9061e53356cf1c1402c4d2c30991e0bd2aafd66c7d986df32856",
         "advanced_from": "d124c89080004d96971a629bb0427056ee1805e3",
         "advanced_on": "2026-11-27"
