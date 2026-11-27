@@ -520,8 +520,6 @@ def main():
         prepare_zip(archive, editor_dir, executable_members=(name[:-4],))
         engine = resolve_engine(args.godot) if args.godot else editor_dir / name[:-4]
         validate_engine(engine, expected_engine)
-        if not args.godot:
-            engine.chmod(0o755)
         engines[version] = engine
         template_name = f'Godot_v{version}-stable_export_templates.tpz'
         template_artifacts[template_name] = pins['artifacts'][template_name]

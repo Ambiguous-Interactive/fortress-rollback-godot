@@ -168,6 +168,13 @@ invalid proxy framing, or a TLS write after the browser read began.
 `first_unobserved` identifies a stage at the measured cutoff.
 Use the proxy and page timestamps within their respective clock domains.
 
+Keep `native-online.json` with the logs from the same run. After export, a
+room failure exits nonzero and can publish a receipt with `passed: false`.
+The receipt identifies the selected and attempted cells, the control, CPU
+affinity where available, input and export hashes, and SHA-256 for retained
+logs. Compare those hashes before using a failure log for attribution.
+Input or export drift invalidates the receipt.
+
 Use the same-link pressure control with a local traced server build receipt.
 The control drops addressed packets after raw arrival for one link while
 the sender sends 520 inputs and 520 quality reports. It freezes the original

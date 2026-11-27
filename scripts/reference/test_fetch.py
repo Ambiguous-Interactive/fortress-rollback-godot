@@ -24,6 +24,7 @@ from package_addon import snapshot as runtime_snapshot
 from fetch import MANIFEST, fetch, load_manifest, sources
 from run import semantic
 from godot_smoke import run as engine_command
+from signalfish_probe import inventory
 
 
 class ReferenceContracts(unittest.TestCase):
@@ -165,7 +166,7 @@ class ReferenceContracts(unittest.TestCase):
                 manifest = load_manifest()
                 pin = {'algorithm': 'sha256', 'digest': hashlib.sha256(archive.read_bytes()).hexdigest()}
                 manifest['artifacts'][name + '.zip'] = pin
-                inode = editor.stat().st_ino
+                original = editor.stat()
                 process = subprocess.Popen([str(editor), '1'])
                 try:
                     self.assertIsNone(process.poll())
@@ -175,7 +176,11 @@ class ReferenceContracts(unittest.TestCase):
                         with self.assertRaises(Prepared):
                             godot_runner.main()
                     self.assertEqual(editor.read_bytes(), expected)
-                    self.assertEqual(editor.stat().st_ino == inode, not corrupt)
+                    prepared = editor.stat()
+                    self.assertEqual(prepared.st_mode & 0o7777, 0o755)
+                    self.assertEqual(prepared.st_ino == original.st_ino, not corrupt)
+                    if not corrupt:
+                        self.assertEqual(prepared.st_ctime_ns, original.st_ctime_ns)
                     self.assertEqual(process.wait(timeout=5), 0)
                     self.assertEqual(subprocess.run([str(editor), '0'], timeout=5).returncode, 0)
                 finally:
@@ -360,12 +365,14 @@ class ReferenceContracts(unittest.TestCase):
                 if command[0] != 'openssl':
                     return engine_command(command, environment, log)
 
+            def inventory_cold_inputs(files, **options):
+                return inventory({key: files[key] for key in ('editor', 'pins')}, **options)
+
             argv = ['runner', '--version', '4.3', '--cache', str(cache), '--addon', str(root / 'addon.zip'), '--output', str(output)]
             with (patch.object(sys, 'argv', argv),
                   patch.dict(os.environ, FORTRESS_PLAYWRIGHT_PACKAGE='unused', FORTRESS_CHROMIUM_EXECUTABLE='unused'),
                   patch.object(native_online_runner, 'MANIFEST', pins),
-                  patch.object(native_online_runner, 'inventory',
-                               side_effect=lambda files: {key: hashlib.sha256(files[key].read_bytes()).hexdigest() for key in ('editor', 'pins')}),
+                  patch.object(native_online_runner, 'inventory', side_effect=inventory_cold_inputs),
                   patch.object(native_online_runner, 'run', side_effect=run_tool),
                   patch.object(native_online_runner, 'stage_export', side_effect=RuntimeError('editor ready'))):
                 self.assertFalse((cache / 'editors').exists())

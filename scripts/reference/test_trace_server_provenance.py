@@ -191,8 +191,8 @@ class TraceServerWitnessTest(unittest.TestCase):
             stack.enter_context(patch.object(native, 'run', return_value=version + '.stable.test'))
             stage = stack.enter_context(patch.object(native, 'stage_export', return_value=(export, {})))
             play = stack.enter_context(patch.object(native, 'play_cells', return_value={}))
-            stack.enter_context(patch.object(native.host_capacity, 'acquire_when_free', return_value=True))
-            stack.enter_context(patch.object(native.host_capacity, 'release'))
+            acquire = stack.enter_context(patch.object(native.host_capacity, 'acquire_when_free', return_value=True))
+            release = stack.enter_context(patch.object(native.host_capacity, 'release'))
             report = output / native.REPORT
             native.main()
             self.assertTrue(json.loads(report.read_text())['passed'])
@@ -240,6 +240,103 @@ class TraceServerWitnessTest(unittest.TestCase):
             inputs = json.loads(report.read_text())['inputs']
             self.assertEqual(inputs['relay_trace_patch'], digest(trace_sources['patch']))
             self.assertEqual(inputs['relay_trace_module'], digest(trace_sources['module']))
+
+            def failed_play(cells, attempted_cells, *_args):
+                attempted_cells.append(cells[0])
+                (output / 'relay-2.log').write_text('native online witness failed in warmup\n')
+                raise RuntimeError('room failed')
+
+            for changed in (None, trace_sources['module'], export):
+                with self.subTest(failed_room_changed=changed):
+                    def failed_play_with_drift(*args, changed=changed):
+                        if changed is not None:
+                            changed.write_bytes(b'changed')
+                        failed_play(*args)
+
+                    play.side_effect = failed_play_with_drift
+                    before = changed.read_bytes() if changed is not None else None
+                    try:
+                        with self.assertRaisesRegex(RuntimeError, '^room failed$') as failure:
+                            native.main()
+                        if changed is not None:
+                            self.assertFalse(report.exists())
+                            self.assertIn('native browser witness inputs changed during execution', failure.exception.__notes__[0])
+                            continue
+                        failed = json.loads(report.read_text())
+                        self.assertFalse(failed['passed'])
+                        self.assertEqual(failed['inputs'], inputs)
+                        self.assertEqual(failed['cells'], ['relay:2'])
+                        self.assertEqual(failed['attempted_cells'], ['relay:2'])
+                        self.assertEqual(failed['control'], '--trace-relay-wire')
+                        self.assertEqual(failed['logs'], {'relay-2.log': digest(output / 'relay-2.log')})
+                    finally:
+                        if changed is not None:
+                            changed.write_bytes(before)
+
+            play.side_effect = failed_play
+            acquire.return_value = False
+            play.reset_mock()
+            with self.assertRaisesRegex(ValueError, 'development host stayed busy'):
+                native.main()
+            play.assert_not_called()
+            failed = json.loads(report.read_text())
+            self.assertFalse(failed['passed'])
+            self.assertEqual(failed['attempted_cells'], [])
+            self.assertEqual(failed['logs'], {})
+            acquire.return_value = True
+
+            release.side_effect = OSError('lease close failed')
+            with self.assertRaisesRegex(RuntimeError, '^room failed$') as failure:
+                native.main()
+            self.assertIn('lease close failed', failure.exception.__notes__[0])
+            try:
+                raise RuntimeError('caller exception')
+            except RuntimeError as caller:
+                play.side_effect = None
+                with self.assertRaisesRegex(OSError, 'lease close failed'):
+                    native.main()
+                self.assertFalse(hasattr(caller, '__notes__'))
+                self.assertFalse(json.loads(report.read_text())['passed'])
+            release.side_effect = None
+
+            def change_while_hashing(paths, **kwargs):
+                if 'relay-2.log' in paths:
+                    export.write_bytes(b'changed')
+                return inventory(paths, **kwargs)
+
+            inventory = native.inventory
+            play.side_effect = failed_play
+            with patch.object(native, 'inventory', side_effect=change_while_hashing):
+                with self.assertRaisesRegex(RuntimeError, '^room failed$') as failure:
+                    native.main()
+                self.assertIn('native browser witness inputs changed during execution', failure.exception.__notes__[0])
+                self.assertFalse(report.exists())
+
+            def change_during_export_verification(paths, **kwargs):
+                if 'export' in paths and kwargs.get('identities') is not None:
+                    trace_sources['module'].write_bytes(b'changed')
+                return inventory(paths, **kwargs)
+
+            with patch.object(native, 'inventory', side_effect=change_during_export_verification):
+                with self.assertRaisesRegex(RuntimeError, '^room failed$') as failure:
+                    native.main()
+                self.assertIn('native browser witness inputs changed during execution', failure.exception.__notes__[0])
+                self.assertFalse(report.exists())
+            trace_sources['module'].write_bytes(b'original')
+
+            for restored in (trace_sources['module'], export):
+                with self.subTest(transient_drift=restored):
+                    def change_and_restore(*args, restored=restored):
+                        original = restored.read_bytes()
+                        restored.write_bytes(b'transient content')
+                        restored.write_bytes(original)
+                        failed_play(*args)
+
+                    play.side_effect = change_and_restore
+                    with self.assertRaisesRegex(RuntimeError, '^room failed$') as failure:
+                        native.main()
+                    self.assertFalse(report.exists(), 'a restored file still invalidates the receipt')
+                    self.assertIn('native browser witness inputs changed during execution', failure.exception.__notes__[0])
 
 
 if __name__ == '__main__':
