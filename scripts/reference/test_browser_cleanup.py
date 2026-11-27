@@ -760,8 +760,21 @@ for (const [change, diagnostic] of [
       return { jsonValue: async () => value, dispose: async () => {} };
     },
   });
-  const sourcePage = page({ pressureRelayLink: () => ordinals, relayWireTrace: () => source });
-  const reporterPage = page({ blockRelayLink: () => before, relayWireTrace: () => reporter, resumeBlockedRelay(stamps) {
+  function receiptBytes(receipt) {
+    const encoded = structuredClone(receipt);
+    for (const groups of Object.values(encoded.streams)) {
+      for (const { events } of Object.values(groups)) {
+        for (const packet of events) {
+          packet.bytes = packetBytes(packet.kind).toString('base64');
+          delete packet.envelope_bytes;
+          delete packet.envelope_sha256;
+        }
+      }
+    }
+    return encoded;
+  }
+  const sourcePage = page({ pressureRelayLink: () => ordinals, relayWireTrace: () => receiptBytes(source) });
+  const reporterPage = page({ blockRelayLink: () => before, relayWireTrace: () => receiptBytes(reporter), resumeBlockedRelay(stamps) {
     assert.equal(stamps.length, 1040);
     assert.equal(stamps.filter(stamp => stamp.kind === 4).length, 520);
     return resumed;
@@ -2800,7 +2813,7 @@ runMain();
                         if control == 'history late trace':
                             link = '00000000000000000000000000000002/00000000000000000000000000000001'
                             self.assertEqual(report['expiryLinks'], [link])
-                            self.assertEqual(report['relayWire'], [{'selected': [link]}] * 2)
+                            self.assertEqual(report['relayWire'], [{'selected': [link], 'streams': {}}] * 2)
                             self.assertNotIn('relayJoinError', report)
                             self.assertEqual(report['relayJoined']['joined'], ['00000000-0000-0000-0000-000000000002'])
                             self.assertEqual(report['postRelease'][1]['native_expiry']['uuid'], '00000000-0000-0000-0000-000000000001')
