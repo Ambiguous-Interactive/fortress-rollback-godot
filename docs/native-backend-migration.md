@@ -238,10 +238,10 @@ callback time on their own clocks. In mixed rooms it covers the Firefox pages.
 The debugger can deliver a frame late or lose its notification during teardown.
 Missing and ambiguous observations leave delivery unresolved.
 
-On failure, `relayFirefoxFailure` can supplement the original phase receipt
-after browser cleanup. Match it to the original JSON line using
-`failure_sha256`. The callback marker reports whether the controller accepted
-the debugger notification after that line was published.
+On failure, the witness waits for the original phase receipt write before
+browser cleanup. After cleanup, `relayFirefoxFailure` can supplement an
+acknowledged write. Match it to the original JSON line using `failure_sha256`.
+The callback marker uses the controller's acknowledgement of that write.
 
 Keep `native-online.json` with the logs from the same run. After export, a
 room failure exits nonzero and can publish a receipt with `passed: false`.

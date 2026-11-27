@@ -3878,6 +3878,13 @@ module.exports.firefox=module.exports.chromium;
                             else:
                                 self.assertEqual(evidence['coverage'], 'debugger-callback-dependent')
                                 self.assertEqual((evidence['pages'], evidence['rows']), ([], []))
+                                log.unlink()
+                                with subprocess.Popen(command, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE) as broken:
+                                    broken.stderr.close()
+                                    self.assertEqual(broken.wait(timeout=10), 1)
+                                self.assertTrue(log.is_file(), 'closed stderr aborted before room cleanup')
+                                self.assertEqual(log.read_text().splitlines(),
+                                                 ['phase receipt', 'context close started', 'browser closed 0', 'browser closed 0', 'server closed'])
                     if not (primary or browser_failure or context_failure or diagnostic):
                         json.loads(child.stdout)
 

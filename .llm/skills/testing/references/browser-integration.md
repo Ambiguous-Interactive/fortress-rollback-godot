@@ -244,8 +244,9 @@ An on-time open only proves publication when the opened file contains that gener
 For late publication, compare pre-rename server work against the controller window from before request publication.
 Order writes by server ordinal and page observations by the recipient's clock.
 Stamp validated history synchronously in the console listener with the expiry's controller ordinal.
-Publish the original failure before closing browsers. Bind later socket evidence to that receipt by digest.
-Keep missing and ambiguous observations explicit even when cleanup fails.
+Await the original failure write before browser cleanup. Bound the wait and handle both the write callback and stream error.
+Bind later socket evidence to the acknowledged failure line by digest.
+Track browser source timestamps separately from debugger callback receipt times. Record debugger gaps as unresolved even when cleanup succeeds.
 Prove ordering between clocks by holding the original socket's FIFO until
 both exact raw stamps arrive and the controller reads their successful writes.
 Freeze native acceptance in the same page turn as the check. Reuse digests only

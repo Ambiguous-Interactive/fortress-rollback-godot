@@ -2631,10 +2631,14 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
     });
     let published_ms;
+    // Node can emit a stream error as well as reporting it through the write callback.
+    const ignoreReportedWriteError = () => {};
+    process.stderr.once('error', ignoreReportedWriteError);
     try {
       published_ms = await boundedRoom(() => new Promise((resolve, reject) => {
         process.stderr.write(failure + '\n', error => error ? reject(error) : resolve(performance.now()));
       }), DIAGNOSTIC_MS, 'native failure receipt write');
+      process.stderr.off('error', ignoreReportedWriteError);
     } catch (writeError) {
       failures.push(writeError);
     }
@@ -2654,10 +2658,10 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     const recipients = roomIdentities?.uuids.map(uuid => uuid.replaceAll('-', ''));
     const observed = await chromiumCapture.finish(new URL(origin).host, failureReceipt?.receive ?? result?.relayReceive, recipients)
       .catch(() => ({ status: 'unavailable' }));
-    if (failureReceipt) console.error(JSON.stringify({ relaySocketFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
-    else result.relaySocketReceive = observed;
+    if (failureReceipt?.published_ms !== undefined) console.error(JSON.stringify({ relaySocketFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
+    else if (result) result.relaySocketReceive = observed;
   }
-  if (traceFirefoxFrames && (failureReceipt || result)) {
+  if (traceFirefoxFrames && (failureReceipt?.published_ms !== undefined || result)) {
     const recipients = roomIdentities?.uuids.map(uuid => uuid.replaceAll('-', ''));
     const observed = joinFirefoxFrames(firefoxObservers, failureReceipt?.receive ?? result?.relayReceive, recipients, failureReceipt?.published_ms);
     if (failureReceipt) console.error(JSON.stringify({ relayFirefoxFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
