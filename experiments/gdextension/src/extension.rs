@@ -5,6 +5,9 @@ use crate::{
 use fortress_rollback::{FortressRequest, InputStatus, PlayerHandle, SessionBuilder};
 use godot::prelude::*;
 
+include!(concat!(env!("OUT_DIR"), "/native_wire.rs"));
+const _: () = assert!(WIRE_VERSION == fortress_rollback::PROTOCOL_VERSION, "native Fortress source protocol differs from its revision");
+
 struct Library;
 #[gdextension]
 unsafe impl ExtensionLibrary for Library {}
@@ -33,7 +36,7 @@ impl FortressNativeSession {
 
     #[func]
     fn wire_profile(&self) -> GString {
-        "fortress-native-d124c890-v1-u32".into()
+        PROFILE.into()
     }
 
     #[func]

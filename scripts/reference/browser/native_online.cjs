@@ -479,7 +479,7 @@ function browserOptions(name, chromiumArgs = []) {
   throw new Error(`unknown browser ${name}`);
 }
 
-function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, closePrefix, beforeRelayDecode) {
+function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, closePrefix, beforeRelayDecode, wireVersion = 2) {
   if (relayWireTrace) window.fortressNativeRelayTrace = relayWireTrace;
   const active = [];
   const resources = { rtc: [], sockets: [] };
@@ -597,7 +597,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
   function nativePacket(bytes) {
     // The pinned Fortress codec uses an eight-byte header and a little-endian u32 body tag.
     const at = session.length;
-    if (bytes.length < at + 12 || bytes[at] !== 0xf5 || bytes[at + 1] !== 0x52 || bytes[at + 2] !== 2 || bytes[at + 3] !== 0) {
+    if (bytes.length < at + 12 || bytes[at] !== 0xf5 || bytes[at + 1] !== 0x52 || bytes[at + 2] !== wireVersion || bytes[at + 3] !== 0) {
       throw new Error('native gameplay wire header differs from the pinned codec');
     }
     const kind = new DataView(bytes.buffer, bytes.byteOffset + at + 8, 4).getUint32(0, true);
@@ -2045,6 +2045,11 @@ async function leaveWithReceipt(page, trace) {
 }
 
 async function run(root, endpoint, mode, players, browserPair, control) {
+  const reviewedRevision = 'd124c89080004d96971a629bb0427056ee1805e3';
+  const sourceRevision = process.env.FORTRESS_NATIVE_SOURCE_REVISION ?? reviewedRevision;
+  const wireVersion = new Map([[reviewedRevision, 2], ['25e8020d1a5fd40c4f16b37f97b5ec5329a8566d', 6]]).get(sourceRevision);
+  assert.ok(wireVersion, 'unsupported native source revision');
+  const nativeProfile = `fortress-native-${sourceRevision.slice(0, 8)}-v${wireVersion === 2 ? 1 : wireVersion}-u32`;
   const startup = mode === 'mesh-startup';
   const liveClose = mode === 'mesh-close';
   const overlap = mode === 'mesh-recovery-overlap';
@@ -2224,7 +2229,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         ? `(${createRelayWireTrace})(${JSON.stringify(RELAY_HOLD_PREFIX)}, ${RELAY_HOLD_CAP}, ${RELAY_HOLD_WINDOW_MS},
             (${decodeRelayDelivery}), ${Boolean(relayProxy)})` : 'undefined';
       const wireScript = `(${instrumentNativeWire})(${name === 'webkit'}, ${JSON.stringify(traceWarmup ? WARMUP_CHECKPOINT : '')}, ${relayTraceScript},
-        ${JSON.stringify(closeObservations ? CLOSE_CHECKPOINT : '')});`;
+        ${JSON.stringify(closeObservations ? CLOSE_CHECKPOINT : '')}, undefined, ${wireVersion});`;
       const expiryClock = traceFirefox ? readFirefoxClock : traceChromium ? readChromiumClock : 'undefined';
       const expiryClockField = traceChromium ? 'chromium_service' : 'firefox_clock';
       const postReleaseScript = postRelease
@@ -2233,6 +2238,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       await page.addInitScript(wireScript + postReleaseScript);
       await page.goto(`${origin}/index.html`);
       await wait(page, () => window.fortressNativeReady === true, null, PAGE_BOOT_MS);
+      assert.equal(await page.evaluate(() => window.fortressNativeProfile), nativeProfile, 'installed native profile differs from source revision');
       bootstrap_ms.push(Math.round(performance.now() - started));
     }
     if (traceChromiumClock) {
@@ -2267,7 +2273,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         roomIdentities = { uuids, roster };
       }
     }
-    if (readRelayServer) await bindRelayServer(ready, traceScopePath, readRelayServer);
+    if (readRelayServer) await bindRelayServer(ready, traceScopePath, readRelayServer, sourceRevision, wireVersion);
     await wait(pages[0], () => window.fortressNative.start_enabled);
     await Promise.all(pages.map(async (page, index) => {
       for (const key of INPUTS[index][1]) await page.keyboard.down(key);

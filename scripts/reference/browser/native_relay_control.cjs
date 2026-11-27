@@ -149,16 +149,17 @@ function createRelayServerReader(path) {
   };
 }
 
-async function bindRelayServer(ready, scopePath, readReceipt) {
+async function bindRelayServer(ready, scopePath, readReceipt, sourceRevision, wireVersion) {
   const { room_id, session_id: room } = ready[0];
   const roster = ready.map(peer => peer.uuid.replaceAll('-', '')).sort();
   assert.ok(ready.every(peer => peer.room_id === room_id && peer.session_id === room), 'relay scope must bind the same room in every browser');
-  const scope = { room_id, room, roster };
+  const scope = { room_id, room, roster, source_revision: sourceRevision };
   await fs.writeFile(scopePath + '.new', JSON.stringify(scope), { flag: 'wx', mode: 0o600 });
   await fs.rename(scopePath + '.new', scopePath);
   await readReceipt(receipt => {
     assert.equal(receipt.clock, 'server.monotonic');
-    assert.deepEqual({ room_id: receipt.room_id, room: receipt.room, roster: receipt.roster }, scope);
+    assert.deepEqual({ room_id: receipt.room_id, room: receipt.room, roster: receipt.roster, source_revision: receipt.source_revision }, scope);
+    assert.equal(receipt.wire_version, wireVersion, 'relay receipt wire version differs from source revision');
     return receipt;
   });
 }

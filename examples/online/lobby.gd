@@ -78,9 +78,12 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 	if slots < 2 or slots > 8 or route not in ["mesh", "relay"]:
 		message = "Choose a supported backend, room size and transport."
 		return ERR_INVALID_PARAMETER
-	if backend_choice == "native" and not Match.Driver.Native.available():
-		message = "Install the native addon to use upstream Fortress Rollback."
-		return ERR_UNAVAILABLE
+	var native_profile: String = ""
+	if backend_choice == "native":
+		native_profile = Match.Driver.Native.installed_profile()
+		if native_profile.is_empty():
+			message = "Install a supported native addon to use upstream Fortress Rollback."
+			return ERR_UNAVAILABLE
 	for path: String in [SDK_PATH, CONFIG_PATH, MESH_PATH]:
 		if not ResourceLoader.exists(path):
 			message = "SignalFish SDK is missing. See docs/online-example.md for installation."
@@ -139,7 +142,7 @@ func _connect_room(endpoint: String, player_name: String, room: String, now_us: 
 	_requested_route = route
 	_native_name = ""
 	if backend == "native":
-		_native_name = "%s-%d-%s" % [Match.Driver.Native.WIRE_PROFILE, slots, route]
+		_native_name = "%s-%d-%s" % [native_profile, slots, route]
 		game_match.game = Simulation.new(slots, Match.Driver.Native.INPUT_BYTES)
 	_cleanup_pending = false
 	all_ready = false

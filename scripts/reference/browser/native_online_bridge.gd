@@ -391,7 +391,7 @@ func _ready() -> void:
 	lobby = ObservedLobby.new()
 	scene.controller = lobby
 	add_child(scene)
-	JavaScriptBridge.eval("window.fortressNativeReady = true")
+	JavaScriptBridge.eval("window.fortressNativeProfile = %s; window.fortressNativeReady = true" % JSON.stringify(Driver.Native.installed_profile()))
 
 
 func _process(_delta: float) -> void:

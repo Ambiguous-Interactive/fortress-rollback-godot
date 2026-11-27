@@ -1,6 +1,6 @@
 # Fortress Rollback for GDScript
 
-This experimental addon links Fortress revision `d124c89080004d96971a629bb0427056ee1805e3` to Godot through godot-rust 0.5.5.
+The default experimental addon links Fortress revision `d124c89080004d96971a629bb0427056ee1805e3` to Godot through godot-rust 0.5.5.
 The Rust crate owns sessions, packet encoding, prediction, correction and snapshot cells. GDScript owns the game state and simulation.
 The GDScript-only addon in the main project has its own protocol and release contract. See the [experiment results](../../docs/experiments/upstream-binding.md).
 
@@ -51,6 +51,9 @@ python3 experiments/gdextension/platform_test.py 4.7.2 linux
 Results, including the installable `addon.zip`, `qualification.json` and the Linux `benchmark.json`, appear under `.cache/native-experiment/<version>/<target>/`.
 The [qualification workflow](../../.github/workflows/gdextension-experiment.yml) uploads these files by editor version and export target.
 Rust build artifacts share `.cache/reference/target/gdextension/`. Release builds and a normal Godot import each contribute to the first-run cost.
+The build verifies the archived paths and file bytes at the Fortress dependency path before assigning the native profile.
+To qualify a candidate, build from its verified archive in a separate workspace and use the candidate's full revision with
+`scripts/reference/native_online_probe.py --source-revision`. The probe checks the addon profile before joining a room.
 For Windows and macOS, run the corresponding target on a native host. The workflow also contains Android emulator and iOS Simulator jobs.
 The Android job builds ARM64 and x86-64 libraries. The iOS job packages ARM64 device and ARM64 simulator slices. Device signing and store distribution are separate release work.
 
