@@ -1,15 +1,18 @@
 """Verify the pinned source receives the original decision at its exact deadline."""
+import copy
 import struct
 
-from drop_history_contract import REVISION, check_source_content, check_source_operation, fields, integer, original_history, require, same
+from drop_history_contract import REVISION, check_source_content, fields, integer, original_history, require, same
+from source_wire import wire_version
 
 
-def check_commit_deadline(source, offset):
+def check_commit_deadline(source, offset, *, source_revision=REVISION):
     label = 'source COMMIT deadline'
+    wire = wire_version(source_revision)
     fields(source, 'upstream_revision offset_us started_us release_us ready ready_received commit commit_received '
                    'abort state dropped_before dropped frontier row_before row_after advance frame_before frame_after game_frame_after advanced_row '
                    'target_connected_before target_connected_after target_receipt_after', label)
-    require(same(source['upstream_revision'], REVISION), label + ' revision')
+    require(same(source['upstream_revision'], source_revision), label + ' revision')
     require(same(source['started_us'], 9000) and same(source['offset_us'], offset)
             and same(source['release_us'], 2_009_000 + offset), label + ' clock')
     observed_order = []
@@ -24,8 +27,7 @@ def check_commit_deadline(source, offset):
                 and same(received, {**emitted, 'order': received['order']}), label + ' decision receipt')
         fields(emitted['body'], kind, label + ' body')
         content = emitted['body'][kind]
-        check_source_content(kind, content, label, 1, 1)
-        check_source_operation(content['operation'], label + ' operation', 1)
+        check_source_content(kind, content, label, 1, 1, wire=wire)
         require(same(content['cut'], 8), label + ' cut')
         if name == 'ready':
             require(content['stage'] == 'Ready' and same(content['participant'], 0), label + ' coordinator READY')
@@ -61,11 +63,13 @@ def check_commit_deadline(source, offset):
         integer(abort['order'], commit_received + 1, 8192, label + ' timeout abort order')
         integer(abort['emission'], source['commit']['emission'] + 1, 4095, label + ' timeout abort emission')
         operation = source['commit']['body']['DropCommit']['operation']
-        require(same([abort['from'], abort['to'], abort['body']],
-                     [1, 0, {'DropAbort': {'operation': operation, 'reason': 'Timeout'}}]), label + ' timeout abort')
+        fields(abort['body'], 'DropAbort', label + ' timeout abort body')
+        content = abort['body']['DropAbort']
+        check_source_content('DropAbort', content, label + ' timeout', 1, 1, wire=wire)
+        require(same([abort['from'], abort['to'], content['operation']], [1, 0, operation]), label + ' timeout abort')
 
 
-def deadline_controls(cases):
+def deadline_controls(cases, *, source_revision=REVISION):
     # Value: protects=actual certificate cutoff; fails_when=mutated delivery, abort, history or frame evidence passes; why_new=retry traces never expire; seam=none
     expired = cases['0']
     controls = {
@@ -78,9 +82,15 @@ def deadline_controls(cases):
         'deadline_changed_received_commit': (0, 'decision receipt', {'commit_received': expired['ready_received']}),
         'deadline_cursor_only_advance': (-1, 'applied gameplay advance', {'game_frame_after': 6, 'advanced_row': None}),
     }
+    if wire_version(source_revision) == 6:
+        for field, value, diagnostic in [('targets', [], 'timeout abort targets'),
+                                         ('terminal_epoch', 0, 'timeout abort terminal_epoch')]:
+            abort = copy.deepcopy(expired['abort'])
+            abort['body']['DropAbort'][field] = value
+            controls['deadline_abort_' + field] = (0, diagnostic, {'abort': abort})
     for name, (offset, diagnostic, mutation) in controls.items():
         try:
-            check_commit_deadline({**cases[str(offset)], **mutation}, offset)
+            check_commit_deadline({**cases[str(offset)], **mutation}, offset, source_revision=source_revision)
         except ValueError as error:
             require(str(error) == 'drop history: source COMMIT deadline ' + diagnostic, name + ' unrelated failure: ' + str(error))
         else:

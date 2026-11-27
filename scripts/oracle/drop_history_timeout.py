@@ -2,13 +2,14 @@
 import copy
 
 from drop_history_contract import (
-    REVISION, check_before, check_delivery, check_godot_commit, check_godot_packet, check_godot_prepare, check_rows, check_source_content, check_source_operation,
-    fields, history_bytes, integer, original_history, require, same,
+    REVISION, check_before, check_delivery, check_godot_commit, check_godot_packet, check_godot_prepare, check_rows, check_source_content,
+    fields, history_bytes, integer, is_direct_cut_announcement, original_history, require, same,
 )
 from drop_history_inventory_controls import check_godot_inventory, check_godot_observation_order, check_source_observation_order
+from source_wire import wire_version
 
 
-def check_source_packets(source):
+def check_source_packets(source, wire):
     label = 'source donor timeout'
     emissions = source['controls']
     receipts = source['received_controls']
@@ -28,14 +29,11 @@ def check_source_packets(source):
             kind, content = next(iter(body.items()))
             require(kind in ('DropPrepare', 'DropReport', 'DropBackfill', 'DropAbort')
                     and type(content) is dict, label + ' no COMMIT')
-            check_source_operation(content.get('operation'), label + ' operation', 2)
+            check_source_content(kind, content, label, 4, 2, True, wire=wire)
             if kind == 'DropAbort':
-                fields(content, 'operation reason', label + ' abort')
-                require(content['reason'] == 'Timeout', label + ' abort reason')
                 if bank is emissions:
                     aborts.append(packet)
             else:
-                check_source_content(kind, content, label, 4, 2, True)
                 if kind == 'DropReport':
                     require(content['stage'] != 'Committed', label + ' no COMMITTED report')
                 if kind == 'DropBackfill':
@@ -68,8 +66,11 @@ def check_source_packets(source):
     require(any('DropPrepare' in packet['body'] and packet['from'] == 0 for packet in entering), label + ' delivered coordinator prepare')
     inventories = {packet['from'] for packet in entering if
                    packet['body'].get('DropReport', {}).get('stage') == 'Inventory'
+                   and packet['body']['DropReport']['receipts']
                    and packet['body']['DropReport']['participant'] == packet['from'] * 2}
     require(inventories == {0, 1}, label + ' delivered direct inventories')
+    if wire == 6:
+        require(any(is_direct_cut_announcement(packet) for packet in entering), label + ' delivered cut before backfill')
     return len(history)
 
 
@@ -136,15 +137,16 @@ def check_godot_packets(godot):
     return times
 
 
-def check_timeout(source, godot):
+def check_timeout(source, godot, *, source_revision=REVISION):
+    wire = wire_version(source_revision)
     fields(source, 'upstream_revision before controls received_controls lost_history survivors started_us timed_publications', 'source donor timeout')
     fields(godot, 'before survivors terminal_events drop_events history_emissions history_receipts lost_history commit_emissions failures '
            'prepare_emissions prepare_receipts inventory_emissions inventory_receipts history_publications history_routing '
            'commit_receipts ack_emissions ack_receipts', 'Godot donor timeout')
-    require(source['upstream_revision'] == REVISION, 'source donor timeout revision')
+    require(source['upstream_revision'] == source_revision, 'source donor timeout revision')
     check_before(source['before'], 'source', 4, 2, True)
     check_before(godot['before'], 'Godot', 4, 2, True)
-    source_retries = check_source_packets(source)
+    source_retries = check_source_packets(source, wire)
     godot_times = check_godot_packets(godot)
     terminals = godot['terminal_events']
     require(type(terminals) is list and len(terminals) == 2 and all(type(event) is dict for event in terminals)
@@ -230,7 +232,7 @@ def clone_godot_routing(trace):
     trace['history_routing'].append({**trace['history_routing'][-1], 'emission': clone['emission']})
 
 
-def timeout_controls(source, godot, delivered):
+def timeout_controls(source, godot, delivered, *, source_revision=REVISION):
     # Value: protects=the uninstalled original suffix can expire without rewriting exposed rows; fails_when=terminal receipts accept omissions or rewrites;
     # why_new=deadline tests hold the decision after history transfer, and loss tests subsequently deliver a retry; seam=none
     cases = {
@@ -276,7 +278,7 @@ def timeout_controls(source, godot, delivered):
             if runtime == 'delivery':
                 check_delivery_control(candidate, godot)
             else:
-                check_timeout(candidate, godot) if runtime == 'source' else check_timeout(source, candidate)
+                check_timeout(candidate if runtime == 'source' else source, godot if runtime == 'source' else candidate, source_revision=source_revision)
         except ValueError as error:
             require(str(error) == f'drop history: {label} {diagnostic}', name + ' unrelated failure: ' + str(error))
         else:

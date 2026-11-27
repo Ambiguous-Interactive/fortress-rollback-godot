@@ -2,6 +2,7 @@
 import copy
 
 from drop_history_contract import compare, payload, require, same
+from source_wire import REVIEWED_REVISION as REVISION
 
 
 def follower_ack(packet, target_slots=2):
@@ -48,7 +49,7 @@ def retime_godot_ack_retry(godot, before_repeated_commit):
     received['order'] = retry['order'] + 1
 
 
-def controls(clean, lost):
+def controls(clean, lost, *, source_revision=REVISION):
     # Value: protects=real follower ACK retry; fails_when=forwarded or delivered certificates masquerade as loss; why_new=COMMIT loss cannot cover ACKs; seam=none
     fabricated = copy.deepcopy(clean)
     fabricated['source']['lost_ack'] = [copy.deepcopy(next(packet for packet in fabricated['source']['controls'] if follower_ack(packet)))]
@@ -69,7 +70,7 @@ def controls(clean, lost):
                 packet['order'] = duplicate_order['godot']['ack_emissions'][0]['order']
     valid_retimed_retry = copy.deepcopy(lost)
     retime_godot_ack_retry(valid_retimed_retry['godot'], False)
-    compare(valid_retimed_retry['source'], valid_retimed_retry['godot'], False, 4, 2, True, False, True)
+    compare(valid_retimed_retry['source'], valid_retimed_retry['godot'], False, 4, 2, True, False, True, source_revision=source_revision)
     ack_before_commit = copy.deepcopy(lost)
     retime_godot_ack_retry(ack_before_commit['godot'], True)
     from drop_history_inventory_controls import check_godot_observation_order
@@ -77,7 +78,7 @@ def controls(clean, lost):
     # Value: protects=first delivered ACK follows repeated COMMIT; fails_when=later retry masks early delivery; why_new=all-early mutation misses this; seam=none
     valid_extra_retry = copy.deepcopy(lost)
     insert_godot_ack_retry(valid_extra_retry['godot'], False)
-    compare(valid_extra_retry['source'], valid_extra_retry['godot'], False, 4, 2, True, False, True)
+    compare(valid_extra_retry['source'], valid_extra_retry['godot'], False, 4, 2, True, False, True, source_revision=source_revision)
     early_extra_retry = copy.deepcopy(lost)
     insert_godot_ack_retry(early_extra_retry['godot'], True)
     cases = [('fabricated_source_ack_loss', fabricated, 'source emission/loss/receipt accounting'),
@@ -90,7 +91,7 @@ def controls(clean, lost):
              ('Godot_first_ack_early_with_later_retry', early_extra_retry, 'Godot acknowledgement follows repeated commit receipt')]
     for name, candidate, diagnostic in cases:
         try:
-            compare(candidate['source'], candidate['godot'], False, 4, 2, True, False, True)
+            compare(candidate['source'], candidate['godot'], False, 4, 2, True, False, True, source_revision=source_revision)
         except ValueError as error:
             require(str(error) == 'drop history: ' + diagnostic, name + ' unrelated failure: ' + str(error))
         else:

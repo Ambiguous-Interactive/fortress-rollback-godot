@@ -668,6 +668,25 @@ archive, complete upstream source inventory, local sources and project settings,
 resolved pinned cargo/rustc identities, engine/oracle identities and comparison bytes. Sources and executables must remain unchanged
 until the receipt commits.
 
+To qualify the registered version-6 source before a pin upgrade, select its
+exact revision:
+
+```sh
+python3 scripts/oracle/drop_history_launch.py --godot godot \
+    --source-revision 25e8020d1a5fd40c4f16b37f97b5ec5329a8566d
+```
+
+The launcher verifies the candidate archive and lockfile, then builds its
+observer in an isolated Cargo target. The version-6 comparison checks the
+participant digest, terminal epoch, original donor and history range, and
+terminal abort. The cut announcement carries an empty receipt inventory.
+The comparison requires that announcement before the first donor backfill.
+Forwarded backfill preserves its original donor. The observer records each
+checksum report's addressed recipient. The report header binds the sender's
+seeded connection, which both outgoing routes share. Interval-one reports
+retain all 64 basis bits and exercise both survivor directions before and
+after the agreed freeze floor.
+
 Three endpoints first play six frames with changing four-byte samples.
 Each endpoint owns one slot in the single-target cases and two in the grouped cases. The departing
 peer then submits frames six through eight or eleven. One real recipient link withholds

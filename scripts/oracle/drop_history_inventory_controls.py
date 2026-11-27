@@ -3,6 +3,7 @@ import copy
 import struct
 
 from drop_history_contract import carry_roster, check_delivery, fields, fixture_roster_digest, integer, payload, require, same
+from source_wire import REVIEWED_REVISION as REVISION
 
 
 def follower_inventory(packet, target_slots):
@@ -128,7 +129,7 @@ def scale_godot_order(godot):
             packet['order'] *= 4
 
 
-def controls(clean, lost):
+def controls(clean, lost, *, source_revision=REVISION):
     # Value: protects=actual answer loss and exact recovery; fails_when=clean traces or missing retries pass; why_new=other loss stages differ; seam=none
     from drop_history_contract import compare
     fabricated_source = copy.deepcopy(clean)
@@ -178,7 +179,7 @@ def controls(clean, lost):
              ('changed_Godot_inventory_retry', wrong_packet, 'Godot barrier roster digest')]
     for name, candidate, diagnostic in cases:
         try:
-            compare(candidate['source'], candidate['godot'], False, 4, 2, True, False, False, True)
+            compare(candidate['source'], candidate['godot'], False, 4, 2, True, False, False, True, source_revision=source_revision)
         except ValueError as error:
             require(str(error) == 'drop history: ' + diagnostic, name + ' unrelated failure: ' + str(error))
         else:
