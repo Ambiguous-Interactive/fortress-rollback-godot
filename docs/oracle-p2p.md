@@ -14,6 +14,25 @@ supported-profile matrix for the whole initial P2P scope, its declared
 exclusions and the reproducible zero-unexplained-divergence report live in
 [the P2P profile report](reference/p2p-profiles.md).
 
+## Raw source revision
+
+The standalone validator can check a saved upstream trace from an explicitly
+selected source revision:
+
+```sh
+python3 scripts/oracle/p2p_validate.py --source --source-revision "$source_sha" \
+    --scenario scenario.json < source.json
+```
+
+Use the SHA of the source used to build the observer. The default selects the
+reviewed version-2 source. The validator also recognizes the exact version-6
+candidate tracked in [#546](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/546).
+It checks the reported revision and every raw header before comparing packet
+semantics. Version 6 requires a checksum basis token as an exact unsigned
+64-bit integer. The fixed-membership oracle requires a zero token. Post-drop
+tokens belong to coordinated-drop evidence, where the frozen slots and commit
+cut supply the basis. Duplicate JSON keys are rejected before projection.
+
 ## Source-only profile audits
 
 The default Rust, Python and Godot comparison profile accepts prediction windows
