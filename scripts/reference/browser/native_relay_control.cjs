@@ -51,13 +51,28 @@ async function readRelayWireDiagnostic(page, links, timeout, label) {
   return receipt;
 }
 
-async function readServerReceipt(path) {
+async function readServerReceipt(path, timing) {
+  timing.open_started_ms = performance.now();
+  let file;
   try {
-    return JSON.parse(await fs.readFile(path, 'utf8'));
+    file = await fs.open(path);
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     throw error;
   }
+  // A successful open pins the atomically renamed file through the read and parse.
+  timing.opened_ms = performance.now();
+  let text;
+  try {
+    text = await file.readFile('utf8');
+    timing.read_ms = performance.now();
+  } finally {
+    await file.close();
+  }
+  const receipt = JSON.parse(text);
+  timing.parsed_ms = performance.now();
+  timing.observed_generation = receipt.request;
+  return receipt;
 }
 
 function createRelayServerReader(path) {
@@ -67,29 +82,47 @@ function createRelayServerReader(path) {
   let reading = false;
   async function poll(select, timeout, links) {
     const deadline = performance.now() + timeout;
-    while (performance.now() < deadline) {
-      if (pending === null) {
-        const next = completed + 1;
-        await fs.writeFile(requestPath + '.next', [next, ...links].join('\n'), { flag: 'wx', mode: 0o600 });
-        await fs.rename(requestPath + '.next', requestPath);
-        pending = { generation: next, links };
-      }
-      const receipt = await readServerReceipt(path);
-      if (receipt) {
-        assert.equal(receipt.version, 2, 'unexpected relay server receipt version');
-        if (receipt.request === pending.generation && performance.now() < deadline) {
-          const requested = pending.links;
-          completed = pending.generation;
-          pending = null;
-          assert.deepEqual(receipt.links, requested, 'relay server receipt selected different links');
-          const matches = requested.length === links.length && requested.every((link, index) => link === links[index]);
-          const result = matches && select(receipt);
-          if (result) return result;
+    let timing = { clock: 'controller.performance', deadline_ms: deadline };
+    try {
+      while (performance.now() < deadline) {
+        if (pending === null) {
+          const generation = completed + 1;
+          timing = { clock: timing.clock, deadline_ms: deadline, generation, links, request_started_ms: performance.now() };
+          await fs.writeFile(requestPath + '.next', [generation, ...links].join('\n'), { flag: 'wx', mode: 0o600 });
+          await fs.rename(requestPath + '.next', requestPath);
+          pending = { generation, links, request_started_ms: timing.request_started_ms, request_published_ms: performance.now() };
         }
+        timing = { clock: timing.clock, deadline_ms: deadline, ...pending };
+        const receipt = await readServerReceipt(path, timing);
+        timing.outcome = 'generation_not_observed';
+        if (receipt) {
+          assert.equal(receipt.version, 2, 'unexpected relay server receipt version');
+          if (receipt.request === pending.generation) {
+            if (performance.now() >= deadline) {
+              if (timing.opened_ms >= deadline) timing.outcome = 'late_open';
+              else if (timing.read_ms >= deadline) timing.outcome = 'late_read';
+              else timing.outcome = timing.parsed_ms >= deadline ? 'late_parse' : 'late_check';
+              break;
+            }
+            const requested = pending.links;
+            completed = pending.generation;
+            pending = null;
+            assert.deepEqual(receipt.links, requested, 'relay server receipt selected different links');
+            const matches = requested.length === links.length && requested.every((link, index) => link === links[index]);
+            timing.outcome = matches ? 'selected' : 'superseded_selection';
+            receipt.controller_timing = timing;
+            const result = matches && select(receipt);
+            if (result) return result;
+            if (matches) timing.outcome = 'predicate_not_met';
+          }
+        }
+        if (performance.now() < deadline) await pause(10);
       }
-      await pause(10);
+      throw new Error('relay server receipt deadline');
+    } catch (error) {
+      error.receiptTiming = timing;
+      throw error;
     }
-    throw new Error('relay server receipt deadline');
   }
   return async (select = receipt => receipt, timeout = 3000, links = []) => {
     assert.ok(!reading, 'relay server reader already has a caller');

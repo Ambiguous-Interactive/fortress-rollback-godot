@@ -2062,17 +2062,22 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   let relayHold;
   let relayHoldServer;
   let relayHoldServerError;
+  let relayHoldServerTiming;
   const collectHoldServer = () => {
     if (!relayHold?.started || !readRelayServer) return null;
-    return relayHoldServer ??= readRelayServer(undefined, DIAGNOSTIC_MS, relayHold.links).catch(error => { relayHoldServerError = String(error); });
+    return relayHoldServer ??= readRelayServer(undefined, DIAGNOSTIC_MS, relayHold.links).catch(error => {
+      relayHoldServerError = String(error);
+      relayHoldServerTiming = error.receiptTiming;
+    });
   };
   async function relayHoldReceipt() {
     if (!relayHold) return undefined;
     const server = await collectHoldServer();
     try {
-      return { ...relayHold.snapshot(server), server_error: relayHoldServerError };
+      return { ...relayHold.snapshot(server), server_error: relayHoldServerError,
+        server_controller_timing: server?.controller_timing ?? relayHoldServerTiming };
     } catch (error) {
-      return { ...relayHold.snapshot(), server_error: String(error) };
+      return { ...relayHold.snapshot(), server_error: String(error), server_controller_timing: server?.controller_timing };
     }
   }
   let phase = 'launch';
@@ -2583,6 +2588,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       warmupGateReceived: warmupBarrier?.received, warmupFrontier: warmupBarrier?.frontier(), postRelease, correctionDeadline, engineTurns,
       relayControl, relayRetention, sameLinkRetention, expiryLinks, relayWire: relayWire ?? undefined, relayJoined, relayJoinError,
       relayReceive,
+      relayServerControllerTiming: error.receiptTiming,
+      relayServerRecoveryTiming: serverReceipt?.value?.controller_timing ?? serverReceipt?.reason?.receiptTiming,
       relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined, expiryLinks) : undefined,
       relayExpiryTraffic: traceRelayWire ? relayExpiryTraffic(expiries, relayJoined, relayWire, relayReceive) : undefined,
       relayHold: holdReceipt,

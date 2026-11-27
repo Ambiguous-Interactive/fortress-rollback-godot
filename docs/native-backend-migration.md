@@ -115,6 +115,24 @@ The browser receipt counts valid native room broadcasts separately from
 addressed packets. Validate the native header before filtering and decode
 sender identity only for the recipient's own traffic.
 
+The per-room server log prints one `relay receipt timing` JSON row for
+each completed publication attempt. Match its request generation and selected
+links to the controller's `controller_timing`. The server row records request
+observation, the locked state cutoff, snapshot completion, buffered JSON
+serialization and the result of rechecking the request and renaming the
+snapshot. A superseded request has `published: false`.
+
+On deadline failure, the browser log retains `relayServerControllerTiming`
+and any `relayServerRecoveryTiming`. The matching generation may have opened
+before the deadline and then missed it during read or parse. A timely open
+proves the atomically published snapshot was already available. A late open
+or an older generation alone leaves publication timing unresolved. Use the
+server row to locate time spent waiting for the snapshot lock, collecting the
+snapshot, serializing it or publishing it. Compare elapsed intervals within
+each clock and join the observations by generation and links. If the server
+alone spent more than the whole remaining request window in those stages,
+the publication necessarily missed the deadline.
+
 Ordinary receipts include up to 128 records per directed link and stage.
 When a native expiry identifies links to diagnose, the browser and server
 publish only those links. Browser SDK and native histories expand to 512

@@ -113,6 +113,79 @@ async function respond() {
             subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs'),
                             str(Path(directory) / 'trace.json')], check=True, timeout=10)
 
+    def test_relay_server_reader_times_current_generation_across_deadline(self):
+        # Value: protects=server publication evidence during receipt timeouts; fails_when=late reads and missing publications look the same; seam=atomic receipt files
+        script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const { createRelayServerReader } = require(process.argv[1]);
+const file = process.argv[2];
+const { open, readFile, rename } = fs;
+const read = createRelayServerReader(file);
+const publish = async request => {
+  await fs.writeFile(file + '.new', JSON.stringify({ version: 2, request, links: [] }));
+  await fs.rename(file + '.new', file);
+};
+let now = 10;
+Object.defineProperty(globalThis, 'performance', { value: { now: () => now } });
+
+(async () => {
+  fs.rename = async (from, to) => {
+    await rename(from, to);
+    if (to === file + '.request') await publish(1);
+  };
+  fs.readFile = async (...args) => {
+    const text = await readFile(...args);
+    now = 100;
+    return text;
+  };
+  fs.open = async (...args) => {
+    const reader = await open(...args);
+    now = 99;
+    return { close: () => reader.close(), readFile: async (...args) => {
+      const text = await reader.readFile(...args);
+      now = 100;
+      return text;
+    } };
+  };
+  await assert.rejects(read(undefined, 90), error => {
+    assert.match(error.message, /relay server receipt deadline/);
+    assert.deepEqual(error.receiptTiming, {
+      clock: 'controller.performance', deadline_ms: 100, generation: 1, links: [],
+      request_started_ms: 10, request_published_ms: 10, open_started_ms: 10,
+      opened_ms: 99, read_ms: 100, parsed_ms: 100, observed_generation: 1, outcome: 'late_read',
+    });
+    return true;
+  });
+
+  // A recovery read can consume the same pending request, with its original request stamps.
+  Object.assign(fs, { open, readFile, rename });
+  const receipt = await read();
+  assert.equal(receipt.request, 1);
+  assert.equal(receipt.controller_timing.request_published_ms, 10);
+  assert.equal(receipt.controller_timing.outcome, 'selected');
+
+  fs.open = async (...args) => {
+    const reader = await open(...args);
+    now = 150;
+    return reader;
+  };
+  await assert.rejects(read(undefined, 50), error => {
+    assert.match(error.message, /relay server receipt deadline/);
+    assert.equal(error.receiptTiming.generation, 2);
+    assert.equal(error.receiptTiming.observed_generation, 1);
+    assert.equal(error.receiptTiming.outcome, 'generation_not_observed');
+    return true;
+  });
+  fs.open = open;
+  await publish(2);
+  assert.equal((await read()).request, 2);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs'),
+                            str(Path(directory) / 'trace.json')], check=True, timeout=10)
+
     def test_relay_control_releases_only_after_both_addressed_stamps_arrive(self):
         # Value: protects=the FIFO barrier; fails_when=unrelated or duplicate arrivals can release it; seam=browser socket observer
         script = r"""
