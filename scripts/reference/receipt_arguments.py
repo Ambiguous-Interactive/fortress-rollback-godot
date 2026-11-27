@@ -1,7 +1,6 @@
 """Invalidate only the selected launcher receipt when argument parsing or validation fails."""
 import argparse
 from contextlib import nullcontext
-import hashlib
 from pathlib import Path
 import sys
 
@@ -74,6 +73,4 @@ class OwnedReceiptParser(ReceiptParser):
     def claim_output(self, directory):
         from local_ownership import claim
 
-        output = Path(directory).resolve()
-        key = hashlib.sha256(str(output).encode()).hexdigest()
-        return claim(f'.oracle-output-{key}', directory=output.parent)
+        return claim('.oracle-output', directory=Path(directory).resolve())

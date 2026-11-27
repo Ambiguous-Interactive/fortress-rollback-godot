@@ -202,7 +202,7 @@ class LauncherEntryPointTest(unittest.TestCase):
                 self.assertIsNotNone(outcome['error'], f'{name} accepted an engine that does not exist')
                 self.assertIn('godot executable not found', str(outcome['error']))
                 self.assertNotIn(receipt_name, outcome['files'], 'a stale success receipt must not survive')
-                self.assertEqual(outcome['files'], [], 'the engine must be resolved before the build')
+                self.assertEqual(outcome['files'], ['.oracle-output.lock'], 'the engine must be resolved before the build')
 
     def test_a_missing_engine_fails_in_a_fresh_process_without_building_anything(self):
         for name, (receipt_name, _, _) in LAUNCHERS.items():
@@ -216,7 +216,7 @@ class LauncherEntryPointTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn('godot executable not found', result.stderr)
                 self.assertFalse(receipt.exists(), 'a stale success receipt must not survive')
-                self.assertEqual(list(output.iterdir()), [],
+                self.assertEqual(sorted(path.name for path in output.iterdir()), ['.oracle-output.lock'],
                                  'the engine must be resolved before the toolchain and the build')
 
 
@@ -235,7 +235,7 @@ class OracleOutputOwnershipTest(unittest.TestCase):
     # Value: protects=one oracle receipt writer; fails_when=a second process corrupts a live receipt; why_new=engine failure tests run serially; seam=CLI
     def test_oracle_launchers_cannot_write_an_owned_output(self):
         with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / 'evidence'
+            output = Path(temporary) / os.fsdecode(b'evidence-\xff')
             output.mkdir()
             receipt = output / 'receipt.json'
             replay_receipt = output / 'replay.json'
