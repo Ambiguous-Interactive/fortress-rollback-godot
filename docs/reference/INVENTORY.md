@@ -3,9 +3,9 @@
 The [parity ledger](parity-ledger.json) is a reproducible **source-family discovery
 baseline**, advancing [B2 / issue 13](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/13).
 It is not a completed semantic applicability audit or evidence of port coverage.
-The pinned Fortress revision is `f13cd5c0f2815926785a395947e18da0dbea0dd8`.
+The pinned Fortress revision is `25e8020d1a5fd40c4f16b37f97b5ec5329a8566d`.
 
-The snapshot contains 632 upstream files, including hidden files, and 337 classified
+The snapshot contains 741 upstream files, including hidden files, and 383 classified
 source/documentation/verification families. Each file has a SHA-256 hash. Classified
 records additionally bind their source revision, source identity, provisional
 protected behavior, owning task/epic, and lexical discovery markers. Cargo feature

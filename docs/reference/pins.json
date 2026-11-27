@@ -4,13 +4,21 @@
   "sources": {
     "fortress": {
       "repository": "https://github.com/wallstop/fortress-rollback",
-      "revision": "d124c89080004d96971a629bb0427056ee1805e3",
+      "revision": "25e8020d1a5fd40c4f16b37f97b5ec5329a8566d",
       "archive": {
-        "url": "https://codeload.github.com/wallstop/fortress-rollback/tar.gz/d124c89080004d96971a629bb0427056ee1805e3",
-        "digest": "7dfed1139a25123e47d4895b4eb5f470cadc099efff20a54b2f19418eb05e2a4",
+        "url": "https://codeload.github.com/wallstop/fortress-rollback/tar.gz/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d",
+        "digest": "ae67b3b5be6f9061e53356cf1c1402c4d2c30991e0bd2aafd66c7d986df32856",
         "algorithm": "sha256"
       },
-      "root": "fortress-rollback-d124c89080004d96971a629bb0427056ee1805e3"
+      "root": "fortress-rollback-25e8020d1a5fd40c4f16b37f97b5ec5329a8566d",
+      "review": {
+        "observed_revision": "25e8020d1a5fd40c4f16b37f97b5ec5329a8566d",
+        "observed_on": "2026-11-27",
+        "report_sha256": "3c448b36ae0416be9bc1ab26caa4fdb813868862dc4ddb6e3344058442d0b566",
+        "archive_sha256": "ae67b3b5be6f9061e53356cf1c1402c4d2c30991e0bd2aafd66c7d986df32856",
+        "advanced_from": "d124c89080004d96971a629bb0427056ee1805e3",
+        "advanced_on": "2026-11-27"
+      }
     },
     "sdk": {
       "repository": "https://github.com/Ambiguous-Interactive/signal-fish-client-godot",
@@ -111,7 +119,7 @@
     "profile": "minimal",
     "features": [],
     "default_features": false,
-    "lockfile_sha256": "7ca0a14b1c9ba068b72f02324f28d3a07df8fb464258a7b9bc3eada53ee57679",
+    "lockfile_sha256": "2643529601aab0a25302bf8455b40ee352cd00576cc85c75256af22470e1caef",
     "rustup_version": "1.29.2"
   },
   "godot": {

@@ -6,9 +6,9 @@ CI runs both engine pins. The receipt and raw logs go to `.cache/reference/resul
 
 The probe invokes public APIs from the Fortress source selected in
 `docs/reference/pins.json`. The current reviewed revision is
-`d124c89080004d96971a629bb0427056ee1805e3`. The candidate rehearsal uses
-`25e8020d1a5fd40c4f16b37f97b5ec5329a8566d`. The receipt identifies the source
-used for each run. The candidate implementations are in
+`25e8020d1a5fd40c4f16b37f97b5ec5329a8566d`. Historical recordings retain
+their `d124c890` source identity. The receipt identifies the source used for
+each run. The current source implementations are in
 [`src/sessions/replay_session.rs`](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sessions/replay_session.rs)
 and [`src/replay.rs`](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/replay.rs).
 This is gameplay replay applicability, separate from network fault-trace replay.
@@ -320,8 +320,8 @@ The historical `d124c89080004d96971a629bb0427056ee1805e3` recording retained
 the first speculative checksum at odd boundaries 1, 3, 5 and 7. The actual
 source playback emitted `ReplayDesync` at each of those boundaries because
 the recording already contained corrected original inputs. Historical validation
-requires those events and their checksum pairs. When the recovery candidate
-`25e8020d` is selected, it refreshes checksums from corrected saved-state cells
+requires those events and their checksum pairs. The reviewed source `25e8020d`
+refreshes checksums from corrected saved-state cells
 after executing the correction requests. Each decoded checksum in this workload
 then matches the independent original history and every playback event list is
 empty. The neutral workload continues to require zero corrections and zero
@@ -357,7 +357,7 @@ another local sample. Godot's actual `Driver.recover()` repairs one versus two p
 frames, stays at boundary 257, and exports all 257 canonical rows. Each decoded export
 then validates through production playback. The neutral control has no correction.
 
-The recovery candidate calls `P2PSession::recover_confirmed_inputs()` with no new
+The reviewed source calls `P2PSession::recover_confirmed_inputs()` with no new
 local sample. Endpoint zero loads boundary 256 and endpoint one loads boundary
 255. Each replays through boundary 257 using the original confirmed inputs. Both
 endpoints report receipt and confirmation through frame 256, retain the original
@@ -370,7 +370,7 @@ serializes, decodes and plays each incomplete export. Each export must stop at
 its independently computed received prefix of 256 versus 255 rows. Neither
 recording contains frame 256.
 
-With reviewed revision `d124c890`, the final poll receives the
+With historical revision `d124c890`, the final poll receives the
 original inputs, then `advance_frame()` returns `MissingLocalInput` without new
 callbacks. Actual `into_replay()` exports 256 versus 255 rows with 128 versus
 170 playback mismatch events. The historical launcher still requires these
@@ -434,10 +434,10 @@ requests. It derives actual source INPUT/ACK/checksum traffic from the serviced 
 and prior confirmation; it does not repeat the earlier fixed-cadence message totals.
 
 Changing histories require corrections at both endpoints after queue reuse. Godot
-and the recovery candidate `25e8020d` recover at boundary 257 and validate all
-257 decoded rows. The candidate already received input 256 before the final
+and the reviewed source `25e8020d` recover at boundary 257 and validate all
+257 decoded rows. The source already received input 256 before the final
 drain. Its changing workload still needs a LOAD at boundary 255 on endpoint zero.
-Endpoint one and both neutral endpoints need only the boundary SAVE. The reviewed
+Endpoint one and both neutral endpoints need only the boundary SAVE. The historical
 revision `d124c890` exports 255 versus 256 rows with 113 versus 144 playback
 mismatch events.
 

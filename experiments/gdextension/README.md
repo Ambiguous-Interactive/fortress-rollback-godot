@@ -1,6 +1,6 @@
 # Fortress Rollback for GDScript
 
-The default experimental addon links Fortress revision `d124c89080004d96971a629bb0427056ee1805e3` to Godot through godot-rust 0.5.5.
+The default experimental addon links Fortress revision `25e8020d1a5fd40c4f16b37f97b5ec5329a8566d` to Godot through godot-rust 0.5.5.
 The Rust crate owns sessions, packet encoding, prediction, correction and snapshot cells. GDScript owns the game state and simulation.
 The GDScript-only addon in the main project has its own protocol and release contract. See the [experiment results](../../docs/experiments/upstream-binding.md).
 
