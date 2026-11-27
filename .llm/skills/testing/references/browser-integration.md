@@ -242,8 +242,10 @@ Release a diagnostic gate on its exact blocked stamps within the page deadline.
 Keep one server receipt request outstanding through timeout and match its generation and links.
 An on-time open only proves publication when the opened file contains that generation.
 For late publication, compare pre-rename server work against the controller window from before request publication.
-Order later writes by server ordinal and receipt stages around expiry on the same recipient page clock.
-Keep a missing or ambiguous anchor explicit and preserve the original failure when evidence is partial.
+Order writes by server ordinal and page observations by the recipient's clock.
+Stamp validated history synchronously in the console listener with the expiry's controller ordinal.
+Publish the original failure before closing browsers. Bind later socket evidence to that receipt by digest.
+Keep missing and ambiguous observations explicit even when cleanup fails.
 Prove ordering between clocks by holding the original socket's FIFO until
 both exact raw stamps arrive and the controller reads their successful writes.
 Freeze native acceptance in the same page turn as the check. Reuse digests only
@@ -256,10 +258,9 @@ Export the requested confirmed prefix once per browser. Keep recurring status
 snapshots small. When a page can publish data before its evaluation reply
 arrives, arm a page-scoped listener before dispatch. Match the request ID and
 frame count and validate the complete receipt within the original deadline.
-Prepare shared ZIP tools through verified member comparison and atomic replacement;
-never truncate an executable inode held by another process. Exercise preparation
-with an actual live executable and a corrupt-cache control. Keep launcher-owned
-projects/results and Firefox fresh-tree installation serialized independently.
+Prepare shared ZIP tools through verified member comparison and atomic replacement.
+Exercise preparation with a live executable and a corrupt-cache control. Use a
+private Firefox installation when another run can refresh the shared tree.
 Apply each page observation at its completion time before waiting for sibling
 pages. Check that peer's existing deadline first, then rearm the earliest live
 deadline. Exercise asymmetric timely completions and exact expired boundaries;
