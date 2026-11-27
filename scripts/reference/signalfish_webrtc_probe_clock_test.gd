@@ -17,6 +17,7 @@ const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Setup = preload("res://webrtc_setup.gd")
 const Drop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
+const Overlap = preload("res://webrtc_drop_overlap.gd")
 
 class BatchMembership:
 	extends "res://addons/fortress_rollback/transport/signalfish_membership.gd"
@@ -40,6 +41,7 @@ class ReceiptMixed:
 	var fixture: Fixture = Fixture.new()
 	var now_us: int = 0
 	var omitted: int = 0
+	var final_frame: int = 39
 	func service(host: Node) -> bool:
 		now_us = host.transport_us
 		return transfer(false)
@@ -54,7 +56,7 @@ class ReceiptMixed:
 					var message: T.Message = decoded.message
 					if message.kind == T.Kind.INPUT:
 						for status: T.Status in message.statuses:
-							if status.last_frame != 39: return false
+							if status.last_frame != final_frame: return false
 						omitted += 1
 						continue
 				var destination: int = packet.to[0] - 1
@@ -204,7 +206,7 @@ func _initialize() -> void:
 	if not _check(retained._service(), "retained mixed transport remains serviceable"): return
 	if not _check(peer.network_status().last_now_us == 400000, "retained mixed output cannot suppress actual peer elapsed time"): return
 	if not _check(mixed.calls == 1 and mixed.has_pending(), "poll preserves caller-owned mixed batch until service"): return
-	if not _post_capture_receipts(fixture): return
+	if not _final_receipt_waits(fixture): return
 	if not _mixed_batches(fixture, peer): return
 	if not _expired_handshake(fixture, config, lifecycle): return
 	retained.meshes[0].free()
@@ -461,11 +463,14 @@ func _handshake_deadline_case(fixture: Fixture, config: Config, lifecycle: L.Opt
 	return _check(valid, "probe handshake deadline=%d full_diagnostics=%s service=%s calls=%d" % [now_us, full_diagnostics, serviced, mixed.calls])
 
 
-# Value: protects=post-capture final receipt delivery; fails_when=host stops recover after recording; why_new=invocation checks cannot prove gossip; seam=real peers and bytes
-func _post_capture_receipts(fixture: Fixture) -> bool:
-	for recover_after_capture: bool in [false, true]:
+# Value: protects=final receipt delivery across collective waits; fails_when=ready peers stop recovery; why_new=checks actual receipt convergence; seam=real peers and bytes
+func _final_receipt_waits(fixture: Fixture) -> bool:
+	for boundary: String in ["recording_idle", "recording_capture", "overlap_idle", "overlap_release"]:
+		var frame_count: int = 7 if boundary.begins_with("overlap_") else 40
+		var final_frame: int = frame_count - 1
 		var probe: RetainedProbe = RetainedProbe.new()
 		var routes: ReceiptMixed = ReceiptMixed.new()
+		routes.final_frame = final_frame
 		var roster: Array[PackedByteArray] = [fixture._id(1), fixture._id(2), fixture._id(3)]
 		for slot: int in 3:
 			var config: Config = Config.new()
@@ -490,11 +495,11 @@ func _post_capture_receipts(fixture: Fixture) -> bool:
 				"begin final receipt mesh"): return false
 		for turn: int in 6:
 			if not _check(routes.transfer(false), "deliver actual receipt mesh handshake"): return false
-		for frame: int in 40:
+		for frame: int in frame_count:
 			routes.now_us = (frame + 1) * 1000
 			for slot: int in 3:
 				var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, frame, PackedByteArray([probe._sample(frame, slot)]))]
-				if not _check(routes.peers[slot].step(routes.now_us, samples).code == S.Code.OK, "advance original forty mesh inputs"): return false
+				if not _check(routes.peers[slot].step(routes.now_us, samples).code == S.Code.OK, "advance original mesh inputs"): return false
 			if not _check(routes.transfer(false) and routes.transfer(false), "deliver original mesh input and ACK bytes"): return false
 		# All originals and ACKs arrive, but the final receipt inventories need a historical carrier.
 		routes.now_us = 240001
@@ -503,15 +508,16 @@ func _post_capture_receipts(fixture: Fixture) -> bool:
 		if not _check(routes.transfer(true) and routes.transfer(false), "lose one final inventory carrier"): return false
 		var finished: Peer = routes.peers[0]
 		var waiting: Peer = routes.peers[1]
-		if not _check(routes.omitted == 1 and finished.status().confirmed_frame == 39 and waiting.status().confirmed_frame < 39,
+		if not _check(routes.omitted == 1 and finished.status().confirmed_frame == final_frame and waiting.status().confirmed_frame < final_frame,
 			"one lost carrier leaves an asymmetric final confirmation"): return false
 		if not _check(finished.recover(routes.now_us).code == S.Code.OK and finished.capture_replay_boundary().code == S.Code.OK
-			and finished.replay().frame_count() == 40, "finished endpoint captures its actual complete recording"): return false
+			and finished.replay().frame_count() == frame_count, "finished endpoint captures its actual complete recording"): return false
 		var hash: HashingContext = HashingContext.new()
 		hash.start(HashingContext.HASH_SHA256)
-		hash.update(probe._expected(40, 3))
+		hash.update(probe._expected(frame_count, 3))
 		var expected_checksum: PackedByteArray = hash.finish().slice(0, 16)
-		if not _check(finished.replay().checksum(40) == expected_checksum, "finished recording captures the independent canonical boundary"): return false
+		if not _check(finished.replay().checksum(frame_count) == expected_checksum, "finished recording captures the independent canonical boundary"):
+			return false
 		probe.clients.append(probe.SDK.new())
 		probe.meshes.append(probe.SDKMesh.new())
 		probe.peers.append(finished)
@@ -519,17 +525,24 @@ func _post_capture_receipts(fixture: Fixture) -> bool:
 		probe.mixed = routes
 		probe.next_progress_us = 1000000
 		probe.transport_epoch_us = probe.ticks_us - 440002
-		# This paired control keeps ordinary polling and actual delivery, but omits post-capture recovery.
-		probe.stage = "recording_capture" if recover_after_capture else "canonical_state"
+		# The idle controls still deliver packets without an explicit recovery call.
+		probe.stage = boundary
+		var overlap: Overlap = null
+		if boundary == "overlap_release":
+			overlap = Overlap.new()
+			overlap._session = finished
+			if not _check(not overlap._ready_to_start(probe, func() -> bool: return false), "overlap start still waits for the controller"): return false
 		if not _check(probe._service() and probe._service(), "captured endpoint keeps servicing actual peer packets"): return false
-		if not _check((waiting.status().confirmed_frame == 39) == recover_after_capture,
-			"post-capture host recovery alone releases the slower endpoint final receipt"): return false
+		var expects_confirmation: bool = boundary in ["recording_capture", "overlap_release"]
+		if not _check((waiting.status().confirmed_frame == final_frame) == expects_confirmation,
+			boundary + " releases the slower endpoint final receipt only with recovery"): return false
+		if overlap != null and not _check(overlap._ready_to_start(probe, func() -> bool: return true), "overlap starts on controller release"): return false
 		for peer: Peer in routes.peers:
-			if not _check(peer.status().current_frame == 40, "receipt service adds no forward frame"): return false
+			if not _check(peer.status().current_frame == frame_count, "receipt service adds no forward frame"): return false
 			for endpoint: Dictionary in peer.network_status().peers.values():
-				if not _check(endpoint.last_submitted_frame == 39 and endpoint.last_received_frame == 39,
-					"receipt service preserves all forty originals without new samples"): return false
-		if recover_after_capture:
+				if not _check(endpoint.last_submitted_frame == final_frame and endpoint.last_received_frame == final_frame,
+					"receipt service preserves every original without new samples"): return false
+		if boundary == "recording_capture":
 			if not _check(waiting.recover(440002).code == S.Code.OK and waiting.capture_replay_boundary().code == S.Code.OK
 				and waiting.replay().frame_count() == 40 and waiting.replay().checksum(40) == expected_checksum,
 				"slower endpoint captures its complete finalized recording tail"): return false
@@ -540,4 +553,5 @@ func _post_capture_receipts(fixture: Fixture) -> bool:
 		probe.clients[0].free()
 		probe.free()
 	print("WEBRTC_POST_CAPTURE_RECEIPTS passed")
+	print("WEBRTC_OVERLAP_RELEASE_RECEIPTS passed")
 	return true

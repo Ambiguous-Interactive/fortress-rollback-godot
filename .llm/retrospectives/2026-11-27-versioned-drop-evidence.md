@@ -18,4 +18,13 @@ identifies which wire fields are attributable to the sender and recipient.
 The previous retrospective's fixed-membership checksum rule still applies to
 that corpus.
 
+The first grouped run timed out before any overlap departure on both Godot
+pins. All pages reached frame six and continued exchanging traffic. Local
+readiness stopped recovery while the controller still waited for other pages.
+The clock regression drops one real final receipt carrier after delivering
+the original samples and ACKs. At the seven-frame boundary, ordinary polling
+leaves the slower peer unconfirmed. Recovery during the false-release
+interval delivers the missing receipt without advancing or resubmitting.
+Keep servicing a confirmed prefix until every peer can pass the same gate.
+
 State `findings-acted`.
