@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run actual pinned upstream P2P handshake and production Godot byte endpoint twice."""
 import json
+import hashlib
 from pathlib import Path
 import subprocess
 from copy import deepcopy
@@ -10,7 +11,7 @@ from handshake_contract import compare, project, negative_controls, raw_negative
 from launch import ROOT, execute, git_identity, require_unchanged
 from handshake_formal import check as check_formal
 from tlc_artifact import ARTIFACT, ensure_jar
-from fetch import digest, load_manifest, sources
+from fetch import digest, parse_manifest, sources
 from receipt_arguments import ReceiptParser
 from run import CACHE, setup_rust, rust_environment
 from engine_path import resolve_engine
@@ -95,11 +96,15 @@ def run(args):
     files = [* (ROOT / 'addons/fortress_rollback/protocol').glob('*.gd'), ROOT / 'tests/oracle/handshake_trace.gd',
              *Path(__file__).parent.glob('*.py'), ROOT / 'scripts/oracle/rust/src/bin/handshake.rs',
              ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock',
-             ROOT / 'scripts/oracle/rust/src/source_revision.rs', ROOT / 'docs/reference/pins.json',
+             ROOT / 'scripts/oracle/rust/src/source_revision.rs',
              ROOT / 'scripts/oracle/contract.py', ROOT / 'scripts/oracle/launch.py',
              *(ROOT / 'scripts/reference').glob('*.py')]
     source_hashes = {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)}
-    manifest = load_manifest()
+    manifest_path = ROOT / 'docs/reference/pins.json'
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = parse_manifest(manifest_bytes)
+    files.append(manifest_path)
+    source_hashes['docs/reference/pins.json'] = hashlib.sha256(manifest_bytes).hexdigest()
     if formal_on:
         artifact = manifest['artifacts'][ARTIFACT]
         jar_source, jar_digest = ROOT / artifact['repository_path'], artifact['digest']
