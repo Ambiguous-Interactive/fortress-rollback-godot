@@ -22,7 +22,7 @@ Usage:
         [--ledger docs/reference/parity-ledger.json] [--report REPORT.json] [--quiet]
     python3 scripts/reference/drift.py --source fortress --old OLD_TREE --new NEW_TREE \
         --pins docs/reference/pins.json --new-revision <sha40> --archive CANDIDATE.tar.gz \
-        --ledger docs/reference/parity-ledger.json --report REPORT.json [--advance]
+        --ledger docs/reference/parity-ledger.json --report REPORT.json [--advance --decisions DECISIONS.json]
 
 Pin flows (#51): with `--pins`, `--new-revision` and `--archive`, the tool
 binds the compared trees to the archives you supply before any bookkeeping
@@ -38,7 +38,9 @@ observation under
 `--advance` it additionally rewrites the pin itself (`revision`, archive URL,
 digest and root), records `advanced_from`/`advanced_on`, and stamps every
 changed path with a commit link; the pin still merges only after the full
-oracle requalification and review of this report.
+oracle requalification. Flagged paths require explicit review decisions before
+advancement. The advancement report retains those decisions and the archive
+identities they cover.
 
 Exit codes: 0 completed comparison (drift or not), 1 tooling/input failure.
 """
@@ -49,6 +51,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -389,63 +392,52 @@ def summarize(report):
     return '\n'.join(lines)
 
 
-def verify_reviewed_tree(entry, old_tree, cache=None):
-    """Require `old_tree` to be the pinned extraction of the reviewed archive.
-
-    The report's `reviewed_revision` is trusted only when the compared old
-    tree byte-matches the reviewed archive the manifest pins: the archive is
-    taken from the local fetch cache (`fetch.fetch` offline, so no network
-    runs here and a cold cache refuses with a named error telling the
-    operator to fetch first), digested against the manifest's recorded
-    digest, extracted and required to equal `--old` byte for byte. Any other
-    tree — including a second copy of the candidate — fails closed before
-    the comparison runs.
-    """
-    cache = CACHE if cache is None else cache
-    archive = fetch.fetch(entry['archive'], f'{entry["revision"]}.tar.gz', offline=True, cache=cache)
-    expected_root = entry['root']
-    reviewed_digest = digest(archive)
-    with tempfile.TemporaryDirectory(dir=Path(cache)) as temporary:
-        with tarfile.open(archive) as tar:
-            members = tar.getmembers()
-            if not members or any(member.name.split('/')[0] != expected_root for member in members):
-                raise ValueError(f'reviewed archive root mismatch: expected {expected_root}')
-            tar.extractall(temporary, filter='data')
-        if not same_tree(Path(temporary) / expected_root, Path(old_tree)):
-            raise ValueError(f'--old is not the reviewed pin extraction: {old_tree}; '
-                             'run scripts/reference/fetch.py and pass its extraction')
-    return reviewed_digest
+def extract_source(archive, root, directory):
+    """Extract one archive for comparison in a private directory."""
+    directory.mkdir()
+    with tarfile.open(archive) as tar:
+        members = tar.getmembers()
+        if not members or any(member.name.split('/')[0] != root for member in members):
+            raise ValueError(f'source archive root mismatch: expected {root}')
+        tar.extractall(directory, filter='data')
+    return directory / root
 
 
-def candidate_tree(archive_path, expected_root, tree, cache=None):
-    """Digest and extract the candidate archive; require it to be the compared tree.
+def archive_report(source, old_entry, new_entry, old_archive, new_archive, ledger, supplied_trees=None):
+    """Classify the same immutable archive bytes that bind the review decisions."""
+    CACHE.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=CACHE) as temporary:
+        directory = Path(temporary)
+        previous = directory / 'reviewed.tar.gz'
+        candidate = directory / 'candidate.tar.gz'
+        shutil.copyfile(old_archive, previous)
+        shutil.copyfile(new_archive, candidate)
+        fetch.verify(previous, old_entry['archive'])
+        if new_entry['archive'] is not None:
+            fetch.verify(candidate, new_entry['archive'])
+        binding = dict(source=source, reviewed_revision=old_entry['revision'], candidate_revision=new_entry['revision'],
+                       reviewed_archive_sha256=digest(previous), candidate_archive_sha256=digest(candidate))
+        old = extract_source(previous, old_entry['root'], directory / 'old')
+        new = extract_source(candidate, new_entry['root'], directory / 'new')
+        if supplied_trees is not None:
+            if not same_tree(old, Path(supplied_trees[0])):
+                raise ValueError(f'--old is not the reviewed pin extraction: {supplied_trees[0]}')
+            if not same_tree(new, Path(supplied_trees[1])):
+                raise ValueError(f'observed tree does not match the candidate archive: {supplied_trees[1]}')
+        report = build_report(source, old, new, ledger, repository=new_entry['repository'],
+                              old_revision=old_entry['revision'], new_revision=new_entry['revision'])
+    # Review receipts are identical across the operator's machine and CI.
+    report['old_tree'] = old_entry['root']
+    report['new_tree'] = new_entry['root']
+    report['review_binding'] = binding
+    return report
 
-    The extraction binds the compared tree to the archive the operator
-    supplied — its digest, extraction and byte identity — not to the upstream
-    archive at the claimed revision. `update_pins` records the supplied
-    digest beside the canonical codeload URL, and the next fetch of that URL
-    (the Reference Baseline requalification on the advancement PR) verifies
-    the real upstream bytes against it, failing closed on a mismatch before
-    the pin can merge. The extraction is the only accepted identity proof
-    between the claimed revision and the compared tree: the archive's every
-    member must live under `expected_root`, and the extracted bytes must
-    equal `tree` byte for byte, so a mismatched, truncated or root-drifted
-    candidate fails closed before any bookkeeping is recorded. Returns the
-    verified archive digest.
-    """
-    archive = Path(archive_path)
-    archive_digest = digest(archive)
-    cache = CACHE if cache is None else Path(cache)
-    cache.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=cache) as temporary:
-        with tarfile.open(archive) as tar:
-            members = tar.getmembers()
-            if not members or any(member.name.split('/')[0] != expected_root for member in members):
-                raise ValueError(f'candidate archive root mismatch: expected {expected_root}')
-            tar.extractall(temporary, filter='data')
-        if not same_tree(Path(temporary) / expected_root, Path(tree)):
-            raise ValueError(f'observed tree does not match the candidate archive: {tree}')
-    return archive_digest
+
+def reviewed_archive(source, entry, offline):
+    named = CACHE / 'downloads' / f'{source}.tar.gz'
+    if named.is_file() and fetch.digest(named, entry['archive']['algorithm']) == entry['archive']['digest']:
+        return named
+    return fetch.fetch(entry['archive'], f'{entry["revision"]}.tar.gz', offline=offline, cache=CACHE)
 
 
 def update_pins(pins_path, source_name, new_revision, archive_digest, report_digest,
@@ -493,6 +485,46 @@ def update_pins(pins_path, source_name, new_revision, archive_digest, report_dig
         temporary.unlink(missing_ok=True)
 
 
+def parse_review_json(contents):
+    """Reject duplicate fields in a review receipt or decision file."""
+    """Resolve exactly the candidate's flagged paths before writing an advancement."""
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f'duplicate decision field: {key}')
+            result[key] = value
+        return result
+
+    return json.loads(contents, object_pairs_hook=unique_object)
+
+
+def review_decisions(data, binding, required_paths):
+    """Resolve exactly the candidate's flagged paths before writing an advancement."""
+    if not isinstance(data, dict) or set(data) != {'binding', 'paths'} or data['binding'] != binding:
+        raise ValueError('review decisions do not bind the compared source, revisions and archives')
+    supplied = data['paths']
+    if not isinstance(supplied, list):
+        raise ValueError('review decisions paths must be an array')
+    dispositions = {'ported', 'inapplicable', 'intentional_divergence'}
+    reviewed = {}
+    required = set(required_paths)
+    for decision in supplied:
+        if not isinstance(decision, dict) or set(decision) != {'path', 'disposition', 'evidence'}:
+            raise ValueError('each review decision needs path, disposition and evidence')
+        name, disposition, evidence = (decision[key] for key in ('path', 'disposition', 'evidence'))
+        if not isinstance(name, str) or name not in required:
+            raise ValueError(f'review decision does not name a flagged path: {name!r}')
+        if name in reviewed:
+            raise ValueError(f'duplicate review decision for path: {name}')
+        if not isinstance(disposition, str) or disposition not in dispositions or not isinstance(evidence, str) or not evidence.strip():
+            raise ValueError(f'invalid review disposition or empty evidence for: {name}')
+        reviewed[name] = decision
+    if missing := sorted(required - reviewed.keys()):
+        raise ValueError(f'unresolved drift paths: {", ".join(missing)}')
+    return [reviewed[name] for name in sorted(reviewed)]
+
+
 def main_with_args(argv):
     """Parse `argv`, run one comparison, and return the process exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -506,6 +538,7 @@ def main_with_args(argv):
     parser.add_argument('--new-revision', help='the candidate revision the observed tree claims to be')
     parser.add_argument('--archive', help='the candidate archive (tar.gz); its digest pins the tree identity')
     parser.add_argument('--advance', action='store_true', help='rewrite the pin, not only record the observation')
+    parser.add_argument('--decisions', type=Path, help='review decision JSON for flagged drift paths')
     args = parser.parse_args(argv)
     pin_flow = any(flag is not None for flag in (args.pins, args.new_revision, args.archive))
     if pin_flow and (args.pins is None or args.new_revision is None or args.archive is None
@@ -519,6 +552,8 @@ def main_with_args(argv):
               'and --report; alone it would silently do nothing', file=sys.stderr)
         return 1
     try:
+        if args.decisions is not None and not args.advance:
+            raise ValueError('--decisions applies only to --advance')
         if args.new_revision is not None and re.fullmatch(r'[0-9a-f]{40}', args.new_revision) is None:
             raise ValueError(f'candidate revision is not a 40-hex sha: {args.new_revision}')
         repository = old_revision = expected_root = None
@@ -536,21 +571,24 @@ def main_with_args(argv):
                                  or not repository.startswith('https://github.com/')):
                 raise ValueError(f'cannot derive an archive URL for repository: {repository}')
             expected_root = root[:-(len(old_revision) + 1)] + '-' + args.new_revision
-        report = build_report(args.source, args.old, args.new, args.ledger,
-                              repository=repository, old_revision=old_revision,
-                              new_revision=args.new_revision)
-        if args.advance and not report['drift']:
-            # An advancement's review evidence is the A-to-B drift itself: two
-            # identical trees produce a clean report no matter what the trees
-            # are, so a B-versus-B submission can never justify rewriting the pin.
-            raise ValueError('the compared trees are identical; an advancement '
-                             'requires drift between the reviewed pin and the candidate')
         report_digest = None
         if pin_flow:
             if args.report.is_dir():
                 raise ValueError(f'the report destination is a directory: {args.report}')
-            verify_reviewed_tree(entry, args.old)
-            archive_digest = candidate_tree(args.archive, expected_root, args.new)
+            if args.report.resolve() == Path(args.pins).resolve():
+                raise ValueError('the report destination must differ from the pins manifest')
+            old_archive = reviewed_archive(args.source, entry, offline=True)
+            candidate_entry = dict(entry, revision=args.new_revision, root=expected_root, archive=None)
+            report = archive_report(args.source, entry, candidate_entry, old_archive, Path(args.archive),
+                                    args.ledger, (args.old, args.new))
+            binding = report['review_binding']
+            archive_digest = binding['candidate_archive_sha256']
+            if args.advance:
+                if not report['drift']:
+                    raise ValueError('the compared trees are identical; an advancement requires drift between the reviewed pin and the candidate')
+                decisions = (parse_review_json(args.decisions.read_bytes()) if args.decisions is not None
+                             else {'binding': binding, 'paths': []})
+                report['review_decisions'] = review_decisions(decisions, binding, report['requires_review'])
             report_bytes = json.dumps(report, indent=2).encode('utf-8') + b'\n'
             report_digest = hashlib.sha256(report_bytes).hexdigest()
             # The report installs before the pins commit: after staging, the
@@ -567,19 +605,20 @@ def main_with_args(argv):
             finally:
                 staged.unlink(missing_ok=True)
         else:
+            report = build_report(args.source, args.old, args.new, args.ledger)
             if args.report is not None:
                 args.report.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
-    except (ValueError, OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as failure:
+    except (ValueError, OSError, tarfile.TarError, KeyError, TypeError, AttributeError) as failure:
         print(f'drift tooling failed: {failure}', file=sys.stderr)
         return 1
     print(summarize(report).splitlines()[0] if args.quiet else summarize(report))
     if pin_flow:
-        if report['requires_review']:
+        if report['requires_review'] and not args.advance:
             print(f"review gate: {len(report['requires_review'])} path(s) require review before this "
-                  f"{'advancement' if args.advance else 'observation'} merges")
+                  'candidate advances')
         if args.advance:
-            print('advancement recorded: merge only after a full oracle requalification '
-                  'run against the new pin (Reference Baseline) and review of the report')
+            print(f"advancement recorded: {len(report['review_decisions'])} review decision(s); "
+                  'merge after full oracle requalification against the new pin (Reference Baseline)')
     return 0
 
 

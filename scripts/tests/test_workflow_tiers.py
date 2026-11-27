@@ -312,6 +312,7 @@ xvfb-run() {
         worker = '\n'.join(blocks['unit-part'])
         verdict = '\n'.join(blocks['unit-fast'])
         self.assertIn('fetch-depth: 0', detect)
+        self.assertIn('scripts/reference/check_pin_reviews.py --base "$BASE"', detect)
         self.assertIn('scripts/unit_gate.py plan --base "$BASE"', detect)
         self.assertIn("if: github.event_name != 'merge_group' &&", worker)
         self.assertIn('scripts/unit_gate.py run --part "$PART"', worker)

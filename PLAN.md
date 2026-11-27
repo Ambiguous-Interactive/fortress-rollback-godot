@@ -127,7 +127,9 @@ already implemented but awaiting closure evidence still belongs to its issue.
 | Development feedback | Measure merge-queue latency and runner cost across qualifying revisions. Time the server build and dependent browser path. | [#451](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/451) |
 | Maintenance | Drift review and upgrades, review availability, browser job time, install hangs | [#53](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/53), [#148](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/148), [#164](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/164), [#249](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/249), [#276](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/276), [#387](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/387), [#388](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/388), [#389](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/389) |
 
-The drift carriers #387–#389 are reporting only; they never advance a pin.
+Drift carriers #387–#389 report upstream observations. A source pin advancement
+ships with [archive-bound review decisions](docs/reference/README.md#observation-and-advancement)
+and passes grouped oracle qualification.
 The supported surface and explicit exclusions are in [docs/supported.md](docs/supported.md).
 
 ## Where truth lives

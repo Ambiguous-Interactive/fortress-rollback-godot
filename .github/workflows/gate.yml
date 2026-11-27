@@ -100,6 +100,11 @@ jobs:
             echo "scripts=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Verify source pin advancement reviews
+        env:
+          BASE: ${{ steps.diff.outputs.base }}
+        run: python3 scripts/reference/check_pin_reviews.py --base "$BASE"
+
       - name: Plan affected unit suites
         id: units
         if: github.event_name != 'merge_group'

@@ -291,8 +291,8 @@ def render_body(source, entry, latest, report_digest, today):
         'This issue is the single ongoing drift stream for this source. Every weekly or manual '
         'observation appends one comment carrying its `report-digest`; a repeated observation of the '
         'same upstream state comments nothing. The report is evidence, never approval: a pin advances '
-        'only through the reviewed operator flow (`scripts/reference/drift.py --pins ... --advance`) '
-        'after a full oracle requalification against the candidate and a reviewed `requires_review` list.',
+        'only through the reviewed operator flow (`scripts/reference/drift.py --pins ... --advance --decisions ...`). '
+        'Gate verifies the recorded decisions and reruns the oracle against the candidate.',
         '',
         'Maintainer checklist:',
         '',
