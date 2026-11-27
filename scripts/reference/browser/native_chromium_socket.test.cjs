@@ -17,8 +17,9 @@ const carrierMatch = { socket: 0, ordinal: 3, outlet_ms: 999, carrier_sha256: di
 const row = { sender: '11'.repeat(16), recipient, epoch: 1, seq: '42', proxy: [carrierMatch] };
 const receive = { room: '33'.repeat(16), sockets: [address], rows: [row] };
 
-const connection = (id, endpoint = local) => ({
+const connection = (id, endpoint = local, time = 40) => ({
   source: { id, type: 3 }, type: 1, phase: 2, params: { local_address: endpoint, remote_address: host },
+  time: String(time),
 });
 const incoming = (id, time, bytes) => ({
   source: { id, type: 3 }, type: 2, phase: 0, time: String(time),
@@ -47,6 +48,7 @@ test('missing, truncated, duplicate and unbound socket evidence do not imply non
   assert.equal(collect([connection(7), { ...complete, params: { byte_count: 999 } }]).status, 'truncated');
   const malformed = { ...complete, params: { ...complete.params, bytes: '@' + complete.params.bytes } };
   assert.equal(collect([connection(7), malformed]).status, 'truncated');
+  assert.equal(collect([connection(7, local, 71), complete]).status, 'truncated');
   assert.equal(collect([connection(7), incoming(7, 80, Buffer.concat([handshake, frame.subarray(0, 5)])),
     incoming(7, 70, frame.subarray(5))]).status, 'truncated');
   const rolled = joinChromiumSocket({ constants, events: [complete] }, 'truncated', host, receive, [recipient]);

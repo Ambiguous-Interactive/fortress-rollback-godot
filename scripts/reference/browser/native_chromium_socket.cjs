@@ -97,6 +97,11 @@ function joinChromiumSocket(log, status, host, receive, recipients = []) {
   return { clock, status: capture, room: receive?.room, rows: rows.map(row => row.result) };
 }
 
+function netlogTime(time) {
+  const number = typeof time === 'string' && /^\d+$/.test(time) ? Number(time) : NaN;
+  return Number.isSafeInteger(number) ? number : NaN;
+}
+
 function collectSocketCarriers(events, types, socketType, end, host, plans) {
   const endpoints = new Map(plans.filter(plan => plan.carriers.size).map(plan => [plan.socket.browser_endpoint, plan]));
   const sources = new Map();
@@ -113,7 +118,8 @@ function collectSocketCarriers(events, types, socketType, end, host, plans) {
     }
     plan.source = event.source.id;
     plan.reader = createFrameReader();
-    plan.last_ms = -1;
+    plan.last_ms = netlogTime(event.time);
+    plan.truncated = !Number.isFinite(plan.last_ms);
     sources.set(plan.source, plan);
   }
   for (const event of events) {
@@ -121,9 +127,9 @@ function collectSocketCarriers(events, types, socketType, end, host, plans) {
     const plan = sources.get(event.source.id);
     if (!plan || plan.ambiguous || plan.truncated) continue;
     const { bytes, byte_count } = event.params ?? {};
-    const at_ms = typeof event.time === 'string' && /^\d+$/.test(event.time) ? Number(event.time) : NaN;
+    const at_ms = netlogTime(event.time);
     const data = typeof bytes === 'string' ? Buffer.from(bytes, 'base64') : null;
-    if (!data || data.length !== byte_count || data.toString('base64') !== bytes || !Number.isSafeInteger(at_ms) || at_ms < 0 || at_ms < plan.last_ms) {
+    if (!data || data.length !== byte_count || data.toString('base64') !== bytes || !Number.isFinite(at_ms) || at_ms < plan.last_ms) {
       plan.truncated = true;
       continue;
     }
