@@ -172,6 +172,7 @@ class ObservedLobby:
 	var relay_overflow: Dictionary = {}
 	var warmup_wire: JavaScriptObject
 	var relay_trace: JavaScriptObject
+	var trace_firefox_clock: bool = false
 	var close_wire: JavaScriptObject
 	var _close_remote_uuids: Dictionary = {}
 	var _engine_mesh_open: bool = false
@@ -180,6 +181,7 @@ class ObservedLobby:
 	var _play_tick_gap_us: int = -1
 	var _next_warmup_tick_us: int = 0
 	var _next_native_frontier_us: int = 0
+	var _is_sampling_native_expiry: bool = false
 	var _sdk_before_poll: int = -1
 	var _sdk_poll_budget: int = -1
 
@@ -237,7 +239,7 @@ class ObservedLobby:
 					"service_gap_peak_us": play_tick_gap_peak_us,
 					"last_accepted": observed_match.last_native_acceptances.get(roster[endpoint - 1]),
 				}
-				relay_trace.recordDeparture("native_expiry", endpoint, JSON.stringify(evidence))
+				relay_trace.recordDeparture("native_expiry", endpoint, JSON.stringify(evidence), _is_sampling_native_expiry)
 		super._fail(reason)
 
 	func _record_plan(value: RefCounted) -> void:
@@ -301,7 +303,11 @@ class ObservedLobby:
 			# Variations after the warmup force correction when delivery is held.
 			if frame >= GATE_FRAME and frame % 2 == 0:
 				buttons = 0
+		_is_sampling_native_expiry = trace_firefox_clock and state == "playing"
+		if _is_sampling_native_expiry:
+			relay_trace.beginNativeService()
 		super.tick(now_us, buttons)
+		_is_sampling_native_expiry = false
 		_last_play_tick_us = now_us if state == "playing" else -1
 		if relay_trace != null and state == "playing":
 			var status: Types.Status = game_match.status()
@@ -532,6 +538,7 @@ func _command(value: Dictionary) -> void:
 			lobby.observe_recovery = bool(value.get("observe_recovery", false))
 			lobby.close_wire = JavaScriptBridge.get_interface("fortressNativeWire") if bool(value.get("trace_close", false)) else null
 			lobby.relay_trace = JavaScriptBridge.get_interface("fortressNativePostRelease") if value.route == "relay" else null
+			lobby.trace_firefox_clock = lobby.relay_trace != null and bool(value.get("trace_firefox_clock", false))
 			scene.endpoint.text = str(value.endpoint)
 			scene.player_name.text = str(value.name)
 			scene.room_code.text = str(value.room)

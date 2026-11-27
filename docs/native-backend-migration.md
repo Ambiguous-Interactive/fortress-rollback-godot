@@ -245,6 +245,17 @@ browser cleanup. After cleanup, `relayFirefoxFailure` can supplement an
 acknowledged write. Match it to the original JSON line using `failure_sha256`.
 The callback marker uses the controller's acknowledgement of that write.
 
+For a native expiry, the reporting Firefox page brackets the service turn
+with wall-clock reads on Gecko's frame clock. The receipt checks elapsed time
+against the page's monotonic clock and allows for Firefox timer precision.
+The comparison assumes the host wall clock stays continuous between the frame
+and the service turn. Each exact carrier on the expired directed link can
+report signed `min_gap_ms` and `max_gap_ms` relative to that turn. An entirely
+negative interval establishes frame receipt before expiry. An entirely positive
+interval establishes receipt after expiry. Overlap and invalid samples leave
+the order unresolved. Use the original phase receipt to check subsequent page
+message, decoder, SDK, and native observations.
+
 Use `--trace-mixed-receive --browser-pair chromium-firefox` with the trace
 server to collect both receipts in one relay room. Each engine observes
 its own frozen recipients. On failure, both supplemental receipts refer
