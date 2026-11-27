@@ -1,11 +1,40 @@
 """Validate the raw drop fields that distinguish the two source revisions."""
 from copy import deepcopy
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import tomllib
 import unittest
+from unittest.mock import patch
 
 from drop_history_contract import check_checksum_reports, check_source_content, check_source_operation
 
 
 class DropHistoryWireTests(unittest.TestCase):
+    # Value: protects=real Cargo manifest parsing; fails_when=absolute path emits JSON surrogate escapes; why_new=alternate source stages a manifest; seam=build
+    def test_candidate_manifest_uses_relative_dependency_under_a_unicode_checkout(self):
+        import drop_history_launch as launch
+
+        with TemporaryDirectory(prefix='drop-🌐-') as temporary:
+            root = Path(temporary).resolve()
+            cache = root / '.cache/reference'
+            candidate = cache / 'drop-source-candidate/fortress-rollback-candidate'
+            candidate.mkdir(parents=True)
+            oracle = root / 'scripts/oracle/rust'
+            (oracle / 'src').mkdir(parents=True)
+            (oracle / 'Cargo.lock').write_text('')
+            (oracle / 'Cargo.toml').write_text(
+                '[dependencies]\nfortress-rollback = { path = "../../../.cache/reference/fortress-reviewed" }\n')
+
+            def verify_manifest(command, *_args):
+                path = Path(command[command.index('--manifest-path') + 1])
+                value = tomllib.loads(path.read_text())['dependencies']['fortress-rollback']['path']
+                self.assertEqual((path.parent / value).resolve(), candidate)
+
+            tools = {'cargo': Path('cargo'), 'rustc': Path('rustc')}
+            with patch.multiple(launch, ROOT=root, CACHE=cache), patch.object(launch, 'build', side_effect=verify_manifest) as build:
+                launch.build_observer(tools, root, 'fortress-reviewed', candidate, 'candidate', True)
+            build.assert_called_once()
+
     # Value: protects=exact operation and donor evidence; fails_when=version-6 identity projects away; why_new=version-2 lacks these fields; seam=none
     def test_operation_and_forwarded_donor_are_versioned(self):
         old = {'coordinator': 0, 'coordinator_generation': 0, 'sequence': 1, 'target_set_digest': 10167666227858214167}

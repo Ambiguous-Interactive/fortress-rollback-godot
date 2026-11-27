@@ -235,7 +235,8 @@ def build_observer(tool_paths, output, reviewed_root, source_tree, source_revisi
             manifest = (oracle / 'Cargo.toml').read_text()
             reviewed_path = json.dumps('../../../.cache/reference/' + reviewed_root)
             require(manifest.count(reviewed_path) == 1, 'reviewed Cargo source path')
-            (project / 'Cargo.toml').write_text(manifest.replace(reviewed_path, json.dumps(source_tree.as_posix())))
+            candidate_path = Path('..') / source_tree.relative_to(CACHE)
+            (project / 'Cargo.toml').write_text(manifest.replace(reviewed_path, json.dumps(candidate_path.as_posix())))
             shutil.copyfile(oracle / 'Cargo.lock', project / 'Cargo.lock')
             shutil.copytree(oracle / 'src', project / 'src')
             build(command + ['--manifest-path', str(project / 'Cargo.toml'), '--target-dir', str(target)],
