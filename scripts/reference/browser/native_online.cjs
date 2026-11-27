@@ -391,13 +391,17 @@ function missedCorrectionDeadline(phase, error, deadline, failedAt) {
     || /^(?:page\.evaluate: )?native relay release deadline(?:\n|$)/.test(message);
 }
 
-function relayReleaseEvidence(peers, uuids, correctionDeadlineReached) {
+function relayReleaseEvidence(peers, uuids, correctionDeadlineReached, { frames, departureCommands }) {
   const socket_closed_pages = [];
   const hold_cap_pages = [];
   const expiries = [];
+  let firstRemoval;
   peers.forEach((peer, reporter_page) => {
     if (peer.release_socket_closed || peer.release_control_socket_closed) socket_closed_pages.push(reporter_page);
     if (peer.hold_cap) hold_cap_pages.push(reporter_page);
+    for (const removal of Object.values(peer.sdk_departures ?? {})) {
+      if (!firstRemoval || removal.controller_order < firstRemoval.controller_order) firstRemoval = { reporter_page, ...removal };
+    }
     const expiry = peer.native_expiry;
     if (!expiry || !uuids) return;
     const expired_page = uuids.indexOf(expiry.uuid);
@@ -409,10 +413,22 @@ function relayReleaseEvidence(peers, uuids, correctionDeadlineReached) {
     const latest = candidates.filter(([, sample]) => sample && sample.controller_order < expiry.controller_order)
       .sort(([, a], [, b]) => b.controller_order - a.controller_order)[0];
     const last_release_checkpoint = latest ? { kind: latest[0], ...latest[1] } : null;
+    const localHistory = peer.history_published;
+    const room_checkpoints = {
+      release_completed_pages: peers.flatMap((peer, index) => peer.release_completed?.controller_order < expiry.controller_order ? [index] : []),
+      history_received_pages: peers.flatMap(({ history_received: history }, index) =>
+        history?.frames === frames && history.controller_ms < expiry.controller_ms ? [index] : []),
+      local_history_published_before_expiry: localHistory?.frames === frames && localHistory.page_ms !== expiry.page_ms
+        ? localHistory.page_ms < expiry.page_ms : null,
+    };
     expiries.push({ reporter_page, expired_page, uuid: expiry.uuid, endpoint: expiry.endpoint,
-      expiry: expiry.expiry, controller_ms: expiry.controller_ms, controller_order: expiry.controller_order, last_release_checkpoint });
+      expiry: expiry.expiry, controller_ms: expiry.controller_ms, controller_order: expiry.controller_order, last_release_checkpoint, room_checkpoints });
   });
-  return { socket_closed_pages, hold_cap_pages, correction_deadline_reached: correctionDeadlineReached, expiries };
+  const first_sdk_removal = firstRemoval
+    ? { reporter_page: firstRemoval.reporter_page, uuid: firstRemoval.uuid, controller_ms: firstRemoval.controller_ms } : null;
+  const intentional_leave_dispatch_ms = departureCommands.find(command => command.phase === 'departure')?.controller_dispatch_ms ?? null;
+  return { socket_closed_pages, hold_cap_pages, correction_deadline_reached: correctionDeadlineReached, expiries, first_sdk_removal,
+    intentional_leave_dispatch_ms };
 }
 
 function retainDepartureCheckpoint(peer, { kind, ...receipt }, roster, local) {
@@ -2517,7 +2533,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled, releaseDelay,
       holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns, relayWire, relayControl,
       relayServer, relayJoined, relayReceive, relayRetention, sameLinkRetention, relayHold: relayHold && await relayHoldReceipt(),
-      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
+      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false, { frames: comparedFrames, departureCommands }),
+      departureCommands, roomIdentities,
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples, departureHttpsClockSamples: closeReport.httpsClockSamples, ...closeReceipts(),
@@ -2593,7 +2610,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined, expiryLinks) : undefined,
       relayExpiryTraffic: traceRelayWire ? relayExpiryTraffic(expiries, relayJoined, relayWire, relayReceive) : undefined,
       relayHold: holdReceipt,
-      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
+      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached,
+        { frames: comparedFrames, departureCommands }),
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
     }));
   } finally {

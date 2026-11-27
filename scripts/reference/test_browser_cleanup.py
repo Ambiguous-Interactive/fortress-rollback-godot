@@ -2390,7 +2390,23 @@ bindDepartureCheckpoints(peers[0], roster, uuids[0]);
 record(2, {...hold('release_socket_closed', 16), socket_state: 3, socket_stage: 'before_send', held_send: true}, 135);
 record(1, hold('hold_cap', 16), 140);
 record(3, {kind: 'native_expiry', endpoint: 8, uuid: uuids[6], page_ms: 6, expiry: evidence(0, 6001)}, 145);
-const report = relayReleaseEvidence(peers, uuids, false);
+record(2, {kind: 'history_published', page_ms: 90, state: 'playing', turns: 28, frame: 41, confirmed: 40, restores: 1, frames: 40}, 146);
+record(0, {kind: 'history_published', page_ms: 4, state: 'playing', turns: 28, frame: 41, confirmed: 40, restores: 1, frames: 39}, 147);
+record(3, {kind: 'sdk_departure', endpoint: 8, uuid: uuids[6], page_ms: 11}, 150);
+record(0, {kind: 'sdk_departure', endpoint: 8, uuid: uuids[6], page_ms: 6}, 150);
+peers[1].history_received = {frames: 40, controller_ms: 119};
+peers[2].history_received = {frames: 40, controller_ms: 120};
+peers[4].history_received = {frames: 39, controller_ms: 118};
+peers[5].history_received = {frames: 40, controller_ms: 131};
+const report = relayReleaseEvidence(peers, uuids, false, {
+  frames: 40, departureCommands: [{phase: 'departure', controller_dispatch_ms: 160}, {phase: 'teardown', controller_dispatch_ms: 170}],
+});
+assert.deepEqual(report.expiries.map(expiry => expiry.room_checkpoints), [
+  {release_completed_pages: [6], history_received_pages: [1, 2], local_history_published_before_expiry: null},
+  {release_completed_pages: [], history_received_pages: [1], local_history_published_before_expiry: true},
+]);
+assert.deepEqual(report.first_sdk_removal, {reporter_page: 3, uuid: uuids[6], controller_ms: 150});
+assert.equal(report.intentional_leave_dispatch_ms, 160);
 assert.equal(report.correction_deadline_reached, false);
 const timeout = Object.assign(new Error('timed out'), {name: 'TimeoutError'});
 assert.equal(missedCorrectionDeadline('corrected history', timeout, 120, 119), false);
@@ -2404,7 +2420,9 @@ for (const message of ['absolute native peer 2 input release deadline', 'absolut
   assert.equal(missedCorrectionDeadline('input release', new Error(message), 120, 120), true);
 }
 const timedOut = missedCorrectionDeadline('corrected history', timeout, 120, 120);
-assert.equal(relayReleaseEvidence(peers, uuids, timedOut).correction_deadline_reached, true);
+const noDispatch = relayReleaseEvidence(peers, uuids, timedOut, {frames: 40, departureCommands: []});
+assert.equal(noDispatch.correction_deadline_reached, true);
+assert.equal(noDispatch.intentional_leave_dispatch_ms, null);
 assert.deepEqual(report.socket_closed_pages, [2]);
 assert.deepEqual(report.hold_cap_pages, [1]);
 assert.deepEqual(report.expiries.map(({reporter_page, expired_page, last_release_checkpoint, expiry}) =>
