@@ -193,11 +193,17 @@ def publish_room_receipt(receipt, logs, evidence, files, export, started_identit
     try:
         pending.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
         identities = {}
-        if (inventory(files, identities=identities) != evidence['inputs']
-                or inventory({'export': export}, identities=identities) != evidence['export']
-                or identities != started_identities
-                or any(file_identity(path.lstat()) != identity for path, identity in identities.items())):
-            raise ValueError('native browser witness inputs changed during execution')
+        for sources, expected in ((files, evidence['inputs']), ({'export': export}, evidence['export'])):
+            actual = inventory(sources, identities=identities)
+            if actual != expected:
+                changed = next(name for name in sorted(actual.keys() | expected.keys()) if actual.get(name) != expected.get(name))
+                raise ValueError(f'native browser witness inputs changed during execution: {changed}')
+        changed = next((path for path, identity in identities.items()
+                        if started_identities.get(path) != identity or file_identity(path.lstat()) != identity), None)
+        if changed is None:
+            changed = min(started_identities.keys() - identities.keys(), default=None)
+        if changed is not None:
+            raise ValueError(f'native browser witness inputs changed during execution: {changed}')
         pending.replace(receipt)
     finally:
         pending.unlink(missing_ok=True)
