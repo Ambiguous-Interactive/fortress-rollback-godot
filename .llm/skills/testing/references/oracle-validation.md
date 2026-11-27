@@ -72,8 +72,10 @@ Select acknowledgement-loss faults by the actual participant certificate too, an
 to distinguish a response to a repeated commit from an independently retried acknowledgement.
 Require the earliest eligible delivered response to satisfy the ordering; a later valid retry cannot excuse an earlier invalid one.
 Validate each packet’s actual ordered target handles and generations against its digest; an expected digest cannot certify an unchecked target list.
-If a global floor prevents the proposed eviction, preserve that control and report the bound;
-changing its inventory cannot establish that the physical fault occurred.
+If a global floor prevents the proposed eviction, preserve that control and report the bound.
+Compare an overwritten safe tag and the protected original row in the same minimum-capacity ring.
+Bind the argument to the recipient's actual receipt, active membership and the prediction window.
+Changing the inventory cannot establish that an original row was evicted.
 Declare expected diagnostics independently; learning them from the validator makes rejection circular.
 For idempotent input delivery, state equality can hide duplicate work. Also assert
 exact queue occupancy, due-frame timing and once-per-frame sampling with a resampling mutant.
