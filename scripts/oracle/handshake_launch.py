@@ -133,10 +133,10 @@ def main():
             raise ValueError('Godot fresh process divergence')
         actual_path = args.output / f'{name}-actual.json'; actual_path.write_text(json.dumps(actuals[0], indent=2) + '\n')
         if name == 'model_matching' and formal_on:
-            formal = check_formal(actuals[0], args.output, args.tlc_jar.resolve())
+            formal = check_formal(actuals[0], args.output, args.tlc_jar.resolve(), upstream=trees['fortress'])
             mutant = deepcopy(actuals[0]); mutant['records'][0]['transitions'][0].update(remaining=0, state='running')
             try:
-                check_formal(mutant, args.output, args.tlc_jar.resolve())
+                check_formal(mutant, args.output, args.tlc_jar.resolve(), upstream=trees['fortress'])
             except ValueError as error:
                 if 'formal begin' not in str(error):
                     raise ValueError('formal initial control failed at unrelated boundary') from error

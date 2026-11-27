@@ -5,7 +5,7 @@ import json
 from launch import ROOT, digest, execute
 from replay_launch import compare
 from spectator_roster import row
-from spectator_startup import _delay_history, expected_rust, check_rust
+from spectator_startup import _delay_history, expected_rust
 
 
 def original_row(frame, players, reserved_slot):
@@ -77,7 +77,7 @@ def controls(observed, expected):
     return evidence
 
 
-def check(engine, output):
+def check(engine, output, observe_rust):
     output.mkdir(parents=True, exist_ok=True)
     command = [str(engine), '--headless', '--path', str(ROOT), '--script',
                'res://tests/oracle/spectator_trace.gd', '--', '--statuses']
@@ -97,7 +97,7 @@ def check(engine, output):
     traces = [observe(command, f'godot-{repetition}') for repetition in range(2)]
     compare(traces[0], traces[1])
     (output / 'observed.json').write_text(json.dumps(traces[0], indent=2) + '\n')
-    rust = check_rust(traces[0], output, delayed=True, roster=True, statuses=True)
+    rust = observe_rust(traces[0], output, delayed=True, roster=True, statuses=True)
     actual = json.loads((output / 'rust-observed.json').read_text())
     mutant = observe([*command, '--mutate-status'], 'godot-lost-status', mutate_status=True)
     diagnostic = 'result.traces[0].transcript[0][4]: value mismatch'

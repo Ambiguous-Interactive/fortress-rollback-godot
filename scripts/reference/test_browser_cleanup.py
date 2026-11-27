@@ -2931,6 +2931,7 @@ require('node:module')._load = function (name, ...args) {
 };
 process.env.FORTRESS_PLAYWRIGHT_PACKAGE = 'fixture-playwright';
 process.env.FORTRESS_CHROMIUM_EXECUTABLE = '/fixture';
+process.env.FORTRESS_NATIVE_SOURCE_REVISION = 'd124c89080004d96971a629bb0427056ee1805e3';
 process.argv = [process.execPath, entrypoint, '.', 'ws://127.0.0.1/v3/ws', 'relay', '2', 'chromium'];
 if (lateExpiry) {
   process.env.FORTRESS_RELAY_TRACE_SCOPE = 'fixture-trace-scope';

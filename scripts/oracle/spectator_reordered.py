@@ -5,7 +5,7 @@ import json
 from launch import ROOT, digest, execute
 from replay_launch import compare
 from spectator_roster import row
-from spectator_startup import expected_rust, check_rust
+from spectator_startup import expected_rust
 
 
 def expected_bundle(swapped=False, ordered=False):
@@ -77,7 +77,7 @@ def controls(observed, expected):
     return evidence
 
 
-def check(engine, output):
+def check(engine, output, observe_rust):
     output.mkdir(parents=True, exist_ok=True)
     command = [str(engine), '--headless', '--path', str(ROOT), '--script',
                'res://tests/oracle/spectator_trace.gd', '--', '--reordered']
@@ -97,7 +97,7 @@ def check(engine, output):
     traces = [observe(command, f'godot-{repeat}') for repeat in range(2)]
     compare(traces[0], traces[1])
     (output / 'observed.json').write_text(json.dumps(traces[0], indent=2) + '\n')
-    rust = check_rust(traces[0], output, reordered=True)
+    rust = observe_rust(traces[0], output, reordered=True)
     actual = json.loads((output / 'rust-observed.json').read_text())
     executed = []
     for argument, label, swapped, ordered, diagnostic in [

@@ -1,5 +1,7 @@
 //! Observe actual pinned host/spectator sessions through fake, bounded delivery.
 #![forbid(unsafe_code)]
+#[path = "../source_revision.rs"]
+mod source_revision;
 use fortress_rollback::{Config, FortressRequest, InputStatus, Message, NonBlockingSocket,
     PlayerType, ProtocolConfig, SessionBuilder, SpectatorConfig, SyncConfig};
 use serde_json::{json, Value};
@@ -145,6 +147,7 @@ fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool
 }
 fn main() {
     let result = (|| -> Result<Vec<Value>, String> {
+        source_revision::compiled()?;
         let mut traces = Vec::new();
         let reordered = std::env::args().any(|argument| argument == "--reordered");
         let statuses = std::env::args().any(|argument| argument == "--statuses");

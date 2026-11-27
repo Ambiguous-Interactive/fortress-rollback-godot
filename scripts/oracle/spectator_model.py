@@ -18,10 +18,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts/reference'))
 
-from fetch import CACHE, digest, load_manifest  # noqa: E402
+from fetch import digest, load_manifest  # noqa: E402
 
-REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
-UPSTREAM = CACHE / ('fortress-rollback-' + REVISION)
 SPEC = Path('specs/tla/SpectatorSession.tla')
 CONFIG = Path('specs/tla/SpectatorSession.cfg')
 JAR_PIN = load_manifest()['artifacts']['tla2tools-1.8.0.jar']
@@ -116,12 +114,12 @@ def _run(jar, spec, config, output, label, expect_ok):
     return _read_outcome(result.returncode, log, label, expect_ok)
 
 
-def check(output, jar):
+def check(output, jar, *, upstream):
     """Verify the pinned spec, then require the unsafe mutant to be rejected."""
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    spec = UPSTREAM / SPEC
-    config = UPSTREAM / CONFIG
+    spec = upstream / SPEC
+    config = upstream / CONFIG
     if not spec.is_file() or not config.is_file():
         raise ValueError('pinned SpectatorSession model missing from verified tree')
     configure = config.read_text()

@@ -17,7 +17,9 @@ sys.path.insert(0, str(ROOT / 'scripts/reference'))
 from fetch import CACHE, digest, load_manifest, sources  # noqa: E402
 from launch import git_identity, require_unchanged  # noqa: E402
 from receipt_arguments import ReceiptParser  # noqa: E402
-from spectator_model import REVISION, SPEC, ensure_jar, check  # noqa: E402
+from source_build import upstream_inventory  # noqa: E402
+from source_wire import wire_version  # noqa: E402
+from spectator_model import CONFIG, SPEC, ensure_jar, check  # noqa: E402
 
 
 def main():
@@ -30,10 +32,6 @@ def main():
     receipt = args.output / 'receipt.json'
     receipt.unlink(missing_ok=True)
     identity = git_identity()
-    manifest = load_manifest()
-    if manifest['sources']['fortress']['revision'] != REVISION:
-        raise ValueError('spectator adapter revision differs from pinned source')
-    sources(manifest)
     files = [*(ROOT / 'scripts/oracle').glob('*.py'), ROOT / 'tests/oracle/spectator_trace.gd',
              *(ROOT / 'addons/fortress_rollback/core').glob('*.gd'),
              *(ROOT / 'scripts/reference').glob('*.py'), ROOT / 'docs/reference/pins.json',
@@ -41,21 +39,28 @@ def main():
              *(ROOT / 'scripts/oracle/rust').rglob('*.rs'),
              ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock']
     source_hashes = {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)}
+    manifest = load_manifest()
+    revision = manifest['sources']['fortress']['revision']
+    wire_version(revision)
+    upstream = sources(manifest)['fortress']
+    model_paths = (upstream / SPEC, upstream / CONFIG)
+    model_hashes = {path: digest(path) for path in model_paths}
+    upstream_hashes = upstream_inventory(upstream) if args.godot else None
     ensure_jar(args.tlc_jar)
-    formal = check(args.output, args.tlc_jar.resolve())
+    formal = check(args.output, args.tlc_jar.resolve(), upstream=upstream)
     runtime = None
     if args.godot:
         from engine_path import resolve_engine
         from spectator_runtime import check as check_runtime
-        runtime = check_runtime(resolve_engine(args.godot), args.output / 'runtime', args.tlc_jar.resolve(), ROOT)
+        runtime = check_runtime(resolve_engine(args.godot), args.output / 'runtime', args.tlc_jar.resolve(), ROOT, manifest=manifest, upstream=upstream)
         if any(outcome['model_sha256'] != formal['spec_sha256']
                for trace in runtime['traces'] for kind, outcome in trace.items()
                if kind in ('positive', 'illegal_advance', 'preplay_divergence')):
             raise ValueError('pinned spectator model changed during runtime projection')
     ensure_jar(args.tlc_jar)
     result = {'format': 1, 'complete': True, 'passed': True,
-              'upstream_revision': manifest['sources']['fortress']['revision'],
-              'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'),
+              'upstream_revision': revision,
+              'manifest_sha256': source_hashes['docs/reference/pins.json'],
               'commit': identity['commit'],
               'working_tree_dirty': identity['working_tree_dirty'],
               'platform': platform.platform(), 'formal': formal, 'runtime': runtime, 'source_sha256': source_hashes,
@@ -64,10 +69,13 @@ def main():
                   'Upstream SpectatorSession model only; no Godot observation requested.',
                   'Synthetic sync preconditions do not establish runtime handshake, events, expiry or status parity.',
                   'No live SignalFish spectator routing is established (see #131).']}
+    require_unchanged('SpectatorSession model inventory', model_hashes, {path: digest(path) for path in model_paths})
+    if upstream_hashes is not None:
+        require_unchanged('upstream Rust source inventory', upstream_hashes, upstream_inventory(upstream))
     require_unchanged('local source inventory', source_hashes, {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)})
     require_unchanged('repository identity', identity, git_identity())
     receipt.write_text(json.dumps(result, indent=2) + '\n')
-    print(f"Spectator model parity: pinned {REVISION[:12]} {SPEC} verifies; unsafe mutant rejected")
+    print(f"Spectator model parity: pinned {revision[:12]} {SPEC} verifies; unsafe mutant rejected")
     return 0
 
 

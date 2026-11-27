@@ -8,8 +8,9 @@ compared separately with Rust's real advance_frame requests.
 from copy import deepcopy
 import json
 
-from launch import ROOT, CACHE, digest, execute, load_manifest, setup_rust
+from launch import ROOT, CACHE, digest, execute, require_unchanged, setup_rust
 from replay_launch import compare
+from source_build import prepare_source_build, source_build_environment, upstream_inventory
 
 ANCHORS = (
     'IF lastRecvFrame = NULL_FRAME \\/ currentFrame = NULL_FRAME',
@@ -60,11 +61,14 @@ def negative_controls(observed, expected):
     return evidence
 
 
-def check_rust(traces, output, delayed=False, roster=False, statuses=False, reordered=False):
-    manifest = load_manifest()
+def check_rust(traces, output, *, manifest, upstream, delayed=False, roster=False, statuses=False, reordered=False):
+    revision = manifest['sources']['fortress']['revision']
+    adapter = prepare_source_build(ROOT / 'scripts/oracle/rust/Cargo.toml', upstream, revision, CACHE)
+    environment = source_build_environment(adapter, upstream, revision)
+    adapter_hashes = upstream_inventory(adapter.parent)
     cargo, _ = setup_rust(manifest, False)
     execute([str(cargo), '+' + manifest['rust']['version'], 'build', '--locked', *(['--features', 'spectator-status'] if statuses else []), '--bin', 'spectator',
-             '--manifest-path', str(ROOT / 'scripts/oracle/rust/Cargo.toml')], output / 'rust-build.log', timeout=600)
+             '--manifest-path', str(adapter)], output / 'rust-build.log', timeout=600, environment=environment)
     binary = CACHE / 'target/debug/spectator'
     fingerprint = digest(binary)
     expected = expected_rust(traces)
@@ -80,6 +84,7 @@ def check_rust(traces, output, delayed=False, roster=False, statuses=False, reor
     compare(observations[0], observations[1])
     if digest(binary) != fingerprint:
         raise ValueError('pinned spectator oracle changed during observation')
+    require_unchanged('spectator Cargo adapter inventory', adapter_hashes, upstream_inventory(adapter.parent))
     (output / 'rust-observed.json').write_text(json.dumps(observations[0], indent=2) + '\n')
     if reordered:
         from spectator_reordered import controls
@@ -236,7 +241,7 @@ def _delay_policy(item, capacity, speed, delay):
         raise ValueError('delayed spectator policy differs from viewable backlog')
 
 
-def check_delay(engine, output):
+def check_delay(engine, output, observe_rust):
     output.mkdir(parents=True, exist_ok=True)
     command = [str(engine), '--headless', '--path', str(ROOT), '--script', 'res://tests/oracle/spectator_trace.gd', '--', '--delayed']
     observations = []
@@ -250,7 +255,7 @@ def check_delay(engine, output):
         observations.append(validate_delay_bundle(json.loads(lines[0])))
     compare(observations[0], observations[1])
     (output / 'observed.json').write_text(json.dumps(observations[0], indent=2) + '\n')
-    rust = check_rust(observations[0], output, delayed=True)
+    rust = observe_rust(observations[0], output, delayed=True)
     stdout, stderr = execute([*command, '--mutate-input'], output / 'godot-temporal-input.log', timeout=60)
     if any(item in stdout + stderr for item in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
         raise ValueError('delayed temporal-input observer failed')
