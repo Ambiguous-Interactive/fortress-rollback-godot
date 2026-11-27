@@ -10,6 +10,7 @@ import zipfile
 from pathlib import Path
 
 from export import ARCH, CACHE, HERE, HOST, MACOS_CROSS_TARGET, ROOT, SCRATCH, editor_archive, prepared_editor
+from verify_source import build_verified, verify_source
 
 sys.path.insert(0, str(ROOT / "scripts/reference"))
 from fetch import digest, fetch, load_manifest, prepare_zip, sources
@@ -75,16 +76,18 @@ def main():
         (directory / previous).unlink(missing_ok=True)
     data = load_manifest()
     sources(dict(data, sources={"fortress": data["sources"]["fortress"]}))
+    manifest = HERE / "Cargo.toml"
+    if verify_source(manifest)[0] != data["sources"]["fortress"]["revision"]:
+        raise ValueError("native platform build source differs from the reviewed pin")
     templates = f"Godot_v{version}-stable_export_templates.tpz"
     fetch(data["artifacts"][templates], templates)
     binary = editor(data, version)
     native = CACHE / "target/gdextension"
     env = dict(os.environ, CARGO_TARGET_DIR=str(native))
-    cargo = ["cargo", "build", "--manifest-path", HERE / "Cargo.toml", "--locked", "--release"]
-    subprocess.run(cargo + ["--lib"], env=env, check=True)
+    build_verified(manifest, ["--lib"], env)
     # Both feature sets can emit a cdylib with the same filename, particularly on Windows.
     peer_target = native / "reference"
-    subprocess.run(cargo + ["--no-default-features", "--features", "peer", "--bins", "--target-dir", peer_target], env=env, check=True)
+    build_verified(manifest, ["--no-default-features", "--features", "peer", "--bins"], env, target_dir=peer_target)
     if target == "web":
         subprocess.run(["bash", HERE / "build_web.sh"], env=dict(env, RUSTUP_TOOLCHAIN="nightly-2026-02-01"), check=True)
     if target == "android":
@@ -99,12 +102,12 @@ def main():
             f'export/android/android_sdk_path="{sdk.as_posix()}"\nexport/android/java_sdk_path="{Path(env["JAVA_HOME"]).as_posix()}"\n')
         for abi in ("aarch64-linux-android", "x86_64-linux-android"):
             env["CARGO_TARGET_" + abi.replace("-", "_").upper() + "_LINKER"] = str(ndk / f"{abi}24-clang")
-            subprocess.run(cargo + ["--target", abi, "--lib"], check=True, env=env)
+            build_verified(manifest, ["--lib"], env, target=abi)
     if target == "macos":
-        subprocess.run(cargo + ["--target", MACOS_CROSS_TARGET, "--lib"], check=True, env=env)
+        build_verified(manifest, ["--lib"], env, target=MACOS_CROSS_TARGET)
     if target == "ios":
         for abi in ("aarch64-apple-ios", "aarch64-apple-ios-sim"):
-            subprocess.run(cargo + ["--target", abi, "--lib"], check=True, env=env)
+            build_verified(manifest, ["--lib"], env, target=abi)
     subprocess.run([sys.executable, HERE / "export.py", version, target, "--editor", binary], check=True, env=env)
     outputs = {"linux": "witness", "windows": "witness.exe", "macos": "witness.app", "android": "witness.apk",
                "web": "index.html", "ios": "build/Build/Products/Release-iphonesimulator/witness.app"}

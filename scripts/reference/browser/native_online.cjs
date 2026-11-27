@@ -47,7 +47,7 @@ const HOLD_MARKS = new Set(['hold_armed', 'hold_first_input', 'hold_first_contro
   'release_started', 'release_progress', 'release_completed', 'release_socket_closed', 'release_control_socket_closed']);
 const HOLD_CONDITIONS = ['stall', 'prediction', 'frontier', 'held_input', 'quality_reply'];
 
-function createWarmupBarrier(players, clock = () => performance.now()) {
+function createWarmupBarrier(players, clock = () => performance.now(), wireVersion = 2) {
   const latest = Array(players).fill(null);
   const errors = Array(players).fill(null);
   const inputErrors = Array(players).fill(null);
@@ -65,7 +65,7 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
   function validAckPayload(payload, frame) {
     if (payload.length !== 64 || (session !== undefined && payload.slice(0, 32) !== session)) return false;
     const bytes = Buffer.from(payload, 'hex');
-    return bytes.readUInt32LE(16) === 0x000252f5 && bytes.readUInt32LE(24) === 3 && bytes.readInt32LE(28) === frame;
+    return bytes.readUInt32LE(16) === (0x52f5 | (wireVersion << 16)) && bytes.readUInt32LE(24) === 3 && bytes.readInt32LE(28) === frame;
   }
   function validWarmupLink(link, sample, roster, inboundAck) {
     const [first, second] = [...roster].sort();
@@ -282,7 +282,7 @@ function instrumentPostRelease(prefix, minimumFrames, readExpiryClock, expiryClo
   };
 }
 
-function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTarget = HISTORY_FRAMES) {
+function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTarget = HISTORY_FRAMES, wireVersion = 2) {
   if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
   try {
     const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes, queued, released, emitted_ms, endpoint, uuid,
@@ -298,7 +298,7 @@ function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTa
         if (chromium_service !== undefined) receipt.chromium_service = chromiumServiceSamples(chromium_service);
         if (frontier !== undefined) {
           try {
-            receipt.frontier = validateRelayExpiryFrontier(frontier, uuid, local, page_ms);
+            receipt.frontier = validateRelayExpiryFrontier(frontier, uuid, local, page_ms, wireVersion);
           } catch (error) {
             peer.checkpoint_error ??= String(error);
           }
@@ -633,7 +633,7 @@ function instrumentNativeWire(tagWebKitSends, warmupPrefix, relayWireTrace, clos
     const stream = !warmupCutoff && link?.[stage];
     if (!stream || remote !== link.sender || bytes.length > 1200 || bytes.length < 32 || !matches(bytes, 0)) return;
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (view.getUint32(16, true) !== 0x000252f5) return;
+    if (view.getUint32(16, true) !== (0x52f5 | (wireVersion << 16))) return;
     const kind = view.getUint32(24, true);
     let start_frame = null;
     let ack_frame;
@@ -2074,7 +2074,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const mixed = startup || liveClose || recovery;
   const route = mixed ? 'mesh' : mode;
   const traceWarmup = route === 'relay' && players === 8;
-  const warmupBarrier = traceWarmup ? createWarmupBarrier(players) : undefined;
+  const warmupBarrier = traceWarmup ? createWarmupBarrier(players, undefined, wireVersion) : undefined;
   const postRelease = route === 'relay' ? Array.from({ length: players }, () => ({})) : undefined;
   const releaseDelay = RELEASE_DELAYS.get(control);
   const releaseSignal = route === 'relay' ? createReleaseSignal(players, releaseDelay === 'delivery' ? RELEASE_DELAY_MS : 0) : undefined;
@@ -2214,7 +2214,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
         }
         if (postRelease && text.startsWith(POST_RELEASE_CHECKPOINT)) {
           const controller = { controller_ms: performance.now(), controller_order: ++postReleaseOrder };
-          postReleaseCheckpoint(postRelease[index], text, controller, roomIdentities?.roster, roomIdentities?.uuids[index], comparedFrames);
+          postReleaseCheckpoint(postRelease[index], text, controller, roomIdentities?.roster, roomIdentities?.uuids[index], comparedFrames, wireVersion);
         }
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push({ index, phase, text });
       });
@@ -2227,7 +2227,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       // Register the browser observers in a single init script.
       const relayTraceScript = traceRelayWire
         ? `(${createRelayWireTrace})(${JSON.stringify(RELAY_HOLD_PREFIX)}, ${RELAY_HOLD_CAP}, ${RELAY_HOLD_WINDOW_MS},
-            (${decodeRelayDelivery}), ${Boolean(relayProxy)})` : 'undefined';
+            (${decodeRelayDelivery}), ${Boolean(relayProxy)}, ${wireVersion})` : 'undefined';
       const wireScript = `(${instrumentNativeWire})(${name === 'webkit'}, ${JSON.stringify(traceWarmup ? WARMUP_CHECKPOINT : '')}, ${relayTraceScript},
         ${JSON.stringify(closeObservations ? CLOSE_CHECKPOINT : '')}, undefined, ${wireVersion});`;
       const expiryClock = traceFirefox ? readFirefoxClock : traceChromium ? readChromiumClock : 'undefined';
@@ -2265,7 +2265,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       if (postRelease) {
         assert.ok(validRoster);
         for (const peer of ready) assert.deepEqual(peer.frozen_roster, roster, 'native departure requires the frozen roster');
-        if (traceRelayWire) relayHold = createRelayHold(ready[0].session_id, uuids);
+        if (traceRelayWire) relayHold = createRelayHold(ready[0].session_id, uuids, RELAY_HOLD_CAP, wireVersion);
         postRelease.forEach((peer, index) => bindDepartureCheckpoints(peer, roster, uuids[index]));
         roomIdentities = { uuids, roster };
       } else if (validRoster && ready.every(peer => Array.isArray(peer.frozen_roster) && peer.frozen_roster.length === players
@@ -2306,7 +2306,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     if (traceSameLink) {
       phase = 'same-link relay retention control';
       assert.ok(readRelayServer, 'same-link relay retention control requires a trace server');
-      sameLinkRetention = await exerciseSameLinkRetention(pages, ready, readRelayServer);
+      sameLinkRetention = await exerciseSameLinkRetention(pages, ready, readRelayServer, wireVersion);
     }
     let atClose, afterClose, restored, recoveryEvidence, closeLinks;
     const physicalCloseSenders = pages.filter((_, index) => physicalClosers.has(index) && browserPeers[index].name === 'webkit');

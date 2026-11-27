@@ -58,7 +58,7 @@ function decodeRelayDelivery(bytes, localBytes = null) {
 }
 
 // Serialized into the browser init script. Keep its dependencies local.
-function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000, decodeDelivery = decodeRelayDelivery, traceCarrier = false) {
+function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000, decodeDelivery = decodeRelayDelivery, traceCarrier = false, wireVersion = 2) {
   const cap = 128;
   const archiveCap = 512;
   const wireArchiveCap = 1024;
@@ -115,7 +115,7 @@ function createRelayWireTrace(holdPrefix = '', holdCap = 512, holdWindow = 45000
     if (envelope.length < 85 || envelope.length > 1257) return null;
     const view = new DataView(envelope.buffer, envelope.byteOffset, envelope.byteLength);
     if (view.getUint32(0) !== 0x46535231 || envelope[4] !== 1 || view.getUint32(53, true) !== envelope.length - 57
-        || view.getUint32(73, true) !== 0x000252f5 || view.getUint16(77, true) === 0
+        || view.getUint32(73, true) !== (0x52f5 | (wireVersion << 16)) || view.getUint16(77, true) === 0
         || hex(envelope.subarray(5, 21)) !== room || hex(envelope.subarray(57, 73)) !== room) return null;
     const kind = view.getUint32(81, true);
     if (kind >= families.length) return null;

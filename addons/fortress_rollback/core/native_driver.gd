@@ -8,7 +8,7 @@ const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 enum ReceiveCode { ACCEPTED, REJECTED, FULL }
 
 const INPUT_BYTES: int = 4
-const WIRE_PROFILES: Array[String] = ["fortress-native-d124c890-v1-u32", "fortress-native-25e8020d-v6-u32"]
+const WIRE_PROFILES: Dictionary = {"fortress-native-d124c890-v1-u32": 2, "fortress-native-25e8020d-v6-u32": 6}
 
 var _native: RefCounted
 var _game: RefCounted

@@ -69,6 +69,7 @@ class ObservedMatch:
 	extends Match
 
 	var warmup_wire: JavaScriptObject
+	var warmup_header: int
 	var warmup_session: PackedByteArray
 	var warmup_recipient: PackedByteArray
 	var warmup_input_sender: String
@@ -104,7 +105,7 @@ class ObservedMatch:
 		var quality: bool = bytes.size() == 46 and (bytes[30] & 3) == 0
 		var watched_input: bool = sender == warmup_input_sender and bytes.size() > 108 and bytes.size() <= NATIVE_PACKET_BYTES
 		var watched_ack: bool = sender == warmup_ack_sender and bytes.size() == 32
-		if not (watched_input or watched_ack or quality) or bytes.decode_u32(16) != 0x000252f5 or bytes.slice(0, 16) != warmup_session:
+		if not (watched_input or watched_ack or quality) or bytes.decode_u32(16) != warmup_header or bytes.slice(0, 16) != warmup_session:
 			return
 		var kind: int = bytes.decode_u32(24)
 		if (watched_input and kind == 2) or (watched_ack and kind == 3):
@@ -555,6 +556,8 @@ func _command(value: Dictionary) -> void:
 					warmup_match = lobby.game_match
 					lobby.warmup_wire = JavaScriptBridge.get_interface("fortressNativeWire")
 					warmup_match.warmup_wire = lobby.warmup_wire
+					var wire_version: int = Driver.Native.WIRE_PROFILES.get(Driver.Native.installed_profile(), 0)
+					warmup_match.warmup_header = 0x52f5 | (wire_version << 16)
 					lobby.client.connect("game_data_binary_received", warmup_match.observe_sdk)
 			var history_limit: int = RECOVERY_HISTORY_LIMIT if lobby.observe_recovery else HISTORY_LIMIT
 			lobby.observations = ObservedGame.new(int(value.players), history_limit)

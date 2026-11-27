@@ -1206,7 +1206,9 @@ for (const [endpoint, sender] of [[3, roster[2]], [0, undefined], [2, undefined]
         script = r"""
 const assert = require('node:assert/strict');
 const { runInNewContext } = require('node:vm');
+const { dirname, join } = require('node:path');
 const { instrumentNativeWire } = require(process.argv[1]);
+const { createRelayWireTrace } = require(join(dirname(process.argv[1]), 'native_relay_trace.cjs'));
 const roster = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'];
 const room = Buffer.alloc(16, 42);
 for (const expected of [2, 6]) {
@@ -1226,6 +1228,20 @@ for (const expected of [2, 6]) {
   assert.throws(() => channel.send(packet(expected === 2 ? 6 : 2)), /native gameplay wire header/);
   assert.throws(() => channel.send(packet(expected, 1)), /native gameplay wire header/);
   assert.deepEqual(routed, [correct]);
+
+  const members = roster.map(uuid => uuid.replaceAll('-', ''));
+  const trace = createRelayWireTrace('', 512, 45000, undefined, false, expected);
+  trace.bind(room.toString('hex'), members[0], members);
+  const envelope = Buffer.alloc(103);
+  envelope.set(Buffer.from('4653523101', 'hex'));
+  envelope.set(room, 5);
+  envelope.set(Buffer.from(members.join(''), 'hex'), 21);
+  envelope.writeUInt32LE(46, 53);
+  envelope.set(room, 57);
+  envelope.set([0xf5, 0x52, expected, 0, 1, 0, 0, 0, 4], 73);
+  assert.ok(trace.record('send', envelope, 1), 'the receipt decoder must keep the selected wire version');
+  envelope[75] = expected === 2 ? 6 : 2;
+  assert.equal(trace.record('send', envelope, 2), undefined, 'the receipt decoder must discard the other wire version');
 }
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
