@@ -58,6 +58,10 @@ test('expiry ordering requires a calibrated document and a unique carrier on the
   assert.equal(observe({ clocks: [{ ...calibration, sample: { ...sample, time_origin_ms: 1 } }] }).observation.expiry_timing.order, 'unresolved');
   assert.equal(observe({ clocks: [{ ...calibration, end_ms: 59 }] }).observation.expiry_timing.order, 'unresolved');
   assert.equal(observe({ clocks: [] }).observation.expiry_timing.order, 'unresolved');
+  const huge = { ...sample, page_ms: Number.MAX_VALUE };
+  assert.deepEqual(observe({ clocks: [{ ...calibration, start_ms: Number.MAX_VALUE, end_ms: Number.MAX_VALUE }],
+    expiries: [{ ...expiry, page_ms: huge.page_ms, chromium_service: { before: huge, after: huge } }] }).observation.expiry_timing,
+  { order: 'unresolved', reason: 'invalid' });
   assert.equal(observe({ expiries: [{ ...expiry, uuid: '44444444-4444-4444-4444-444444444444' }] }).observation.expiry_timing, undefined);
   assert.equal(observe({ input: { ...receive, rows: [{ ...row, proxy: [carrierMatch, carrierMatch] }] } }).observation, undefined);
 });
@@ -163,7 +167,7 @@ test('Chromium TLS receipts bound expiry while the renderer is busy',
           socket.binaryType = 'arraybuffer';
           socket.onopen = () => {
             trace.bindDeparture(${JSON.stringify(receiver)}, ${JSON.stringify([sender, receiver])});
-            socket.send('ready');
+            console.debug('relay socket opened');
           };
           socket.onmessage = async event => {
             const text = new TextDecoder().decode(event.data);
@@ -173,7 +177,6 @@ test('Chromium TLS receipts bound expiry while the renderer is busy',
               const until = performance.now() + 750;
               while (performance.now() < until) {}
               trace.recordDeparture('native_expiry', 1, ${JSON.stringify(JSON.stringify(nativeEvidence))}, true);
-              socket.send('after');
             }, 75);
             if (text === ${JSON.stringify(carrier.toString())}) await fetch('/handled-exact-carrier');
             console.log(text);
@@ -183,18 +186,18 @@ test('Chromium TLS receipts bound expiry while the renderer is busy',
       server = createServer({ key: await readFile(keyPath), cert: await readFile(certPath) }, (request, response) =>
         response.end(request.url === '/' ? html : 'ok'));
       let proxySocket;
+      const send = async index => {
+        await pause(75);
+        const value = payloads[index];
+        if (!socket.destroyed) socket.write(Buffer.concat([Buffer.from([0x82, value.length]), Buffer.from(value)]));
+      };
       server.on('upgrade', (request, upgraded) => {
         socket = upgraded;
         proxySocket = proxySocketAddress(request, socket);
         const accept = createHash('sha1').update(request.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
         socket.write(Buffer.concat([handshake.subarray(0, -2), Buffer.from(`Sec-WebSocket-Accept: ${accept}\r\n\r\n`)]));
-        let index = 0;
-        socket.on('data', () => {
-          const value = payloads[index++];
-          if (value) pause(75).then(() => {
-            if (!socket.destroyed) socket.write(Buffer.concat([Buffer.from([0x82, value.length]), Buffer.from(value)]));
-          });
-        });
+        // The page sends once, from inside the service turn. A partial read already proves the send started.
+        socket.once('data', () => void send(1));
       });
       await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
       const endpoint = `127.0.0.1:${server.address().port}`;
@@ -206,8 +209,13 @@ test('Chromium TLS receipts bound expiry while the renderer is busy',
       const page = await browser.newPage({ ignoreHTTPSErrors: true });
       await page.addInitScript(`(${instrumentPostRelease})(${JSON.stringify(prefix)}, 40, ${readChromiumClock}, 'chromium_service');`);
       const reporter = {};
-      page.on('console', message => postReleaseCheckpoint(reporter, message.text(),
-        { controller_ms: performance.now(), controller_order: 1 }, [sender, receiver], receiver));
+      page.on('console', message => {
+        const value = message.text();
+        if (value === 'relay socket opened') void send(0);
+        if (!value.startsWith(prefix)) return;
+        postReleaseCheckpoint(reporter, value, { controller_ms: performance.now(), controller_order: 1 }, [sender, receiver], receiver);
+        void send(2);
+      });
       await page.goto(`https://${endpoint}/`);
       const calibration = await calibrateChromiumClock(page);
       await Promise.all([

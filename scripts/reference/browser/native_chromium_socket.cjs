@@ -37,8 +37,10 @@ function chromiumExpiryWindow(calibration, expiry) {
     || !Number.isFinite(sample?.page_ms) || sample.page_ms < 0 || sample.page_ms > before.page_ms
     || !Number.isFinite(expiry.page_ms) || before.page_ms > after.page_ms || after.page_ms > expiry.page_ms
     || before.time_origin_ms !== sample.time_origin_ms || after.time_origin_ms !== sample.time_origin_ms) return { status: 'invalid' };
-  return { status: 'bounded', min_netlog_ms: start_ms + (before.page_ms - sample.page_ms) - PAGE_CLOCK_PRECISION_MS,
-    max_netlog_ms: end_ms + (after.page_ms - sample.page_ms) + PAGE_CLOCK_PRECISION_MS };
+  const min_netlog_ms = start_ms + (before.page_ms - sample.page_ms) - PAGE_CLOCK_PRECISION_MS;
+  const max_netlog_ms = end_ms + (after.page_ms - sample.page_ms) + PAGE_CLOCK_PRECISION_MS;
+  if (!(min_netlog_ms > 0 && min_netlog_ms <= max_netlog_ms && max_netlog_ms <= Number.MAX_SAFE_INTEGER)) return { status: 'invalid' };
+  return { status: 'bounded', min_netlog_ms, max_netlog_ms };
 }
 
 function chromiumExpiryTiming(window, at_ms) {
