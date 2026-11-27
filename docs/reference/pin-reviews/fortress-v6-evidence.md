@@ -2743,11 +2743,18 @@ The diff clarifies bounded checksum reports, zero-speed catch-up after all hosts
 requirements. Godot caps pending checksum reports per endpoint and exercises the capacity diagnostic and
 missing-quorum timeout. Godot requires positive catch-up speed and distinguishes authenticated clean
 completion from selected-source loss. There is no API equivalent of the source application-directed removal
-bypass. Both Godot pins passed the existing suites, result hashes
-8bc9c2d13f66737fea1d951031ad97858f61c73b747efdcb1425de8ccd0cd738,
-c1503bc55e621d8be0afc119ebb48b9efc85eb94d8d2b27cca7efe8a7ffbb96d. Both Godot pins passed the existing suites,
-result hashes 5ae23872e4283f2756ca4a2aa7d1e8abddc253ce1c09eb1d559111050516fdcf,
-43d5d9a4534d6d92807518fcbfce92f7ef8a40c506571b3ca4e4c3a827f6ace3. Reviewed archive member SHA-256
+bypass. Under Godot 4.3, the spectator session, spectator policy, and SignalFish spectator relay suites
+passed. Receipt `.cache/scratch/session279/spectator-policy-4.3.json` SHA-256
+`8bc9c2d13f66737fea1d951031ad97858f61c73b747efdcb1425de8ccd0cd738`. Under Godot 4.7.2, the spectator session,
+spectator policy, and SignalFish spectator relay suites passed. Receipt
+`.cache/scratch/session279/spectator-policy-4.7.2.json` SHA-256
+`c1503bc55e621d8be0afc119ebb48b9efc85eb94d8d2b27cca7efe8a7ffbb96d`. Under Godot 4.3, the snapshot history,
+peer lifecycle, and peer drop barrier suites passed. Receipt
+`.cache/scratch/session279/snapshot-policy-4.3.json` SHA-256
+`5ae23872e4283f2756ca4a2aa7d1e8abddc253ce1c09eb1d559111050516fdcf`. Under Godot 4.7.2, the snapshot history,
+peer lifecycle, and peer drop barrier suites passed. Receipt
+`.cache/scratch/session279/snapshot-policy-4.7.2.json` SHA-256
+`43d5d9a4534d6d92807518fcbfce92f7ef8a40c506571b3ca4e4c3a827f6ace3`. Reviewed archive member SHA-256
 4c22a58ae1baa06527380dbb7a553d142a69ee0078d8c48a5f96cd1cfe4a4552 and candidate
 887ee9ca471499c62663ee76371699199014fb7a4d41c6fbbd9e2d1b3ec86e75.
 

@@ -6,7 +6,7 @@ CI runs both engine pins. The receipt and raw logs go to `.cache/reference/resul
 
 The probe invokes public APIs from the Fortress source selected in
 `docs/reference/pins.json`. The current reviewed revision is
-`25e8020d1a5fd40c4f16b37f97b5ec5329a8566d`. Historical recordings retain
+`25e8020d1a5fd40c4f16b37f97b5ec5329a8566d`. Historical version-2 recordings retain
 their `d124c890` source identity. The receipt identifies the source used for
 each run. The current source implementations are in
 [`src/sessions/replay_session.rs`](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sessions/replay_session.rs)

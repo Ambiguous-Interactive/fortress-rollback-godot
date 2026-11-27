@@ -5784,7 +5784,7 @@
     {
       "path": "src/sessions/config.rs",
       "disposition": "intentional_divergence",
-      "evidence": "fortress-v6-evidence.md#decision-234 SHA-256 a66e2c780a3427db158dbf920e4fc2ee6d21705be58e8b9418e94fba8563fa04"
+      "evidence": "fortress-v6-evidence.md#decision-234 SHA-256 5374cb6f9e04cad867eeb9a0b46febe7b74dd55dc93f6e034e9d45fa1d46d956"
     },
     {
       "path": "src/sessions/hot_join.rs",
