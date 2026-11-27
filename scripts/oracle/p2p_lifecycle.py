@@ -1,5 +1,6 @@
 """Strict optional P4 observations retain actual public source metrics and controls."""
 from contract import fields, integer, hex_bytes
+from source_wire import checksum_basis
 
 
 def settings(value, players):
@@ -12,7 +13,7 @@ def settings(value, players):
     integer(value['divergent_peer'], -1, players - 1, 'divergent peer')
 
 
-def control(value, source):
+def control(value, source, *, wire=2):
     body = value['semantic']; kind = body['kind']
     names = {'quality_report': 'kind frame_advantage ping', 'quality_reply': 'kind pong',
              'keep_alive': 'kind', 'goodbye': 'kind reason', 'checksum_report': 'kind frame checksum'}
@@ -37,8 +38,13 @@ def control(value, source):
             return
         variant = {'quality_report': 'QualityReport', 'quality_reply': 'QualityReply', 'checksum_report': 'ChecksumReport'}[kind]
         fields(raw_body, variant, 'raw control variant'); raw_body = raw_body[variant]
-        fields(raw_body, names[kind].replace('kind ', ''), 'raw control')
-        for key, actual in raw_body.items():
+        if kind == 'checksum_report':
+            if checksum_basis(raw_body, wire) != 0:
+                raise ValueError('nonzero checksum basis outside fixed-membership history')
+        else:
+            fields(raw_body, names[kind].replace('kind ', ''), 'raw control')
+        for key in names[kind].split()[1:]:
+            actual = raw_body[key]
             if key in ('ping', 'pong', 'checksum'):
                 integer(actual, 0, (1 << 128) - 1, 'raw wide integer')
                 if f'{actual:032x}' != body[key]:

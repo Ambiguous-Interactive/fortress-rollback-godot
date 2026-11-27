@@ -2,8 +2,8 @@
 from copy import deepcopy
 import p2p_lifecycle as lifecycle
 from contract import fields, integer, hex_bytes, checksum, initial_game_state, advance_game_state
+from source_wire import REVIEWED_REVISION as REVISION, header as _raw_header, wire_version
 
-REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
 # Source delay refusals and the matching production Godot codes.
 DELAY_ERRORS = {'InputDelayDecreaseUnsupported': 'UNSUPPORTED', 'FrameDelayTooLarge': 'INVALID_CONFIGURATION',
                 'ConfigValueOutOfRange': 'INVALID_CONFIGURATION'}
@@ -173,7 +173,7 @@ def validate_scenario(value):
     return value
 
 
-def packet(value, players, source, slots_by_machine=None, width=DEFAULT_WIDTH):
+def packet(value, players, source, slots_by_machine=None, width=DEFAULT_WIDTH, *, wire=2):
     fields(value, 'id from to semantic raw' if source else 'id from to semantic', 'packet')
     integer(value['id'], 0, 100000, 'packet id')
     # Endpoints are machine addresses; an explicit layout has fewer machines than slots,
@@ -191,8 +191,8 @@ def packet(value, players, source, slots_by_machine=None, width=DEFAULT_WIDTH):
         raise ValueError('semantic packet')
     if body['kind'] in {'quality_report', 'quality_reply', 'checksum_report', 'keep_alive', 'goodbye'}:
         if source:
-            _raw_header(value['raw'])
-        lifecycle.control(value, source)
+            _raw_header(value['raw'], wire)
+        lifecycle.control(value, source, wire=wire)
         return
     fields(body, 'kind ack_frame' if body['kind'] == 'input_ack' else 'kind start_frame ack_frame statuses players frames', 'semantic body')
     integer(body['ack_frame'], -1, 10000, 'ack')
@@ -220,7 +220,7 @@ def packet(value, players, source, slots_by_machine=None, width=DEFAULT_WIDTH):
     elif body['kind'] != 'input_ack':
         raise ValueError('unsupported packet')
     if source:
-        raw = value['raw']; _raw_header(raw)
+        raw = value['raw']; _raw_header(raw, wire)
         kind = 'Input' if body['kind'] == 'input' else 'InputAck'
         fields(raw['body'], kind, 'raw body')
         raw_body = raw['body'][kind]
@@ -241,22 +241,13 @@ def packet(value, players, source, slots_by_machine=None, width=DEFAULT_WIDTH):
                 integer(byte, 0, 255, 'compressed byte')
 
 
-def _raw_header(raw):
-    fields(raw, 'header body', 'raw packet')
-    header = raw['header']; fields(header, 'conn_id flags protocol_version sentinel', 'header')
-    integer(header['conn_id'], 1, 4294967295, 'connection')
-    integer(header['flags'], 0, 0, 'flags'); integer(header['protocol_version'], 2, 2, 'protocol version')
-    if type(header['sentinel']) is not list or len(header['sentinel']) != 2:
-        raise ValueError('sentinel')
-    for actual, expected in zip(header['sentinel'], [245, 82]):
-        integer(actual, expected, expected, 'sentinel byte')
-
-
-def validate(value, scenario, source=False):
+def validate(value, scenario, source=False, *, source_revision=REVISION):
     validate_scenario(scenario)
     fields(value, 'format complete upstream_revision scenario records packets', 'p2p trace')
     integer(value['format'], 1, 1, 'trace format')
-    if value['complete'] is not True or value['upstream_revision'] != REVISION:
+    expected_revision = source_revision if source else REVISION
+    wire = wire_version(expected_revision)
+    if value['complete'] is not True or value['upstream_revision'] != expected_revision:
         raise ValueError('incomplete/revision')
     validate_scenario(value['scenario'])
     if value['scenario'] != scenario:
@@ -270,7 +261,7 @@ def validate(value, scenario, source=False):
     width = scenario_width(scenario)
     slot_starts = scenario_delays(scenario)
     for index, outgoing in enumerate(value['packets']):
-        packet(outgoing, scenario['players'], source, layout_slots, width)
+        packet(outgoing, scenario['players'], source, layout_slots, width, wire=wire)
         # An explicit layout cannot carry the lifecycle section that would pin the
         # desync interval, so the engines' upstream-default checksum reports
         # (`DesyncDetection::On { interval: 60 }`) stay part of the compared traffic;
@@ -455,8 +446,8 @@ def normalize(value, source=False):
     return result
 
 
-def compare(actual, expected, scenario):
-    validate(expected, scenario, True); validate(actual, scenario)
+def compare(actual, expected, scenario, *, source_revision=REVISION):
+    validate(expected, scenario, True, source_revision=source_revision); validate(actual, scenario)
     actual = normalize(actual); expected = normalize(expected, True)
     if 'lifecycle' in scenario:
         lifecycle.terminal_projection(actual, expected, scenario)

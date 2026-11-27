@@ -16,6 +16,7 @@ from p2p_launch import upstream_inventory, executable_identity, require_unchange
 from contract import initial_game_state, checksum
 from p2p_contract import validate_scenario, validate, packet, normalize, compare, REVISION
 from p2p_contract import DELAY_ERRORS, INPUT_ERRORS, comparable_delay, expected_delay_error, godot_max_delay, slots_of
+from source_wire import RECOVERY_REVISION, checksum_basis, decode_trace
 
 
 def timeout_fixture():
@@ -211,6 +212,50 @@ class P2PContractTests(unittest.TestCase):
             mutant = deepcopy(value); mutant['raw']['body']['ChecksumReport']['checksum'] = alias
             with self.assertRaises(ValueError):
                 control(mutant, True)
+
+    def test_versioned_checksum_basis_before_projection(self):
+        value = {'id': 0, 'from': 0, 'to': 1,
+                 'semantic': {'kind': 'checksum_report', 'frame': 2, 'checksum': '0' * 32},
+                 'raw': {'header': {'conn_id': 1, 'flags': 0, 'protocol_version': 6, 'sentinel': [245, 82]},
+                         'body': {'ChecksumReport': {'frame': 2, 'checksum': 0, 'basis_token': 0}}}}
+        packet(value, 2, True, wire=6)
+        with self.assertRaisesRegex(ValueError, 'protocol version'):
+            packet(value, 2, True)
+        body = value['raw']['body']['ChecksumReport']
+        for token in (True, 0.0, -1, 1 << 64, '0'):
+            with self.subTest(token=token):
+                body['basis_token'] = token
+                with self.assertRaisesRegex(ValueError, 'checksum basis token'):
+                    packet(value, 2, True, wire=6)
+        for token in ((1 << 64) - 1, 4176669562639073937):
+            body['basis_token'] = token
+            self.assertEqual(checksum_basis(body, 6), token)
+            with self.assertRaisesRegex(ValueError, 'fixed-membership'):
+                packet(value, 2, True, wire=6)
+        del body['basis_token']
+        with self.assertRaisesRegex(ValueError, 'raw control'):
+            packet(value, 2, True, wire=6)
+        value['raw']['header']['protocol_version'] = 2
+        packet(value, 2, True)
+        body['basis_token'] = 0
+        with self.assertRaisesRegex(ValueError, 'raw control'):
+            packet(value, 2, True)
+        with self.assertRaisesRegex(ValueError, 'unsupported upstream wire version'):
+            packet(value, 2, True, wire=7)
+
+    def test_trace_rejects_duplicate_raw_basis(self):
+        contents = '{"body":{"ChecksumReport":{"frame":2,"checksum":0,"basis_token":4176669562639073937,"basis_token":0}}}'
+        with self.assertRaisesRegex(ValueError, 'duplicate trace field: basis_token'):
+            decode_trace(contents)
+
+    def test_source_revision_selection_is_explicit(self):
+        _, trace, scenario = timeout_fixture()
+        trace['upstream_revision'] = RECOVERY_REVISION
+        validate(trace, scenario, True, source_revision=RECOVERY_REVISION)
+        with self.assertRaisesRegex(ValueError, 'incomplete/revision'):
+            validate(trace, scenario, True)
+        with self.assertRaisesRegex(ValueError, 'unsupported upstream wire revision'):
+            validate(trace, scenario, True, source_revision='a' * 40)
 
     # Value: protects=the layout checksum seam; fails_when=a layout trace loses its
     # upstream-default desync reports, or a quality/keepalive packet or a solo-mesh

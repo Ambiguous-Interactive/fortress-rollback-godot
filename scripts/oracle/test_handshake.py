@@ -4,6 +4,7 @@ from copy import deepcopy
 from handshake_contract import compare, packet, version, wide, project, raw_negative_controls
 from handshake_launch import scenarios
 from handshake_formal import validate_begin
+from source_wire import RECOVERY_REVISION, REVIEWED_REVISION
 
 
 class HandshakeContractTests(unittest.TestCase):
@@ -64,9 +65,27 @@ class HandshakeContractTests(unittest.TestCase):
                      'outstanding': 0, 'remote_connection': None, 'timeout_sent': False, 'mismatch': {}, 'elapsed_ms': -1}
         begin = dict(activated, action='begin', state='synchronizing')
         send = dict(begin, action='send_request', token='2a000000000000000000000000000000', disposition='fresh', outstanding=1)
-        return {'format': 1, 'complete': True, 'upstream_revision': 'd124c89080004d96971a629bb0427056ee1805e3', 'records': [
+        return {'format': 1, 'complete': True, 'upstream_revision': REVIEWED_REVISION, 'records': [
             {'operation': None, 'packets': [packet_value], 'transitions': [activated, begin, send], 'events': []},
             {'operation': 0, 'packets': [], 'transitions': [], 'events': []}]}
+
+    def test_candidate_projection_requires_selected_identity_and_wire(self):
+        pinned = self.raw_fixture()
+        scenario = {'format': 1, 'operations': [{'kind': 'poll', 'now_us': 0}]}
+        candidate = deepcopy(pinned)
+        candidate['upstream_revision'] = RECOVERY_REVISION
+        sync = candidate['records'][0]['packets'][0]
+        sync['header']['protocol_version'] = 6
+        sync['body']['SyncRequest']['min_compat_version'] = 6
+        self.assertEqual(project(candidate, scenario, source_revision=RECOVERY_REVISION), project(pinned, scenario))
+        with self.assertRaisesRegex(ValueError, 'identity'):
+            project(candidate, scenario)
+        for wire, advertised, error in ((2, 6, 'header version'), (6, 2, 'advertised version'), (6, 7, 'advertised version')):
+            with self.subTest(wire=wire, advertised=advertised):
+                sync['header']['protocol_version'] = wire
+                sync['body']['SyncRequest']['min_compat_version'] = advertised
+                with self.assertRaisesRegex(ValueError, error):
+                    project(candidate, scenario, source_revision=RECOVERY_REVISION)
 
     # Value: protects=raw recorder evidence survives strict parsing; fails_when=False aliases null or activation disappears; why_new=review reproduced erased corruptions; seam=none
     def test_raw_transition_corruptions(self):

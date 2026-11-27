@@ -129,7 +129,8 @@ already implemented but awaiting closure evidence still belongs to its issue.
 
 Drift carriers #387–#389 report upstream observations. A source pin advancement
 ships with [archive-bound review decisions](docs/reference/README.md#observation-and-advancement)
-and passes grouped oracle qualification.
+and passes grouped oracle qualification. The version-6 wire qualification is
+tracked in [#546](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/546).
 The supported surface and explicit exclusions are in [docs/supported.md](docs/supported.md).
 
 ## Where truth lives

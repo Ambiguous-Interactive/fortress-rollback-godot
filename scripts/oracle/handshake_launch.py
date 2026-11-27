@@ -13,9 +13,10 @@ from fetch import digest, load_manifest, sources
 from receipt_arguments import ReceiptParser
 from run import CACHE, setup_rust, rust_environment
 from engine_path import resolve_engine
+from source_wire import REVIEWED_REVISION, decode_trace, wire_version
 
 
-def scenarios():
+def scenarios(*, source_revision=REVIEWED_REVISION):
     def op(kind, time, token=None, **kwargs):
         value = {'kind': kind, 'now_us': time}
         if token is not None:
@@ -33,7 +34,7 @@ def scenarios():
         'wrong_connection': [op('reply', 1, 0), op('reply', 2, 1, connection=78), op('reply', 3, 1)],
         'reply_refreshes_retry': [op('request', 190000, 0), op('poll', 201000), op('poll', 390000), op('poll', 390001)],
     }
-    changes = {'min_compat_version': 3, 'num_players': 3, 'input_bytes_per_player': 8, 'fps': 61, 'max_prediction': 9,
+    changes = {'min_compat_version': wire_version(source_revision) + 1, 'num_players': 3, 'input_bytes_per_player': 8, 'fps': 61, 'max_prediction': 9,
                'desync_interval': 61, 'features': 1, 'config_digest': 0}
     for kind in ('request', 'reply'):
         for field, value in changes.items():
@@ -111,7 +112,7 @@ def main():
             stdout, stderr = execute([str(binary)], args.output / f'{name}-rust-{repeat}.log', submitted.read_text())
             if stderr.strip():
                 raise ValueError('upstream unexpected stderr')
-            outputs.append(json.loads(stdout))
+            outputs.append(decode_trace(stdout))
         if outputs[0] != outputs[1]:
             raise ValueError('upstream fresh process divergence')
         fixture, expected = project(outputs[0], scenario)

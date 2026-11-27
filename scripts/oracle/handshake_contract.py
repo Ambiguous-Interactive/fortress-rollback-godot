@@ -2,6 +2,7 @@
 from copy import deepcopy
 from contract import fields, integer
 from handshake_schema import transition as validate_transition
+from source_wire import REVIEWED_REVISION, header, wire_version
 
 
 def wide(value, width):
@@ -9,33 +10,24 @@ def wide(value, width):
     return value.to_bytes(width, 'little').hex()
 
 
-def version(value):
-    integer(value, 2, 3, 'semantic version')
-    if value not in (2, 3):
-        raise ValueError('unmodeled upstream semantic version')
-    return {2: 1, 3: 2}[value]
+def version(value, wire=2):
+    integer(value, wire, wire + 1, 'semantic version')
+    return value - wire + 1
 
 
-def packet(raw, sender='0100000000000000'):
-    fields(raw, 'header body', 'upstream packet')
-    fields(raw['header'], 'conn_id flags protocol_version sentinel', 'upstream header')
-    integer(raw['header']['protocol_version'], 2, 2, 'header version')
-    integer(raw['header']['flags'], 0, 0, 'header flags')
-    if type(raw['header']['sentinel']) is not list or len(raw['header']['sentinel']) != 2:
-        raise ValueError('header sentinel inventory')
-    for byte, expected in zip(raw['header']['sentinel'], [245, 82]):
-        integer(byte, expected, expected, 'header sentinel')
-    integer(raw['header']['conn_id'], 0, 0xffffffff, 'header connection')
+def packet(raw, sender='0100000000000000', *, wire=2):
+    header(raw, wire, synchronizing=True)
     body = raw['body']
-    if len(body) != 1 or next(iter(body)) not in ('SyncRequest', 'SyncReply'):
+    if type(body) is not dict or len(body) != 1 or next(iter(body)) not in ('SyncRequest', 'SyncReply'):
         raise ValueError('unexpected upstream packet kind')
     kind = next(iter(body)); value = body[kind]
     token = 'random_request' if kind == 'SyncRequest' else 'random_reply'
     fields(value, f'{token} min_compat_version features config config_digest', 'sync body')
     fields(value['config'], 'num_players input_bytes_per_player fps max_prediction desync_interval', 'sync config')
     integer(value[token], 0, 0xffffffff, 'upstream u32 token')
+    integer(value['min_compat_version'], wire, wire, 'upstream advertised version')
     result = {'kind': 'request' if kind == 'SyncRequest' else 'reply', 'token': wide(value[token], 16),
-              'sender': sender, 'connection': wide(raw['header']['conn_id'], 8), 'min_compat_version': version(value['min_compat_version']),
+              'sender': sender, 'connection': wide(raw['header']['conn_id'], 8), 'min_compat_version': version(value['min_compat_version'], wire),
               'features': value['features'], 'config_digest': wide(value['config_digest'], 8)}
     integer(value['features'], 0, 0xffffffff, 'features')
     for key, high in {'num_players': 65535, 'input_bytes_per_player': 65535, 'fps': 0xffffffff, 'max_prediction': 65535, 'desync_interval': 0xffffffff}.items():
@@ -45,15 +37,16 @@ def packet(raw, sender='0100000000000000'):
     return result
 
 
-def project(raw, scenario):
+def project(raw, scenario, *, source_revision=REVIEWED_REVISION):
+    wire = wire_version(source_revision)
     fields(raw, 'format complete upstream_revision records', 'upstream result')
     integer(raw['format'], 1, 1, 'upstream format')
-    if raw['format'] != 1 or raw['complete'] is not True or raw['upstream_revision'] != 'd124c89080004d96971a629bb0427056ee1805e3':
+    if raw['format'] != 1 or raw['complete'] is not True or raw['upstream_revision'] != source_revision:
         raise ValueError('upstream identity/completion')
     if len(raw['records']) != len(scenario['operations']) + 1:
         raise ValueError('partial upstream operations')
     sent = []; operations = []; expected = []
-    local = packet(raw['records'][0]['packets'][0])
+    local = packet(raw['records'][0]['packets'][0], wire=wire)
     for index, row in enumerate(raw['records']):
         fields(row, 'operation packets transitions events', 'upstream operation')
         if index:
@@ -74,14 +67,14 @@ def project(raw, scenario):
             source = scenario['operations'][index - 1]
             operation.update(kind='poll', now_us=source['now_us'])
             if source['kind'] != 'poll':
-                message = packet(sent[source['token_index']], '0200000000000000')
-                message['kind'] = source['kind'];
+                message = packet(sent[source['token_index']], '0200000000000000', wire=wire)
+                message['kind'] = source['kind']
                 if 'echo' in source:
                     message['token'] = wide(source['echo'], 16)
                 message['connection'] = wide(source.get('connection', 77), 8)
                 for key, value in source.get('changes', {}).items():
                     target = {'num_players': 'player_count', 'input_bytes_per_player': 'input_width'}.get(key, key)
-                    message[target] = version(value) if key == 'min_compat_version' else wide(value, 8) if key == 'config_digest' else value
+                    message[target] = version(value, wire) if key == 'min_compat_version' else wide(value, 8) if key == 'config_digest' else value
                 operation.update(kind='receive', message=message, source='0300000000000000' if source.get('source') == 'stranger' else '0200000000000000')
         operations.append(operation)
         transitions = []
@@ -102,16 +95,18 @@ def project(raw, scenario):
                               outstanding_request_count=transition['outstanding'], remote_connection=transition['remote_connection'] or '',
                               mismatch=transition['mismatch'])
             if normalized['mismatch'].get('field') == 'min_compat_version':
-                normalized['mismatch'] = dict(normalized['mismatch'], ours=version(normalized['mismatch']['ours']), theirs=version(normalized['mismatch']['theirs']))
+                mismatch = normalized['mismatch']
+                normalized['mismatch'] = dict(mismatch, ours=version(mismatch['ours'], wire), theirs=version(mismatch['theirs'], wire))
             transitions.append(normalized)
         events = deepcopy(row['events'])
         for event in events:
             event_schema(event)
         for event in events:
             if event['kind'] == 'incompatible' and event['reason']['field'] == 'min_compat_version':
-                event['reason'] = dict(event['reason'], ours=version(event['reason']['ours']), theirs=version(event['reason']['theirs']))
+                reason = event['reason']
+                event['reason'] = dict(reason, ours=version(reason['ours'], wire), theirs=version(reason['theirs'], wire))
         code = 4 if operation.get('source') == '0300000000000000' else 5 if index and scenario['operations'][index - 1].get('connection') == 78 else 0
-        expected.append({'code': code, 'transitions': transitions, 'events': events, 'packets': [packet(p) for p in row['packets']]})
+        expected.append({'code': code, 'transitions': transitions, 'events': events, 'packets': [packet(p, wire=wire) for p in row['packets']]})
         sent.extend(row['packets'])
     return {'format': 1, 'local': local, 'operations': operations}, expected
 
@@ -214,13 +209,13 @@ def event_schema(event):
         raise ValueError('unknown upstream event')
 
 
-def raw_negative_controls(raw, scenario):
+def raw_negative_controls(raw, scenario, *, source_revision=REVIEWED_REVISION):
     names = []
     for field, value, marker in [('token', False, 'null'), ('disposition', False, 'null'), ('remote_connection', False, 'canonical hex'),
                                  ('action', 'unknown', 'transition action'), ('state', False, 'transition state'), ('remaining', True, 'raw transition remaining')]:
         mutated = deepcopy(raw); mutated['records'][0]['transitions'][1][field] = value
         try:
-            project(mutated, scenario)
+            project(mutated, scenario, source_revision=source_revision)
         except ValueError as error:
             if marker not in str(error):
                 raise ValueError('raw control unrelated rejection: ' + field) from error
@@ -229,7 +224,7 @@ def raw_negative_controls(raw, scenario):
             raise ValueError('raw corruption survived: ' + field)
     mutated = deepcopy(raw); mutated['records'][1]['transitions'].append(deepcopy(raw['records'][0]['transitions'][0]))
     try:
-        project(mutated, scenario)
+        project(mutated, scenario, source_revision=source_revision)
     except ValueError as error:
         if 'position' not in str(error):
             raise ValueError('activation control unrelated rejection') from error

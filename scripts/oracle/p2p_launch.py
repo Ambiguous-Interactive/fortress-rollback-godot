@@ -24,6 +24,7 @@ import p2p_capacity
 import p2p_shrink
 import p2p_wrap
 import p2p_schedule
+from source_wire import decode_trace
 
 PREFIX = 'FORTRESS_P2P_RESULT '
 
@@ -41,7 +42,7 @@ def source(binary, scenario):
     result = subprocess.run([str(binary)], input=json.dumps(scenario), capture_output=True, encoding='utf-8', timeout=30, env=rust_environment())
     if result.returncode or result.stderr.strip():
         raise ValueError('corpus source process failed: ' + result.stderr[:200])
-    value = json.loads(result.stdout); validate(value, scenario, True)
+    value = decode_trace(result.stdout); validate(value, scenario, True)
     return value
 
 
@@ -462,7 +463,7 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
             stdout, stderr = execute([str(binary)], output / f'{name}-shrink-source.log', json.dumps(candidate))
             if stderr.strip():
                 return None
-            value = json.loads(stdout); validate(value, candidate, True)
+            value = decode_trace(stdout); validate(value, candidate, True)
         except (ValueError, subprocess.TimeoutExpired, OSError):
             return None
         submitted = output / f'{name}-shrink-scenario.json'; submitted.write_text(json.dumps(candidate, indent=2) + '\n')
@@ -488,7 +489,7 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
             stdout, stderr = execute([str(binary)], output / f'{name}-minimized-source-{repeat}.log', submitted.read_text())
             if stderr.strip():
                 raise ValueError('minimized source stderr')
-            value = json.loads(stdout); validate(value, minimized, True); source_results.append(value)
+            value = decode_trace(stdout); validate(value, minimized, True); source_results.append(value)
         if source_results[0] != source_results[1]:
             raise ValueError('minimized source repeat mismatch')
         verified, stderr = execute([str(binary), '--validate-trace'],
@@ -602,7 +603,7 @@ def main(wrap_only=False):
             stdout, stderr = execute([str(binary)], args.output / f'{name}-rust-{repeat}.log', submitted.read_text())
             if stderr.strip():
                 raise ValueError('source stderr')
-            value = json.loads(stdout); validate(value, scenario, True); source_results.append(value)
+            value = decode_trace(stdout); validate(value, scenario, True); source_results.append(value)
         if source_results[0] != source_results[1]:
             raise ValueError('source process repeat mismatch')
         expected = source_results[0]
