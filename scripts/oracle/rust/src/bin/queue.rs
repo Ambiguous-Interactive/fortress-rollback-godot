@@ -5,7 +5,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{self, Read};
 
-const REVISION: &str = "d124c89080004d96971a629bb0427056ee1805e3";
+#[path = "../source_revision.rs"]
+mod source_revision;
+
 #[derive(Debug)]
 struct QueueConfig;
 impl Config for QueueConfig {
@@ -44,8 +46,9 @@ fn bytes(text: &str, width: usize) -> Result<[u8; 32], String> {
 }
 fn hex(bytes: &[u8]) -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() }
 fn run(original: Value) -> Result<Value, String> {
+    let revision = source_revision::compiled()?;
     let bundle: Bundle = serde_json::from_value(original.clone()).map_err(|e| e.to_string())?;
-    if bundle.format != 1 || bundle.upstream_revision != REVISION || bundle.cases.is_empty() || bundle.cases.len() > 1000 {
+    if bundle.format != 1 || bundle.upstream_revision != revision || bundle.cases.is_empty() || bundle.cases.len() > 1000 {
         return Err("unsupported bundle format, revision or case count".into());
     }
     let mut names = std::collections::BTreeSet::new();
@@ -117,7 +120,7 @@ fn run(original: Value) -> Result<Value, String> {
         }
         cases.push(json!({"name":case.name,"records":records}));
     }
-    Ok(json!({"format":1,"upstream_revision":REVISION,"cases":cases,"complete":true}))
+    Ok(json!({"format":1,"upstream_revision":revision,"cases":cases,"complete":true}))
 }
 fn main() {
     let result = (|| {

@@ -4,6 +4,7 @@ import json
 import subprocess
 
 from contract import checksum, initial_game_state
+from source_wire import RECOVERY_REVISION, REVIEWED_REVISION
 
 
 def mutate_load_state(trace):
@@ -50,9 +51,11 @@ def reject(command, log, environment, payload=None, expected_prefix=None, expect
 
 
 def negative_controls(binary, engine_command, scenario, trace, directory, environment):
+    other_revision = RECOVERY_REVISION if scenario['upstream_revision'] == REVIEWED_REVISION else REVIEWED_REVISION
     scenario_mutations = {
         'version': lambda x: x.update(format=3),
         'revision': lambda x: x.update(upstream_revision='0' * 40),
+        'foreign_revision': lambda x: x.update(upstream_revision=other_revision),
         'empty_operations': lambda x: x.update(operations=[]),
         'empty_bytes': lambda x: x['operations'][2].update(bytes=''),
         'extra_fields': lambda x: x['operations'][0].update(ignored=True),
@@ -67,6 +70,7 @@ def negative_controls(binary, engine_command, scenario, trace, directory, enviro
     load_index = advance_operation['index']
     initial = initial_game_state(scenario['players'], scenario['format'])
     game_mutations = {
+        'foreign_revision': lambda x: x.update(upstream_revision=other_revision),
         'checksum': lambda x: x['final_state'].update(checksum='0' * 32),
         'state': lambda x: x['final_state'].update(bytes='00' * len(initial)),
         'load_state': mutate_load_state,
@@ -91,6 +95,8 @@ def negative_controls(binary, engine_command, scenario, trace, directory, enviro
             validate_game_failure(result.stdout, 'state mismatch' if name == 'state' else 'checksum mismatch', count)
         elif name == 'empty_operations':
             validate_game_failure(result.stdout, 'scenario: empty or oversized operations', 0)
+        elif name == 'foreign_revision':
+            validate_game_failure(result.stdout, 'trace: revision differs from scenario', 0)
         if name == 'load_state':
             before_load = sum(len(op['requests']) for op in trace['operations'][:load_index])
             before_load += next(i for i, request in enumerate(advance_operation['requests']) if request['kind'] == 'load')

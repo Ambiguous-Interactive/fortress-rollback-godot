@@ -9,7 +9,8 @@ states against uninterrupted original inputs rather than trusting either engine.
 """
 import json
 
-UPSTREAM_REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
+from source_wire import REVIEWED_REVISION
+
 PLAYERS = 3
 MAX_PREDICTION = 4
 QUEUE_CAPACITY = 9
@@ -71,7 +72,7 @@ def hex_input(byte):
     return f'{byte:02x}'
 
 
-def scenario():
+def scenario(revision=REVIEWED_REVISION):
     """Operations for the global-floor schedule; receive/submit/delay carry expected results."""
     operations = []
     delivered = [-1, -1, -1]
@@ -105,7 +106,7 @@ def scenario():
             receive(1, floor, False)
     return {
         'format': 1,
-        'upstream_revision': UPSTREAM_REVISION,
+        'upstream_revision': revision,
         'players': PLAYERS,
         'max_prediction': MAX_PREDICTION,
         'queue_capacity': QUEUE_CAPACITY,
@@ -115,15 +116,15 @@ def scenario():
     }
 
 
-def bundle():
-    return {'scenario': scenario(), 'baseline': [state.hex() for state in baseline_states()]}
+def bundle(revision=REVIEWED_REVISION):
+    return {'scenario': scenario(revision), 'baseline': [state.hex() for state in baseline_states()]}
 
 
-def validate_bundle(data):
+def validate_bundle(data, revision=REVIEWED_REVISION):
     if not isinstance(data, dict) or set(data) != {'scenario', 'baseline'}:
         raise ValueError('floor bundle must hold scenario and baseline')
     scenario_data = json.loads(json.dumps(data['scenario']))
-    expected = scenario()
+    expected = scenario(revision)
     if scenario_data != expected:
         raise ValueError('floor bundle scenario must be the canonical global-floor schedule')
     baseline = data['baseline']

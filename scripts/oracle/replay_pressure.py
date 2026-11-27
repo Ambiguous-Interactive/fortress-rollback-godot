@@ -4,9 +4,10 @@ import json
 
 from replay_launch import advance, compare, expected as playback_expected, state_bytes
 from replay_remote import sample
+from replay_recovery import controls as source_final_controls, source_observation
 
 
-def expected(rust, neutral=False, terminal=False):
+def expected(rust, neutral=False, terminal=False, *, source_recovery=False):
     rounds = 257
     rows = [[sample(slot, frame, neutral) for slot in range(2)] for frame in range(rounds)]
     initial = (0, 0xffffffff, 0xffffffff, 0)
@@ -97,10 +98,19 @@ def expected(rust, neutral=False, terminal=False):
     recovery = []
     if rust:
         count = sum(sum(group) for group in pending) + sum(group[0] for group in pending)
-        recovery = [dict(messages=count, frames=[rounds, rounds], errors=[
-            'Invalid Request: missing local input for one or more players'] * 2,
-            frontiers=[dict(peer=slot, current_before=rounds, current_frame=rounds, confirmed_frame=rounds - 1, receipt_frame=rounds - 1,
-                            last_inputs=rows[-1], callback_count=len(peer['records'])) for slot, peer in enumerate(peers)])]
+        corrections = None
+        if source_recovery:
+            corrections = []
+            for slot, peer in enumerate(peers):
+                first = len(peer['records'])
+                peer['received'] = rounds - 1
+                repair(peer, slot, True)
+                corrected = len(peer['records']) != first
+                corrections.append(int(corrected))
+                if not corrected:
+                    save(peer)
+                save(peer)
+        recovery = [source_observation(count, rows, [peer['records'] for peer in peers], corrections)]
     else:
         for slot, peer in enumerate(peers):
             first = len(peer['records'])
@@ -113,7 +123,7 @@ def expected(rust, neutral=False, terminal=False):
     for slot, peer in enumerate(peers):
         if terminal:
             save(peer)
-        checksums = peer['checksums'] if rust else [state_bytes(state).hex() for state in canonical[:-1]]
+        checksums = peer['checksums'] if rust and not source_recovery else [state_bytes(state).hex() for state in canonical[:-1]]
         exported = rows[:len(checksums)]
         playback = playback_expected(dict(name=f'remote-{slot}', players=2, seed=0xffffffff, validate=True,
                                           frames=exported, checksums=checksums), rust, version=6 if terminal else 5)
@@ -125,19 +135,21 @@ def expected(rust, neutral=False, terminal=False):
     return dict(format=1, peers=result, deliveries=deliveries, recovery=recovery)
 
 
-def validate(actual, rust, neutral=False):
-    compare(actual, expected(rust, neutral), 'pressure.' + ('rust' if rust else 'godot'))
+def validate(actual, rust, neutral=False, *, source_recovery=False):
+    compare(actual, expected(rust, neutral, source_recovery=source_recovery), 'pressure.' + ('rust' if rust else 'godot'))
     for slot, peer in enumerate(actual['peers']):
         services = peer['services']
         stalls = [service['round'] for service in services if service['before'] == service['after']]
         compare(len(services), 285 + slot, 'pressure.required_service_count')
         compare(len(stalls), 28 + slot, 'pressure.required_stall_count')
         compare(sum(service['after'] - service['before'] for service in services), 257, 'pressure.required_advances')
+        if source_recovery:
+            compare(len(peer['frames']), 257, 'pressure.required_export')
         if not neutral and not any(row['kind'] == 'load' and row['frame'] > 128 for row in peer['records']):
             raise ValueError('pressure: missing post-wrap correction')
 
 
-def controls(observed):
+def controls(observed, *, recovery=False):
     names = []
     for runtime in ('rust', 'godot'):
         for fault in ('omitted-stall', 'resampled-input', 'post-wrap-export', 'delivery-count'):
@@ -157,7 +169,7 @@ def controls(observed):
                 changed['deliveries'][0]['messages' if runtime == 'rust' else 'rows'] += 1
                 field = 'deliveries[0].' + ('messages' if runtime == 'rust' else 'rows') + ':'
             try:
-                validate(changed, runtime == 'rust')
+                validate(changed, runtime == 'rust', source_recovery=recovery)
             except ValueError as error:
                 if not str(error).startswith(f'pressure.{runtime}.{field}'):
                     raise ValueError(f'{fault}: wrong pressure rejection: {error}') from error
@@ -167,7 +179,7 @@ def controls(observed):
     return names
 
 
-def observe(binary, engine, root, output, execute):
+def observe(binary, engine, root, output, execute, *, recovery=False):
     combined = {}
     manual_api = {}
     for neutral in (False, True):
@@ -188,7 +200,7 @@ def observe(binary, engine, root, output, execute):
                 elif stderr.strip():
                     raise ValueError('unexpected pressure source stderr')
                 observed[runtime] = json.loads(stdout)
-                validate(observed[runtime], runtime == 'rust', neutral)
+                validate(observed[runtime], runtime == 'rust', neutral, source_recovery=recovery)
             repeats.append(observed)
         compare(repeats[0], repeats[1], 'pressure.repeat')
         combined['neutral' if neutral else 'corrected'] = repeats[0]
@@ -228,5 +240,9 @@ def observe(binary, engine, root, output, execute):
     else:
         raise ValueError('pressure resampling was accepted')
     from replay_asymmetric import observe_terminal
-    return dict(repeat_equal=True, observations=combined, manual_api=manual_api, negative_controls=controls(combined['corrected']), standalone_rejections=refused,
-                terminal=observe_terminal(engine, root, output, execute, pressure=True))
+    result = dict(repeat_equal=True, observations=combined, manual_api=manual_api,
+                  negative_controls=controls(combined['corrected'], recovery=recovery), standalone_rejections=refused,
+                  terminal=observe_terminal(engine, root, output, execute, pressure=True))
+    if recovery:
+        result['source_final_receipts'] = dict(negative_controls=source_final_controls(combined, validate, 'pressure', recovery=True))
+    return result

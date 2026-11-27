@@ -175,7 +175,7 @@ make test-oracle
 make queue-probes GODOT=/path/to/godot
 ```
 
-The queue runner verifies source archives and the existing Rust toolchain/lock
+The queue runner verifies the archive selected by the manifest and the Rust toolchain and lockfile
 before building a development-only `__internal::InputQueue` adapter. It executes
 711 cases and 8353 operations in each fresh process, twice per implementation.
 Its exhaustive component covers every depth-three operation sequence from a
@@ -188,8 +188,8 @@ owned input/read copies and atomic failures.
 
 `receipt.json` records engines, source/binary/lock/scenario/trace hashes,
 completion counts, run-twice equality and limits. Missing/extra records and the
-first exact normalized difference fail comparison. Five malformed artifact
-controls run against each binary; a separate witness records the reviewed
+first exact normalized difference fail comparison. The six malformed artifact
+controls include the other registered source revision. A separate witness records the reviewed
 startup partial-prefix divergence and checks retained bytes after rejection.
 Raw traces and logs remain under `.cache/reference/results/queue/` by default.
 CI runs the queue corpus on the minimum and pinned current native engines.
@@ -216,8 +216,8 @@ adds six reclaim cases: 711 cases and 8,353 operations in total. Both engines ru
 in fresh processes twice on Godot 4.3 and pinned current 4.7.2. The added traces
 compare actual upstream floor preservation, asymmetric local mismatch versus a
 global floor, non-power-of-two wraps, failed delay atomicity, active prediction,
-reset/discard clamps and physical stale input versus recoverable history. Five
-malformed bundle controls run per implementation, including a boolean floor.
+reset/discard clamps and physical stale input versus recoverable history.
+The malformed bundle controls also include a boolean floor.
 The startup partial-prefix divergence remains separately checked.
 
 The pinned reclaim entry points are crate-private and retained lookup is private.
@@ -230,7 +230,7 @@ wrapper text and hash, and observed source hash. A control overwrites the cached
 wrapper and verifies regeneration from original bytes, leaving the pinned tree
 unchanged. This development hook is absent from the shipped Godot addon.
 
-The original queue SHA-256 is
+The original queue SHA-256 at `d124c890` is
 `537ae9aab97af4cdfb7b0d84b738f56879ee387136c073b40eba1ff476f4a776`;
 the wrapper SHA-256 is
 `7336f7bc2d46909f805354c47273eda5665d482f02820f69dbdd702789e87673`.

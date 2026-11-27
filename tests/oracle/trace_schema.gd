@@ -4,14 +4,17 @@ extends RefCounted
 # Variant is intentional at each untrusted JSON boundary. Godot 4.3 has no
 # typed dictionaries and parses JSON integers as floating-point values.
 const Game = preload("res://tests/oracle/reference_game.gd")
-const REVISION: String = "d124c89080004d96971a629bb0427056ee1805e3"
+const SOURCE_REVISIONS: Array[String] = [
+	"d124c89080004d96971a629bb0427056ee1805e3",
+	"25e8020d1a5fd40c4f16b37f97b5ec5329a8566d",
+]
 const FRAME_MAX: int = 2147483647
 
 
 static func validate(trace: Dictionary) -> String:
 	if not _fields(trace, "format upstream_revision scenario operations final_state"):
 		return "trace: unknown or missing fields"
-	if not integer(trace["format"], 1, 2) or trace["upstream_revision"] != REVISION:
+	if not integer(trace["format"], 1, 2) or trace["upstream_revision"] not in SOURCE_REVISIONS:
 		return "trace: unsupported format or revision"
 	var error: String = _scenario(trace["scenario"])
 	if not error.is_empty():
@@ -19,6 +22,8 @@ static func validate(trace: Dictionary) -> String:
 	var scenario: Dictionary = trace["scenario"]
 	if trace["format"] != scenario["format"]:
 		return "trace: format differs from scenario"
+	if trace["upstream_revision"] != scenario["upstream_revision"]:
+		return "trace: revision differs from scenario"
 	var sources: Array = scenario["operations"]
 	if not trace["operations"] is Array or trace["operations"].size() != sources.size():
 		return "trace: operation count differs from scenario"
@@ -37,7 +42,7 @@ static func validate(trace: Dictionary) -> String:
 static func _scenario(value: Variant) -> String:
 	if not _fields(value, "format upstream_revision players input_width check_distance input_delay operations"):
 		return "scenario: unknown or missing fields"
-	if not integer(value["format"], 1, 2) or value["upstream_revision"] != REVISION:
+	if not integer(value["format"], 1, 2) or value["upstream_revision"] not in SOURCE_REVISIONS:
 		return "scenario: unsupported format or revision"
 	if not integer(value["players"], 2, 8) or not integer(value["input_width"], 4, 4):
 		return "scenario: invalid players or input width"

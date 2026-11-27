@@ -1,5 +1,7 @@
 //! Public pinned P2P session handshake observation; no handshake implementation here.
 #![forbid(unsafe_code)]
+#[path = "../source_revision.rs"]
+mod source_revision;
 use fortress_rollback::{Config, Message, NonBlockingSocket, PlayerType, ProtocolConfig, SessionBuilder, SyncConfig, FortressEvent};
 use fortress_rollback::network::protocol::{HandshakeTraceAction as Action, HandshakeTraceEvent};
 use serde::Deserialize;
@@ -66,6 +68,10 @@ fn events(session: &mut fortress_rollback::P2PSession<Oracle>) -> Vec<Value> {
     }).collect()
 }
 fn main() {
+    let revision = source_revision::compiled().unwrap_or_else(|error| {
+        eprintln!("handshake oracle: {error}");
+        std::process::exit(2);
+    });
     let mut input = String::new(); io::stdin().read_to_string(&mut input).unwrap();
     let scenario: Scenario = serde_json::from_str(&input).expect("strict handshake scenario");
     assert_eq!(scenario.format, 1); assert!(!scenario.operations.is_empty() && scenario.operations.len() <= 128);
@@ -118,5 +124,5 @@ fn main() {
         records.push(json!({"operation":index,"transitions":collect(&session,&mut cursor),
         "packets":packets,"events":events(&mut session)}));
     }
-    println!("{}",json!({"format":1,"complete":true,"upstream_revision":"d124c89080004d96971a629bb0427056ee1805e3","records":records}));
+    println!("{}",json!({"format":1,"complete":true,"upstream_revision":revision,"records":records}));
 }

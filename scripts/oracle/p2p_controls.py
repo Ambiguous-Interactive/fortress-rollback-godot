@@ -7,8 +7,9 @@ import sys
 from contract import checksum, initial_game_state, advance_game_state
 from controls import reject
 from launch import execute
-from p2p_contract import fold_input
+from p2p_contract import REVISION, fold_input
 from run import rust_environment
+from source_wire import RECOVERY_REVISION, REVIEWED_REVISION, wire_version
 
 
 def temporal_permutation(actual):
@@ -47,9 +48,8 @@ def temporal_permutation(actual):
 
 
 
-def profile_audit_controls(binary, directory):
+def profile_audit_controls(binary, directory, *, source_revision=REVISION):
     """Low windows require explicit source-only mode and never enter comparison."""
-    from p2p_contract import REVISION
     from contract import fields, integer
     controls = []
     for window in (0, 1):
@@ -61,7 +61,7 @@ def profile_audit_controls(binary, directory):
             value = json.loads(stdout)
             fields(value, 'format complete upstream_revision scenario records packets', 'profile audit trace')
             integer(value['format'], 1, 1, 'profile audit format')
-            if (stderr.strip() or value['complete'] is not True or value['upstream_revision'] != REVISION
+            if (stderr.strip() or value['complete'] is not True or value['upstream_revision'] != source_revision
                     or value['scenario'] != scenario or type(value['records']) is not list or len(value['records']) != 1 or value['packets'] != []):
                 raise ValueError('profile audit completion')
             record = value['records'][0]
@@ -132,7 +132,7 @@ def wire_mutant(observer, field):
     return observer.replace(anchor, replacement, 1)
 
 
-def wire_controls(binary, engine, directory):
+def wire_controls(binary, engine, directory, *, source_revision=REVISION):
     from p2p_contract import validate, compare
     from p2p_launch import parse_godot
     root = Path(__file__).resolve().parents[2]
@@ -142,7 +142,7 @@ def wire_controls(binary, engine, directory):
     stdout, stderr = execute([str(binary)], directory / 'control-wire-source.log', json.dumps(scenario))
     if stderr.strip():
         raise ValueError('wire control source process output')
-    expected = json.loads(stdout); validate(expected, scenario, True)
+    expected = json.loads(stdout); validate(expected, scenario, True, source_revision=source_revision)
     (directory / 'control-wire-source.json').write_text(json.dumps(expected, indent=2) + '\n')
     observer = (root / 'tests/oracle/p2p_trace.gd').read_text(encoding='utf-8')
     controls = []
@@ -154,7 +154,7 @@ def wire_controls(binary, engine, directory):
             stdout, stderr = execute(command, log)
             actual = parse_godot(stdout, stderr)
             try:
-                compare(actual, expected, scenario)
+                compare(actual, expected, scenario, source_revision=source_revision)
             except ValueError as error:
                 if str(error) != 'sender players':
                     raise ValueError('wire player control wrong boundary') from error
@@ -174,7 +174,7 @@ def wire_controls(binary, engine, directory):
     return controls
 
 
-def process_controls(binary, engine, scenario, expected, actual, directory):
+def process_controls(binary, engine, scenario, expected, actual, directory, *, source_revision=REVISION):
     environment = rust_environment()
     mutants = {'empty': {}, 'empty_operations': dict(scenario, operations=[]), 'unknown': dict(scenario, extra=True)}
     value = deepcopy(scenario); value['operations'][0]['now_us'] = True; mutants['bool_time'] = value
@@ -224,8 +224,8 @@ def process_controls(binary, engine, scenario, expected, actual, directory):
             'res://tests/oracle/p2p_trace.gd', '--', '--scenario', str(path.resolve())], directory / f'control-godot-{name}.log',
             environment, expected_prefix='FORTRESS_P2P_ERROR invalid scenario', expected_exit=2)
         controls.append('malformed_' + name)
-    controls.extend(profile_audit_controls(binary, directory))
-    controls.extend(wire_controls(binary, engine, directory))
+    controls.extend(profile_audit_controls(binary, directory, source_revision=source_revision))
+    controls.extend(wire_controls(binary, engine, directory, source_revision=source_revision))
     # Numeric-looking text and escaped quotes remain strings, never numeric tokens.
     quoted = '{"format":1,"players":2,"input_delay":0,"max_prediction":4,"operations":[{"kind":"p\\u006fll","peer":0,"now_us":0}]}'
     path = directory / 'control-quoted-integers.json'; path.write_text(quoted + '\n')
@@ -253,9 +253,28 @@ def process_controls(binary, engine, scenario, expected, actual, directory):
     reject([str(binary), '--validate-trace'], directory / 'control-compressed.log', environment,
         json.dumps(raw), 'raw compressed semantic mismatch', 2)
     controls.append('actual_source_decoder_raw_compression')
+    alternate = RECOVERY_REVISION if source_revision == REVIEWED_REVISION else REVIEWED_REVISION
+    foreign_wire = deepcopy(expected)
+    foreign_wire['packets'][0]['raw']['header']['protocol_version'] = wire_version(alternate)
+    raw_json = json.dumps(expected)
+    version_token = f'"protocol_version": {wire_version(source_revision)}'
+    revision_token = f'"upstream_revision": "{source_revision}"'
+    controls_raw = (
+        ('foreign-revision', 'raw trace source revision', json.dumps(dict(expected, upstream_revision=alternate))),
+        ('foreign-wire', 'raw trace wire version', json.dumps(foreign_wire)),
+        ('duplicate-revision', 'duplicate trace field: upstream_revision',
+         raw_json.replace(revision_token, f'"upstream_revision": "{alternate}", ' + revision_token, 1)),
+        ('duplicate-wire', 'duplicate trace field: protocol_version',
+         raw_json.replace(version_token, f'"protocol_version": {wire_version(alternate)}, ' + version_token, 1)),
+    )
+    for label, diagnostic, payload in controls_raw:
+        reject([str(binary), '--validate-trace'], directory / f'control-{label}.log', environment,
+               payload, 'p2p oracle: ' + diagnostic, 2)
+        controls.append('actual_source_decoder_' + label.replace('-', '_'))
     original = directory / 'control-original-scenario.json'; original.write_text(json.dumps(scenario) + '\n')
     expected_path = directory / 'control-original-source.json'; expected_path.write_text(json.dumps(expected) + '\n')
-    validator = [sys.executable, str(Path(__file__).with_name('p2p_validate.py')), '--scenario', str(original), '--expected', str(expected_path)]
+    validator = [sys.executable, str(Path(__file__).with_name('p2p_validate.py')), '--scenario', str(original), '--expected', str(expected_path),
+                 '--source-revision', source_revision]
     mutant = temporal_permutation(actual)
     path = directory / 'control-temporal.json'; path.write_text(json.dumps(mutant, indent=2) + '\n')
     reject(validator, directory / 'control-temporal.log', environment, json.dumps(mutant),

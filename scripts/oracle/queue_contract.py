@@ -1,13 +1,14 @@
 """Strict queue artifact schemas and exact, first-divergence comparison."""
 from contract import fields, integer
 
-REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
+from source_wire import REVIEWED_REVISION as REVISION, wire_version
 
 
-def validate_bundle(value):
+def validate_bundle(value, *, source_revision=REVISION):
+    wire_version(source_revision)
     fields(value, 'format upstream_revision cases', 'queue bundle')
     integer(value['format'], 1, 1, 'queue format')
-    if value['upstream_revision'] != REVISION:
+    if value['upstream_revision'] != source_revision:
         raise ValueError('stale queue revision')
     cases = value['cases']
     if not isinstance(cases, list) or not 1 <= len(cases) <= 1000:
@@ -52,11 +53,12 @@ def validate_bundle(value):
     return value
 
 
-def compare(expected, actual, names, counts):
+def compare(expected, actual, names, counts, *, source_revision=REVISION):
+    wire_version(source_revision)
     for trace in (expected, actual):
         fields(trace, 'format upstream_revision complete cases', 'queue trace')
         integer(trace['format'], 1, 1, 'queue trace format')
-        if trace['upstream_revision'] != REVISION or trace['complete'] is not True:
+        if trace['upstream_revision'] != source_revision or trace['complete'] is not True:
             raise ValueError('queue trace revision or incomplete execution')
         if not isinstance(trace['cases'], list) or len(trace['cases']) != len(names):
             raise ValueError('queue trace missing or extra cases')

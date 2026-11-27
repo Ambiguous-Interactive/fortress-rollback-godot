@@ -3,7 +3,7 @@ import itertools
 from queue_contract import REVISION
 
 
-def bundle():
+def bundle(source_revision=REVISION):
     cases = []
 
     def case(name, operations, capacity=8, width=4, player=0):
@@ -79,4 +79,4 @@ def bundle():
                        reclaim(capacity, 1), reclaim(capacity, 2), retained(2), retained(1),
                        reclaim(capacity + 1, 5), confirmed(2), retained(2), reset, read(2)]
         case(f'reclaim-delay-atomic-{capacity}', operations, capacity=capacity)
-    return {'format': 1, 'upstream_revision': REVISION, 'cases': cases}
+    return {'format': 1, 'upstream_revision': source_revision, 'cases': cases}

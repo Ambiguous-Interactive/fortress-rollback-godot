@@ -2,10 +2,13 @@
 import copy
 import unittest
 import tempfile
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 from queue_launch import observation_source, OBSERVATION_HOOK
 from queue_contract import validate_bundle, compare
+from queue_corpus import bundle
+from source_wire import RECOVERY_REVISION, REVIEWED_REVISION
 
 
 class QueueContractTests(unittest.TestCase):
@@ -42,25 +45,45 @@ class QueueContractTests(unittest.TestCase):
             root = Path(directory)
             source = root / 'pinned'
             (source / 'src/input_queue').mkdir(parents=True)
+            (source / 'Cargo.toml').write_text('[package]\nname = "fixture"\n')
+            (source / 'Cargo.lock').write_text('')
             original = b'// immutable source\n'
             (source / 'src/input_queue/mod.rs').write_bytes(original)
             with patch('queue_launch.CACHE', root / 'cache'):
-                _, receipt = observation_source(source)
-                hooked = root / 'cache/queue-observation/fortress/src/input_queue/mod.rs'
+                manifest, receipt = observation_source(source, REVIEWED_REVISION)
+                workspace = manifest.parent.parent
+                hooked = workspace / 'fortress/src/input_queue/mod.rs'
+                dependency = tomllib.loads(manifest.read_text())['dependencies']['fortress-rollback']['path']
+                self.assertEqual((manifest.parent / dependency).resolve(), workspace / 'fortress')
+                candidate, _ = observation_source(source, RECOVERY_REVISION)
+                self.assertNotEqual(candidate.parent.parent, workspace)
                 self.assertEqual(hooked.read_bytes(), original + OBSERVATION_HOOK.encode())
-                timestamps = {path: path.stat().st_mtime_ns for path in [hooked,
-                    root / 'cache/queue-observation/adapter/Cargo.toml', root / 'cache/queue-observation/adapter/Cargo.lock']}
-                observation_source(source)
+                timestamps = {path: path.stat().st_mtime_ns for path in [hooked, manifest, manifest.with_name('Cargo.lock')]}
+                observation_source(source, REVIEWED_REVISION)
                 self.assertEqual({path: path.stat().st_mtime_ns for path in timestamps}, timestamps)
-                injected = root / 'cache/queue-observation/adapter/build.rs'
+                injected = manifest.with_name('build.rs')
                 injected.write_text('hostile build script')
                 hooked.write_text('altered wrapper')
-                _, repeated = observation_source(source)
+                _, repeated = observation_source(source, REVIEWED_REVISION)
                 self.assertEqual(receipt, repeated)
                 self.assertFalse(injected.exists())
                 self.assertEqual(hooked.read_bytes(), original + OBSERVATION_HOOK.encode())
                 self.assertEqual((source / 'src/input_queue/mod.rs').read_bytes(), original)
                 self.assertTrue(receipt['original_queue_unmodified'])
+
+    def test_selected_revision_must_match_bundle_and_each_trace(self):
+        # Value: both registered revisions must reject the other's otherwise valid artifact.
+        for current, other in ((REVIEWED_REVISION, RECOVERY_REVISION), (RECOVERY_REVISION, REVIEWED_REVISION)):
+            candidate = bundle(current)
+            self.assertEqual(validate_bundle(candidate, source_revision=current), candidate)
+            with self.assertRaisesRegex(ValueError, 'stale queue revision'):
+                validate_bundle(candidate, source_revision=other)
+            trace = {'format': 1, 'upstream_revision': current, 'complete': True, 'cases': []}
+            compare(trace, trace, [], [], source_revision=current)
+            mismatched = dict(trace, upstream_revision=other)
+            for left, right in ((trace, mismatched), (mismatched, trace)):
+                with self.assertRaisesRegex(ValueError, 'queue trace revision'):
+                    compare(left, right, [], [], source_revision=current)
 
     def test_first_divergence_and_complete_consumption(self):
         record = {'index': 0, 'kind': 'read', 'accepted': True, 'frame': 0, 'bytes': '01',

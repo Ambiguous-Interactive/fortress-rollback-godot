@@ -30,9 +30,39 @@ fn exchange_selected(buffers: &[Arc<Mutex<Buffers>>], eligible: &[bool; 2]) -> u
     count
 }
 
-pub fn run(mode: &str) -> Result<Value, String> {
+fn fulfill(requests: impl IntoIterator<Item = FortressRequest<Cfg>>, state: &mut [u32; 4], records: &mut Vec<Value>) -> Result<(), String> {
+    for request in requests {
+        match request {
+            FortressRequest::SaveGameState { cell, frame } => {
+                records.push(json!({"kind":"save", "frame":frame.as_i32(), "bytes":hex(&bytes(state)), "inputs":[]}));
+                if !cell.save(frame, Some(*state), Some(u128::from_le_bytes(bytes(state).try_into().unwrap()))) {
+                    return Err("remote save refused".into());
+                }
+            }
+            FortressRequest::LoadGameState { cell, frame } => {
+                *state = cell.load().ok_or("missing remote rollback snapshot")?;
+                records.push(json!({"kind":"load", "frame":frame.as_i32(), "bytes":hex(&bytes(state)), "inputs":[]}));
+            }
+            FortressRequest::AdvanceFrame { inputs } => {
+                let observed: Vec<_> = inputs.iter().map(|(value, status)| json!({"value":value,"status":status.to_string().to_lowercase()})).collect();
+                let frame = state[0];
+                for (slot, (value, _)) in inputs.iter().enumerate() {
+                    state[1] = state[1].wrapping_mul(33).wrapping_add(*value).wrapping_add(slot as u32);
+                    state[2] = state[2].wrapping_mul(1664525).wrapping_add(1013904223);
+                    state[3] = state[3].wrapping_add(state[1]) ^ state[2];
+                }
+                state[0] += 1;
+                records.push(json!({"kind":"advance", "frame":frame, "bytes":hex(&bytes(state)), "inputs":observed}));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn run(mode: &str) -> Result<(Value, Option<String>), String> {
     let seed = u32::MAX;
     let withhold = mode == "--remote-recording-withhold";
+    let omit_final = mode.ends_with("-final-missing");
     let neutral = mode.contains("neutral");
     let asymmetric = mode.contains("asymmetric") || mode.contains("pressure");
     let pressure = mode.contains("pressure");
@@ -75,31 +105,7 @@ pub fn run(mode: &str) -> Result<Value, String> {
             let first = records[peer].len();
             let value = if neutral { 0 } else { seed.wrapping_add((round as u32).wrapping_mul(1234567)).wrapping_add((peer as u32).wrapping_mul(0x1020304)) };
             sessions[peer].add_local_input(peer.into(), value).map_err(|e| e.to_string())?;
-            for request in sessions[peer].advance_frame().map_err(|e| e.to_string())? {
-                match request {
-                    FortressRequest::SaveGameState { cell, frame } => {
-                        records[peer].push(json!({"kind":"save", "frame":frame.as_i32(), "bytes":hex(&bytes(&states[peer])), "inputs":[]}));
-                        if !cell.save(frame, Some(states[peer]), Some(u128::from_le_bytes(bytes(&states[peer]).try_into().unwrap()))) {
-                            return Err("remote save refused".into());
-                        }
-                    }
-                    FortressRequest::LoadGameState { cell, frame } => {
-                        states[peer] = cell.load().ok_or("missing remote rollback snapshot")?;
-                        records[peer].push(json!({"kind":"load", "frame":frame.as_i32(), "bytes":hex(&bytes(&states[peer])), "inputs":[]}));
-                    }
-                    FortressRequest::AdvanceFrame { inputs } => {
-                        let observed: Vec<_> = inputs.iter().map(|(value, status)| json!({"value":value,"status":status.to_string().to_lowercase()})).collect();
-                        let frame = states[peer][0];
-                        for (slot, (value, _)) in inputs.iter().enumerate() {
-                            states[peer][1] = states[peer][1].wrapping_mul(33).wrapping_add(*value).wrapping_add(slot as u32);
-                            states[peer][2] = states[peer][2].wrapping_mul(1664525).wrapping_add(1013904223);
-                            states[peer][3] = states[peer][3].wrapping_add(states[peer][1]) ^ states[peer][2];
-                        }
-                        states[peer][0] += 1;
-                        records[peer].push(json!({"kind":"advance", "frame":frame, "bytes":hex(&bytes(&states[peer])), "inputs":observed}));
-                    }
-                }
-            }
+            fulfill(sessions[peer].advance_frame().map_err(|e| e.to_string())?, &mut states[peer], &mut records[peer])?;
             if pressure && mode.ends_with("-withhold") && states[peer][0] == before {
                 return Err(format!("pressure prediction-window stall: peer={peer} turn={turn} frames=[{},{}]", states[0][0], states[1][0]));
             }
@@ -128,27 +134,67 @@ pub fn run(mode: &str) -> Result<Value, String> {
     }
     if pressure && states.iter().any(|state| state[0] != rounds as u32) { return Err("pressure service bound exhausted".into()); }
     let mut recovery = Vec::new();
+    let mut missing_final = None;
     if asymmetric {
         let mut delivered = 0;
         for _ in 0..4 {
-            if !mode.ends_with("-final-missing") { delivered += exchange(&buffers); }
+            if !omit_final { delivered += exchange(&buffers); }
             for session in &mut sessions { session.poll_remote_clients(); }
         }
+        #[cfg(feature = "replay-recovery")]
+        let mut corrections = Vec::new();
+        #[cfg(feature = "replay-recovery")]
+        let mut repeated_saves = Vec::new();
+        #[cfg(not(feature = "replay-recovery"))]
         let mut errors = Vec::new();
         let mut frontiers = Vec::new();
         for (peer, session) in sessions.iter_mut().enumerate() {
             let before = session.current_frame().as_i32();
-            let error = session.advance_frame().err().ok_or("source unexpectedly allowed recovery without a local sample")?;
-            errors.push(error.to_string());
-            let last_inputs = session.confirmed_inputs_for_frame(fortress_rollback::Frame::new(rounds as i32 - 1))
-                .map_err(|_| format!("source final original input unavailable: peer={peer} frame={}", rounds - 1))?;
+            #[cfg(not(feature = "replay-recovery"))]
+            errors.push(session.advance_frame().err()
+                .ok_or("source unexpectedly allowed recovery without a local sample")?.to_string());
+            #[cfg(feature = "replay-recovery")]
+            {
+                let first = records[peer].len();
+                fulfill(session.recover_confirmed_inputs().map_err(|e| e.to_string())?, &mut states[peer], &mut records[peer])?;
+                if session.current_frame().as_i32() != before || states[peer][0] as i32 != before {
+                    return Err("source recovery changed the frame boundary".into());
+                }
+                let repeated = session.recover_confirmed_inputs().map_err(|e| e.to_string())?;
+                if repeated.iter().any(|request| !matches!(request, FortressRequest::SaveGameState { .. })) {
+                    return Err(format!("repeated source recovery repaired or advanced: peer={peer}, requests={repeated:?}"));
+                }
+                repeated_saves.push(repeated.len());
+                let first_repeat = records[peer].len();
+                fulfill(repeated, &mut states[peer], &mut records[peer])?;
+                if session.current_frame().as_i32() != before || states[peer][0] as i32 != before {
+                    return Err("repeated source recovery changed the frame boundary".into());
+                }
+                corrections.push(records[peer][first..first_repeat].iter().filter(|row| row["kind"] == "load").count());
+            }
+            let last_inputs = match session.confirmed_inputs_for_frame(fortress_rollback::Frame::new(rounds as i32 - 1)) {
+                Ok(inputs) => Some(inputs),
+                Err(_) => {
+                    let error = format!("source final original input unavailable: peer={peer} frame={}", rounds - 1);
+                    if !omit_final { return Err(error); }
+                    missing_final.get_or_insert(error);
+                    None
+                }
+            };
             frontiers.push(json!({"peer":peer,"current_before":before,"current_frame":session.current_frame().as_i32(),
                 "confirmed_frame":session.confirmed_frame().as_i32(),
                 "receipt_frame":session.diagnostic_player_receipt_frame((1 - peer).into()).ok_or("missing source receipt frontier")?.as_i32(),
                 "last_inputs":last_inputs,"callback_count":records[peer].len()}));
         }
-        recovery.push(json!({"messages":delivered,"frames":states.iter().map(|state|state[0]).collect::<Vec<_>>(),
-            "errors":errors,"frontiers":frontiers}));
+        let mut observation = json!({"messages":delivered,"frames":[states[0][0],states[1][0]],"frontiers":frontiers});
+        #[cfg(not(feature = "replay-recovery"))]
+        { observation["errors"] = json!(errors); }
+        #[cfg(feature = "replay-recovery")]
+        {
+            observation["corrections"] = json!(corrections);
+            observation["repeated_saves"] = json!(repeated_saves);
+        }
+        recovery.push(observation);
     }
     let mut peers = Vec::new();
     for (peer, session) in sessions.into_iter().enumerate() {
@@ -164,5 +210,5 @@ pub fn run(mode: &str) -> Result<Value, String> {
     }
     let mut result = json!({"format":1,"peers":peers,"deliveries":deliveries});
     if asymmetric { result["recovery"] = json!(recovery); }
-    Ok(result)
+    Ok((result, missing_final))
 }

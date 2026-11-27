@@ -6,16 +6,17 @@ from pathlib import Path
 
 from replay_launch import advance, compare, expected as playback_expected, state_bytes
 from replay_remote import sample
+from replay_recovery import controls as source_final_controls, source_observation, withheld_receipt_controls
 
 
-def expected(rust, neutral=False, terminal=False):
+def expected(rust, neutral=False, terminal=False, *, source_recovery=False, omit_final=False):
     rounds = 257
     rows = [[sample(slot, frame, neutral) for slot in range(2)] for frame in range(rounds)]
     initial = (0, 0xffffffff, 0xffffffff, 0)
     canonical = [initial]
     for row in rows:
         canonical.append(advance(canonical[-1], row))
-    peers, recovery = [], []
+    peers, recovery, corrections, receipts = [], [], [], []
     for peer, period in enumerate((2, 3)):
         state, records, services, first_saved = initial, [], [], {}
         received, repaired = -1, -1
@@ -63,7 +64,21 @@ def expected(rust, neutral=False, terminal=False):
             recovery.append(dict(peer=peer, rows=count, before=rounds, after=rounds,
                                  requests=[row['kind'] for row in records[first:]]))
             exported = rounds
-        checksums = [first_saved[frame] if rust else state_bytes(canonical[frame]).hex() for frame in range(exported)]
+        elif source_recovery:
+            first = len(records)
+            if not omit_final:
+                received = rounds - 1
+            repair(rounds, True)
+            corrected = len(records) != first
+            corrections.append(int(corrected))
+            if not corrected:
+                save()
+            save()  # Repeated recovery saves the same boundary without another correction.
+            exported = received + 1
+        if rust:
+            receipts.append(received if omit_final else rounds - 1)
+        checksums = [first_saved[frame] if rust and not source_recovery else state_bytes(canonical[frame]).hex()
+                     for frame in range(exported)]
         playback = playback_expected(dict(name=f'remote-{peer}', players=2, seed=0xffffffff, validate=True,
                                           frames=rows[:exported], checksums=checksums), rust)
         if terminal:
@@ -98,32 +113,30 @@ def expected(rust, neutral=False, terminal=False):
                         count += inputs + controls
                         pending[1 - peer][1] += inputs
             deliveries.append(dict(round=turn, messages=count, eligible=eligible))
-        count = sum(sum(group) for group in pending) + sum(group[0] for group in pending)
-        recovery = [dict(messages=count, frames=[rounds, rounds], errors=[
-            "Invalid Request: missing local input for one or more players"] * 2,
-            frontiers=[dict(peer=peer, current_before=rounds, current_frame=rounds, confirmed_frame=rounds - 1, receipt_frame=rounds - 1,
-                            last_inputs=rows[-1], callback_count=len(peers[peer]['records'])) for peer in range(2)])]
+        count = 0 if omit_final else sum(sum(group) for group in pending) + sum(group[0] for group in pending)
+        recovery = [source_observation(count, rows, [peer['records'] for peer in peers], corrections if source_recovery else None,
+                                       receipts=receipts)]
     else:
         deliveries = [dict(round=turn, peer=peer, rows=period) for turn in range(rounds)
                       for peer, period in enumerate((2, 3)) if turn % period == period - 1]
     return dict(format=1, peers=peers, deliveries=deliveries, recovery=recovery)
 
 
-def validate(actual, rust, neutral=False):
-    compare(actual, expected(rust, neutral), 'asymmetric.' + ('rust' if rust else 'godot'))
+def validate(actual, rust, neutral=False, *, source_recovery=False):
+    compare(actual, expected(rust, neutral, source_recovery=source_recovery), 'asymmetric.' + ('rust' if rust else 'godot'))
     compare(len(actual['peers']), 2, 'asymmetric.required_peers')
     for peer in actual['peers']:
         compare(peer['current_frame'], 257, 'asymmetric.required_boundary')
         compare(len(peer['services']), 257, 'asymmetric.required_services')
-        compare(len(peer['frames']), (256 if peer['peer'] == 0 else 255) if rust else 257, 'asymmetric.required_export')
+        compare(len(peer['frames']), (256 if peer['peer'] == 0 else 255) if rust and not source_recovery else 257, 'asymmetric.required_export')
     if not neutral:
         for peer, period in zip(actual['peers'], (2, 3)):
             loads = [row['frame'] for row in peer['records'] if row['kind'] == 'load']
-            compare(loads, list(range(0, 257 - 257 % period, period)) + ([] if rust else [256 if period == 2 else 255]),
+            compare(loads, list(range(0, 257 - 257 % period, period)) + ([] if rust and not source_recovery else [256 if period == 2 else 255]),
                     'asymmetric.required_loads')
 
 
-def controls(observed):
+def controls(observed, *, recovery=False):
     names = []
     for runtime in ('rust', 'godot'):
         for fault in ('symmetric-label', 'omitted-load', 'late-receipt', 'post-wrap-export', 'decoded-playback'):
@@ -147,7 +160,7 @@ def controls(observed):
                 peer['playback']['records'][index]['bytes'] = '00' * 16
                 field = f'peers[1].playback.records[{index}].bytes:'
             try:
-                validate(changed, runtime == 'rust')
+                validate(changed, runtime == 'rust', source_recovery=recovery)
             except ValueError as error:
                 if not str(error).startswith(f'asymmetric.{runtime}.{field}'):
                     raise ValueError(f'{fault}: wrong asymmetric rejection: {error}') from error
@@ -157,7 +170,7 @@ def controls(observed):
     return names
 
 
-def observe(binary, engine, root, output, execute):
+def observe(binary, engine, root, output, execute, *, recovery=False):
     combined = {}
     manual_api = {}
     for neutral in (False, True):
@@ -178,7 +191,7 @@ def observe(binary, engine, root, output, execute):
                 elif stderr.strip():
                     raise ValueError('unexpected asymmetric source stderr')
                 observed[runtime] = json.loads(stdout)
-                validate(observed[runtime], runtime == 'rust', neutral)
+                validate(observed[runtime], runtime == 'rust', neutral, source_recovery=recovery)
             repeats.append(observed)
         compare(repeats[0], repeats[1], 'asymmetric.repeat')
         combined['neutral' if neutral else 'corrected'] = repeats[0]
@@ -202,9 +215,10 @@ def observe(binary, engine, root, output, execute):
             raise ValueError(f'{runtime}: asymmetric missing receipts did not stop gameplay')
     from replay_corruption import observe as observe_corruption
     serialized = observe_corruption(engine, root, output, execute, combined['corrected']['godot'])
-    from replay_recovery import observe as observe_recovery
-    recovery = observe_recovery(binary, output, execute, combined)
-    return dict(source_final_receipts=recovery, repeat_equal=True, observations=combined, manual_api=manual_api, negative_controls=controls(combined['corrected']),
+    final_receipts = withheld_receipt_controls(binary, output, execute, expected, recovery=recovery)
+    final_receipts['negative_controls'] += source_final_controls(combined, validate, 'asymmetric', recovery=recovery)
+    return dict(source_final_receipts=final_receipts, repeat_equal=True, observations=combined, manual_api=manual_api,
+                negative_controls=controls(combined['corrected'], recovery=recovery),
                 standalone_rejections=refused, serialized_controls=serialized, terminal=observe_terminal(engine, root, output, execute))
 
 

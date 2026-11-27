@@ -4,27 +4,34 @@ extends SceneTree
 
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const REVISION: String = "d124c89080004d96971a629bb0427056ee1805e3"
+const RECOVERY_REVISION: String = "25e8020d1a5fd40c4f16b37f97b5ec5329a8566d"
 const PREFIX: String = "FORTRESS_QUEUE_RESULT "
 
 
 func _initialize() -> void:
 	var arguments: PackedStringArray = OS.get_cmdline_user_args()
-	if arguments.size() != 2 or arguments[0] != "--bundle":
-		_fail("expected --bundle file")
+	if arguments.size() not in [2, 4] or arguments[0] != "--bundle":
+		_fail("expected --bundle file with optional --source-revision revision")
 		return
+	var revision: String = REVISION
+	if arguments.size() == 4:
+		if arguments[2] != "--source-revision" or arguments[3] not in [REVISION, RECOVERY_REVISION]:
+			_fail("unsupported source revision")
+			return
+		revision = arguments[3]
 	var file: FileAccess = FileAccess.open(arguments[1], FileAccess.READ)
 	if file == null or file.get_length() > 8000000:
 		_fail("missing or oversized bundle")
 		return
 	var parser: JSON = JSON.new()
-	if parser.parse(file.get_as_text()) != OK or not _valid_bundle(parser.data):
+	if parser.parse(file.get_as_text()) != OK or not _valid_bundle(parser.data, revision):
 		_fail("invalid queue bundle")
 		return
 	var bundle: Dictionary = parser.data
 	var cases: Array[Dictionary] = []
 	for case: Dictionary in bundle["cases"]:
 		cases.append(_execute(case))
-	print(PREFIX + JSON.stringify({"format": 1, "upstream_revision": REVISION, "complete": true, "cases": cases}))
+	print(PREFIX + JSON.stringify({"format": 1, "upstream_revision": revision, "complete": true, "cases": cases}))
 	quit(0)
 
 
@@ -88,10 +95,10 @@ func _execute(case: Dictionary) -> Dictionary:
 
 
 # Variant is required at the untrusted JSON boundary; validate before narrowing types.
-func _valid_bundle(value: Variant) -> bool:
+func _valid_bundle(value: Variant, revision: String) -> bool:
 	if not _fields(value, ["format", "upstream_revision", "cases"]):
 		return false
-	if not _integer(value["format"], 1, 1) or value["upstream_revision"] != REVISION:
+	if not _integer(value["format"], 1, 1) or value["upstream_revision"] != revision:
 		return false
 	if not value["cases"] is Array or value["cases"].is_empty() or value["cases"].size() > 1000:
 		return false

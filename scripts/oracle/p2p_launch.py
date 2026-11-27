@@ -24,6 +24,7 @@ import p2p_capacity
 import p2p_shrink
 import p2p_wrap
 import p2p_schedule
+from source_build import prepare_source_build, source_build_environment, upstream_inventory
 from source_wire import decode_trace
 
 PREFIX = 'FORTRESS_P2P_RESULT '
@@ -38,11 +39,11 @@ def parse_godot(stdout, stderr):
     return json.loads(rows[0])
 
 
-def source(binary, scenario):
+def source(binary, scenario, *, source_revision=REVISION):
     result = subprocess.run([str(binary)], input=json.dumps(scenario), capture_output=True, encoding='utf-8', timeout=30, env=rust_environment())
     if result.returncode or result.stderr.strip():
         raise ValueError('corpus source process failed: ' + result.stderr[:200])
-    value = decode_trace(result.stdout); validate(value, scenario, True)
+    value = decode_trace(result.stdout); validate(value, scenario, True, source_revision=source_revision)
     return value
 
 
@@ -149,7 +150,7 @@ def wrap_partition(part):
     return p2p_wrap.NAMES if part is None else WRAP_PARTITIONS[part - 1]
 
 
-def corpus(binary, selected=None, wrap_only=False, wrap_part=None, *, group=None, hints=None):
+def corpus(binary, selected=None, wrap_only=False, wrap_part=None, *, group=None, hints=None, source_revision=REVISION):
     """Schedules derive only from actual sent packet inventories, never request traces."""
     cases = {}
     if wrap_only:
@@ -165,7 +166,7 @@ def corpus(binary, selected=None, wrap_only=False, wrap_part=None, *, group=None
     for name in names:
         if selected is not None and selected != name:
             continue
-        observe = p2p_schedule.builder_observer(binary, hints.get(name), source)
+        observe = p2p_schedule.builder_observer(binary, hints.get(name), partial(source, source_revision=source_revision))
         if name in p2p_lifecycle_corpus.NAMES:
             cases[name] = p2p_lifecycle_corpus.build(binary, observe, name)
         else:
@@ -365,9 +366,9 @@ def build_case(binary, players, delay, mode, window=4, width=4, delays=None, *, 
     return scenario
 
 
-def negative_controls(actual, expected, scenario):
+def negative_controls(actual, expected, scenario, *, source_revision=REVISION):
     if 'lifecycle' in scenario:
-        return p2p_lifecycle_controls.controls(actual, expected, scenario)
+        return p2p_lifecycle_controls.controls(actual, expected, scenario, source_revision=source_revision)
     request_op = next(i for i, r in enumerate(actual['records']) if any(q['kind'] == 'advance' for q in r['requests']))
     request_index = next(i for i, q in enumerate(actual['records'][request_op]['requests']) if q['kind'] == 'advance')
     save_record = next(i for i, r in enumerate(actual['records']) if r['requests'] and r['requests'][0]['kind'] == 'save')
@@ -418,7 +419,7 @@ def negative_controls(actual, expected, scenario):
     for name, mutate in controls.items():
         mutant = deepcopy(actual); mutate(mutant)
         try:
-            compare(mutant, expected, scenario)
+            compare(mutant, expected, scenario, source_revision=source_revision)
         except ValueError:
             pass
         else:
@@ -447,7 +448,7 @@ def negative_controls(actual, expected, scenario):
     return names
 
 
-def differential_failure(name, binary, engine, scenario, expected, failure, output):
+def differential_failure(name, binary, engine, scenario, expected, failure, output, *, source_revision=REVISION):
     """Shrink a fresh differential disagreement to a minimal scenario, confirm it, and raise with the evidence.
 
     Every probe candidate reruns both sides, so an adopted removal always
@@ -463,7 +464,7 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
             stdout, stderr = execute([str(binary)], output / f'{name}-shrink-source.log', json.dumps(candidate))
             if stderr.strip():
                 return None
-            value = decode_trace(stdout); validate(value, candidate, True)
+            value = decode_trace(stdout); validate(value, candidate, True, source_revision=source_revision)
         except (ValueError, subprocess.TimeoutExpired, OSError):
             return None
         submitted = output / f'{name}-shrink-scenario.json'; submitted.write_text(json.dumps(candidate, indent=2) + '\n')
@@ -475,7 +476,7 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
         except (ValueError, subprocess.TimeoutExpired, OSError):
             return None
         try:
-            compare(actual, value, candidate)
+            compare(actual, value, candidate, source_revision=source_revision)
         except ValueError as disagreement:
             return str(disagreement)
         return None
@@ -489,7 +490,7 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
             stdout, stderr = execute([str(binary)], output / f'{name}-minimized-source-{repeat}.log', submitted.read_text())
             if stderr.strip():
                 raise ValueError('minimized source stderr')
-            value = decode_trace(stdout); validate(value, minimized, True); source_results.append(value)
+            value = decode_trace(stdout); validate(value, minimized, True, source_revision=source_revision); source_results.append(value)
         if source_results[0] != source_results[1]:
             raise ValueError('minimized source repeat mismatch')
         verified, stderr = execute([str(binary), '--validate-trace'],
@@ -509,7 +510,7 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
             godot_actuals.append(actual)
             (output / f'{name}-minimized-actual-{repeat}.json').write_text(json.dumps(actual, indent=2) + '\n')
             try:
-                compare(actual, source_results[0], minimized)
+                compare(actual, source_results[0], minimized, source_revision=source_revision)
             except ValueError:
                 continue
             raise ValueError('minimized scenario does not reproduce on repeat ' + str(repeat))
@@ -532,13 +533,9 @@ def source_files():
     return [*(ROOT / 'addons/fortress_rollback/core').glob('*.gd'), *(ROOT / 'addons/fortress_rollback/protocol').glob('*.gd'),
         *(ROOT / 'tests/oracle').glob('*.gd'), *Path(__file__).parent.glob('*.py'), *FIXTURES.glob('*'),
         *p2p_schedule.HINTS.parent.glob(p2p_schedule.HINTS.name), ROOT / 'scripts/oracle/rust/src/bin/p2p.rs',
-        ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock', ROOT / 'docs/reference/pins.json',
+        ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock',
+        ROOT / 'scripts/oracle/rust/src/source_revision.rs', ROOT / 'scripts/oracle/rust/src/bin/p2p/unique_json.rs', ROOT / 'docs/reference/pins.json',
         *(ROOT / 'scripts/reference').glob('*.py')]
-
-def upstream_inventory(tree):
-    paths = [*tree.rglob('*.rs'), tree / 'Cargo.toml', tree / 'Cargo.lock']
-    return {str(path.relative_to(tree)): digest(path) for path in sorted(paths)}
-
 
 def executable_identity(path):
     resolved = path.resolve(strict=True)
@@ -569,6 +566,10 @@ def main(wrap_only=False):
     files = source_files()
     hashes = {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)}
     manifest = load_manifest(); trees = sources(manifest, offline=args.offline)
+    source_revision = manifest['sources']['fortress']['revision']
+    cargo_manifest = prepare_source_build(ROOT / 'scripts/oracle/rust/Cargo.toml', trees['fortress'], source_revision, CACHE)
+    build_environment = source_build_environment(cargo_manifest, trees['fortress'], source_revision)
+    adapter_hashes = upstream_inventory(cargo_manifest.parent)
     upstream_hashes = upstream_inventory(trees['fortress'])
     engine_identity = executable_identity(engine)
     cargo, _ = setup_rust(manifest, args.offline)
@@ -579,20 +580,20 @@ def main(wrap_only=False):
     if not engine_version.startswith(('4.3.stable', '4.7.2.stable')):
         raise ValueError('unsupported engine profile')
     execute([str(cargo), '+' + version, 'build', '--locked', '--offline', '--manifest-path',
-        str(ROOT / 'scripts/oracle/rust/Cargo.toml'), '--bin', 'p2p'], args.output / 'build.log', timeout=600)
+        str(cargo_manifest), '--bin', 'p2p'], args.output / 'build.log', timeout=600, environment=build_environment)
     # The oracle bin's own unit tests pin the hostile layout and player-count bounds.
     test_command = [str(cargo), '+' + version, 'test', '--locked', '--offline', '--manifest-path',
-        str(ROOT / 'scripts/oracle/rust/Cargo.toml'), '--bin', 'p2p']
-    execute(test_command, args.output / 'oracle-tests.log', timeout=600)
+        str(cargo_manifest), '--bin', 'p2p']
+    execute(test_command, args.output / 'oracle-tests.log', timeout=600, environment=build_environment)
     binary = CACHE / 'target/debug/p2p'
     binary_identity = executable_identity(binary)
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
     wrap_part = getattr(args, 'wrap_part', None)
     mesh_only = not wrap_only and args.mesh_only
-    cases = corpus(binary, args.case, wrap_only=wrap_only, wrap_part=wrap_part, group='mesh' if mesh_only else None)
+    cases = corpus(binary, args.case, wrap_only=wrap_only, wrap_part=wrap_part, group='mesh' if mesh_only else None, source_revision=source_revision)
     if wrap_only and args.include_lifecycle:
-        cases.update(corpus(binary, group='lifecycle'))
+        cases.update(corpus(binary, group='lifecycle', source_revision=source_revision))
     if args.case:
         cases = {args.case: cases[args.case]}
     evidence = []
@@ -603,7 +604,7 @@ def main(wrap_only=False):
             stdout, stderr = execute([str(binary)], args.output / f'{name}-rust-{repeat}.log', submitted.read_text())
             if stderr.strip():
                 raise ValueError('source stderr')
-            value = decode_trace(stdout); validate(value, scenario, True); source_results.append(value)
+            value = decode_trace(stdout); validate(value, scenario, True, source_revision=source_revision); source_results.append(value)
         if source_results[0] != source_results[1]:
             raise ValueError('source process repeat mismatch')
         expected = source_results[0]
@@ -622,16 +623,16 @@ def main(wrap_only=False):
                 actual = parse_godot(stdout, stderr)
             except ValueError as failure:
                 # A rejected trace script is itself a Godot-side disagreement with the validated source run.
-                differential_failure(name, binary, engine, scenario, expected, failure, args.output)
+                differential_failure(name, binary, engine, scenario, expected, failure, args.output, source_revision=source_revision)
             try:
-                compare(actual, expected, scenario)
+                compare(actual, expected, scenario, source_revision=source_revision)
             except ValueError as failure:
-                differential_failure(name, binary, engine, scenario, expected, failure, args.output)
+                differential_failure(name, binary, engine, scenario, expected, failure, args.output, source_revision=source_revision)
             actuals.append(actual)
         if actuals[0] != actuals[1]:
             raise ValueError('Godot repeat mismatch')
         path = args.output / (name + '-actual.json'); path.write_text(json.dumps(actuals[0], indent=2) + '\n')
-        controls = negative_controls(actuals[0], expected, scenario)
+        controls = negative_controls(actuals[0], expected, scenario, source_revision=source_revision)
         lifecycle_evidence = p2p_lifecycle.corpus_evidence(name, expected, controls) if 'lifecycle' in scenario else {}
         recovery_evidence = {}
         if name == p2p_recovery.NAME:
@@ -652,15 +653,16 @@ def main(wrap_only=False):
         print(name + ': actual input/ACK packets, ordered callbacks and confirmation match twice', flush=True)
     process_evidence = process_controls(binary, engine, cases['mesh_2_delay_0'],
         json.loads((args.output / 'mesh_2_delay_0-source.json').read_text()),
-        json.loads((args.output / 'mesh_2_delay_0-actual.json').read_text()), args.output) if 'mesh_2_delay_0' in cases else []
-    process_evidence.extend(p2p_lifecycle_controls.process_controls(binary, engine, cases, args.output))
+        json.loads((args.output / 'mesh_2_delay_0-actual.json').read_text()), args.output, source_revision=source_revision) if 'mesh_2_delay_0' in cases else []
+    process_evidence.extend(p2p_lifecycle_controls.process_controls(binary, engine, cases, args.output, source_revision=source_revision))
     require_unchanged('local source inventory', hashes, {str(p.relative_to(ROOT)): digest(p) for p in sorted(source_files())})
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
     require_unchanged('Rust oracle executable', binary_identity, executable_identity(binary))
+    require_unchanged('Cargo adapter inventory', adapter_hashes, upstream_inventory(cargo_manifest.parent))
     require_unchanged('repository identity', identity, git_identity())
     receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True,
-        'upstream_revision': REVISION, 'upstream_archive_sha256': manifest['sources']['fortress']['archive']['digest'],
+        'upstream_revision': source_revision, 'upstream_archive_sha256': manifest['sources']['fortress']['archive']['digest'],
         'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'upstream_source_sha256': upstream_hashes,
         'upstream_lock_sha256': upstream_hashes['Cargo.lock'],
         'upstream_manifest_sha256': upstream_hashes['Cargo.toml'], 'source_sha256': hashes,

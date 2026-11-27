@@ -6,6 +6,7 @@ import tomllib
 import unittest
 from unittest.mock import patch
 
+from source_wire import RECOVERY_REVISION
 from drop_history_contract import check_checksum_reports, check_source_content, check_source_operation
 
 
@@ -23,7 +24,7 @@ class DropHistoryWireTests(unittest.TestCase):
             (oracle / 'src').mkdir(parents=True)
             (oracle / 'Cargo.lock').write_text('')
             (oracle / 'Cargo.toml').write_text(
-                '[dependencies]\nfortress-rollback = { path = "../../../.cache/reference/fortress-reviewed" }\n')
+                '[dependencies]\nfortress-rollback = { path = "../../../.cache/reference/fortress-reviewed", default-features = false }\n')
 
             def verify_manifest(command, *_args):
                 path = Path(command[command.index('--manifest-path') + 1])
@@ -32,7 +33,7 @@ class DropHistoryWireTests(unittest.TestCase):
 
             tools = {'cargo': Path('cargo'), 'rustc': Path('rustc')}
             with patch.multiple(launch, ROOT=root, CACHE=cache), patch.object(launch, 'build', side_effect=verify_manifest) as build:
-                launch.build_observer(tools, root, 'fortress-reviewed', candidate, 'candidate', True)
+                launch.build_observer(tools, root, candidate, RECOVERY_REVISION, True)
             build.assert_called_once()
 
     # Value: protects=exact operation and donor evidence; fails_when=version-6 identity projects away; why_new=version-2 lacks these fields; seam=none
