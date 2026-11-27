@@ -56,10 +56,10 @@ func configure(host: Node, mode: Object) -> bool:
 	if fallback.configure(host.transports[0], relay, host.memberships[0], host.adapters[0], host.peers[0], controls) != 0:
 		host.errors.append("mixed_fallback_configure")
 		return false
-	_observe_relay(host)
+	_observe_relay(host, host.recording_pressure)
 	return true
 
-func _observe_relay(host: Node) -> void:
+func _observe_relay(host: Node, capture_recording: bool = false) -> void:
 	host.clients[0].game_data_binary_received.connect(func(sender: String, encoding: int, bytes: PackedByteArray) -> void:
 		var decoded: RefCounted = Relay.Envelope.decode(bytes, 1024)
 		if encoding == 1 and decoded.code == 0 and decoded.sender == sender and decoded.recipient == uuid \
@@ -69,7 +69,7 @@ func _observe_relay(host: Node) -> void:
 			limits.player_count = host.player_count
 			var input: T.Result = Codec.decode(decoded.payload, limits)
 			if input.code != T.Code.OK: return
-			if host.recording_pressure and _post_wrap_input(input.message):
+			if capture_recording and _post_wrap_input(input.message):
 				var envelope: String = bytes.hex_encode()
 				if received_inputs.size() >= 512 and not received_inputs.has(envelope):
 					host.errors.append("recording_pressure_receipt_overflow")
