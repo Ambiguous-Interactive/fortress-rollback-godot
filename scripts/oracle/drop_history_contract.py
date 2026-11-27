@@ -217,7 +217,7 @@ def check_godot_packet(raw, missing_rows, target_slots, warmup=0):
             'Godot history packet original bytes')
 
 
-def check_godot_prepare(packet, missing_rows, target_slots, warmup=0, unequal=False):
+def check_godot_prepare(packet, missing_rows, target_slots, warmup=0, unequal=False, *, opening_cut=None):
     """The coordinator's survivor-link proposal: the opening window offer and the
     donor plan (stage HISTORY), each retried byte-identical, the plan re-emitted
     when the frozen value's digest becomes known. The plan carries the
@@ -249,7 +249,7 @@ def check_godot_prepare(packet, missing_rows, target_slots, warmup=0, unequal=Fa
                 + targets + struct.pack('<I', len(plan)) + plan
                 + struct.pack('<Q', fixture_roster_digest(target_slots)))
     donor_plan = struct.pack('<BH', target_slots, 1024)
-    opening = body(0, warmup + 4, max(0, warmup - 2 + int(unequal)), 0, b'')
+    opening = body(0, warmup + 4 if opening_cut is None else opening_cut, max(0, warmup - 2 + int(unequal)), 0, b'')
     uncertified = body(5, cut, warmup + 8, 0, donor_plan)
     certified = body(5, cut, warmup + 8, digest(frozen), donor_plan)
     require(data in (opening, uncertified, certified), 'Godot exact original prepare')

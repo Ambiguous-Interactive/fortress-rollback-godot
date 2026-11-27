@@ -5,6 +5,8 @@ const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.
 
 var order: int = 0
 var publications: Dictionary = {}
+var history_publications: Array[Dictionary] = []
+var track_history: bool = false
 
 ## The barrier payload shapes the fixture records. One definition keeps the
 ## observer's publications and the fixture's emissions in the same set, so a
@@ -27,7 +29,8 @@ class ObservedDrop:
 		# static, so both read these shared constants.
 		var phase: int = int(payload.phase)
 		var stage: int = int(payload.stage)
-		if phase not in RECORDED_PHASES and not (phase == Drop.Phase.REPORT and stage in RECORDED_STAGES):
+		var history: bool = observer.get_ref().track_history and phase == Drop.Phase.BACKFILL and stage == Drop.Stage.HISTORY
+		if not history and phase not in RECORDED_PHASES and not (phase == Drop.Phase.REPORT and stage in RECORDED_STAGES):
 			return super._publish(host, index, payload)
 		var endpoint: RefCounted = host._endpoint(index)
 		var before: int = endpoint._outbox.size()
@@ -35,7 +38,7 @@ class ObservedDrop:
 		var code: int = super._publish(host, index, payload)
 		if code == I.Code.OK:
 			for offset: int in range(before, endpoint._outbox.size()):
-				observer.get_ref().published(source, host._ids[index][0] - 1, endpoint._outbox[offset])
+				observer.get_ref().published(source, host._ids[index][0] - 1, endpoint._outbox[offset], host._now if history else -1)
 		return code
 
 
@@ -53,11 +56,14 @@ func next_order() -> int:
 	return order
 
 
-func published(source: int, recipient: int, bytes: PackedByteArray) -> void:
+func published(source: int, recipient: int, bytes: PackedByteArray, history_at: int) -> void:
 	var key: String = "%d:%d:%s" % [source, recipient, bytes.hex_encode()]
 	if not publications.has(key):
 		publications[key] = []
-	publications[key].append(next_order())
+	var accepted_order: int = next_order()
+	publications[key].append(accepted_order)
+	if history_at >= 0:
+		history_publications.append({"from": source, "to": recipient, "packet": bytes.hex_encode(), "order": accepted_order, "at_us": history_at})
 
 
 func take(source: int, recipient: int, bytes: PackedByteArray) -> int:

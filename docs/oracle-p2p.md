@@ -773,17 +773,19 @@ own configured deadline likewise refuses the COMMIT at equality and after.
 
 The all-donor-loss comparison uses the unequal four/five opening with two
 departing slots. Both transports discard every original history packet for
-rows 8–11 while still delivering the other controls. The pinned source emits
+rows 8–11 after the proposal and inventory receipts. The Godot observer
+binds each routed copy to its accepted publication and checks the 50 ms
+retry intervals. The pinned source emits
 a timeout ABORT from each survivor. Its next advance returns
 `NotSynchronized`, both target handles stay connected, and the original
 retained confirmed rows match before and after expiry. Godot reports
-`timeout` on both survivors, refuses another step and leaves both targets
-unfrozen. It checks every original confirmed row, status and canonical game
+`timeout` at each survivor’s own deadline, refuses another step and leaves
+both targets unfrozen. It checks every original confirmed row, status and canonical game
 prefix through each opening frontier. Both runtimes preserve the recipient's
 target receipts at 7 and the donor's at 11. The paired Godot control applies
 the same pending corrections and exposes the same rows before the barrier,
 then delivers the original donor packet, freezes both slots at 11 and
-continues through twenty canonical prefixes. No retained donor row is evicted.
+continues through twenty canonical prefixes. The retained donor rows remain resident in both runtimes.
 
 This establishes single-target and grouped two-target missing-history donor scenarios
 with clean delivery, one lost original historical backfill, and unequal grouped inventory/COMMIT/ACK loss alone or combined. The two implementations
