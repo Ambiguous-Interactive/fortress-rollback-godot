@@ -247,8 +247,9 @@ Use `--trace-mixed-receive --browser-pair chromium-firefox` with the trace
 server to collect both receipts in one relay room. Each engine observes
 its own frozen recipients. On failure, both supplemental receipts refer
 to the same original line. The witness rechecks proxy matches after teardown.
-A later duplicate is ambiguous, and rollover cannot substitute a later
-carrier for an original match. Compare timestamps within each source clock.
+A later duplicate is ambiguous. If the proxy capture has gaps, the
+supplements leave exact attribution unresolved. Compare timestamps within
+each source clock.
 
 Keep `native-online.json` with the logs from the same run. After export, a
 room failure exits nonzero and can publish a receipt with `passed: false`.

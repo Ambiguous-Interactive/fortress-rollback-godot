@@ -142,6 +142,14 @@ test('settled proxy capture keeps original anchors and detects late duplicates',
   assert.deepEqual(refresh().rows[0].proxy.map(write => write.ordinal), [1, 2], 'late duplicate makes the carrier ambiguous');
   assert.deepEqual(original.rows[0].proxy.map(write => write.ordinal), [1], 'published failure remains intact');
 
+  const incomplete = proxy.snapshot();
+  incomplete.sockets[0].events.pop();
+  incomplete.sockets.push({ page_index: 0, browser_endpoint: '127.0.0.1:44002', events: [], omitted: 1 });
+  assert.deepEqual(refreshRelayReceive(original, joined, incomplete).rows[0].proxy, [], 'an evicted duplicate could match the old ordinal');
+  incomplete.sockets.pop();
+  incomplete.sockets[0].omitted = 1;
+  assert.deepEqual(refreshRelayReceive(original, joined, incomplete).rows[0].proxy, [], 'the observed frame could come from an evicted ordinal');
+
   const settled = proxy.snapshot();
   settled.sockets[0].events.shift();
   assert.deepEqual(refreshRelayReceive(original, joined, settled).rows[0].proxy, [], 'rollover cannot substitute a new ordinal');
