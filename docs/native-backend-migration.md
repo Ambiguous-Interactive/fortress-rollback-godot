@@ -124,14 +124,16 @@ snapshot. A superseded request has `published: false`.
 
 On deadline failure, the browser log retains `relayServerControllerTiming`
 and any `relayServerRecoveryTiming`. The matching generation may have opened
-before the deadline and then missed it during read or parse. A timely open
-proves the atomically published snapshot was already available. A late open
+before the deadline and then missed it during read, close, parse or selection.
+A timely open proves the atomically published snapshot was already available. A late open
 or an older generation alone leaves publication timing unresolved. Use the
 server row to locate time spent waiting for the snapshot lock, collecting the
 snapshot, serializing it or publishing it. Compare elapsed intervals within
-each clock and join the observations by generation and links. If the server
-alone spent more than the whole remaining request window in those stages,
-the publication necessarily missed the deadline.
+each clock and join the observations by generation and links. The interval
+from server request observation to serialization completion is before the
+rename. If it equals or exceeds the controller interval from request start
+to the deadline, the publication missed the deadline. The server can observe
+the request only after the controller starts writing it.
 
 Ordinary receipts include up to 128 records per directed link and stage.
 When a native expiry identifies links to diagnose, the browser and server

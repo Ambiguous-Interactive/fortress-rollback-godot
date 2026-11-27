@@ -69,9 +69,10 @@ async function readServerReceipt(path, timing) {
   } finally {
     await file.close();
   }
+  timing.parse_started_ms = performance.now();
   const receipt = JSON.parse(text);
   timing.parsed_ms = performance.now();
-  timing.observed_generation = receipt.request;
+  timing.observed_generation = receipt?.request;
   return receipt;
 }
 
@@ -101,19 +102,31 @@ function createRelayServerReader(path) {
             if (performance.now() >= deadline) {
               if (timing.opened_ms >= deadline) timing.outcome = 'late_open';
               else if (timing.read_ms >= deadline) timing.outcome = 'late_read';
+              else if (timing.parse_started_ms >= deadline) timing.outcome = 'late_before_parse';
               else timing.outcome = timing.parsed_ms >= deadline ? 'late_parse' : 'late_check';
               break;
             }
             const requested = pending.links;
-            completed = pending.generation;
-            pending = null;
             assert.deepEqual(receipt.links, requested, 'relay server receipt selected different links');
             const matches = requested.length === links.length && requested.every((link, index) => link === links[index]);
-            timing.outcome = matches ? 'selected' : 'superseded_selection';
-            receipt.controller_timing = timing;
-            const result = matches && select(receipt);
+            let result;
+            if (matches) {
+              receipt.controller_timing = timing;
+              timing.outcome = 'predicate_error';
+              try {
+                result = select(receipt);
+              } finally {
+                timing.selection_finished_ms = performance.now();
+              }
+              if (timing.selection_finished_ms >= deadline) {
+                timing.outcome = 'late_selection';
+                break;
+              }
+            }
+            completed = pending.generation;
+            pending = null;
+            timing.outcome = result ? 'selected' : matches ? 'predicate_not_met' : 'superseded_selection';
             if (result) return result;
-            if (matches) timing.outcome = 'predicate_not_met';
           }
         }
         if (performance.now() < deadline) await pause(10);

@@ -237,7 +237,7 @@ impl Trace {
         let published = paths.commit(scope, &request)?;
         let commit_finished_ns = at_ns();
         // The receipt is immutable after rename. Log the observed rename outcome separately.
-        eprintln!("relay receipt timing {}", serde_json::json!({
+        let _ = writeln!(io::stderr().lock(), "relay receipt timing {}", serde_json::json!({
             "clock": "server.monotonic",
             "room": scope.room,
             "request": request.generation,

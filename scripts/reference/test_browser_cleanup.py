@@ -120,7 +120,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const { createRelayServerReader } = require(process.argv[1]);
 const file = process.argv[2];
-const { open, readFile, rename } = fs;
+const { open, rename } = fs;
 const read = createRelayServerReader(file);
 const publish = async request => {
   await fs.writeFile(file + '.new', JSON.stringify({ version: 2, request, links: [] }));
@@ -133,11 +133,6 @@ Object.defineProperty(globalThis, 'performance', { value: { now: () => now } });
   fs.rename = async (from, to) => {
     await rename(from, to);
     if (to === file + '.request') await publish(1);
-  };
-  fs.readFile = async (...args) => {
-    const text = await readFile(...args);
-    now = 100;
-    return text;
   };
   fs.open = async (...args) => {
     const reader = await open(...args);
@@ -153,13 +148,13 @@ Object.defineProperty(globalThis, 'performance', { value: { now: () => now } });
     assert.deepEqual(error.receiptTiming, {
       clock: 'controller.performance', deadline_ms: 100, generation: 1, links: [],
       request_started_ms: 10, request_published_ms: 10, open_started_ms: 10,
-      opened_ms: 99, read_ms: 100, parsed_ms: 100, observed_generation: 1, outcome: 'late_read',
+      opened_ms: 99, read_ms: 100, parse_started_ms: 100, parsed_ms: 100, observed_generation: 1, outcome: 'late_read',
     });
     return true;
   });
 
   // A recovery read can consume the same pending request, with its original request stamps.
-  Object.assign(fs, { open, readFile, rename });
+  Object.assign(fs, { open, rename });
   const receipt = await read();
   assert.equal(receipt.request, 1);
   assert.equal(receipt.controller_timing.request_published_ms, 10);
@@ -179,6 +174,23 @@ Object.defineProperty(globalThis, 'performance', { value: { now: () => now } });
   });
   fs.open = open;
   await publish(2);
+  const failure = new Error('selection rejected');
+  await assert.rejects(read(() => { throw failure; }), error => {
+    assert.equal(error, failure);
+    assert.equal(error.receiptTiming.outcome, 'predicate_error');
+    assert.equal(error.receiptTiming.selection_finished_ms, 150);
+    return true;
+  });
+  await assert.rejects(read(candidate => {
+    now = 151;
+    return candidate;
+  }, 1), error => {
+    assert.match(error.message, /relay server receipt deadline/);
+    assert.equal(error.receiptTiming.parsed_ms, 150);
+    assert.equal(error.receiptTiming.selection_finished_ms, 151);
+    assert.equal(error.receiptTiming.outcome, 'late_selection');
+    return true;
+  });
   assert.equal((await read()).request, 2);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
