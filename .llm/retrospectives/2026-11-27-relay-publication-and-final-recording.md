@@ -11,13 +11,16 @@
 The controlled generation replay varied only code generation for the trace
 publisher. Each result was compared with the original bytes. Optimization
 level 1 reduced the median elapsed publication time from 603 to 456 ms.
-The optimized 4.3 Firefox pilot printed `relay:4 passed` and
-`relay:8 passed`. The eight-player final generation encoded and flushed in
-1,436 ms. Independent verification found 40 original canonical rows, eight
-clean Leaves and exact Gecko carriers on all 56 directed links.
+The matched 4.3 Firefox run printed `relay:4 passed` and `relay:8 passed`.
+The eight-player final generation encoded and flushed in 2,005 ms.
+Independent verification found 40 original canonical rows, eight clean Leaves
+and exact Gecko carriers on all 56 directed links.
+[Original receipt](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/blob/8d7cf5c30e9369a6a72a1752d36e43c987bd8152/before-relay-8-server-trace.json.gz)
+[Optimized receipt](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/blob/8d7cf5c30e9369a6a72a1752d36e43c987bd8152/after-relay-8-server-trace.json.gz)
+[Server and controller timings](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/blob/8d7cf5c30e9369a6a72a1752d36e43c987bd8152/README.md)
 
 On the unchanged CPU mask, both pinned Firefox matrices selected generation 3
-in time. Selection took 962 ms for eight peers on 4.3 and 389 ms on 4.7.2.
+in time. Selection took 2,112 ms for eight peers on 4.3 and 749 ms on 4.7.2.
 Both stock Chromium controls passed the same canonical history and Leave
 checks. A deliberate Firefox post-history hold confirmed 36 input and 20
 quality carriers at Gecko and raw arrival before expiry and stopped at the

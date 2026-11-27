@@ -124,6 +124,12 @@ observation, the locked state cutoff, snapshot completion, buffered JSON
 serialization and the result of rechecking the request and renaming the
 snapshot. A superseded request has `published: false`.
 
+The matched eight-player Firefox 4.3 captures used CPUs 0–2 and the same
+three-second controller deadline.
+[Original receipt](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/blob/8d7cf5c30e9369a6a72a1752d36e43c987bd8152/before-relay-8-server-trace.json.gz)
+[Optimized receipt](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/blob/8d7cf5c30e9369a6a72a1752d36e43c987bd8152/after-relay-8-server-trace.json.gz)
+[Server and controller timings](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/blob/8d7cf5c30e9369a6a72a1752d36e43c987bd8152/README.md)
+
 On deadline failure, the browser log retains `relayServerControllerTiming`
 and any `relayServerRecoveryTiming`. The matching generation may have opened
 before the deadline and then missed it during read, close or parse.
