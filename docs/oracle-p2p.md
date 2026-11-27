@@ -761,11 +761,14 @@ certified follower. Rust can apply a decision after collecting every READY,
 and a forwarded COMMITTED report can supply the same decision. The Rust
 socket therefore also holds the coordinator's READY and COMMITTED
 reports to the follower. It releases the original READY and COMMIT in one
-receive batch at offsets −1, 0 and +1 µs from the 2-second deadline. A drop
-commits and play advances only one microsecond before the deadline. At
+receive batch at offsets −1, 0 and +1 µs from the 2-second deadline. The clock
+starts at the public removal request after six warmup and three target-only
+turns. Only the early case reports the target's drop and cut, then applies
+the returned gameplay requests to advance the game. At
 equality and after, Rust emits a timeout ABORT for the same operation and
 its next advance returns `NotSynchronized` without changing the game frame.
-All three runs preserve the exposed original input row at frame 4. Godot's
+All three runs preserve the exposed original input row at frame 4 after
+the advancement attempt. Godot's
 own configured deadline likewise refuses the COMMIT at equality and after.
 
 This establishes single-target and grouped two-target missing-history donor scenarios

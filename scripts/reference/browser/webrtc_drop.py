@@ -1014,14 +1014,21 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                         or type(row.get('pending_events')) is not int or row['pending_events'] != 1
                         or type(row.get('opening_frontier')) is not int or row['opening_frontier'] != frontier):
                     raise ValueError('peer-drop missing-history opening frontier missing or invalid')
+                opening_receipt = row.get('opening_target_receipt')
+                if type(opening_receipt) is not int or opening_receipt != (3 if coordinator else 6):
+                    raise ValueError('peer-drop missing-history opening target receipt missing or invalid')
                 published = row.get('drop_frames')
                 if (row['departing_slot'] != target_slot or row['freeze_frame'] != 6
                         or not isinstance(published, dict) or published != {target_id: 6}
                         or type(published[target_id]) is not int):
                     raise ValueError('peer-drop missing-history certified departure missing')
-                expected = bytes([(frontier * 17 + target_slot * 31 + 1) & 255]).hex()
-                if row.get('exposed_before') != expected or row.get('exposed_after') != expected:
-                    raise ValueError('peer-drop missing-history exposed input changed or missing')
+                expected = [{'bytes': bytes([(frontier * 17 + slot * 31 + 1) & 255]).hex(), 'status': 1}
+                            for slot in range(len(roster))]
+                for field in ('exposed_before', 'exposed_after'):
+                    observed = row.get(field)
+                    if (not isinstance(observed, list) or observed != expected
+                            or any(type(item['status']) is not int for item in observed)):
+                        raise ValueError('peer-drop missing-history exposed input changed or missing')
             proposer = next(row for row in survivors if row['role'] == 1)
             follower = next(row for row in survivors if row['role'] == 0)
             if not _withheld_input_range(follower.get('withheld_from_departing'), 3, follower['slot'], target_id):

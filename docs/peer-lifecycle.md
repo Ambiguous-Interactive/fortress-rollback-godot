@@ -337,8 +337,9 @@ frame 2 and the donor at frame 3. Withholding the donor's inputs from the depart
 page keeps its receipt for the donor's slot at 2. The departing page still reports
 receipt of the proposer's original frame 3 to the donor. Separately, it withholds
 its own original frames 4–6 from the proposer, which recovers them from the donor.
-The receipt checks the confirmed input at each opening frontier before and after
-the certificate, the matching drop event at cut 6 and 38 original canonical prefixes
+At barrier opening, the proposer has target inputs through 3 and the donor
+through 6. The receipt checks every slot's confirmed input and status at each opening
+frontier before and after the certificate, the matching drop event at cut 6 and 38 original canonical prefixes
 per survivor.
 
 The agreement runs in real sessions, not only in unit tests. Three peer

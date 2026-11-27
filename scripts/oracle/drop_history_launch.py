@@ -139,7 +139,7 @@ def deadline_evidence(engine, binary, output):
             and len(record.get('runs', [])) == 2 and same(*record['runs'])
             and record['runs'][0].get('assertions', 0) > 0 and record['runs'][0].get('failures') == [], 'Godot COMMIT deadline repeat')
 
-    return {'source': cases, 'godot': record}, deadline_controls(cases['0'])
+    return {'source': cases, 'godot': record}, deadline_controls(cases)
 
 
 def build(command, log, rustc):

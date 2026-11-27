@@ -121,8 +121,9 @@ func run(host: Node, count: int) -> bool:
 	var history_lost: bool = bool(JavaScriptBridge.eval("window.fortressDropHistoryLost || false"))
 	var unequal_history: bool = missing_history and not history_lost
 	var opening_expected: int = -1
+	var expected_target_receipt: int = -1
 	var coordinator_identity: PackedByteArray = PackedByteArray()
-	var exposed_before: String = ""
+	var exposed_before: Array[Dictionary] = []
 	var commit_loss: bool = bool(JavaScriptBridge.eval("window.fortressDropCommit || false"))
 	var rollback_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropRollback || false"))
 	var room_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropRoom || false"))
@@ -145,6 +146,7 @@ func run(host: Node, count: int) -> bool:
 		else:
 			if unequal_history:
 				opening_expected = 2 if slot == recipient_slot else 3
+				expected_target_receipt = 3 if slot == recipient_slot else 6
 				# The proposer needs the departing endpoint's receipt for the donor's slot.
 				if slot != recipient_slot:
 					host.transports[0].arm_drop(departing_identity, 3, 6, slot)
@@ -190,19 +192,21 @@ func run(host: Node, count: int) -> bool:
 		return await host.transports[0].run_overlap(host, departing_uuid)
 	if opening_expected >= 0:
 		host.stage = "peer_drop_before_unequal_frontiers"
-		var target_receipt: int = 3 if opening_expected == 2 else 6
 		if not await host._wait(
 			func() -> bool:
-				return peer.network_status().peers[departing_key].last_received_frame >= target_receipt \
+				return peer.network_status().peers[departing_key].last_received_frame >= expected_target_receipt \
 					and peer.status().confirmed_frame >= opening_expected,
 			true
 		):
 			return false
 		host._update_transport_clock()
 		var recovered: Driver.StepResult = peer.recover(host.transport_us)
-		exposed_before = _exposed_input(peer, opening_expected, departing_slot)
+		exposed_before = _exposed_row(peer, opening_expected, count)
 		if recovered.code != S.Code.OK or peer.status().confirmed_frame != opening_expected or exposed_before.is_empty():
 			host.errors.append("peer_drop_missing_before_exposure")
+			return false
+		if peer.network_status().peers[departing_key].last_received_frame != expected_target_receipt:
+			host.errors.append("peer_drop_missing_before_target_receipt")
 			return false
 	JavaScriptBridge.eval("document.body.dataset.fortressDropReady = 'true'")
 	if JavaScriptBridge.eval("window.fortressDropClose || false"):
@@ -531,7 +535,12 @@ func run(host: Node, count: int) -> bool:
 			host.errors.append("peer_drop_missing_opening_frontier")
 			return false
 		row["opening_frontier"] = opening_frontier
-		var exposed_after: String = _exposed_input(peer, opening_frontier, departing_slot)
+		var opening_target: Vector2i = barrier.receipts.get(departing_slot, Vector2i(-1, -1))
+		if opening_target.y != expected_target_receipt:
+			host.errors.append("peer_drop_missing_opening_target_receipt")
+			return false
+		row["opening_target_receipt"] = opening_target.y
+		var exposed_after: Array[Dictionary] = _exposed_row(peer, opening_frontier, count)
 		if opening_frontier != opening_expected or exposed_before != exposed_after or exposed_after.is_empty():
 			host.errors.append("peer_drop_missing_exposed_input")
 			return false
@@ -654,12 +663,17 @@ func run(host: Node, count: int) -> bool:
 ## The donor's retained bytes never reach the recipient. The barrier must
 ## expire and end the match: no survivor freezes the departed slot, installs a
 ## partial interval or continues from an unverified local frontier.
-func _exposed_input(peer: Peer, frame: int, slot: int) -> String:
+func _exposed_row(peer: Peer, frame: int, count: int) -> Array[Dictionary]:
 	var input_row: S.FrameInputs = peer.confirmed_inputs(frame)
 	if input_row == null:
-		return ""
-	var input: S.InputResult = input_row.read(slot)
-	return input.bytes.hex_encode() if input.code == S.Code.OK and input.status == Queue.Status.CONFIRMED else ""
+		return []
+	var row: Array[Dictionary] = []
+	for slot: int in range(count):
+		var input: S.InputResult = input_row.read(slot)
+		if input.code != S.Code.OK or input.status != Queue.Status.CONFIRMED:
+			return []
+		row.append({"bytes": input.bytes.hex_encode(), "status": input.status})
+	return row
 
 
 func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,

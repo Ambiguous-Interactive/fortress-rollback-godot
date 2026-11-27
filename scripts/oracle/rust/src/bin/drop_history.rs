@@ -1,7 +1,7 @@
 //! Scoped actual-source witness for original history across a coordinated drop.
 #![forbid(unsafe_code)]
-use fortress_rollback::{Config, DisconnectBehavior, FortressError, FortressRequest, Frame, InputStatus, Message,
-    NonBlockingSocket, P2PSession, PlayerHandle, PlayerType, ProtocolConfig, SessionBuilder, SyncConfig};
+use fortress_rollback::{Config, DisconnectBehavior, FortressError, FortressEvent, FortressRequest, Frame, InputStatus, Message,
+    NonBlockingSocket, P2PSession, PlayerHandle, PlayerType, ProtocolConfig, RequestVec, SessionBuilder, SyncConfig};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::{Arc, Mutex}, time::Duration};
 
@@ -62,7 +62,10 @@ fn advance(session: &mut P2PSession<Profile>, game: &mut Game, player: usize,
     for slot in player * slots..(player + 1) * slots {
         session.add_local_input(PlayerHandle::new(slot), sample(slot, game.frame)).map_err(|error| format!("{error:?}"))?;
     }
-    for request in session.advance_frame().map_err(|error| format!("{error:?}"))? {
+    apply_requests(session.advance_frame().map_err(|error| format!("{error:?}"))?, game, states)
+}
+fn apply_requests(requests: RequestVec<Profile>, game: &mut Game, states: &mut BTreeMap<i32, Value>) -> Result<(), String> {
+    for request in requests {
         match request {
             FortressRequest::SaveGameState { cell, frame } => {
                 if frame.as_i32() != game.frame || !cell.save(frame, Some(game.clone()), Some(0)) { return Err("save boundary".into()); }
@@ -220,7 +223,8 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
     let expired_original_rows = (0..2).map(|peer|
         sessions[peer].confirmed_inputs_for_frame(Frame::new(0)).is_err()).collect::<Vec<_>>();
     let started_at = *clock.lock().unwrap();
-    for session in sessions.iter_mut().take(2) { session.remove_player(PlayerHandle::new(2 * target_slots)).map_err(|error| format!("{error:?}"))?; }
+    let target = PlayerHandle::new(2 * target_slots);
+    for session in sessions.iter_mut().take(2) { session.remove_player(target).map_err(|error| format!("{error:?}"))?; }
     let negotiation_rounds = if deadline_offset.is_some() { 16 } else { 160 };
     for _ in 0..negotiation_rounds {
         *clock.lock().unwrap() += 1000;
@@ -243,7 +247,8 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
                 .map_err(|error| format!("confirmed prefix: {error:?}"))
         };
         let original_row = confirmed(follower)?;
-        let dropped_before = follower.events().filter(|event| matches!(event, fortress_rollback::FortressEvent::PeerDropped { .. })).count();
+        let dropped_before = peer_dropped(follower);
+        let target_connected_before = follower.diagnostic_player_connected(target);
         let release = (started_at + 2_000_000).checked_add_signed(offset).ok_or("deadline overflow")?;
         *clock.lock().unwrap() = release;
         buffers[1].lock().unwrap().incoming.extend([
@@ -258,22 +263,29 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
         let commit_received = received(&emitted)?;
         drop(observations);
         let abort = control.iter().find(|packet| packet["from"] == 1 && packet["to"] == 0 && packet["body"].get("DropAbort").is_some());
-        let final_row = confirmed(follower)?;
         let frame_before = follower.current_frame().as_i32();
         follower.add_local_input(PlayerHandle::new(target_slots), sample(target_slots, frame_before))
             .map_err(|error| format!("deadline input: {error:?}"))?;
         let advance = match follower.advance_frame() {
-            Ok(_) => "ok",
+            Ok(requests) => {
+                apply_requests(requests, &mut games[1], &mut histories[1])?;
+                "ok"
+            },
             Err(FortressError::NotSynchronized) => "not_synchronized",
             Err(error) => return Err(format!("deadline advance: {error:?}")),
         };
-        let dropped = follower.events().filter(|event| matches!(event, fortress_rollback::FortressEvent::PeerDropped { .. })).count();
+        let final_row = confirmed(follower)?;
+        let dropped = peer_dropped(follower);
+        let target_connected_after = follower.diagnostic_player_connected(target);
+        let target_receipt_after = follower.diagnostic_player_receipt_frame(target).map(Frame::as_i32);
         return Ok(json!({"upstream_revision":REVISION, "offset_us":offset,
             "started_us":started_at, "release_us":release, "ready":ready_emitted, "ready_received":ready_received,
             "commit":emitted, "commit_received":commit_received, "abort":abort,
             "state":follower.current_state().to_string(), "dropped_before":dropped_before, "dropped":dropped, "frontier":frontier.as_i32(),
             "row_before":original_row, "row_after":final_row, "advance":advance, "frame_before":frame_before,
-            "frame_after":follower.current_frame().as_i32()}));
+            "frame_after":follower.current_frame().as_i32(), "game_frame_after":games[1].frame, "advanced_row":histories[1].get(&frame_before),
+            "target_connected_before":target_connected_before, "target_connected_after":target_connected_after,
+            "target_receipt_after":target_receipt_after}));
     }
     let mut dropped = Vec::new();
     for session in sessions.iter_mut().take(2) {
@@ -308,6 +320,12 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
         result["expired_original_rows"] = json!(expired_original_rows);
     }
     Ok(result)
+}
+fn peer_dropped(session: &mut P2PSession<Profile>) -> Vec<Value> {
+    session.events().filter_map(|event| match event {
+        FortressEvent::PeerDropped { handle, addr } => Some(json!({"handle":handle.as_usize(), "address":addr})),
+        _ => None,
+    }).collect()
 }
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
