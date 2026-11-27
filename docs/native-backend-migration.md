@@ -158,6 +158,9 @@ the server write by room, endpoints, epoch, sequence and envelope SHA-256.
 The complete carrier SHA-256 joins the same proxy observation to the browser
 event. A TLS write callback describes the proxy's local write.
 The browser receipt supplies the independent delivery observation.
+The receipt freezes retained bytes in the browser and hashes the exact
+envelopes and carriers in the Node controller. This leaves the renderer free
+of export-time digest work while preserving its capture cutoff.
 
 Each proxy socket retains 8,192 addressed records, with a cap of 16 sockets.
 Each page retains 8,192 addressed message events. Capture stops retaining
