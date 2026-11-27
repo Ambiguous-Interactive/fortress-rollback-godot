@@ -7,6 +7,49 @@ const LOG_MIB = 32;
 const LOG_LIMIT = LOG_MIB * 1024 * 1024;
 // Chromium uses a rolling file. Allow for its constants and final state in addition to event bytes.
 const READ_LIMIT = LOG_LIMIT + 4 * 1024 * 1024;
+const PAGE_CLOCK_PRECISION_MS = 2;
+const validClockMs = value => Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER;
+
+function readChromiumClock() {
+  return { page_ms: performance.now(), time_origin_ms: performance.timeOrigin };
+}
+
+async function calibrateChromiumClock(page) {
+  // Linux Chromium TimeTicks and Node hrtime use the same system monotonic clock.
+  const now = () => Number(process.hrtime.bigint() / 1000n) / 1000;
+  const start_ms = now();
+  const sample = await page.evaluate(readChromiumClock);
+  return { start_ms, end_ms: now(), sample };
+}
+
+function chromiumServiceSamples(samples) {
+  const project = sample => validClockMs(sample?.page_ms) && validClockMs(sample.time_origin_ms) && sample.time_origin_ms > 0
+    ? { page_ms: sample.page_ms, time_origin_ms: sample.time_origin_ms } : null;
+  const [before, after] = Array.isArray(samples) && samples.length === 2 ? samples : [];
+  return { before: project(before), after: project(after) };
+}
+
+function chromiumExpiryWindow(calibration, expiry) {
+  const { start_ms, end_ms, sample } = calibration ?? {};
+  const { before, after } = expiry.chromium_service ?? {};
+  if (!calibration || !before || !after) return { status: 'unavailable' };
+  const timestamps = [start_ms, end_ms, sample?.page_ms, sample?.time_origin_ms, before.page_ms, after.page_ms, expiry.page_ms];
+  if (!timestamps.every(validClockMs) || start_ms <= 0 || end_ms < start_ms || sample.time_origin_ms <= 0
+    || sample.page_ms > before.page_ms || before.page_ms > after.page_ms || after.page_ms > expiry.page_ms
+    || before.time_origin_ms !== sample.time_origin_ms || after.time_origin_ms !== sample.time_origin_ms) return { status: 'invalid' };
+  const min_netlog_ms = start_ms + (before.page_ms - sample.page_ms) - PAGE_CLOCK_PRECISION_MS;
+  const max_netlog_ms = end_ms + (after.page_ms - sample.page_ms) + PAGE_CLOCK_PRECISION_MS;
+  if (!(min_netlog_ms > 0 && min_netlog_ms <= max_netlog_ms && max_netlog_ms <= Number.MAX_SAFE_INTEGER)) return { status: 'invalid' };
+  return { status: 'bounded', min_netlog_ms, max_netlog_ms };
+}
+
+function chromiumExpiryTiming(window, at_ms) {
+  if (window.status !== 'bounded') return { order: 'unresolved', reason: window.status };
+  const min_gap_ms = at_ms - window.max_netlog_ms;
+  // NetLog serializes TimeTicks by truncating to whole milliseconds.
+  const max_gap_ms = at_ms + 1 - window.min_netlog_ms;
+  return { order: max_gap_ms < 0 ? 'before' : min_gap_ms > 0 ? 'after' : 'unresolved', min_gap_ms, max_gap_ms };
+}
 
 async function readChromiumLog(path) {
   try {
@@ -37,11 +80,11 @@ async function createChromiumCapture(root) {
   const path = join(directory, 'netlog.json');
   return {
     args: [`--log-net-log=${path}`, '--net-log-capture-mode=Everything', `--net-log-max-size-mb=${LOG_MIB}`],
-    async finish(host, receive, recipients) {
+    async finish(host, receive, recipients, calibrations, nativeExpiries) {
       let receipt;
       try {
         const { status, log } = await readChromiumLog(path);
-        receipt = joinChromiumSocket(log, status, host, receive, recipients);
+        receipt = joinChromiumSocket(log, status, host, receive, recipients, calibrations, nativeExpiries);
       } finally {
         try {
           await rm(directory, { recursive: true, force: true });
@@ -60,7 +103,7 @@ function proxySocketAddress(request, socket) {
   return { page_index: Number(page[1]), browser_endpoint: `${socket.remoteAddress}:${socket.remotePort}` };
 }
 
-function joinChromiumSocket(log, status, host, receive, recipients = []) {
+function joinChromiumSocket(log, status, host, receive, recipients = [], calibrations = [], nativeExpiries = []) {
   const clock = 'chromium.netlog.time_ms';
   const types = log?.constants?.logEventTypes;
   const socketType = log?.constants?.logSourceType?.SOCKET;
@@ -68,6 +111,11 @@ function joinChromiumSocket(log, status, host, receive, recipients = []) {
   const supported = [types?.TCP_CONNECT, types?.SSL_SOCKET_BYTES_RECEIVED, socketType, end].every(Number.isInteger)
     && Array.isArray(log?.events);
   const capture = supported || status === 'truncated' ? status : 'unavailable';
+  const expiryWindows = recipients.map((recipient, index) => {
+    const expiry = nativeExpiries[index];
+    if (!recipient || !expiry) return null;
+    return { index, recipient, sender: expiry.uuid.replaceAll('-', ''), ...chromiumExpiryWindow(calibrations[index], expiry) };
+  });
   const socketPlans = (receive?.sockets ?? []).map(socket => ({ socket, carriers: new Map() }));
   const rows = (receive?.rows ?? []).map(({ proxy, message, first_unobserved, coverage_gap, ...stamp }) => {
     const result = { ...stamp, status: 'unavailable' };
@@ -93,9 +141,12 @@ function joinChromiumSocket(log, status, host, receive, recipients = []) {
       result.status = 'observed';
       result.observation = { socket: candidate.socket, proxy_ordinal: candidate.ordinal, carrier_sha256: candidate.carrier_sha256,
         netlog_source: plan.source, at_ms: match.at_ms };
+      const expiry = expiryWindows[plan.socket.page_index];
+      if (expiry?.sender === result.sender) result.observation.expiry_timing = chromiumExpiryTiming(expiry, match.at_ms);
     } else if (plan.truncated) result.status = 'truncated';
   }
-  return { clock, status: capture, room: receive?.room, rows: rows.map(row => row.result) };
+  const expiries = expiryWindows.filter(Boolean);
+  return { clock, status: capture, room: receive?.room, ...(expiries.length && { expiries }), rows: rows.map(row => row.result) };
 }
 
 function netlogTime(time) {
@@ -146,4 +197,5 @@ function collectSocketCarriers(events, types, socketType, end, host, plans) {
   }
 }
 
-module.exports = { createChromiumCapture, joinChromiumSocket, proxySocketAddress, readChromiumLog };
+module.exports = { calibrateChromiumClock, chromiumServiceSamples, createChromiumCapture, joinChromiumSocket, proxySocketAddress, readChromiumClock,
+  readChromiumLog };

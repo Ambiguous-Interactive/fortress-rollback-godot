@@ -225,8 +225,22 @@ record decrypted TLS reads before the page callback. The
 `relaySocketReceive` receipt matches the full addressed carrier digest
 on the proxy connection tagged for the frozen recipient. The observation
 records the NetLog socket source, proxy ordinal, and Chromium monotonic
-timestamp of the read that completed the message. Its clock is independent
-of the proxy, page and controller clocks.
+timestamp of the read that completed the message.
+
+On Linux, the controller and Chromium NetLog share the system monotonic
+clock. The witness brackets each Chromium page's clock with a controller
+round trip before gameplay. The reporter then records the start of the
+native service turn and the expiry callback on that same page. The receipt
+checks the document time origin and preserves the clock samples in
+`chromiumClocks` and `postRelease`.
+[Chromium clock implementation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/base/time/time_now_posix.cc)
+
+The failure supplement's `expiries` give the possible extent of the turn on
+the NetLog clock. An exact carrier on the expired directed link includes
+signed bounds that allow for NetLog's whole-millisecond timestamps. An
+entirely negative or positive interval proves that its TLS read completed
+before or after expiry, respectively. An overlapping interval, missing
+calibration or changed document leaves the order unresolved.
 
 Chromium retains a rolling 32 MiB capture. The witness reads it after
 browser shutdown and discards the raw log. A retained exact observation
@@ -267,8 +281,9 @@ server to collect both receipts in one relay room. Each engine observes
 its own frozen recipients. On failure, both supplemental receipts refer
 to the same original line. The witness rechecks proxy matches after teardown.
 A later duplicate is ambiguous. If the proxy capture has gaps, the
-supplements leave exact attribution unresolved. Compare timestamps within
-each source clock.
+supplements leave exact attribution unresolved. Use the browser's own
+expiry interval to compare times. The controller receipt orders room
+checkpoints and commands separately.
 
 Keep `native-online.json` with the logs from the same run. After export, a
 room failure exits nonzero and can publish a receipt with `passed: false`.

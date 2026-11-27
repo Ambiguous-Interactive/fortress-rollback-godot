@@ -248,7 +248,8 @@ Order writes by server ordinal and page observations by the recipient's clock.
 Stamp validated history synchronously in the console listener with the expiry's controller ordinal.
 Await the original failure write before browser cleanup. Bound the wait and handle both the write callback and stream error.
 Bind supplemental socket evidence to the acknowledged failure line by digest, with one tagged socket per frozen recipient.
-Recheck proxy coverage after teardown. Resolve Firefox expiry order only with strict source bounds and no omitted or tied callback candidate at the inlet.
+Recheck proxy coverage after teardown. Require strict source bounds on the reporting page and refuse omitted or tied Firefox inlet candidates.
+On Linux Chromium, check the document origin and keep the NetLog millisecond interval. Validate each clock sample before subtraction to catch overflow and cancellation.
 Prove ordering between clocks by holding the original socket's FIFO until
 both exact raw stamps arrive and the controller reads their successful writes.
 Freeze native acceptance in the same page turn as the check. Reuse digests only

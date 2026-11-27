@@ -172,7 +172,7 @@ class ObservedLobby:
 	var relay_overflow: Dictionary = {}
 	var warmup_wire: JavaScriptObject
 	var relay_trace: JavaScriptObject
-	var trace_firefox_clock: bool = false
+	var trace_expiry_clock: bool = false
 	var close_wire: JavaScriptObject
 	var _close_remote_uuids: Dictionary = {}
 	var _engine_mesh_open: bool = false
@@ -303,7 +303,7 @@ class ObservedLobby:
 			# Variations after the warmup force correction when delivery is held.
 			if frame >= GATE_FRAME and frame % 2 == 0:
 				buttons = 0
-		_is_sampling_native_expiry = trace_firefox_clock and state == "playing"
+		_is_sampling_native_expiry = trace_expiry_clock and state == "playing"
 		if _is_sampling_native_expiry:
 			relay_trace.beginNativeService()
 		super.tick(now_us, buttons)
@@ -538,7 +538,7 @@ func _command(value: Dictionary) -> void:
 			lobby.observe_recovery = bool(value.get("observe_recovery", false))
 			lobby.close_wire = JavaScriptBridge.get_interface("fortressNativeWire") if bool(value.get("trace_close", false)) else null
 			lobby.relay_trace = JavaScriptBridge.get_interface("fortressNativePostRelease") if value.route == "relay" else null
-			lobby.trace_firefox_clock = lobby.relay_trace != null and bool(value.get("trace_firefox_clock", false))
+			lobby.trace_expiry_clock = lobby.relay_trace != null and bool(value.get("trace_expiry_clock", false))
 			scene.endpoint.text = str(value.endpoint)
 			scene.player_name.text = str(value.name)
 			scene.room_code.text = str(value.room)

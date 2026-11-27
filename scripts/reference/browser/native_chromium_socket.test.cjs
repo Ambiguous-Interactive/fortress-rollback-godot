@@ -41,6 +41,32 @@ test('socket receipt reassembles exact carrier and keeps completion on the NetLo
   assert.equal(collect(events, receive, ['wrong-recipient']).status, 'unavailable');
 });
 
+test('expiry ordering requires a calibrated document and a unique carrier on the expired link', () => {
+  const sample = { page_ms: 20, time_origin_ms: 1700000000000 };
+  const calibration = { start_ms: 60, end_ms: 62, sample };
+  const expiry = { uuid: '11111111-1111-1111-1111-111111111111', page_ms: 59, chromium_service: {
+    before: { ...sample, page_ms: 40 }, after: { ...sample, page_ms: 58 },
+  } };
+  const observe = ({ at = 75, clocks = [calibration], expiries = [expiry], input = receive } = {}) => joinChromiumSocket({
+    constants, events: [connection(7), incoming(7, at, Buffer.concat([handshake, frame]))],
+  }, 'recorded', host, input, [recipient], clocks, expiries).rows[0];
+
+  assert.deepEqual(observe().observation.expiry_timing, { order: 'before', min_gap_ms: -27, max_gap_ms: -2 });
+  assert.equal(observe({ at: 77 }).observation.expiry_timing.order, 'unresolved', 'bound equality');
+  assert.equal(observe({ at: 85 }).observation.expiry_timing.order, 'unresolved', 'overlap');
+  assert.equal(observe({ at: 103 }).observation.expiry_timing.order, 'after');
+  assert.equal(observe({ clocks: [{ ...calibration, sample: { ...sample, time_origin_ms: 1 } }] }).observation.expiry_timing.order, 'unresolved');
+  assert.equal(observe({ clocks: [{ ...calibration, end_ms: 59 }] }).observation.expiry_timing.order, 'unresolved');
+  assert.equal(observe({ clocks: [] }).observation.expiry_timing.order, 'unresolved');
+  const huge = { ...sample, page_ms: Number.MAX_VALUE };
+  for (const badClock of [{ ...calibration, start_ms: Number.MAX_VALUE, end_ms: Number.MAX_VALUE }, { ...calibration, sample: huge }]) {
+    const badExpiry = { ...expiry, page_ms: huge.page_ms, chromium_service: { before: huge, after: huge } };
+    assert.deepEqual(observe({ clocks: [badClock], expiries: [badExpiry] }).observation.expiry_timing, { order: 'unresolved', reason: 'invalid' });
+  }
+  assert.equal(observe({ expiries: [{ ...expiry, uuid: '44444444-4444-4444-4444-444444444444' }] }).observation.expiry_timing, undefined);
+  assert.equal(observe({ input: { ...receive, rows: [{ ...row, proxy: [carrierMatch, carrierMatch] }] } }).observation, undefined);
+});
+
 test('missing, truncated, duplicate and unbound socket evidence do not imply non-delivery', async () => {
   assert.deepEqual(await readChromiumLog('/not-a-capture'), { status: 'unavailable' });
   const complete = incoming(7, 70, Buffer.concat([handshake, frame]));
@@ -110,15 +136,17 @@ test('capture cleanup failure preserves the matched socket observation', async t
   }
 });
 
-test('Chromium TLS receive leads the busy page callback on the same NetLog clock',
-  { skip: process.env.FORTRESS_TEST_CHROMIUM_SOCKET !== '1', timeout: 20000 }, async () => {
+// Value: protects=TLS completion ordering on the native expiry turn; fails_when=late callback replaces receipt time; why_new=real Chromium clocks; seam=loopback.
+test('Chromium TLS receipts bound expiry while the renderer is busy',
+  { skip: process.platform !== 'linux' || process.env.FORTRESS_TEST_CHROMIUM_SOCKET !== '1', timeout: 20000 }, async () => {
     const { execFileSync } = require('node:child_process');
     const { mkdir, mkdtemp, readFile, rm } = require('node:fs/promises');
     const { createServer } = require('node:https');
     const { tmpdir } = require('node:os');
     const { join } = require('node:path');
     const { setTimeout: pause } = require('node:timers/promises');
-    const { createChromiumCapture, proxySocketAddress } = require('./native_chromium_socket.cjs');
+    const { calibrateChromiumClock, createChromiumCapture, proxySocketAddress, readChromiumClock } = require('./native_chromium_socket.cjs');
+    const { instrumentPostRelease, postReleaseCheckpoint } = require('./native_online.cjs');
     const directory = await mkdtemp(join(tmpdir(), 'fortress-socket-control-'));
     const keyPath = join(directory, 'key.pem');
     const certPath = join(directory, 'cert.pem');
@@ -126,31 +154,51 @@ test('Chromium TLS receive leads the busy page callback on the same NetLog clock
     try {
       execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost',
         '-keyout', keyPath, '-out', certPath], { stdio: 'ignore', timeout: 5000 });
+      const payloads = ['before', carrier.toString(), 'after'];
+      const digests = payloads.map(value => createHash('sha256').update(value).digest('hex'));
+      const prefix = 'fortress native post-release ';
+      const sender = '11111111-1111-1111-1111-111111111111';
+      const receiver = '22222222-2222-2222-2222-222222222222';
+      const nativeEvidence = { observed_us: 800000, sdk_queued: 0, sdk_peak: 0, sdk_before_poll: 0,
+        service_started_us: 400000, service_gap_us: 16667, service_gap_peak_us: 20000, last_accepted: null };
       const html = `<script>
-        const socket = new WebSocket('wss://' + location.host + '/v3/ws?trace_page=0');
-        socket.binaryType = 'arraybuffer';
-        socket.onopen = () => {
-          socket.send('ready');
-          const until = performance.now() + 750;
-          while (performance.now() < until) {}
-        };
-        socket.onmessage = async event => {
-          await fetch('/handled-exact-carrier');
-          console.log(new TextDecoder().decode(event.data));
+        window.start = () => {
+          const socket = new WebSocket('wss://' + location.host + '/v3/ws?trace_page=0');
+          const trace = window.fortressNativePostRelease;
+          socket.binaryType = 'arraybuffer';
+          socket.onopen = () => {
+            trace.bindDeparture(${JSON.stringify(receiver)}, ${JSON.stringify([sender, receiver])});
+            console.debug('relay socket opened');
+          };
+          socket.onmessage = async event => {
+            const text = new TextDecoder().decode(event.data);
+            if (text === 'before') setTimeout(() => {
+              trace.beginNativeService();
+              socket.send('during');
+              const until = performance.now() + 750;
+              while (performance.now() < until) {}
+              trace.recordDeparture('native_expiry', 1, ${JSON.stringify(JSON.stringify(nativeEvidence))}, true);
+            }, 75);
+            if (text === ${JSON.stringify(carrier.toString())}) await fetch('/handled-exact-carrier');
+            console.log(text);
+          };
         };
       </script>`;
       server = createServer({ key: await readFile(keyPath), cert: await readFile(certPath) }, (request, response) =>
         response.end(request.url === '/' ? html : 'ok'));
       let proxySocket;
-      let written;
+      const send = async index => {
+        await pause(75);
+        const value = payloads[index];
+        if (!socket.destroyed) socket.write(Buffer.concat([Buffer.from([0x82, value.length]), Buffer.from(value)]));
+      };
       server.on('upgrade', (request, upgraded) => {
         socket = upgraded;
         proxySocket = proxySocketAddress(request, socket);
         const accept = createHash('sha1').update(request.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
         socket.write(Buffer.concat([handshake.subarray(0, -2), Buffer.from(`Sec-WebSocket-Accept: ${accept}\r\n\r\n`)]));
-        written = new Promise((resolve, reject) => socket.once('data', () => {
-          pause(75).then(() => socket.write(frame, error => error ? reject(error) : resolve()));
-        }));
+        // The page sends once, from inside the service turn. A partial read already proves the send started.
+        socket.once('data', () => void send(1));
       });
       await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
       const endpoint = `127.0.0.1:${server.address().port}`;
@@ -160,16 +208,32 @@ test('Chromium TLS receive leads the busy page callback on the same NetLog clock
       const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
       browser = await chromium.launch({ executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE, args: capture.args });
       const page = await browser.newPage({ ignoreHTTPSErrors: true });
-      const handled = page.waitForEvent('console', { predicate: msg => msg.text() === carrier.toString(), timeout: 10000 });
+      await page.addInitScript(`(${instrumentPostRelease})(${JSON.stringify(prefix)}, 40, ${readChromiumClock}, 'chromium_service');`);
+      const reporter = {};
+      page.on('console', message => {
+        const value = message.text();
+        if (value === 'relay socket opened') void send(0);
+        if (!value.startsWith(prefix)) return;
+        postReleaseCheckpoint(reporter, value, { controller_ms: performance.now(), controller_order: 1 }, [sender, receiver], receiver);
+        void send(2);
+      });
       await page.goto(`https://${endpoint}/`);
-      await handled;
-      await written;
+      const calibration = await calibrateChromiumClock(page);
+      await Promise.all([
+        ...payloads.map(value => page.waitForEvent('console', { predicate: msg => msg.text() === value, timeout: 10000 })),
+        page.evaluate(() => window.start()),
+      ]);
       await browser.close();
       browser = undefined;
       const { log } = await readChromiumLog(capture.args[0].slice('--log-net-log='.length));
-      const seen = await capture.finish(endpoint, { ...receive, sockets: [proxySocket] }, [recipient]);
+      const input = { ...receive, sockets: [proxySocket], rows: digests.map((carrier_sha256, index) => ({ ...row, seq: String(index + 42),
+        proxy: [{ ...carrierMatch, ordinal: index + 3, carrier_sha256 }] })) };
+      assert.ok(reporter.native_expiry, reporter.checkpoint_error);
+      const seen = await capture.finish(endpoint, input, [recipient], [calibration], [reporter.native_expiry]);
       assert.equal(seen.status, 'recorded');
-      const [exact] = seen.rows;
+      assert.equal(seen.expiries[0].status, 'bounded');
+      assert.deepEqual(seen.rows.map(row => row.observation?.expiry_timing?.order), ['before', 'unresolved', 'after']);
+      const [, exact] = seen.rows;
       assert.equal(exact.status, 'observed');
       assert.equal(exact.observation.carrier_sha256, digest);
       const markers = log.events.filter(event => event.type === log.constants.logEventTypes.SSL_SOCKET_BYTES_SENT
@@ -177,7 +241,7 @@ test('Chromium TLS receive leads the busy page callback on the same NetLog clock
       assert.equal(markers.length, 1);
       const earlier = Number(markers[0].time) - exact.observation.at_ms;
       assert.ok(earlier >= 300, `TLS receipt preceded the page marker by only ${earlier} ms`);
-      console.log(`Chromium received exact carrier ${digest} ${earlier} ms before the page handler marker`);
+      console.log(JSON.stringify({ carrier_timing: seen.rows.map(row => row.observation.expiry_timing), delayed_page_handler_ms: earlier }));
     } finally {
       await browser?.close();
       socket?.destroy();

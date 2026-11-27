@@ -1,4 +1,5 @@
-const { createChromiumCapture, proxySocketAddress } = require('./native_chromium_socket.cjs');
+const { calibrateChromiumClock, chromiumServiceSamples, createChromiumCapture, proxySocketAddress, readChromiumClock } =
+  require('./native_chromium_socket.cjs');
 const { createDepartureClock, CLOSE_HTTPS_PRE_SAMPLES } = require('./native_departure_clock.cjs');
 const { observeFirefoxFrames, joinFirefoxFrames, readFirefoxClock, firefoxExpiryWindow } = require('./native_firefox_frames.cjs');
 const { assertRecoveredRoom, OmittedReplacement, PHYSICAL_PAIRS, recoverPairs } = require('./native_recovery.cjs');
@@ -184,7 +185,7 @@ function createWarmupBarrier(players, clock = () => performance.now()) {
   };
 }
 
-function instrumentPostRelease(prefix, minimumFrames, readExpiryClock) {
+function instrumentPostRelease(prefix, minimumFrames, readExpiryClock, expiryClockField = 'firefox_clock') {
   let nativeServiceStart;
   let baseline;
   let corrected = false;
@@ -265,16 +266,16 @@ function instrumentPostRelease(prefix, minimumFrames, readExpiryClock) {
       const endpoint = sdk ? roster.indexOf(remote) + 1 : remote;
       const uuid = roster[endpoint - 1];
       if (!uuid || uuid === local || (sdk ? departed.has(uuid) : expired)) return;
-      let frontier, firefox_clock;
+      let frontier, clockSamples;
       if (sdk) departed.add(uuid);
       else {
-        if (readExpiryClock) firefox_clock = duringNativeService ? [nativeServiceStart ?? null, readExpiryClock()] : null;
+        if (readExpiryClock) clockSamples = duringNativeService ? [nativeServiceStart ?? null, readExpiryClock()] : null;
         expired = true;
         window.fortressNativeWire?.endRelayHold?.('terminal');
         frontier = window.fortressNativeWire?.relayExpiryFrontier?.(uuid.replaceAll('-', ''));
       }
       console.debug(prefix + JSON.stringify({ kind, endpoint, uuid, page_ms: performance.now(),
-        expiry: evidence === undefined ? undefined : JSON.parse(evidence), frontier, firefox_clock }));
+        expiry: evidence === undefined ? undefined : JSON.parse(evidence), frontier, [expiryClockField]: clockSamples }));
     },
     mark,
     observe,
@@ -285,7 +286,7 @@ function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTa
   if (!text.startsWith(POST_RELEASE_CHECKPOINT)) return;
   try {
     const { kind, page_ms, state, turns, frame, confirmed, restores, frames, held, bytes, queued, released, emitted_ms, endpoint, uuid,
-      expiry, frontier, firefox_clock, socket_state, socket_stage, held_send, pending, control_round_trips, buffered_bytes, traffic } =
+      expiry, frontier, firefox_clock, chromium_service, socket_state, socket_stage, held_send, pending, control_round_trips, buffered_bytes, traffic } =
       JSON.parse(text.slice(POST_RELEASE_CHECKPOINT.length));
     if (LIFETIME_MARKS.has(kind)) {
       if (!Number.isFinite(page_ms) || page_ms < 0 || !Number.isSafeInteger(endpoint) || endpoint < 1
@@ -294,6 +295,7 @@ function postReleaseCheckpoint(peer, text, controller, roster, local, comparedTa
       if (kind === 'native_expiry') {
         receipt.expiry = validateExpiry(expiry);
         if (firefox_clock !== undefined) receipt.firefox_clock = firefoxExpiryWindow(firefox_clock, page_ms);
+        if (chromium_service !== undefined) receipt.chromium_service = chromiumServiceSamples(chromium_service);
         if (frontier !== undefined) {
           try {
             receipt.frontier = validateRelayExpiryFrontier(frontier, uuid, local, page_ms);
@@ -2054,6 +2056,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const traceSameLink = control === '--relay-same-link-control';
   const traceMixedReceive = control === '--trace-mixed-receive';
   const traceChromiumSocket = traceMixedReceive || control === '--trace-chromium-socket';
+  const traceChromiumClock = traceChromiumSocket && process.platform === 'linux';
   const traceFirefoxFrames = traceMixedReceive || control === '--trace-firefox-frames';
   const traceBrowserReceive = traceChromiumSocket || traceFirefoxFrames;
   const traceRelayWire = control === '--trace-relay-wire' || traceRetention || traceSameLink || traceBrowserReceive;
@@ -2092,6 +2095,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const browsers = [];
   const browserPeers = [];
   const firefoxObservers = [];
+  let chromiumClocks;
   let result;
   let failureReceipt;
   let chromiumCapture;
@@ -2181,6 +2185,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       const page = await context.newPage();
       pages.push(page);
       const traceFirefox = traceFirefoxFrames && name === 'firefox';
+      const traceChromium = traceChromiumClock && name === 'chromium';
       if (traceFirefox) firefoxObservers[index] = observeFirefoxFrames(page, pageEndpoint(index, name));
       const display = name === 'firefox' ? await placeFirefox(page, index) : null;
       browserPeers.push({ index, name, version: browser.version(), display });
@@ -2220,19 +2225,25 @@ async function run(root, endpoint, mode, players, browserPair, control) {
             (${decodeRelayDelivery}), ${Boolean(relayProxy)})` : 'undefined';
       const wireScript = `(${instrumentNativeWire})(${name === 'webkit'}, ${JSON.stringify(traceWarmup ? WARMUP_CHECKPOINT : '')}, ${relayTraceScript},
         ${JSON.stringify(closeObservations ? CLOSE_CHECKPOINT : '')});`;
+      const expiryClock = traceFirefox ? readFirefoxClock : traceChromium ? readChromiumClock : 'undefined';
+      const expiryClockField = traceChromium ? 'chromium_service' : 'firefox_clock';
       const postReleaseScript = postRelease
-        ? `(${instrumentPostRelease})(${JSON.stringify(POST_RELEASE_CHECKPOINT)}, ${HISTORY_FRAMES}, ${traceFirefox ? readFirefoxClock : 'undefined'});`
+        ? `(${instrumentPostRelease})(${JSON.stringify(POST_RELEASE_CHECKPOINT)}, ${HISTORY_FRAMES}, ${expiryClock}, '${expiryClockField}');`
         : '';
       await page.addInitScript(wireScript + postReleaseScript);
       await page.goto(`${origin}/index.html`);
       await wait(page, () => window.fortressNativeReady === true, null, PAGE_BOOT_MS);
       bootstrap_ms.push(Math.round(performance.now() - started));
     }
+    if (traceChromiumClock) {
+      chromiumClocks = await Promise.all(pages.map((page, index) => browserPeers[index].name !== 'chromium' ? null
+        : boundedRoom(() => calibrateChromiumClock(page), DIAGNOSTIC_MS, `native peer ${index} Chromium clock`).catch(() => null)));
+    }
     phase = 'lobby';
     function connect(page, index, room) {
       return command(page, 'connect', { endpoint: pageEndpoint(index, browserPeers[index].name), name: `Player ${index}`, room, route, players,
         wait_for_full_mesh: mode === 'mesh' || recovery, observe_recovery: recovery, trace_close: traceMeshDeparture, trace_warmup: traceWarmup,
-        trace_firefox_clock: Boolean(firefoxObservers[index]) });
+        trace_expiry_clock: Boolean(firefoxObservers[index] || chromiumClocks?.[index]) });
     }
     await connect(pages[0], 0, '');
     await wait(pages[0], () => window.fortressNative.state === 'lobby' && window.fortressNative.room !== '');
@@ -2617,11 +2628,11 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     const relayReceive = collectRelayReceive(relayJoined, relayWire, serverReceipt?.value);
     const expiries = observedExpiries();
-    const nativeExpiries = traceFirefoxFrames ? postRelease?.map(peer => peer.native_expiry) : undefined;
+    const nativeExpiries = traceBrowserReceive ? postRelease?.map(peer => peer.native_expiry) : undefined;
     const failure = JSON.stringify({
       phase, target_frames: comparedFrames, historyEvidence: historyFailureEvidence(relayHistory, comparedFrames, roomIdentities),
       primary_error: error instanceof Error ? error.message : typeof error === 'string' ? error : undefined,
-      browser_peers: browserPeers, bootstrap_ms, errors, releaseDelay, closeErrors: [...physicalCloseErrors, ...departureErrors],
+      browser_peers: browserPeers, chromiumClocks, bootstrap_ms, errors, releaseDelay, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks, departureCommands, roomIdentities, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
       lastCompleteCloseProofs: [...(physicalCloseReport.lastCompleteProofs ?? []), ...(closeReport.lastCompleteProofs ?? [])],
@@ -2674,7 +2685,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const browserReceive = browserReceipt?.relayReceive && refreshRelayReceive(browserReceipt.relayReceive, browserReceipt.relayJoined, relayProxy.snapshot());
   if (chromiumCapture && browserReceipt) {
     const recipients = roomIdentities?.uuids.map((uuid, index) => browserPeers[index]?.name === 'chromium' ? uuid.replaceAll('-', '') : null);
-    const observed = await chromiumCapture.finish(new URL(origin).host, browserReceive, recipients)
+    const observed = await chromiumCapture.finish(new URL(origin).host, browserReceive, recipients, chromiumClocks, failureReceipt?.nativeExpiries)
       .catch(() => ({ status: 'unavailable' }));
     if (failureReceipt?.published_ms !== undefined) console.error(JSON.stringify({ relaySocketFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
     else if (result) result.relaySocketReceive = observed;
