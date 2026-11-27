@@ -154,6 +154,14 @@ A later expiry can fall outside the upstream link
 selection. Its receipt identifies that scope, and its original browser
 observations remain available independently of the general relay trace.
 
+For each expiry, `releaseEvidence` lists the pages whose release
+completions and target-frame history responses reached the controller
+before its expiry receipt. The reporter's target-frame publication is
+compared with its own expiry on the page clock, even if the console message
+reaches the controller later. An absent, mismatched or equal-time publication
+leaves that comparison unknown. The same receipt records the first SDK removal
+observation and intentional Leave dispatch on the controller clock.
+
 For each pinned packet with a unique retained server write, `relayExpiryTraffic`
 lists subsequent retained writes on the same directed link and packet family.
 The server write ordinals order those writes. The browser observations list
@@ -203,6 +211,23 @@ The `coverage_gap` field identifies an omitted archive, an unavailable page,
 invalid proxy framing, or a TLS write after the browser read began.
 `first_unobserved` identifies a stage at the measured cutoff.
 Use the proxy and page timestamps within their respective clock domains.
+
+Add `--trace-chromium-socket` to an instrumented Chromium relay cell to
+record decrypted TLS reads before the page callback. The
+`relaySocketReceive` receipt matches the full addressed carrier digest
+on the proxy connection tagged for the frozen recipient. The observation
+records the NetLog socket source, proxy ordinal, and Chromium monotonic
+timestamp of the read that completed the message. Its clock is independent
+of the proxy, page and controller clocks.
+
+Chromium retains a rolling 32 MiB capture. The witness reads it after
+browser shutdown and discards the raw log. A retained exact observation
+can survive startup-log eviction. Unavailable, truncated and ambiguous
+observations leave delivery unresolved. Capture status does not determine
+the gameplay verdict. On failure, the browser log publishes the original phase
+receipt before cleanup and can append a `relaySocketFailure` receipt after
+Chromium closes. Its `failure_sha256` hashes the exact original JSON line
+without its newline.
 
 Keep `native-online.json` with the logs from the same run. After export, a
 room failure exits nonzero and can publish a receipt with `passed: false`.

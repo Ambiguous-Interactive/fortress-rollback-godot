@@ -214,14 +214,22 @@ def missing_evidence():
     value = evidence()
     value['dropMissing'] = True
     value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'] = {
-        'dropped': 3, 'from': 4, 'through': 6, 'frames': [4, 5, 6], 'overlaps': 0, 'slot': 2, 'unsupported': 0}
+        'dropped': 3, 'from': 4, 'through': 6, 'frames': [4, 5, 6], 'overlaps': 0, 'slot': 2, 'unsupported': 0,
+        'destination': hashlib.sha256(b'00000000-0000-0000-0000-000000000000').digest()[:8].hex()}
     proposer = value['records'][0]['peers'][0]['result']['records'][0]
     follower = value['records'][0]['peers'][1]['result']['records'][0]
-    proposer.update(opening_frontier=3, pending_events=1, operation=9, history_donor=follower['slot'],
+    target_id = hashlib.sha256(value['records'][0]['peers'][2]['result']['records'][0]['uuid'].encode('ascii')).digest()[:8].hex()
+    exposed = {frame: [{'bytes': value, 'status': 1} for value in values]
+               for frame, values in ((2, ('23', '42', '61')), (3, ('34', '53', '72')))}
+    proposer.update(drop_frames={target_id: 6}, opening_frontier=2, opening_target_receipt=3, exposed_before=exposed[2], exposed_after=copy.deepcopy(exposed[2]),
+                    pending_events=1, operation=9, history_donor=follower['slot'],
                     history_first=4, history_cut=proposer['freeze_frame'],
                     history_installed=True, history_dropped=0, history_resends=0, history_drop_chunk=-1,
                     history_drop_operation=-1, history_drop_count=0)
-    follower.update(opening_frontier=4, pending_events=1, operation=9, history_donor=follower['slot'],
+    follower.update(drop_frames={target_id: 6}, opening_frontier=3, opening_target_receipt=6, exposed_before=exposed[3], exposed_after=copy.deepcopy(exposed[3]),
+                    withheld_from_departing={'dropped': 4, 'from': 3, 'through': 6, 'frames': [3, 4, 5, 6],
+                                             'overlaps': 0, 'slot': 1, 'unsupported': 0, 'destination': target_id},
+                    pending_events=1, operation=9, history_donor=follower['slot'],
                     history_first=4, history_cut=follower['freeze_frame'],
                     history_installed=False, history_dropped=1, history_resends=1, history_drop_chunk=0,
                     history_drop_operation=9, history_drop_count=1)
@@ -231,6 +239,7 @@ def missing_evidence():
 def lost_evidence():
     value = missing_evidence()
     value['dropHistoryLost'] = True
+    del value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs']['destination']
     proposer = value['records'][0]['peers'][0]['result']['records'][0]
     follower = value['records'][0]['peers'][1]['result']['records'][0]
     terminal = {'state': 'failed', 'failed': True, 'failure_reason': 'timeout', 'lifecycle': 'terminated',
@@ -454,15 +463,40 @@ class MissingHistoryEvidence(unittest.TestCase):
             duplicate['records'][0]['peers'][peer]['result']['records'][0]['pending_events'] = 2
             with self.subTest(peer=peer), self.assertRaisesRegex(ValueError, 'opening frontier missing or invalid'):
                 validate_drop_browser(duplicate, missing_history=True)
-        boundary = copy.deepcopy(original)
-        follower = boundary['records'][0]['peers'][1]['result']['records'][0]
-        follower['opening_frontier'] = follower['freeze_frame']
-        self.assertIs(validate_drop_browser(boundary, missing_history=True), boundary)
+        mutations = [
+            (0, {'opening_frontier': 3}, 'opening frontier'),
+            (1, {'opening_frontier': 2}, 'opening frontier'),
+            (1, {'opening_frontier': 4}, 'opening frontier'),
+            (0, {'opening_target_receipt': 4}, 'opening target receipt'),
+            (1, {'opening_target_receipt': 5}, 'opening target receipt'),
+            (1, {'withheld_from_departing': None}, 'asymmetric withholding'),
+            (1, {'exposed_before': '00'}, 'exposed input'),
+            (0, {'exposed_after': '00'}, 'exposed input'),
+        ]
+        for index, fields, diagnostic in mutations:
+            value = copy.deepcopy(original)
+            value['records'][0]['peers'][index]['result']['records'][0].update(fields)
+            with self.subTest(fields=fields), self.assertRaisesRegex(ValueError, diagnostic):
+                validate_drop_browser(value, missing_history=True)
+
+    def test_full_opening_row_preserves_continuing_inputs_and_statuses(self):
+        original = missing_evidence()
+        self.assertIs(validate_drop_browser(original, missing_history=True), original)
+        for row_field in ('exposed_before', 'exposed_after'):
+            for slot_field, replacement in [('bytes', '00'), ('status', 2), ('status', True)]:
+                value = copy.deepcopy(original)
+                donor = value['records'][0]['peers'][1]['result']['records'][0]
+                donor[row_field][0][slot_field] = replacement
+                with self.subTest(row_field=row_field, slot_field=slot_field, replacement=replacement), \
+                        self.assertRaisesRegex(ValueError, 'exposed input'):
+                    validate_drop_browser(value, missing_history=True)
 
     def test_live_missing_history_requires_withholding_and_transfer(self):
         original = missing_evidence()
         self.assertIs(validate_drop_browser(original, missing_history=True), original)
         mutations = [
+            lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(destination='00' * 8),
+            lambda value: value['records'][0]['peers'][1]['result']['records'][0]['withheld_from_departing'].update(destination='00' * 8),
             lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(dropped=0),
             lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(**{'from': 3}),
             lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(through=7),
@@ -470,6 +504,7 @@ class MissingHistoryEvidence(unittest.TestCase):
             lambda value: value['records'][0]['peers'][2]['result']['records'][0]['missing_inputs'].update(overlaps=1),
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_installed=False),
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_donor=0),
+            lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_first=3),
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_first=5),
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_cut=4),
             lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(history_cut=3),

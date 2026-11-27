@@ -487,11 +487,7 @@ def _lost_history_row(row, role, slot, departing_slot, first, through):
 def _validate_lost_history(result, survivors):
     departed = result['records'][0]['peers'][2]['result']['records'][0]
     report = departed.get('missing_inputs')
-    if (not isinstance(report, dict) or set(report) != {'dropped', 'from', 'through', 'frames', 'overlaps', 'slot', 'unsupported'}
-            or report.get('dropped') != 3
-            or report.get('from') != 4 or report.get('through') != 6
-            or report.get('frames') != [4, 5, 6] or report.get('overlaps') != 0
-            or report.get('unsupported') != 0 or report.get('slot') != departed.get('slot')):
+    if not _withheld_input_range(report, 4, departed['slot']):
         raise ValueError('peer-drop lost-history withholding evidence missing')
     if len(survivors) != 2:
         raise ValueError('peer-drop lost-history survivor rows missing')
@@ -716,6 +712,16 @@ def check_serial_controls(result, second_boundary):
     last['serial_canonical'][-1] = '00' * 16
     reject('peer-drop serial canonical history differs from original inputs')
     return {'diagnostics': diagnostics}
+
+
+def _withheld_input_range(report, first, slot, destination=None):
+    fields = {'dropped': 7 - first, 'from': first, 'through': 6, 'frames': list(range(first, 7)),
+              'overlaps': 0, 'slot': slot, 'unsupported': 0}
+    if destination is not None:
+        fields['destination'] = destination
+    return (isinstance(report, dict) and report.keys() == fields.keys()
+            and all(type(report[key]) is type(value) and report[key] == value for key, value in fields.items())
+            and all(type(frame) is int for frame in report['frames']))
 
 
 def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False,
@@ -996,24 +1002,39 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
         if commit_loss:
             _validate_commit_loss(survivors)
         if missing_history:
-            for row in survivors:
-                if (type(row.get('pending_events')) is not int or row['pending_events'] != 1
-                        or type(row.get('opening_frontier')) is not int or row['opening_frontier'] < 0):
-                    raise ValueError('peer-drop missing-history opening frontier missing or invalid')
-                if row['opening_frontier'] > row['freeze_frame']:
-                    raise ValueError('peer-drop missing-history cut precedes an opening frontier')
             departed = records[0]['peers'][2]['result']['records'][0]
-            report = departed.get('missing_inputs')
-            if (not isinstance(report, dict) or set(report) != {'dropped', 'from', 'through', 'frames', 'overlaps', 'slot', 'unsupported'}
-                    or report.get('dropped') != 3
-                    or report.get('from') != 4 or report.get('through') != 6
-                    or report.get('frames') != [4, 5, 6] or report.get('overlaps') != 0
-                    or report.get('unsupported') != 0 or report.get('slot') != departed.get('slot')):
+            target_slot, target_id = departed['slot'], _peer_id(departed['uuid'])
+            coordinator_slot = min(row['slot'] for row in survivors)
+            if not _withheld_input_range(departed.get('missing_inputs'), 4, target_slot, _peer_id(roster[coordinator_slot])):
                 raise ValueError('peer-drop missing input withholding evidence missing')
+            for row in survivors:
+                coordinator = row['slot'] == coordinator_slot
+                frontier = 2 if coordinator else 3
+                if (row['role'] != int(coordinator)
+                        or type(row.get('pending_events')) is not int or row['pending_events'] != 1
+                        or type(row.get('opening_frontier')) is not int or row['opening_frontier'] != frontier):
+                    raise ValueError('peer-drop missing-history opening frontier missing or invalid')
+                opening_receipt = row.get('opening_target_receipt')
+                if type(opening_receipt) is not int or opening_receipt != (3 if coordinator else 6):
+                    raise ValueError('peer-drop missing-history opening target receipt missing or invalid')
+                published = row.get('drop_frames')
+                if (row['departing_slot'] != target_slot or row['freeze_frame'] != 6
+                        or not isinstance(published, dict) or published != {target_id: 6}
+                        or type(published[target_id]) is not int):
+                    raise ValueError('peer-drop missing-history certified departure missing')
+                expected = [{'bytes': bytes([(frontier * 17 + slot * 31 + 1) & 255]).hex(), 'status': 1}
+                            for slot in range(len(roster))]
+                for field in ('exposed_before', 'exposed_after'):
+                    observed = row.get(field)
+                    if (not isinstance(observed, list) or observed != expected
+                            or any(type(item['status']) is not int for item in observed)):
+                        raise ValueError('peer-drop missing-history exposed input changed or missing')
             proposer = next(row for row in survivors if row['role'] == 1)
             follower = next(row for row in survivors if row['role'] == 0)
+            if not _withheld_input_range(follower.get('withheld_from_departing'), 3, follower['slot'], target_id):
+                raise ValueError('peer-drop asymmetric withholding evidence missing')
             if (proposer.get('history_installed') is not True
-                    or type(proposer.get('history_first')) is not int or not 0 <= proposer['history_first'] <= 4
+                    or type(proposer.get('history_first')) is not int or proposer['history_first'] != 4
                     or type(proposer.get('history_cut')) is not int or proposer['history_cut'] < 6
                     or proposer.get('history_cut') != proposer.get('freeze_frame')
                     or proposer.get('history_donor') != follower.get('slot')

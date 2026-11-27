@@ -32,6 +32,9 @@ var pressure_refusals: int = 0
 var pressure_post_wrap_refusals: int = 0
 var pressure_retries: int = 0
 var refused_head: PackedByteArray = PackedByteArray()
+var refused_input: Dictionary = {}
+var retried_inputs: Array[Dictionary] = []
+var received_inputs: Dictionary = {}
 
 func configure(host: Node, mode: Object) -> bool:
 	uuid = host.memberships[0].local_uuid()
@@ -53,10 +56,10 @@ func configure(host: Node, mode: Object) -> bool:
 	if fallback.configure(host.transports[0], relay, host.memberships[0], host.adapters[0], host.peers[0], controls) != 0:
 		host.errors.append("mixed_fallback_configure")
 		return false
-	_observe_relay(host)
+	_observe_relay(host, host.recording_pressure)
 	return true
 
-func _observe_relay(host: Node) -> void:
+func _observe_relay(host: Node, capture_recording: bool = false) -> void:
 	host.clients[0].game_data_binary_received.connect(func(sender: String, encoding: int, bytes: PackedByteArray) -> void:
 		var decoded: RefCounted = Relay.Envelope.decode(bytes, 1024)
 		if encoding == 1 and decoded.code == 0 and decoded.sender == sender and decoded.recipient == uuid \
@@ -65,7 +68,14 @@ func _observe_relay(host: Node) -> void:
 			var limits: T.Limits = T.Limits.new()
 			limits.player_count = host.player_count
 			var input: T.Result = Codec.decode(decoded.payload, limits)
-			if input.code != T.Code.OK or not _early_input(input.message): return
+			if input.code != T.Code.OK: return
+			if capture_recording and _post_wrap_input(input.message):
+				var envelope: String = bytes.hex_encode()
+				if received_inputs.size() >= 512 and not received_inputs.has(envelope):
+					host.errors.append("recording_pressure_receipt_overflow")
+				else:
+					received_inputs[envelope] = true
+			if not _early_input(input.message): return
 			var payload: String = decoded.payload.hex_encode()
 			if relay_payloads.size() >= 128 and not relay_payloads.has(payload):
 				host.errors.append("mixed_capture_overflow")
@@ -75,6 +85,10 @@ func _observe_relay(host: Node) -> void:
 func _early_input(message: T.Message) -> bool:
 	return message.kind == T.Kind.INPUT and message.start_frame >= 0 \
 		and message.start_frame + message.frame_count <= 3
+
+func _post_wrap_input(message: T.Message) -> bool:
+	return message.kind == T.Kind.INPUT and message.start_frame > 128
+
 
 func has_pending() -> bool:
 	return not pending.is_empty()
@@ -122,18 +136,29 @@ func service(host: Node) -> bool:
 		if relay._pending.is_empty() or relay._pending[0].envelope != refused_head:
 			host.errors.append("recording_pressure_head_changed")
 			return false
+	var blocked_reads: int = -1
+	if host.recording_pressure and retried_inputs.size() < 2 and refused_input.is_empty() and host.peers[0].status().current_frame > 129:
+		blocked_reads = int(JavaScriptBridge.eval("window.fortressRtc.relayPostWrapBlockedReads"))
 	var result: Relay.Result = fallback.poll(host.transport_us, host._next_token)
+	if result.code not in [Relay.Code.OK, Relay.Code.BACKPRESSURE]:
+		host.errors.append("mixed_poll_%d_peer_%d" % [result.code, result.peer_code])
+		return false
 	if host.recording_pressure:
 		if not refused_head.is_empty() and relay._sent > 0:
 			pressure_retries += 1
 			refused_head.clear()
+			if not refused_input.is_empty():
+				refused_input["retry_turn"] = host.pressure_service_turn
+				retried_inputs.append(refused_input)
+				refused_input = {}
+				JavaScriptBridge.eval("window.fortressRecordingRefusedHead = ''")
 		if result.code == Relay.Code.BACKPRESSURE and not relay._pending.is_empty():
 			pressure_refusals += 1
 			if host.peers[0].status().current_frame > 128: pressure_post_wrap_refusals += 1
 			refused_head = relay._pending[0].envelope.duplicate()
-	if result.code not in [Relay.Code.OK, Relay.Code.BACKPRESSURE]:
-		host.errors.append("mixed_poll_%d_peer_%d" % [result.code, result.peer_code])
-		return false
+			if blocked_reads >= 0:
+				var current_reads: int = int(JavaScriptBridge.eval("window.fortressRtc.relayPostWrapBlockedReads"))
+				if current_reads == blocked_reads + 1: _capture_refused_input(host, current_reads)
 	host.sent_packets += result.sent
 	host.received_packets += result.received
 	var state: Dictionary = fallback.status()
@@ -147,6 +172,21 @@ func service(host: Node) -> bool:
 	previous_confirmed = core.confirmed_frame
 	previous_frame = core.current_frame
 	return true
+
+func _capture_refused_input(host: Node, blocked_read: int) -> void:
+	var envelope: RefCounted = Relay.Envelope.decode(refused_head, 1024)
+	if envelope.code != Relay.Code.OK: return
+	var limits: T.Limits = T.Limits.new()
+	limits.player_count = host.player_count
+	var packet: T.Result = Codec.decode(envelope.payload, limits)
+	if packet.code != T.Code.OK or not _post_wrap_input(packet.message): return
+	for earlier: Dictionary in retried_inputs:
+		if earlier.start_frame == packet.message.start_frame: return
+	var hex: String = refused_head.hex_encode()
+	if not JavaScriptBridge.eval("window.fortressArmRecordingHead(" + JSON.stringify(hex) + ")"): return
+	refused_input = {"envelope": hex, "start_frame": packet.message.start_frame, "frame": host.peers[0].status().current_frame,
+		"refused_turn": host.pressure_service_turn, "blocked_read": blocked_read}
+
 
 func _record_bounds() -> void:
 	var state: Dictionary = fallback.status()
@@ -173,6 +213,7 @@ func report() -> Dictionary:
 		"uuid": uuid, "relay_payloads": relay_payloads.keys(),
 		"pressure_refusals": pressure_refusals, "pressure_post_wrap_refusals": pressure_post_wrap_refusals,
 		"pressure_retries": pressure_retries, "refused_head_bytes": refused_head.size(),
+		"retried_inputs": retried_inputs, "received_inputs": received_inputs.keys(),
 		"overlap": {} if overlap == null else {"recipient": overlap_recipient, "payload": overlap.bytes.hex_encode()}}
 
 func detach() -> void:

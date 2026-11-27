@@ -3,17 +3,24 @@ extends RefCounted
 # Value: protects=bounded overlap evidence; fails_when=later relay variants exhaust early inventory; why_new=browser callbacks lacked native coverage; seam=actual SDK signal
 const Fixture = preload("res://tests/unit/test_signalfish_fallback.gd")
 const Mixed = preload("res://scripts/reference/browser/webrtc_mixed.gd")
+const Relay = preload("res://addons/fortress_rollback/transport/signalfish_relay.gd")
+const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const Envelope = preload("res://addons/fortress_rollback/transport/signalfish_relay_envelope.gd")
 const M = preload("res://tests/unit/test_signalfish_membership.gd")
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["later_traffic", "boundaries", "capture_cap", "invalid"])
+	return PackedStringArray(["later_traffic", "boundaries", "capture_cap", "invalid", "failed_recording_poll"])
 
 func run_case(name: String, context: RefCounted) -> void:
 	var helper: RefCounted = Fixture.new()
 	var fixture: Dictionary = helper.build(context)
+	if name == "failed_recording_poll":
+		_failed_recording_poll(context, helper, fixture)
+		helper.destroy(fixture)
+		context.finish()
+		return
 	# The observer receives the real SDK signal without filling the unrelated transport ingress FIFO.
 	fixture.relay.detach()
 	var host: Host = Host.new()
@@ -75,6 +82,22 @@ func run_case(name: String, context: RefCounted) -> void:
 	host.free()
 	context.finish()
 
+func _failed_recording_poll(context: RefCounted, helper: RefCounted, fixture: Dictionary) -> void:
+	var mixed: Mixed = Mixed.new()
+	mixed.relay = fixture.relay
+	mixed.fallback = fixture.fallback
+	context.equal(mixed.relay.enqueue_batch([helper.packet(fixture, 1)]), Relay.Code.OK, "queue the preceding send")
+	context.equal(mixed.relay.poll(0).sent, 1, "preceding relay poll records a real send")
+	context.equal(mixed.relay.enqueue_batch([helper.packet(fixture, 2)]), Relay.Code.OK, "queue the retained head")
+	var head: PackedByteArray = mixed.relay._pending[0].envelope.duplicate()
+	mixed.refused_head = head.duplicate()
+	var host: PressureHost = PressureHost.new()
+	context.equal(mixed.service(host), false, "negative poll time fails before relay service")
+	context.equal(host.errors, ["mixed_poll_%d_peer_0" % Relay.Code.INVALID_ARGUMENT], "diagnostic preserves the poll failure")
+	context.equal(mixed.pressure_retries, 0, "a stale send count does not record a retry")
+	context.equal(mixed.refused_head, head, "a failed poll preserves the retained head")
+	host.free()
+
 func _payload(context: RefCounted, fixture: Dictionary, kind: int, frame: int, epoch: int = 0, frames: int = 1) -> PackedByteArray:
 	var message: T.Message = T.Message.new()
 	message.kind = kind
@@ -103,4 +126,13 @@ class Host:
 	var clients: Array = []
 	var memberships: Array = []
 	var player_count: int = 2
+	var errors: Array[String] = []
+
+class PressureHost:
+	extends Node
+	var local_index: int = 1
+	var recording_pressure: bool = true
+	var peers: Array[Peer] = [Peer.new()]
+	var transport_us: int = -1
+	var _next_token: Callable = Callable()
 	var errors: Array[String] = []

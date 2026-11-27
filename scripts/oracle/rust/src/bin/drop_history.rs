@@ -1,9 +1,11 @@
 //! Scoped actual-source witness for original history across a coordinated drop.
 #![forbid(unsafe_code)]
-use fortress_rollback::{Config, DisconnectBehavior, FortressRequest, Frame, InputStatus, Message,
-    NonBlockingSocket, P2PSession, PlayerHandle, PlayerType, ProtocolConfig, SessionBuilder, SyncConfig};
+use fortress_rollback::{Config, DisconnectBehavior, FortressError, FortressEvent, FortressRequest, Frame, InputStatus, Message,
+    NonBlockingSocket, P2PSession, PlayerHandle, PlayerType, ProtocolConfig, RequestVec, SessionBuilder, SyncConfig};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::{Arc, Mutex}, time::Duration};
+
+const REVISION: &str = "d124c89080004d96971a629bb0427056ee1805e3";
 
 #[derive(Clone)]
 struct Game { frame: i32, values: Vec<i64> }
@@ -60,7 +62,10 @@ fn advance(session: &mut P2PSession<Profile>, game: &mut Game, player: usize,
     for slot in player * slots..(player + 1) * slots {
         session.add_local_input(PlayerHandle::new(slot), sample(slot, game.frame)).map_err(|error| format!("{error:?}"))?;
     }
-    for request in session.advance_frame().map_err(|error| format!("{error:?}"))? {
+    apply_requests(session.advance_frame().map_err(|error| format!("{error:?}"))?, game, states)
+}
+fn apply_requests(requests: RequestVec<Profile>, game: &mut Game, states: &mut BTreeMap<i32, Value>) -> Result<(), String> {
+    for request in requests {
         match request {
             FortressRequest::SaveGameState { cell, frame } => {
                 if frame.as_i32() != game.frame || !cell.save(frame, Some(game.clone()), Some(0)) { return Err("save boundary".into()); }
@@ -87,7 +92,8 @@ fn advance(session: &mut P2PSession<Profile>, game: &mut Game, player: usize,
 #[derive(Default)]
 struct Fault {
     enabled: bool, dropped: Vec<Value>, commit_enabled: bool, dropped_commit: Vec<Value>, ack_enabled: bool, ack_participant: usize,
-    dropped_ack: Vec<Value>, inventory_enabled: bool, dropped_inventory: Vec<Value>, prepare_enabled: bool, dropped_prepare: Vec<Value>
+    dropped_ack: Vec<Value>, inventory_enabled: bool, dropped_inventory: Vec<Value>, prepare_enabled: bool, dropped_prepare: Vec<Value>,
+    hold_decision: bool, held_ready: Option<(String, Message, Value)>, held_commit: Option<(String, Message, Value)>,
 }
 fn route(buffers: &[Arc<Mutex<Buffers>>], missing: bool, silent: bool, control: &mut Vec<Value>, fault: &mut Fault) -> Result<bool, String> {
     let mut delivered = false;
@@ -102,6 +108,21 @@ fn route(buffers: &[Arc<Mutex<Buffers>>], missing: bool, silent: bool, control: 
                     let packet = json!({"from":sender,"to":recipient,"body":body,"emission":control.len(),"order":order.ok_or("missing control emission order")?});
                     emitted_control = Some(packet.clone());
                     control.push(packet.clone());
+                    if fault.hold_decision && sender == 0 && recipient == 1 {
+                        // All READY reports or one COMMITTED report can convey the decision without a COMMIT.
+                        let stage = body.get("DropReport").and_then(|report| report.get("stage")).and_then(Value::as_str);
+                        if body.contains_key("DropCommit") {
+                            fault.held_commit.get_or_insert_with(|| (sender.to_string(), message, packet));
+                            continue;
+                        }
+                        if stage == Some("Ready") && body["DropReport"]["participant"] == 0 {
+                            fault.held_ready.get_or_insert_with(|| (sender.to_string(), message, packet));
+                            continue;
+                        }
+                        if stage == Some("Committed") {
+                            continue;
+                        }
+                    }
                     if fault.prepare_enabled && fault.dropped_prepare.is_empty() && sender == 0 && recipient == 1
                         && body.contains_key("DropPrepare") {
                         fault.dropped_prepare.push(packet);
@@ -144,7 +165,7 @@ fn settle(sessions: &mut [P2PSession<Profile>], buffers: &[Arc<Mutex<Buffers>>],
     Err("unbounded settlement".into())
 }
 fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit_loss: bool, ack_loss: bool, inventory_loss: bool,
-    prepare_loss: bool, warmup: i32) -> Result<Value, String> {
+    prepare_loss: bool, warmup: i32, deadline_offset: Option<i64>) -> Result<Value, String> {
     let clock = Arc::new(Mutex::new(0_u64));
     let origin = web_time::Instant::now();
     let order = Arc::new(Mutex::new(0_usize));
@@ -171,7 +192,7 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
     }
     let mut control = Vec::new();
     let mut fault = Fault { enabled: loss, commit_enabled: commit_loss, ack_enabled: ack_loss, ack_participant: target_slots,
-        inventory_enabled: inventory_loss, prepare_enabled: prepare_loss, ..Default::default() };
+        inventory_enabled: inventory_loss, prepare_enabled: prepare_loss, hold_decision: deadline_offset.is_some(), ..Default::default() };
     settle(&mut sessions, &buffers, false, false, &mut control, &mut fault)?;
     for session in &mut sessions {
         if format!("{:?}", session.current_state()) != "Running" { return Err("bootstrap".into()); }
@@ -201,10 +222,70 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
     }).collect::<Vec<_>>();
     let expired_original_rows = (0..2).map(|peer|
         sessions[peer].confirmed_inputs_for_frame(Frame::new(0)).is_err()).collect::<Vec<_>>();
-    for session in sessions.iter_mut().take(2) { session.remove_player(PlayerHandle::new(2 * target_slots)).map_err(|error| format!("{error:?}"))?; }
-    for _ in 0..160 {
+    let started_at = *clock.lock().unwrap();
+    let target = PlayerHandle::new(2 * target_slots);
+    for session in sessions.iter_mut().take(2) { session.remove_player(target).map_err(|error| format!("{error:?}"))?; }
+    let negotiation_rounds = if deadline_offset.is_some() { 16 } else { 160 };
+    for _ in 0..negotiation_rounds {
         *clock.lock().unwrap() += 1000;
-        settle(&mut sessions, &buffers, true, true, &mut control, &mut fault)?;
+        if deadline_offset.is_some() {
+            // The pending follower retransmits every poll, so this schedule does not settle to an empty outbox.
+            for session in sessions.iter_mut().take(2) { session.poll_remote_clients(); }
+            route(&buffers, true, true, &mut control, &mut fault)?;
+        } else {
+            settle(&mut sessions, &buffers, true, true, &mut control, &mut fault)?;
+        }
+    }
+    if let Some(offset) = deadline_offset {
+        let (sender, original, emitted) = fault.held_commit.take().ok_or("coordinator did not send held COMMIT")?;
+        let (ready_sender, ready, ready_emitted) = fault.held_ready.take().ok_or("coordinator did not send held READY")?;
+        let follower = &mut sessions[1];
+        let frontier = follower.confirmed_frame();
+        let confirmed = |session: &P2PSession<Profile>| -> Result<Vec<String>, String> {
+            session.confirmed_inputs_for_frame(frontier)
+                .map(|row| row.iter().map(|bytes| hex(bytes)).collect())
+                .map_err(|error| format!("confirmed prefix: {error:?}"))
+        };
+        let original_row = confirmed(follower)?;
+        let dropped_before = peer_dropped(follower);
+        let target_connected_before = follower.diagnostic_player_connected(target);
+        let release = (started_at + 2_000_000).checked_add_signed(offset).ok_or("deadline overflow")?;
+        *clock.lock().unwrap() = release;
+        buffers[1].lock().unwrap().incoming.extend([
+            (ready_sender, ready, Some(ready_emitted.clone())), (sender, original, Some(emitted.clone()))
+        ]);
+        follower.poll_remote_clients();
+        route(&buffers, true, true, &mut control, &mut fault)?;
+        let observations = buffers[1].lock().unwrap();
+        let received = |original: &Value| observations.received.iter()
+            .find(|observation| observation["emission"] == original["emission"]).cloned().ok_or("original decision packet was not read");
+        let ready_received = received(&ready_emitted)?;
+        let commit_received = received(&emitted)?;
+        drop(observations);
+        let abort = control.iter().find(|packet| packet["from"] == 1 && packet["to"] == 0 && packet["body"].get("DropAbort").is_some());
+        let frame_before = follower.current_frame().as_i32();
+        follower.add_local_input(PlayerHandle::new(target_slots), sample(target_slots, frame_before))
+            .map_err(|error| format!("deadline input: {error:?}"))?;
+        let advance = match follower.advance_frame() {
+            Ok(requests) => {
+                apply_requests(requests, &mut games[1], &mut histories[1])?;
+                "ok"
+            },
+            Err(FortressError::NotSynchronized) => "not_synchronized",
+            Err(error) => return Err(format!("deadline advance: {error:?}")),
+        };
+        let final_row = confirmed(follower)?;
+        let dropped = peer_dropped(follower);
+        let target_connected_after = follower.diagnostic_player_connected(target);
+        let target_receipt_after = follower.diagnostic_player_receipt_frame(target).map(Frame::as_i32);
+        return Ok(json!({"upstream_revision":REVISION, "offset_us":offset,
+            "started_us":started_at, "release_us":release, "ready":ready_emitted, "ready_received":ready_received,
+            "commit":emitted, "commit_received":commit_received, "abort":abort,
+            "state":follower.current_state().to_string(), "dropped_before":dropped_before, "dropped":dropped, "frontier":frontier.as_i32(),
+            "row_before":original_row, "row_after":final_row, "advance":advance, "frame_before":frame_before,
+            "frame_after":follower.current_frame().as_i32(), "game_frame_after":games[1].frame, "advanced_row":histories[1].get(&frame_before),
+            "target_connected_before":target_connected_before, "target_connected_after":target_connected_after,
+            "target_receipt_after":target_receipt_after}));
     }
     let mut dropped = Vec::new();
     for session in sessions.iter_mut().take(2) {
@@ -230,7 +311,7 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
         survivors.push(json!({"peer":peer,"current_frame":sessions[peer].current_frame().as_i32(),
             "confirmed_frame":sessions[peer].confirmed_frame().as_i32(),"rows":rows}));
     }
-    let mut result = json!({"format":6,"complete":true,"upstream_revision":"d124c89080004d96971a629bb0427056ee1805e3",
+    let mut result = json!({"format":6,"complete":true,"upstream_revision":REVISION,
         "missing_rows":missing_rows,"target_slots":target_slots,"before":before,"dropped":dropped,
         "lost_inventory":fault.dropped_inventory,"lost_prepare":fault.dropped_prepare,"lost_history":fault.dropped,"lost_commit":fault.dropped_commit,"lost_ack":fault.dropped_ack,
         "controls":control,"received_controls":received_controls,"survivors":survivors});
@@ -240,8 +321,27 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
     }
     Ok(result)
 }
+fn peer_dropped(session: &mut P2PSession<Profile>) -> Vec<Value> {
+    session.events().filter_map(|event| match event {
+        FortressEvent::PeerDropped { handle, addr } => Some(json!({"handle":handle.as_usize(), "address":addr})),
+        _ => None,
+    }).collect()
+}
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if let [mode, offset] = arguments.as_slice() {
+        if mode == "--commit-deadline" {
+            let offset = match offset.as_str() {
+                "-1" => -1, "0" => 0, "1" => 1,
+                _ => { eprintln!("drop history: unexpected deadline offset"); std::process::exit(2); }
+            };
+            match run(false, 1, 1, false, false, false, false, false, 0, Some(offset)) {
+                Ok(result) => println!("{result}"),
+                Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); }
+            }
+            return;
+        }
+    }
     let loss = arguments.contains(&"--drop-first-history".into());
     let multi = arguments.contains(&"--multi-row-history".into());
     let grouped = arguments.contains(&"--multiple-target-slots".into());
@@ -255,7 +355,7 @@ fn main() {
         + usize::from(loss) + usize::from(multi) + usize::from(grouped) + usize::from(wrapped) {
         eprintln!("drop history: unexpected argument"); std::process::exit(2);
     }
-    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss, ack_loss, inventory_loss, prepare_loss, if wrapped { 251 } else { 0 }) {
+    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss, ack_loss, inventory_loss, prepare_loss, if wrapped { 251 } else { 0 }, None) {
         Ok(result) => println!("{result}"),
         Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); }
     }

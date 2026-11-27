@@ -1,4 +1,5 @@
 """Value: browser cleanup preserves causes and releases every owned server and browser."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,9 @@ class BrowserCleanupTests(unittest.TestCase):
 
     def test_native_relay_proxy_preserves_carriers_and_distinguishes_observation_gaps(self):
         subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_relay_proxy.test.cjs')], check=True, timeout=20)
+
+    def test_native_chromium_socket_joins_exact_carriers_and_preserves_unavailable_evidence(self):
+        subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_chromium_socket.test.cjs')], check=True, timeout=10)
 
     def test_native_relay_hold_keeps_exact_receipt_when_final_read_times_out(self):
         subprocess.run(['node', '--test', str(ROOT / 'scripts/reference/browser/native_relay_hold.test.cjs')], check=True, timeout=10)
@@ -2390,7 +2394,24 @@ bindDepartureCheckpoints(peers[0], roster, uuids[0]);
 record(2, {...hold('release_socket_closed', 16), socket_state: 3, socket_stage: 'before_send', held_send: true}, 135);
 record(1, hold('hold_cap', 16), 140);
 record(3, {kind: 'native_expiry', endpoint: 8, uuid: uuids[6], page_ms: 6, expiry: evidence(0, 6001)}, 145);
-const report = relayReleaseEvidence(peers, uuids, false);
+record(2, {kind: 'history_published', page_ms: 90, state: 'playing', turns: 28, frame: 41, confirmed: 40, restores: 1, frames: 40}, 146);
+record(0, {kind: 'history_published', page_ms: 4, state: 'playing', turns: 28, frame: 41, confirmed: 40, restores: 1, frames: 39}, 147);
+record(3, {kind: 'sdk_departure', endpoint: 8, uuid: uuids[6], page_ms: 11}, 150);
+record(0, {kind: 'sdk_departure', endpoint: 8, uuid: uuids[6], page_ms: 6}, 150);
+const firstExpiry = peers[2].native_expiry;
+peers[1].history_received = {frames: 40, controller_ms: 120, controller_order: firstExpiry.controller_order - 1};
+peers[2].history_received = {frames: 40, controller_ms: 120, controller_order: firstExpiry.controller_order + 1};
+peers[4].history_received = {frames: 39, controller_ms: 118, controller_order: firstExpiry.controller_order - 1};
+peers[5].history_received = {frames: 40, controller_ms: 131, controller_order: peers[0].native_expiry.controller_order + 1};
+const report = relayReleaseEvidence(peers, uuids, false, {
+  frames: 40, departureCommands: [{phase: 'departure', controller_dispatch_ms: 160}, {phase: 'teardown', controller_dispatch_ms: 170}],
+});
+assert.deepEqual(report.expiries.map(expiry => expiry.room_checkpoints), [
+  {release_completed_pages: [6], history_received_pages: [1, 2], local_history_published_before_expiry: null},
+  {release_completed_pages: [], history_received_pages: [1], local_history_published_before_expiry: true},
+]);
+assert.deepEqual(report.first_sdk_removal, {reporter_page: 3, uuid: uuids[6], controller_ms: 150});
+assert.equal(report.intentional_leave_dispatch_ms, 160);
 assert.equal(report.correction_deadline_reached, false);
 const timeout = Object.assign(new Error('timed out'), {name: 'TimeoutError'});
 assert.equal(missedCorrectionDeadline('corrected history', timeout, 120, 119), false);
@@ -2404,7 +2425,9 @@ for (const message of ['absolute native peer 2 input release deadline', 'absolut
   assert.equal(missedCorrectionDeadline('input release', new Error(message), 120, 120), true);
 }
 const timedOut = missedCorrectionDeadline('corrected history', timeout, 120, 120);
-assert.equal(relayReleaseEvidence(peers, uuids, timedOut).correction_deadline_reached, true);
+const noDispatch = relayReleaseEvidence(peers, uuids, timedOut, {frames: 40, departureCommands: []});
+assert.equal(noDispatch.correction_deadline_reached, true);
+assert.equal(noDispatch.intentional_leave_dispatch_ms, null);
 assert.deepEqual(report.socket_closed_pages, [2]);
 assert.deepEqual(report.hold_cap_pages, [1]);
 assert.deepEqual(report.expiries.map(({reporter_page, expired_page, last_release_checkpoint, expiry}) =>
@@ -2604,6 +2627,7 @@ async function run() {
   let now = 100;
   global.performance = { now: () => now };
   global.window = {};
+  let acceptance;
   function fixture(id, outcome) {
     let predicate, complete, reject;
     return {
@@ -2629,6 +2653,7 @@ async function run() {
             return;
           }
           assert.equal(predicate(message({ ...fresh, id })), true);
+          if (outcome === 'pending') assert.deepEqual(acceptance, { value: fresh, receivedAt: 100 });
           assert.equal(predicate(message({ ...fresh, id })), false, 'repeat publication');
           complete();
         });
@@ -2637,7 +2662,8 @@ async function run() {
       },
     };
   }
-  assert.deepEqual(await readConfirmedHistory(fixture(18, 'pending'), 2, 18, 2), fresh);
+  const onReceipt = (value, receivedAt) => { acceptance = { value, receivedAt }; };
+  assert.deepEqual(await readConfirmedHistory(fixture(18, 'pending'), 2, 18, 2, onReceipt), fresh);
   assert.deepEqual(await readConfirmedHistory(fixture(19, 'rejected'), 2, 19, 2), fresh);
   await assert.rejects(readConfirmedHistory(fixture(20, 'late'), 2, 20, 2), /history receipt timed out/);
 
@@ -3699,6 +3725,7 @@ global.cleanupLog=value=>fs.appendFileSync(process.env.CLEANUP_LOG,value+'\n');
 const originalError=console.error;
 console.error=(...values)=>{
   if(process.env.FAIL_CUSTOM_INSPECT==='1'&&process.exitCode!==1)throw Error('CLI_EXIT_CODE_NOT_SET');
+  if(process.env.FAIL_NATIVE_HANG==='1' && typeof values[0]==='string' && values[0].startsWith('{"phase":'))cleanupLog('phase receipt');
   originalError(...values);
 };
 const create=http.createServer;
@@ -3753,12 +3780,13 @@ module.exports.chromium={launch:async()=>{
                      ('online-opaque', True, False, False), ('webrtc-opaque', True, False, False),
                      *[(name+'-inspect', True, False, False) for name in ['smoke', 'ownership', 'online', 'webrtc', 'spectator']],
                      ('ownership-diagnostic', False, False, False), ('ownership-diagnostic', False, True, True),
-                     ('native_online', True, False, False)]
+                     ('native_online', True, False, False), ('native_online-trace', True, False, False)]
             for name, primary, browser_failure, context_failure in cases:
                 opaque = name.endswith('-opaque')
                 custom_inspect = name.endswith('-inspect')
                 diagnostic = name.endswith('-diagnostic')
-                name = name.removesuffix('-opaque').removesuffix('-inspect').removesuffix('-diagnostic')
+                trace = name.endswith('-trace')
+                name = name.removesuffix('-opaque').removesuffix('-inspect').removesuffix('-diagnostic').removesuffix('-trace')
                 log.unlink(missing_ok=True)
                 environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_CHROMIUM_EXECUTABLE': '/fixture',
                                'FORTRESS_TLS_CERT': str(certificate), 'FORTRESS_TLS_KEY': str(certificate), 'CLEANUP_LOG': str(log),
@@ -3771,7 +3799,10 @@ module.exports.chromium={launch:async()=>{
                 command = ['node', '--require', str(preload), str(ROOT / 'scripts/reference/browser' / (name + '.cjs')), str(directory)]
                 command += [json.dumps(['res://tests/unit/test_alpha.gd'])] if name == 'ownership' else ['ws://127.0.0.1:12345/v3/ws']
                 if name == 'native_online':
-                    command += ['mesh', '2']
+                    command += ['relay', '4', 'chromium', '--trace-chromium-socket'] if trace else ['mesh', '2']
+                    if trace:
+                        environment.update(FORTRESS_RELAY_TRACE_SCOPE=str(directory / 'scope.json'),
+                                           FORTRESS_RELAY_TRACE_OUTPUT=str(directory / 'trace.json'))
                 with self.subTest(name=name, primary=primary, browser_failure=browser_failure, context_failure=context_failure):
                     # Match sibling Node controls: allow hosted startup scheduling while still bounding hangs.
                     child = subprocess.run(command, env=environment, capture_output=True, encoding='utf-8', timeout=10)
@@ -3814,7 +3845,16 @@ module.exports.chromium={launch:async()=>{
                     if name == 'native_online':
                         self.assertIn('native peer 0 diagnostics deadline', child.stderr)
                         self.assertIn('native context 0 close deadline', child.stderr)
-                        self.assertIn('browser closed 0', log.read_text())
+                        cleanup = log.read_text().splitlines()
+                        self.assertLess(cleanup.index('phase receipt'), cleanup.index('browser closed 0'))
+                        phase = next(line for line in child.stderr.splitlines() if line.startswith('{"phase":'))
+                        self.assertEqual(json.loads(phase)['primary_error'], 'PRIMARY_FAILURE')
+                        if trace:
+                            followup = next(line for line in child.stderr.splitlines() if line.startswith('{"relaySocketFailure":'))
+                            self.assertEqual(json.loads(phase)['phase'], 'launch')
+                            evidence = json.loads(followup)['relaySocketFailure']
+                            self.assertEqual(evidence['failure_sha256'], hashlib.sha256(phase.encode()).hexdigest())
+                            self.assertEqual(evidence['status'], 'unavailable')
                     if not (primary or browser_failure or context_failure or diagnostic):
                         json.loads(child.stdout)
 

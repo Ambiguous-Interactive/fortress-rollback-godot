@@ -3,6 +3,8 @@ import hashlib
 import re
 import struct
 
+from wire import validate_original_input
+
 
 MAX_BYTES = 65536
 
@@ -69,6 +71,47 @@ def validate_recording(value, count, expected_engine=None, frames=40):
     return frames
 
 
+def _validate_pressure_routes(peers, identities):
+    for index, (sender, recipient) in enumerate((identities, identities[::-1])):
+        source, destination = peers[index], peers[1 - index]
+        sent, retried = source['rtc'].get('recordingRelaySends'), source['result']['records'][0]['mixed'].get('retried_inputs')
+        receipt = destination['result']['records'][0]['mixed']
+        received = receipt.get('received_inputs')
+        if (type(sent) is not list or len(sent) != 2 or type(retried) is not list or len(retried) != 2
+                or type(received) is not list or len(received) > min(512, receipt['accepted_binary'])
+                or any(type(item) is not str or not re.fullmatch(r'(?:[0-9a-f]{2}){133,1081}', item) for item in received)
+                or len(set(received)) != len(received)):
+            raise ValueError('recording pressure attributed retry inventory incomplete')
+        period = 5 + index
+        slot = sorted(identities).index(sender)
+        last_retry, last_read, starts = 0, 0, set()
+        for retry, physical in zip(retried, sent):
+            if type(retry) is not dict or type(physical) is not dict:
+                raise ValueError('recording pressure attributed retry entry invalid')
+            refused_turn, retry_turn, frame, start, read = (retry.get(key) for key in ('refused_turn', 'retry_turn', 'frame', 'start_frame', 'blocked_read'))
+            if (any(type(value) is not int for value in (refused_turn, retry_turn, frame, start, read, physical.get('turn')))
+                    or not 130 <= frame <= 253 or last_retry >= refused_turn or refused_turn % period == 0
+                    or retry_turn != refused_turn + period - refused_turn % period or physical['turn'] != retry_turn):
+                raise ValueError('recording pressure attributed retry turn invalid')
+            if not last_read < read <= source['rtc']['relayPostWrapBlockedReads']:
+                raise ValueError('recording pressure attributed retry socket read invalid')
+            envelope = retry.get('envelope')
+            if type(envelope) is not str or not re.fullmatch(r'(?:[0-9a-f]{2}){133,1081}', envelope):
+                raise ValueError('recording pressure attributed retry envelope invalid')
+            data = bytes.fromhex(envelope)
+            if (data[:21] != b'FSR1\x01' + bytes([2]) * 16 or data[21:37].hex() != sender.replace('-', '')
+                    or data[37:53].hex() != recipient.replace('-', '') or struct.unpack_from('<I', data, 53)[0] != len(data) - 57):
+                raise ValueError('recording pressure attributed retry address invalid')
+            if validate_original_input(data[57:], 2, sender, slot, index, 257, (129, frame), 'recording pressure') != start or start in starts:
+                raise ValueError('recording pressure attributed retry original range invalid')
+            if physical.get('first') is not True:
+                raise ValueError('recording pressure attributed retry first physical send missing')
+            if physical.get('wire') != envelope or envelope not in received:
+                raise ValueError('recording pressure attributed retry missing physical send or addressed receipt')
+            starts.add(start)
+            last_retry, last_read = retry_turn, read
+
+
 def validate_pressure(result, expected_engine=None):
     """Require actual socket receipt, repeated post-wrap refusal and original decoded history."""
     if (type(result) is not dict or result.get('passed') is not True or result.get('recordingPressure') is not True
@@ -107,18 +150,19 @@ def validate_pressure(result, expected_engine=None):
         for key in ('maximum_pending', 'maximum_relay_pending', 'maximum_relay_received'):
             if type(state.get(key)) is not int or not 0 <= state[key] <= 128:
                 raise ValueError('recording pressure owned queue exceeded its bound')
-        if (type(witness.get('binary_receives')) is not int or witness['binary_receives'] < state['accepted_binary']
+        if (rtc.get('captureError') is not False or type(witness.get('binary_receives')) is not int or witness['binary_receives'] < state['accepted_binary']
                 or type(rtc.get('binarySent')) is not int or rtc['binarySent'] < 2):
             raise ValueError('recording pressure physical binary transport missing')
         for key in ('relayBlockedReads', 'relayPostWrapBlockedReads'):
             if type(rtc.get(key)) is not int or rtc[key] < 2:
                 raise ValueError('recording pressure physical socket refusal control missing')
         teardown = rtc.get('teardown', {})
+        if type(teardown.get('websockets_created')) is not int or teardown['websockets_created'] != 1:
+            raise ValueError('recording pressure expected one WebSocket per endpoint')
         if (type(teardown.get('channels')) is not int or teardown['channels'] != 3 or type(teardown.get('connections_created')) is not int
                 or teardown['connections_created'] < 1 or type(teardown.get('connections')) is not int
                 or teardown['connections'] != teardown['connections_created']
-                or type(teardown.get('websockets_created')) is not int or teardown['websockets_created'] < 1
-                or type(teardown.get('websockets')) is not int or teardown['websockets'] != teardown['websockets_created']):
+                or type(teardown.get('websockets')) is not int or teardown['websockets'] != 1):
             raise ValueError('recording pressure browser resources survived teardown')
         channels = rtc.get('channels')
         if (type(channels) is not list or len(channels) != 3 or any(type(channel.get('id')) is not int for channel in channels)
@@ -134,4 +178,5 @@ def validate_pressure(result, expected_engine=None):
         validate_recording(row.get('recording'), 2, expected_engine, frames=257)
     if len(set(identities)) != 2:
         raise ValueError('recording pressure endpoints share an identity')
+    _validate_pressure_routes(peers, identities)
     return result

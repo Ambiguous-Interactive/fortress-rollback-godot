@@ -32,7 +32,7 @@ from signalfish_live_probe import (build_cargo, extract, native_inventory, sourc
 from signalfish_probe import inventory
 from run import capture
 from web_templates import web_template_archive
-from wire import INPUT_HEADER
+from wire import validate_original_input
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import host_capacity  # noqa: E402
@@ -227,25 +227,8 @@ def validate_overlap(peers):
         raise ValueError('unexpected overlap producer')
 
 def validate_overlap_input(raw, count, sender, slot):
-    size_offset = 57 + 7 * count
-    if (len(raw) < size_offset + 5 or raw[:8] != INPUT_HEADER
-            or int.from_bytes(raw[40:44], 'little') != len(raw) - 44
-            or raw[8:24] != bytes([count]) * 16 or raw[24:32] != hashlib.sha256(sender.encode('ascii')).digest()[:8]
-            or raw[32:40] != b'\x01\x00\x00\x00\x00\x00\x00\x00'):
-        raise ValueError('overlap protocol header or identity invalid')
-    start = int.from_bytes(raw[44:48], 'little', signed=True)
-    ack = int.from_bytes(raw[48:52], 'little', signed=True)
-    frames = int.from_bytes(raw[52:54], 'little')
-    if (start < 0 or frames < 1 or start + frames > 3 or not -1 <= ack <= 39 or raw[54:57] != bytes([1, slot, count])
-            or len(raw) != size_offset + 4 + frames or int.from_bytes(raw[size_offset:size_offset + 4], 'little') != frames):
-        raise ValueError('overlap protocol input layout invalid')
-    for index in range(count):
-        status = raw[57 + 7 * index:64 + 7 * index]
-        if status[0] != 0 or status[5:7] != b'\x00\x00' or not -1 <= int.from_bytes(status[1:5], 'little', signed=True) <= 39:
-            raise ValueError('overlap protocol status invalid')
-    expected = bytes((frame * 17 + slot * 31 + 1) & 255 for frame in range(start, start + frames))
-    if raw[size_offset + 4:] != expected:
-        raise ValueError('overlap original input bytes changed')
+    validate_original_input(raw, count, sender, slot, 0, 40, (0, 3), 'overlap')
+
 
 def validate_disabled_control(returncode, output):
     failures = []

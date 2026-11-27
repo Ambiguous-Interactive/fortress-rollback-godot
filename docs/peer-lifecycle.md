@@ -332,12 +332,15 @@ trace comparison and the expanded live fault matrix remain in
 Asymmetric delivery tests preserve and recover the full original suffix before the survivors continue.
 A captured donor journal also survives physical source-ring reuse; a fresh journal refuses the same evicted range.
 These checks do not establish the remaining pinned-source comparison.
-The live missing-history receipt records both survivors' opening confirmation
-frontiers and requires the certified cut to cover them. In Chromium on both
-Godot pins, the two frontiers were 3, the donor supplied original frames 4–6,
-and both survivors froze at 6 and compared 38 canonical prefixes. A deliberately
-unequal live schedule remains under
-[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188).
+The live missing-history receipt requires the proposer to open at confirmed
+frame 2 and the donor at frame 3. Withholding the donor's inputs from the departing
+page keeps its receipt for the donor's slot at 2. The departing page still reports
+receipt of the proposer's original frame 3 to the donor. Separately, it withholds
+its own original frames 4–6 from the proposer, which recovers them from the donor.
+At barrier opening, the proposer has target inputs through 3 and the donor
+through 6. The receipt checks every slot's confirmed input and status at each opening
+frontier before and after the certificate, the matching drop event at cut 6 and 38 original canonical prefixes
+per survivor.
 
 The agreement runs in real sessions, not only in unit tests. Three peer
 sessions on the deterministic test transport play, one peer stops answering,

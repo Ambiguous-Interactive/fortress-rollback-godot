@@ -1,3 +1,4 @@
+const { createChromiumCapture, proxySocketAddress } = require('./native_chromium_socket.cjs');
 const { createDepartureClock, CLOSE_HTTPS_PRE_SAMPLES } = require('./native_departure_clock.cjs');
 const { assertRecoveredRoom, OmittedReplacement, PHYSICAL_PAIRS, recoverPairs } = require('./native_recovery.cjs');
 const { createRelayWireTrace, decodeRelayDelivery } = require('./native_relay_trace.cjs');
@@ -6,7 +7,7 @@ const { createRelayHold, RELAY_HOLD_CAP, RELAY_HOLD_PREFIX, RELAY_HOLD_WINDOW_MS
 const { assertJoinedRelayControl, bindRelayServer, createRelayServerReader, exerciseRelayDelivery, exerciseRelayRetention, exerciseSameLinkRetention,
   joinRelayReceipts, readRelayWireDiagnostic, relayExpiryRows, validateRelayExpiryFrontier } = require('./native_relay_control.cjs');
 const assert = require('node:assert/strict');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { setImmediate: flush, setTimeout: pause } = require('node:timers/promises');
 const { createHost } = require('./online_host.cjs');
 const { placeFirefox } = require('./webrtc_display.cjs');
@@ -391,13 +392,17 @@ function missedCorrectionDeadline(phase, error, deadline, failedAt) {
     || /^(?:page\.evaluate: )?native relay release deadline(?:\n|$)/.test(message);
 }
 
-function relayReleaseEvidence(peers, uuids, correctionDeadlineReached) {
+function relayReleaseEvidence(peers, uuids, correctionDeadlineReached, { frames, departureCommands }) {
   const socket_closed_pages = [];
   const hold_cap_pages = [];
   const expiries = [];
+  let firstRemoval;
   peers.forEach((peer, reporter_page) => {
     if (peer.release_socket_closed || peer.release_control_socket_closed) socket_closed_pages.push(reporter_page);
     if (peer.hold_cap) hold_cap_pages.push(reporter_page);
+    for (const removal of Object.values(peer.sdk_departures ?? {})) {
+      if (!firstRemoval || removal.controller_order < firstRemoval.controller_order) firstRemoval = { reporter_page, ...removal };
+    }
     const expiry = peer.native_expiry;
     if (!expiry || !uuids) return;
     const expired_page = uuids.indexOf(expiry.uuid);
@@ -409,10 +414,22 @@ function relayReleaseEvidence(peers, uuids, correctionDeadlineReached) {
     const latest = candidates.filter(([, sample]) => sample && sample.controller_order < expiry.controller_order)
       .sort(([, a], [, b]) => b.controller_order - a.controller_order)[0];
     const last_release_checkpoint = latest ? { kind: latest[0], ...latest[1] } : null;
+    const localHistory = peer.history_published;
+    const room_checkpoints = {
+      release_completed_pages: peers.flatMap((peer, index) => peer.release_completed?.controller_order < expiry.controller_order ? [index] : []),
+      history_received_pages: peers.flatMap(({ history_received: history }, index) =>
+        history?.frames === frames && history.controller_order < expiry.controller_order ? [index] : []),
+      local_history_published_before_expiry: localHistory?.frames === frames && localHistory.page_ms !== expiry.page_ms
+        ? localHistory.page_ms < expiry.page_ms : null,
+    };
     expiries.push({ reporter_page, expired_page, uuid: expiry.uuid, endpoint: expiry.endpoint,
-      expiry: expiry.expiry, controller_ms: expiry.controller_ms, controller_order: expiry.controller_order, last_release_checkpoint });
+      expiry: expiry.expiry, controller_ms: expiry.controller_ms, controller_order: expiry.controller_order, last_release_checkpoint, room_checkpoints });
   });
-  return { socket_closed_pages, hold_cap_pages, correction_deadline_reached: correctionDeadlineReached, expiries };
+  const first_sdk_removal = firstRemoval
+    ? { reporter_page: firstRemoval.reporter_page, uuid: firstRemoval.uuid, controller_ms: firstRemoval.controller_ms } : null;
+  const intentional_leave_dispatch_ms = departureCommands.find(command => command.phase === 'departure')?.controller_dispatch_ms ?? null;
+  return { socket_closed_pages, hold_cap_pages, correction_deadline_reached: correctionDeadlineReached, expiries, first_sdk_removal,
+    intentional_leave_dispatch_ms };
 }
 
 function retainDepartureCheckpoint(peer, { kind, ...receipt }, roster, local) {
@@ -435,14 +452,14 @@ function bindDepartureCheckpoints(peer, roster, local) {
   delete peer.unbound_lifetime;
 }
 
-function browserOptions(name) {
+function browserOptions(name, chromiumArgs = []) {
   const executablePath = process.env[`FORTRESS_${name.toUpperCase()}_EXECUTABLE`];
   if (!executablePath) throw new Error(`missing executable for ${name}`);
   switch (name) {
     case 'chromium':
       return { executablePath, headless: true,
         args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-          '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] };
+          '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', ...chromiumArgs] };
     case 'firefox':
       return { executablePath, headless: false,
         firefoxUserPrefs: { 'webgl.force-enabled': true, 'webgl.disabled': false, 'toolkit.shutdown.fastShutdownStage': 0 } };
@@ -1605,7 +1622,7 @@ function historyThrough(peers) {
   return frames;
 }
 
-async function readConfirmedHistory(page, frames, id, players) {
+async function readConfirmedHistory(page, frames, id, players, onReceipt) {
   assert.ok(Number.isSafeInteger(id) && id > 0, 'native history request ID must be a positive safe integer');
   assert.ok(Number.isSafeInteger(frames) && frames > 0, 'native history frame count must be a positive safe integer');
   let receipt;
@@ -1631,8 +1648,10 @@ async function readConfirmedHistory(page, frames, id, players) {
         if (!Array.isArray(row) || row.length !== players || !row.every(Number.isSafeInteger)
           || typeof snapshot !== 'string' || !CANONICAL_SNAPSHOT.test(snapshot)) return false;
       }
-      if (performance.now() >= deadline) return false;
+      const receivedAt = performance.now();
+      if (receivedAt >= deadline) return false;
       receipt = { frames, rows, snapshots };
+      onReceipt?.(receipt, receivedAt);
       return true;
     },
   });
@@ -2025,11 +2044,13 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const omitSecond = control === '--omit-second-replacement';
   const traceRetention = control === '--relay-retention-control';
   const traceSameLink = control === '--relay-same-link-control';
-  const traceRelayWire = control === '--trace-relay-wire' || traceRetention || traceSameLink;
+  const traceChromiumSocket = control === '--trace-chromium-socket';
+  const traceRelayWire = control === '--trace-relay-wire' || traceRetention || traceSameLink || traceChromiumSocket;
   const traceScopePath = traceRelayWire && process.env.FORTRESS_RELAY_TRACE_SCOPE;
   const traceReceiptPath = traceScopePath && process.env.FORTRESS_RELAY_TRACE_OUTPUT;
   const readRelayServer = traceReceiptPath && createRelayServerReader(traceReceiptPath);
-  const relayProxy = readRelayServer ? createRelayProxyTrace() : undefined;
+  if (traceChromiumSocket && !readRelayServer) throw new Error('Chromium socket tracing requires a relay trace server');
+  const relayProxy = readRelayServer ? createRelayProxyTrace(traceChromiumSocket ? proxySocketAddress : undefined) : undefined;
   const mixed = startup || liveClose || recovery;
   const route = mixed ? 'mesh' : mode;
   const traceWarmup = route === 'relay' && players === 8;
@@ -2057,6 +2078,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const browsers = [];
   const browserPeers = [];
   let result;
+  let failureReceipt;
+  let chromiumCapture;
   let omittedReplacement;
   let roomIdentities;
   let relayHold;
@@ -2131,7 +2154,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     readRelayWireDiagnostic(page, links, DIAGNOSTIC_MS, `native peer ${index} relay wire receipt`)));
   const collectRelayReceive = (joined, pages, serverReceipt) => relayProxy && joinRelayReceive(joined, relayProxy.snapshot(), pages, serverReceipt?.room);
   try {
-    for (const name of browserPair) browsers.push(await playwright[name].launch(browserOptions(name)));
+    if (traceChromiumSocket) chromiumCapture = await createChromiumCapture(root);
+    for (const name of browserPair) browsers.push(await playwright[name].launch(browserOptions(name, chromiumCapture?.args)));
     for (let index = 0; index < players; index++) {
       const started = performance.now();
       const browser = browsers[index % browsers.length];
@@ -2186,7 +2210,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     phase = 'lobby';
     function connect(page, index, room) {
-      return command(page, 'connect', { endpoint: socketEndpoint, name: `Player ${index}`, room, route, players,
+      const endpoint = traceChromiumSocket ? `${socketEndpoint}?trace_page=${index}` : socketEndpoint;
+      return command(page, 'connect', { endpoint, name: `Player ${index}`, room, route, players,
         wait_for_full_mesh: mode === 'mesh' || recovery, observe_recovery: recovery, trace_close: traceMeshDeparture, trace_warmup: traceWarmup });
     }
     await connect(pages[0], 0, '');
@@ -2341,15 +2366,14 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
     phase = 'confirmed history capture';
-    const captures = await Promise.allSettled(pages.map(async (page, index) => {
-      const receipt = await boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence, players), PAGE_WAIT_MS,
-        `native peer ${index} confirmed history capture`);
-      if (relayHistory) {
+    const captures = await Promise.allSettled(pages.map((page, index) => {
+      const onReceipt = relayHistory && ((receipt, controller_ms) => {
         const { slot, uuid, session_id, room_id } = stalled[index];
         relayHistory[index] = { ...receipt, index, slot, uuid, session_id, room_id };
-        postRelease[index].history_received = { frames: receipt.frames, controller_ms: performance.now() };
-      }
-      return receipt;
+        postRelease[index].history_received = { frames: receipt.frames, controller_ms, controller_order: ++postReleaseOrder };
+      });
+      return boundedRoom(() => readConfirmedHistory(page, comparedFrames, ++sequence, players, onReceipt), PAGE_WAIT_MS,
+        `native peer ${index} confirmed history capture`);
     }));
     const captureFailure = captures.find(result => result.status === 'rejected');
     if (captureFailure) throw captureFailure.reason;
@@ -2517,7 +2541,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     result = { passed: true, route: mode, players, compared_frames: comparedFrames, browser_peers: browserPeers, bootstrap_ms, armed, stalled, releaseDelay,
       holdReadyReceived: mixed ? undefined : holdReadyReceived, postRelease, correctionDeadline, engineTurns, relayWire, relayControl,
       relayServer, relayJoined, relayReceive, relayRetention, sameLinkRetention, relayHold: relayHold && await relayHoldReceipt(),
-      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false), departureCommands, roomIdentities,
+      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, false, { frames: comparedFrames, departureCommands }),
+      departureCommands, roomIdentities,
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
       direct, atClose, afterClose, restored, recoveryEvidence, peers, interruption, terminal, after, closeErrors: [...physicalCloseErrors, ...departureErrors], closeLinks,
       departureClocks: closeReport.clocks, departureClockSamples: closeReport.clockSamples, departureHttpsClockSamples: closeReport.httpsClockSamples, ...closeReceipts(),
@@ -2572,8 +2597,9 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     const relayReceive = collectRelayReceive(relayJoined, relayWire, serverReceipt?.value);
     const expiries = observedExpiries();
-    console.error(JSON.stringify({
+    const failure = JSON.stringify({
       phase, target_frames: comparedFrames, historyEvidence: historyFailureEvidence(relayHistory, comparedFrames, roomIdentities),
+      primary_error: error instanceof Error ? error.message : typeof error === 'string' ? error : undefined,
       browser_peers: browserPeers, bootstrap_ms, errors, releaseDelay, closeErrors: [...physicalCloseErrors, ...departureErrors],
       departureClocks: closeReport.clocks, departureCommands, roomIdentities, ...closeReceipts(),
       closeProofs: [...(physicalCloseReport.proofs ?? []), ...(closeReport.proofs ?? [])],
@@ -2593,9 +2619,12 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       relayExpiryRows: traceRelayWire ? relayExpiryRows(expiries, relayJoined, expiryLinks) : undefined,
       relayExpiryTraffic: traceRelayWire ? relayExpiryTraffic(expiries, relayJoined, relayWire, relayReceive) : undefined,
       relayHold: holdReceipt,
-      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached),
+      releaseEvidence: postRelease && relayReleaseEvidence(postRelease, roomIdentities?.uuids, correctionDeadlineReached,
+        { frames: comparedFrames, departureCommands }),
       releaseTiming: releaseTiming?.map((receipt, index) => ({ ...receipt, ...releaseDeliveryTiming(receipt, postRelease?.[index].hold_cap) })),
-    }));
+    });
+    console.error(failure);
+    if (chromiumCapture) failureReceipt = { sha256: createHash('sha256').update(failure).digest('hex'), receive: relayReceive };
   } finally {
     releaseSignal?.cancel();
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
@@ -2606,6 +2635,13 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     }
     failures.push(...await closeAll([server], owner => new Promise((resolve, reject) =>
       owner.close(error => error ? reject(error) : resolve())), 'host'));
+  }
+  if (chromiumCapture && (failureReceipt || result)) {
+    const recipients = roomIdentities?.uuids.map(uuid => uuid.replaceAll('-', ''));
+    const observed = await chromiumCapture.finish(new URL(origin).host, failureReceipt?.receive ?? result?.relayReceive, recipients)
+      .catch(() => ({ status: 'unavailable' }));
+    if (failureReceipt) console.error(JSON.stringify({ relaySocketFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
+    else result.relaySocketReceive = observed;
   }
   await flush();
   if (errors.length) failures.push(new Error(JSON.stringify(errors)));
@@ -2623,6 +2659,7 @@ if (require.main === module) {
   const validOverlap = overlap && (!control || control === '--omit-second-replacement');
   const validFault = size === '4' && (validOverlap || (!control && ['mesh-startup', 'mesh-close', 'mesh-recovery'].includes(route)));
   const relayControl = !control || control === '--trace-relay-wire'
+    || profile === 'chromium' && control === '--trace-chromium-socket'
     || (size === '8' && (['--relay-retention-control', '--relay-same-link-control'].includes(control)
       || profile === 'firefox' && RELEASE_DELAYS.has(control)));
   const validPlain = ['2', '4', '8'].includes(size) && (route === 'relay' ? relayControl : route === 'mesh' && !control);

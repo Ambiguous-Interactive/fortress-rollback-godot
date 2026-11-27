@@ -228,7 +228,7 @@ class TraceServerWitnessTest(unittest.TestCase):
                     play.reset_mock(side_effect=True)
                     play.side_effect = changed_play
                     try:
-                        with self.assertRaisesRegex(ValueError, 'native browser witness inputs changed during execution'):
+                        with self.assertRaisesRegex(ValueError, 'native browser witness inputs changed during execution: relay_trace_' + key):
                             native.main()
                         play.assert_called_once()
                         self.assertFalse(report.exists())
@@ -337,6 +337,7 @@ class TraceServerWitnessTest(unittest.TestCase):
                         native.main()
                     self.assertFalse(report.exists(), 'a restored file still invalidates the receipt')
                     self.assertIn('native browser witness inputs changed during execution', failure.exception.__notes__[0])
+                    self.assertIn(restored.name, failure.exception.__notes__[0])
 
 
 if __name__ == '__main__':

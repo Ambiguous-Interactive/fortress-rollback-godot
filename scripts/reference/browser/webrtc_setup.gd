@@ -255,13 +255,16 @@ class DropDirect:
 		_record_sent_commit_retries(retries, result.sent, now_us)
 		return result
 
-	func drop_report() -> Dictionary:
+	func drop_report(include_destination: bool = false) -> Dictionary:
 		var frames: Array[int] = []
 		for frame: int in _frames.keys():
 			frames.append(frame)
 		frames.sort()
-		return {"dropped": frames.size(), "from": _drop_from, "through": _drop_through,
+		var result: Dictionary = {"dropped": frames.size(), "from": _drop_from, "through": _drop_through,
 			"frames": frames, "overlaps": _overlaps, "slot": _drop_slot, "unsupported": _unsupported}
+		if include_destination:
+			result["destination"] = _drop_identity.hex_encode()
+		return result
 
 	func history_report() -> Dictionary:
 		return {

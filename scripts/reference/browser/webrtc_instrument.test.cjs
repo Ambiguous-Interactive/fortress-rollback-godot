@@ -810,10 +810,11 @@ test('corrupt control sets both physical second directions before either origina
 // Value: repeated relay refusal must preserve actual socket state and stop exactly after queue reuse.
 test('recording pressure follows service turns on both physical socket types through frame252', () => {
   class Socket {
+    static OPEN = 1;
     constructor() { this.readyState = 1; this.nativeBuffered = 7; this.sent = []; }
     get bufferedAmount() { return this.nativeBuffered; }
     addEventListener() {}
-    send(bytes) { this.sent.push(bytes); }
+    send(bytes) { if (this.refuseSend) throw new Error('socket send refused'); this.sent.push(bytes); }
   }
   class Channel extends Socket {
     constructor(options) { super(); Object.assign(this, options); }
@@ -850,8 +851,36 @@ test('recording pressure follows service turns on both physical socket types thr
     assert.equal(socket.bufferedAmount, 7);
     assert.equal(channel.bufferedAmount, 7);
     assert.equal(socket.readyState, 1);
+    assert.equal(window.fortressArmRecordingHead('0102'), true);
+    window.fortressRecordingTurn = 12;
+    socket.send(new Uint8Array([0, 1, 2]));
+    assert.deepEqual(window.fortressRtc.recordingRelaySends, []);
+    socket.refuseSend = true;
+    assert.throws(() => socket.send(new Uint8Array([1, 2])), /socket send refused/);
+    assert.deepEqual(window.fortressRtc.recordingRelaySends, []);
+    socket.refuseSend = false;
+    socket.readyState = 2;
     socket.send(new Uint8Array([1, 2]));
-    assert.equal(socket.sent.length, 1);
+    assert.deepEqual(window.fortressRtc.recordingRelaySends, []);
+    socket.readyState = Socket.OPEN;
+    socket.send(Uint8Array.from([0, 1, 2, 0]).subarray(1, 3));
+    assert.deepEqual(window.fortressRtc.recordingRelaySends, [{ turn: 12, wire: '0102', first: true }]);
+    socket.send(new Uint8Array([1, 2]));
+    assert.equal(window.fortressRtc.recordingRelaySends.length, 1);
+    assert.equal(socket.sent.length, 4);
+    socket.send(new Uint8Array([4, 5]));
+    assert.equal(window.fortressArmRecordingHead('0405'), false);
+    window.fortressRecordingRefusedHead = '0405';
+    window.fortressRecordingTurn = 18;
+    socket.send(new Uint8Array([4, 5]));
+    assert.equal(window.fortressRtc.recordingRelaySends.length, 1, 'a prior identical send can explain the receiver receipt');
+    document.body.dataset.fortressFrame = '129';
+    const observedRefusals = window.fortressRtc.relayPostWrapBlockedReads;
+    for (let index = 0; index < 1024; index++) socket.send(Uint8Array.from([8, index >> 8, index & 255]));
+    assert.equal(window.fortressRtc.relayPostWrapBlockedReads, observedRefusals, 'telemetry reads the native buffer without incrementing refusals');
+    assert.equal(window.fortressRtc.maximumRelayBuffered, 7);
+    assert.equal(window.fortressRtc.captureError, true);
+    assert.equal(window.fortressArmRecordingHead('0607'), false);
   } finally {
     delete global.WebSocket;
     delete global.window;

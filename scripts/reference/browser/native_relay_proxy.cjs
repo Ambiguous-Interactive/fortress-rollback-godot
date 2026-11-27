@@ -98,12 +98,12 @@ function createFrameReader() {
   return { push, status: () => ({ skipped, error }) };
 }
 
-function createRelayProxyTrace() {
+function createRelayProxyTrace(socketAddress) {
   const sockets = [];
   let refused = 0;
   const hash = bytes => createHash('sha256').update(bytes).digest('hex');
   const trace = {
-    open() {
+    open(address) {
       if (sockets.length === SOCKET_CAP) {
         refused++;
         return null;
@@ -132,12 +132,12 @@ function createRelayProxyTrace() {
           return [event];
         });
       }
-      sockets.push({ snapshot: () => ({ count, omitted: count - events.length, rejected, ...reader.status(), events: [...events]
+      sockets.push({ snapshot: () => ({ ...address, count, omitted: count - events.length, rejected, ...reader.status(), events: [...events]
         .sort((a, b) => a.ordinal - b.ordinal).map(event => ({ ...event })) }) });
       return inlet;
     },
-    forward(upstream, socket) {
-      const inlet = trace.open();
+    forward(upstream, socket, request) {
+      const inlet = trace.open(socketAddress?.(request, socket));
       if (inlet) traceProxyWrites(upstream, socket, inlet, trace.beforeForward);
       else upstream.pipe(socket);
     },

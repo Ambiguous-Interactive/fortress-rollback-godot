@@ -755,13 +755,31 @@ specific validation gate. Three additional process controls perturb an owned God
 export to NONE/PREDICTED/unknown status 42 at the observation boundary and require the exact status
 refusal, without changing game state or application callback records.
 
+The pending-decision deadline check runs on both Godot pins and the pinned
+Rust source. Godot holds the coordinator's encoded COMMIT from an already
+certified follower. Rust can apply a decision after collecting every READY,
+and a forwarded COMMITTED report can supply the same decision. The Rust
+socket therefore also holds the coordinator's READY and COMMITTED
+reports to the follower. It releases the original READY and COMMIT in one
+receive batch at offsets −1, 0 and +1 µs from the 2-second deadline. The clock
+starts at the public removal request after six warmup and three target-only
+turns. Only the early case reports the target's drop and cut, then applies
+the returned gameplay requests to advance the game. At
+equality and after, Rust emits a timeout ABORT for the same operation and
+its next advance returns `NotSynchronized` without changing the game frame.
+All three runs preserve the exposed original input row at frame 4 after
+the advancement attempt. Godot's
+own configured deadline likewise refuses the COMMIT at equality and after.
+
 This establishes single-target and grouped two-target missing-history donor scenarios
 with clean delivery, one lost original historical backfill, and unequal grouped inventory/COMMIT/ACK loss alone or combined. The two implementations
 use distinct wire formats and different departure triggers. Their retained
 history floors also differ before the drop. This gate does not establish wire
 interoperability, complete barrier participant/sequence/journal parity, all
-asymmetric exposed-frontier cases beyond the four/five schedule, physical donor eviction,
-other lost/reordered control acceptance, or live browser donor recovery. Those remain
+asymmetric exposed-frontier cases beyond the four/five schedule, physical donor eviction
+of a still-required range, or the remaining negative history paths. Live browser recovery
+has its own [exported witness](peer-lifecycle.md#unequal-confirmation-frontiers). Broader
+acceptance remains
 under [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188),
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
 and [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
