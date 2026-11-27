@@ -34,9 +34,7 @@ def prepare_editor(data, version, offline=False, *, cache=None):
     directory = cache / 'editors' / version
     directory.mkdir(parents=True, exist_ok=True)
     prepare_zip(archive, directory, executable_members=(name[:-4],))
-    editor = directory / name[:-4]
-    editor.chmod(0o755)
-    return editor
+    return directory / name[:-4]
 
 
 def main():

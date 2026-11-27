@@ -248,7 +248,7 @@ class TraceServerWitnessTest(unittest.TestCase):
 
             for changed in (None, trace_sources['module'], export):
                 with self.subTest(failed_room_changed=changed):
-                    def failed_play_with_drift(*args):
+                    def failed_play_with_drift(*args, changed=changed):
                         if changed is not None:
                             changed.write_bytes(b'changed')
                         failed_play(*args)
@@ -322,6 +322,21 @@ class TraceServerWitnessTest(unittest.TestCase):
                     native.main()
                 self.assertIn('native browser witness inputs changed during execution', failure.exception.__notes__[0])
                 self.assertFalse(report.exists())
+            trace_sources['module'].write_bytes(b'original')
+
+            for restored in (trace_sources['module'], export):
+                with self.subTest(transient_drift=restored):
+                    def change_and_restore(*args, restored=restored):
+                        original = restored.read_bytes()
+                        restored.write_bytes(b'transient content')
+                        restored.write_bytes(original)
+                        failed_play(*args)
+
+                    play.side_effect = change_and_restore
+                    with self.assertRaisesRegex(RuntimeError, '^room failed$') as failure:
+                        native.main()
+                    self.assertFalse(report.exists(), 'a restored file still invalidates the receipt')
+                    self.assertIn('native browser witness inputs changed during execution', failure.exception.__notes__[0])
 
 
 if __name__ == '__main__':

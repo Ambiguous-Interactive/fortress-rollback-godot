@@ -186,7 +186,7 @@ def validate_trace_build(receipt, revision, frozen):
         raise ValueError('relay trace server build receipt does not match the current trace sources')
 
 
-def publish_room_receipt(receipt, logs, evidence, files, export, outcome):
+def publish_room_receipt(receipt, logs, evidence, files, export, started_identities, outcome):
     existing_logs = {name: receipt.parent / name for name in logs if (receipt.parent / name).is_file()}
     report = {**evidence, **outcome, 'logs': inventory(existing_logs)}
     pending = receipt.with_suffix('.json.next')
@@ -195,6 +195,7 @@ def publish_room_receipt(receipt, logs, evidence, files, export, outcome):
         identities = {}
         if (inventory(files, identities=identities) != evidence['inputs']
                 or inventory({'export': export}, identities=identities) != evidence['export']
+                or identities != started_identities
                 or any(file_identity(path.lstat()) != identity for path, identity in identities.items())):
             raise ValueError('native browser witness inputs changed during execution')
         pending.replace(receipt)
@@ -287,7 +288,8 @@ def main():
     if trace_build is not None:
         files.update(relay_trace_build=trace_build, relay_trace_patch=TRACE_SOURCE / 'hooks.patch',
                      relay_trace_module=TRACE_SOURCE / 'relay_packet_trace.rs')
-    frozen = inventory(files)
+    started_identities = {}
+    frozen = inventory(files, identities=started_identities)
     if frozen['pins'] != hashlib.sha256(manifest_bytes).hexdigest():
         raise ValueError('pin manifest changed during native browser witness setup')
     if trace_build is not None:
@@ -311,7 +313,7 @@ def main():
         attempted_cells = []
         evidence = {'engine': actual, 'cells': cells, 'browser_pair': args.browser_pair, 'control': control,
                     'attempted_cells': attempted_cells, 'cpu_affinity': sorted(affinity(0)) if affinity else None, 'inputs': frozen, 'staged': staged,
-                    'export': inventory({'export': export})}
+                    'export': inventory({'export': export}, identities=started_identities)}
         try:
             if not host_capacity.acquire_when_free('native-online-witness', 600):
                 raise ValueError('development host stayed busy')
@@ -338,11 +340,11 @@ def main():
                 raise ValueError('missing release delay control evidence')
         except Exception as error:
             try:
-                publish_room_receipt(receipt, logs, evidence, files, export, {'passed': False})
+                publish_room_receipt(receipt, logs, evidence, files, export, started_identities, {'passed': False})
             except (OSError, ValueError) as receipt_error:
                 error.add_note(f'Could not publish native browser failure receipt: {receipt_error}')
             raise
-        publish_room_receipt(receipt, logs, evidence, files, export, {'passed': True, 'results': results})
+        publish_room_receipt(receipt, logs, evidence, files, export, started_identities, {'passed': True, 'results': results})
 
 
 if __name__ == '__main__':

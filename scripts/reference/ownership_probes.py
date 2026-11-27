@@ -1150,7 +1150,6 @@ def run_probes(args, results):
         editor_dir.mkdir(parents=True, exist_ok=True)
         prepare_zip(archive, editor_dir, executable_members=(name[:-4],))
         editor = editor_dir / name[:-4]
-        editor.chmod(0o755)
         editor_paths = {'editor': editor}
         editor_frozen = tool_inventory(editor_paths)
         verify_tools(editor_paths, editor_frozen)
