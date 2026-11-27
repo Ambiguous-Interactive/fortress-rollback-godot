@@ -536,11 +536,14 @@ The `recording-pressure` label adds a two-player, 257-frame match across two def
 input-ring capacities. Both independent browser contexts repeatedly refuse direct
 sends and report a full relay socket buffer on asymmetric bounded service turns.
 Accepted bytes still traverse the pinned SDK, real WebSockets and SignalFish server.
-The witness checks retained relay heads before retry, requires repeated refusal and
-successful retry after frame 128, and compares original canonical prefixes while
-pressure remains active. After final receipt recovery, both decoded recordings
-contain every original input/status row and all 258 original checksum boundaries.
-The original watchdog durations remain unchanged.
+The witness checks retained relay heads before retry and compares original
+canonical prefixes while pressure remains active. In each direction it follows
+two distinct post-wrap original-input envelopes from a refused socket-buffer read
+to the sender's successful WebSocket send and the receiving SDK's binary signal.
+The receipt records each refusal and retry turn. Validation checks the expected
+five- or six-turn release schedule, the envelope's frozen sender and recipient,
+and the original input bytes. After recovery, both decoded recordings
+contain every finalized input/status row and all 258 original checksum boundaries.
 
 These are Godot browser witnesses, not source-runtime comparisons. Buffer pressure
 is injected; physical relay congestion, the complete asymmetric delivery/stall

@@ -324,7 +324,8 @@ func _service_batch() -> bool:
 func _service() -> bool:
 	if recording_pressure:
 		pressure_service_turn += 1
-		JavaScriptBridge.eval("window.fortressRelayRefused = %s" % ("false" if pressure_service_turn % (5 + local_index) == 0 else "true"))
+		JavaScriptBridge.eval("window.fortressRelayRefused = %s; window.fortressRecordingTurn = %d" % [
+			"false" if pressure_service_turn % (5 + local_index) == 0 else "true", pressure_service_turn])
 	_service_had_work = false
 	_update_transport_clock()
 	if not _healthy(): return false

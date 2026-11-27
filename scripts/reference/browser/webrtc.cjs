@@ -116,6 +116,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   evidence.binarySent = 0;
   evidence.relayBlockedReads = 0;
   evidence.relayPostWrapBlockedReads = 0;
+  evidence.recordingRelaySends = [];
   evidence.maximumRelayBuffered = 0;
   evidence.captureError = false;
   window.fortressScheduling = { frames: 0, first: performance.now(), last: null };
@@ -150,7 +151,16 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   const websocketSend = WebSocket.prototype.send;
   WebSocket.prototype.send = function(bytes) {
     if (typeof bytes !== 'string') evidence.binarySent++;
+    const target = recordingPressure && this.readyState === nativeSocket.OPEN ? window.fortressRecordingRefusedHead : '';
     const result = websocketSend.call(this, bytes);
+    if (target && evidence.recordingRelaySends.length < 2 && bytes.byteLength <= 1081) {
+      const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const wire = Array.from(view, byte => byte.toString(16).padStart(2, '0')).join('');
+      if (wire === target) {
+        evidence.recordingRelaySends.push({ turn: window.fortressRecordingTurn, wire });
+        window.fortressRecordingRefusedHead = '';
+      }
+    }
     evidence.maximumRelayBuffered = Math.max(evidence.maximumRelayBuffered, this.bufferedAmount || 0);
     return result;
   };

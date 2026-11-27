@@ -810,10 +810,11 @@ test('corrupt control sets both physical second directions before either origina
 // Value: repeated relay refusal must preserve actual socket state and stop exactly after queue reuse.
 test('recording pressure follows service turns on both physical socket types through frame252', () => {
   class Socket {
+    static OPEN = 1;
     constructor() { this.readyState = 1; this.nativeBuffered = 7; this.sent = []; }
     get bufferedAmount() { return this.nativeBuffered; }
     addEventListener() {}
-    send(bytes) { this.sent.push(bytes); }
+    send(bytes) { if (this.refuseSend) throw new Error('socket send refused'); this.sent.push(bytes); }
   }
   class Channel extends Socket {
     constructor(options) { super(); Object.assign(this, options); }
@@ -850,8 +851,23 @@ test('recording pressure follows service turns on both physical socket types thr
     assert.equal(socket.bufferedAmount, 7);
     assert.equal(channel.bufferedAmount, 7);
     assert.equal(socket.readyState, 1);
+    window.fortressRecordingRefusedHead = '0102';
+    window.fortressRecordingTurn = 12;
+    socket.send(new Uint8Array([0, 1, 2]));
+    assert.deepEqual(window.fortressRtc.recordingRelaySends, []);
+    socket.refuseSend = true;
+    assert.throws(() => socket.send(new Uint8Array([1, 2])), /socket send refused/);
+    assert.deepEqual(window.fortressRtc.recordingRelaySends, []);
+    socket.refuseSend = false;
+    socket.readyState = 2;
     socket.send(new Uint8Array([1, 2]));
-    assert.equal(socket.sent.length, 1);
+    assert.deepEqual(window.fortressRtc.recordingRelaySends, []);
+    socket.readyState = Socket.OPEN;
+    socket.send(Uint8Array.from([0, 1, 2, 0]).subarray(1, 3));
+    assert.deepEqual(window.fortressRtc.recordingRelaySends, [{ turn: 12, wire: '0102' }]);
+    socket.send(new Uint8Array([1, 2]));
+    assert.equal(window.fortressRtc.recordingRelaySends.length, 1);
+    assert.equal(socket.sent.length, 4);
   } finally {
     delete global.WebSocket;
     delete global.window;

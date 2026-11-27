@@ -5,6 +5,7 @@ import struct
 import unittest
 
 from browser.webrtc_recording import engine_identity, validate_recording, validate_pressure
+from wire import INPUT_HEADER
 
 
 ENGINE = 'test-engine'
@@ -27,6 +28,17 @@ def recording(count, frames=40):
     return {'hex': raw.hex(), 'before_frame': frames, 'after_frame': frames, 'recover_code': 0, 'capture_code': 0,
             'decode_code': 0, 'playback_code': 16, 'playback_frame': frames, 'failure_frame': -1,
             'canonical': final.hex(), 'checked_checksums': frames + 1}
+
+
+def pressure_input(sender, recipient, index, start):
+    body = struct.pack('<iiHBBB', start, start - 1, 1, 1, index, 2)
+    body += struct.pack('<BiH', 0, start, 0) * 2 + struct.pack('<I', 1)
+    body += bytes([(start * 17 + index * 31 + 1) & 255])
+    protocol = INPUT_HEADER + bytes([2]) * 16 + hashlib.sha256(sender.encode('ascii')).digest()[:8]
+    protocol += struct.pack('<QI', index + 1, len(body)) + body
+    envelope = b'FSR1\x01' + bytes([2]) * 16
+    envelope += bytes.fromhex((sender + recipient).replace('-', '')) + struct.pack('<I', len(protocol)) + protocol
+    return envelope.hex()
 
 
 class RecordingTests(unittest.TestCase):
@@ -82,19 +94,25 @@ class RecordingTests(unittest.TestCase):
     def test_post_wrap_pressure_recordings_and_missing_evidence(self):
         result = {'passed': True, 'recordingPressure': True, 'mixed': True, 'faults': False, 'corrupt': False,
                   'errors': [], 'browser_instances': 2, 'records': [{'players': 2, 'peers': []}]}
+        ids = [f'{index:08x}-0000-0000-0000-000000000000' for index in range(2)]
+        packets = [[pressure_input(ids[index], ids[1 - index], index, start) for start in (129, 134)] for index in range(2)]
         for index in range(2):
-            state = dict(uuid=f'{index:08x}-0000-0000-0000-000000000000', pressure_refusals=20, pressure_post_wrap_refusals=10,
+            period = 5 + index
+            retries = [dict(envelope=packet, start_frame=start, frame=start + 1, refused_turn=100 * period + n * period + 1,
+                            retry_turn=101 * period + n * period, blocked_read=n + 1) for n, (packet, start) in enumerate(zip(packets[index], (129, 134)))]
+            sends = [dict(wire=retry['envelope'], turn=retry['retry_turn']) for retry in retries]
+            state = dict(uuid=ids[index], pressure_refusals=20, pressure_post_wrap_refusals=10,
                          pressure_retries=10, accepted_binary=30, refused_head_bytes=0, caller_pending=0,
-                         maximum_pending=10, maximum_relay_pending=10, maximum_relay_received=10)
+                         maximum_pending=10, maximum_relay_pending=10, maximum_relay_received=10,
+                         retried_inputs=retries, received_inputs=packets[1 - index])
             channels = [dict(id=1), dict(id=2), dict(id=3, blockedLink=True, blockedReads=20, ordered=False, negotiated=True,
                                                    maxPacketLifeTime=1, maxRetransmits=None, sent=10, received=10)]
             row = dict(players=2, frames_submitted=257, canonical_comparisons=255, minimum_confirmed=255,
                        active_comparisons=254, rollback_loads=10, mixed=state, recording=recording(2, 257))
             result['records'][0]['peers'].append(dict(result=dict(passed=True, records=[row], binary_receives=30),
-                rtc=dict(binarySent=30, relayBlockedReads=20, relayPostWrapBlockedReads=10, channels=channels,
+                rtc=dict(binarySent=30, relayBlockedReads=20, relayPostWrapBlockedReads=10, channels=channels, recordingRelaySends=sends,
                          teardown=dict(channels=3, connections_created=1, connections=1, websockets_created=1, websockets=1))))
         self.assertIs(validate_pressure(result, ENGINE), result)
-        original = result['records'][0]['peers'][0]
         for section, key, value in [('mixed', 'pressure_post_wrap_refusals', 0), ('mixed', 'pressure_retries', 0),
                                     ('mixed', 'refused_head_bytes', 100), ('mixed', 'accepted_binary', True),
                                     ('rtc', 'relayPostWrapBlockedReads', 0), ('rtc', 'binarySent', 0),
@@ -122,6 +140,36 @@ class RecordingTests(unittest.TestCase):
                     target = changed['records'][0]
                 target[key] = value
                 with self.assertRaises(ValueError):
+                    validate_pressure(changed, ENGINE)
+        for mutation, diagnostic in [('missing_receipt', 'missing physical send or addressed receipt'),
+                                     ('missing_send', 'inventory incomplete'), ('wrong_wire', 'missing physical send or addressed receipt'),
+                                     ('wrong_turn', 'retry turn'), ('reordered_retries', 'retry turn'), ('wrong_socket_read', 'socket read'),
+                                     ('wrong_recipient', 'retry address'), ('wrong_session', 'retry address'), ('wrong_sample', 'original input bytes'),
+                                     ('wrong_connection', 'header or identity')]:
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(result)
+                sender, receiver = changed['records'][0]['peers']
+                sent = sender['rtc']['recordingRelaySends']
+                retries = sender['result']['records'][0]['mixed']['retried_inputs']
+                received = receiver['result']['records'][0]['mixed']['received_inputs']
+                if mutation == 'missing_receipt':
+                    received.pop(0)
+                elif mutation == 'missing_send':
+                    sender['rtc'].pop('recordingRelaySends')
+                elif mutation == 'wrong_wire':
+                    sent[0]['wire'] = retries[1]['envelope']
+                elif mutation == 'wrong_turn':
+                    retries[0]['refused_turn'] = retries[0]['retry_turn']
+                elif mutation == 'reordered_retries':
+                    retries.reverse()
+                elif mutation == 'wrong_socket_read':
+                    retries[1]['blocked_read'] = retries[0]['blocked_read']
+                else:
+                    envelope = bytearray.fromhex(retries[0]['envelope'])
+                    offset = {'wrong_recipient': 37, 'wrong_session': 5, 'wrong_sample': -1, 'wrong_connection': 89}[mutation]
+                    envelope[offset] ^= 1
+                    sent[0]['wire'] = received[0] = retries[0]['envelope'] = envelope.hex()
+                with self.assertRaisesRegex(ValueError, diagnostic):
                     validate_pressure(changed, ENGINE)
         changed = copy.deepcopy(result)
         changed['records'][0]['peers'][0]['result']['records'][0]['recording'] = recording(2)
