@@ -8,7 +8,7 @@ const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 enum ReceiveCode { ACCEPTED, REJECTED, FULL }
 
 const INPUT_BYTES: int = 4
-const WIRE_PROFILE: String = "fortress-native-d124c890-v1-u32"
+const WIRE_PROFILES: Dictionary = {"fortress-native-d124c890-v1-u32": 2, "fortress-native-25e8020d-v6-u32": 6}
 
 var _native: RefCounted
 var _game: RefCounted
@@ -29,18 +29,34 @@ var _last_now: int = -1
 
 ## Requires the separately installed native addon.
 static func available() -> bool:
-	return ClassDB.class_exists(&"FortressNativeSession") and ClassDB.class_has_method(&"FortressNativeSession", &"wire_profile") \
-		and ClassDB.class_has_method(&"FortressNativeSession", &"receive_from_result")
+	return not installed_profile().is_empty()
+
+
+static func installed_profile() -> String:
+	return _supported_profile(_instantiate())
+
+
+static func _instantiate() -> RefCounted:
+	if ClassDB.class_exists(&"FortressNativeSession") and ClassDB.class_has_method(&"FortressNativeSession", &"wire_profile") \
+		and ClassDB.class_has_method(&"FortressNativeSession", &"receive_from_result"):
+		return ClassDB.instantiate(&"FortressNativeSession")
+	return null
+
+
+static func _supported_profile(native: RefCounted) -> String:
+	if native == null:
+		return ""
+	# The extension returns a String through a dynamic call.
+	var profile: Variant = native.call("wire_profile")
+	return profile if profile is String and WIRE_PROFILES.has(profile) else ""
 
 
 func configure(endpoints: PackedInt32Array, game: RefCounted, snapshot_limit: int, save_succeeded: Callable) -> int:
-	if not available():
+	var native: RefCounted = _instantiate()
+	if _supported_profile(native).is_empty():
 		return Types.Code.UNSUPPORTED
 	if _native != null or game == null or snapshot_limit < 1 or snapshot_limit > 16777216:
 		return Types.Code.INVALID_CONFIGURATION
-	var native: RefCounted = ClassDB.instantiate(&"FortressNativeSession")
-	if native == null or native.call("wire_profile") != WIRE_PROFILE:
-		return Types.Code.UNSUPPORTED
 	if not native.call("start_roster", endpoints):
 		return Types.Code.INVALID_CONFIGURATION
 	for slot: int in endpoints.size():

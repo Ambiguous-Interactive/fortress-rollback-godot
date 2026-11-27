@@ -26,6 +26,8 @@ from signalfish_probe import file_identity, inventory
 sys.path.insert(0, str(ROOT / 'scripts'))
 import host_capacity  # noqa: E402
 from package_addon import ADDON, snapshot as runtime_snapshot  # noqa: E402
+sys.path.insert(0, str(ROOT / 'scripts/oracle'))
+from source_wire import REVIEWED_REVISION, wire_version  # noqa: E402
 
 OVERLAP_CELL = 'mesh-recovery-overlap:4'
 CELLS = tuple(f'{route}:{count}' for route in ('mesh', 'relay') for count in (2, 4, 8)) + (
@@ -213,6 +215,7 @@ def publish_room_receipt(receipt, logs, evidence, files, export, started_identit
 def main():
     parser = ReceiptParser(description=__doc__, receipt=REPORT)
     parser.add_argument('--version', help='pinned Godot version, defaults to current stable')
+    parser.add_argument('--source-revision', help='exact Fortress revision, defaults to the reviewed pin')
     parser.add_argument('--cell', action='append', choices=CELLS)
     parser.add_argument('--omit-second-replacement', action='store_true', help='negative control for the overlapping recovery cell')
     parser.add_argument('--trace-relay-wire', action='store_true', help='capture bounded browser, SDK and native inbox packet receipts in relay cells')
@@ -243,12 +246,17 @@ def main():
     begin_results(output, REPORT, [*logs, receipt.with_suffix('.json.next').name])
     manifest_bytes = MANIFEST.read_bytes()
     manifest = parse_manifest(manifest_bytes)
+    source_revision = manifest['sources']['fortress']['revision'] if args.source_revision is None else args.source_revision
+    wire = wire_version(source_revision)
+    profile_generation = 1 if source_revision == REVIEWED_REVISION else wire
+    native_profile = f'fortress-native-{source_revision[:8]}-v{profile_generation}-u32'
     versions = (manifest['godot']['minimum'], manifest['godot']['current_stable'])
     if args.version is None:
         args.version = versions[-1]
     elif args.version not in versions:
         parser.error(f'--version must be one of {", ".join(versions)}')
     environment = os.environ.copy()
+    environment['FORTRESS_NATIVE_SOURCE_REVISION'] = source_revision
     browser_pair = tuple(args.browser_pair.split('-'))
     tools = {name: f'FORTRESS_{name.upper()}_EXECUTABLE' for name in browser_pair}
     if 'firefox' in browser_pair:
@@ -295,6 +303,7 @@ def main():
     files = {'pins': MANIFEST, 'editor': editor, 'templates': templates, 'addon': addon, 'server': server_binary,
              'server_config': server_source / 'config.example.json', **{name: Path(environment[var]) for name, var in tools.items()},
              'runner': Path(__file__), 'editor_setup': BROWSER.parent / 'godot_smoke.py', 'artifact_helper': BROWSER.parent / 'fetch.py',
+             'source_wire': ROOT / 'scripts/oracle/source_wire.py', 'wire_contract': ROOT / 'scripts/oracle/contract.py',
              'inventory_helper': BROWSER.parent / 'signalfish_probe.py',
              'client': BROWSER / 'native_online.cjs', 'host': BROWSER / 'online_host.cjs', 'display': BROWSER / 'webrtc_display.cjs',
              'watchdog': BROWSER / 'webrtc_watchdog.cjs', 'recovery': BROWSER / 'native_recovery.cjs', 'local_stun': BROWSER / 'local_stun.py',
@@ -338,6 +347,7 @@ def main():
         affinity = getattr(os, 'sched_getaffinity', None)
         attempted_cells = []
         evidence = {'engine': actual, 'cells': cells, 'browser_pair': args.browser_pair, 'control': control,
+                    'source_revision': source_revision, 'wire_version': wire, 'native_profile': native_profile,
                     'attempted_cells': attempted_cells, 'cpu_affinity': sorted(affinity(0)) if affinity else None, 'inputs': frozen, 'staged': staged,
                     'export': inventory({'export': export}, identities=started_identities)}
         try:

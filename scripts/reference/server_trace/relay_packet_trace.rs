@@ -25,12 +25,30 @@ static TRACE: OnceLock<Option<Arc<Trace>>> = OnceLock::new();
 
 type Link = (usize, usize);
 
+#[derive(Clone, Copy, Deserialize, Serialize)]
+enum WireSource {
+    #[serde(rename = "d124c89080004d96971a629bb0427056ee1805e3")]
+    Reviewed,
+    #[serde(rename = "25e8020d1a5fd40c4f16b37f97b5ec5329a8566d")]
+    Candidate,
+}
+
+impl WireSource {
+    fn wire_version(self) -> u8 {
+        match self {
+            Self::Reviewed => 2,
+            Self::Candidate => 6,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Scope {
     room_id: RoomId,
     room: String,
     roster: Vec<String>,
+    source_revision: WireSource,
 }
 
 impl Scope {
@@ -205,6 +223,7 @@ impl Trace {
         #[derive(Serialize)]
         struct Snapshot<'a> {
             version: u8,
+            wire_version: u8,
             request: u64,
             links: &'a [String],
             clock: &'static str,
@@ -224,6 +243,7 @@ impl Trace {
             &mut writer,
             &Snapshot {
                 version: 2,
+                wire_version: scope.source_revision.wire_version(),
                 request: request.generation,
                 links: &links,
                 clock: "server.monotonic",
@@ -367,7 +387,7 @@ fn record_packet(trace: &Trace, boundary: Boundary, room_id: RoomId, sender: Pla
         || envelope[0..5] != *b"FSR1\x01"
         || envelope[5..21] != envelope[57..73]
         || envelope[21..37] != *sender.as_bytes()
-        || envelope[73..77] != [0xf5, 0x52, 2, 0]
+        || envelope[73..77] != [0xf5, 0x52, scope.source_revision.wire_version(), 0]
     {
         return;
     }
@@ -453,6 +473,7 @@ mod tests {
                 room_id,
                 room: room_id.simple().to_string(),
                 roster: roster.iter().map(|id| id.simple().to_string()).collect(),
+                source_revision: WireSource::Reviewed,
             }),
             state: Mutex::default(),
         }
@@ -473,6 +494,28 @@ mod tests {
         record_packet(trace, Boundary::Write { recipient, written_at: trace.origin, addressed: false }, room_id, sender, seq, 7, &envelope);
         record_packet(trace, Boundary::Write { recipient: sender, written_at: trace.origin, addressed: false }, room_id, sender, seq, 7, &envelope);
         envelope
+    }
+
+    #[test]
+    fn receipt_scope_rejects_the_other_native_wire_version() {
+        let room = RoomId::from_u128(1);
+        let [sender, recipient] = [2, 3].map(PlayerId::from_u128);
+        let mut reviewed = trace_for(room, &[sender, recipient]);
+        let mut candidate = trace_for(room, &[sender, recipient]);
+        candidate.scope.get_mut().unwrap().source_revision = WireSource::Candidate;
+
+        let mut envelope = record_pair(&reviewed, room, sender, recipient, 2, 1);
+        let receive = |trace: &Trace, payload: &[u8]| {
+            record_packet(trace, Boundary::Ingress { socket_ordinal: 2, received_at: trace.origin, addressed_to: None }, room, sender, 2, 7, payload);
+        };
+        receive(&candidate, &envelope);
+        assert_eq!(candidate.state.get_mut().unwrap().ingress.input.count, 0);
+
+        envelope[75] = 6;
+        receive(&candidate, &envelope);
+        receive(&reviewed, &envelope);
+        assert_eq!(candidate.state.get_mut().unwrap().ingress.input.count, 1);
+        assert_eq!(reviewed.state.get_mut().unwrap().ingress.input.count, 1);
     }
 
     #[test]

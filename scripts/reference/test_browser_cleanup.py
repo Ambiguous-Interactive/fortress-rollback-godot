@@ -1201,6 +1201,62 @@ for (const [endpoint, sender] of [[3, roster[2]], [0, undefined], [2, undefined]
 """
         subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
 
+    def test_native_wire_requires_the_selected_header_before_routing(self):
+        # Value: protects=exact source wire admission; fails_when=the witness accepts a different version or reserved flags; seam=live send wrapper
+        script = r"""
+const assert = require('node:assert/strict');
+const { runInNewContext } = require('node:vm');
+const { dirname, join } = require('node:path');
+const { instrumentNativeWire } = require(process.argv[1]);
+const { createRelayWireTrace } = require(join(dirname(process.argv[1]), 'native_relay_trace.cjs'));
+const roster = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'];
+const room = Buffer.alloc(16, 42);
+for (const expected of [2, 6]) {
+  const window = {};
+  const routed = [];
+  class Connection {
+    addEventListener() {}
+    createDataChannel() { return { id: 3, send: bytes => routed.push(bytes), addEventListener() {} }; }
+  }
+  const realm = { window, RTCPeerConnection: Connection, WebSocket: class {}, ArrayBuffer, Uint8Array, DataView, performance };
+  runInNewContext(`(${instrumentNativeWire})(false, '', undefined, '', undefined, ${expected})`, realm);
+  window.fortressNativeWire.bind(room.toString('hex'), roster[0], roster);
+  const channel = new Connection().createDataChannel('gameplay');
+  const packet = (version, flags = 0) => Buffer.concat([room, Buffer.from([0xf5, 0x52, version, flags, 1, 0, 0, 0, 2, 0, 0, 0])]);
+  const correct = packet(expected);
+  channel.send(correct);
+  assert.throws(() => channel.send(packet(expected === 2 ? 6 : 2)), /native gameplay wire header/);
+  assert.throws(() => channel.send(packet(expected, 1)), /native gameplay wire header/);
+  assert.deepEqual(routed, [correct]);
+
+  const members = roster.map(uuid => uuid.replaceAll('-', ''));
+  const trace = createRelayWireTrace('', 512, 45000, undefined, false, expected);
+  trace.bind(room.toString('hex'), members[0], members);
+  const envelope = Buffer.alloc(103);
+  envelope.set(Buffer.from('4653523101', 'hex'));
+  envelope.set(room, 5);
+  envelope.set(Buffer.from(members.join(''), 'hex'), 21);
+  envelope.writeUInt32LE(46, 53);
+  envelope.set(room, 57);
+  envelope.set([0xf5, 0x52, expected, 0, 1, 0, 0, 0, 4], 73);
+  assert.ok(trace.record('send', envelope, 1), 'the receipt decoder must keep the selected wire version');
+  envelope[75] = expected === 2 ? 6 : 2;
+  assert.equal(trace.record('send', envelope, 2), undefined, 'the receipt decoder must discard the other wire version');
+}
+"""
+        subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_online.cjs')], check=True, timeout=10)
+
+    def test_native_wire_rejects_empty_short_and_unknown_revisions_before_browser_start(self):
+        # Value: protects=exact revision selection; fails_when=an absent or partial identifier selects a default; seam=runner entry point
+        client = ROOT / 'scripts/reference/browser/native_online.cjs'
+        for revision in ('', '25e8020d', '0' * 40):
+            with self.subTest(revision=revision):
+                environment = {**os.environ, 'FORTRESS_NATIVE_SOURCE_REVISION': revision}
+                run = subprocess.run(['node', str(client), '.', 'ws://127.0.0.1', 'relay', '2'],
+                                     env=environment, capture_output=True, text=True, timeout=10)
+                self.assertEqual(run.returncode, 1)
+                self.assertIn('unsupported native source revision', run.stderr)
+
     def test_native_relay_warmup_preserves_stages_with_cutoff_and_eviction(self):
         # Value: protects=exact staged warmup attribution; fails_when=an unmatched reply implies processing; seam=raw socket and staged observers
         script = r"""
@@ -2768,7 +2824,8 @@ function makePage() {
       expiry: { observed_us: 3000000, sdk_queued: 0, sdk_peak: 51, sdk_before_poll: 2,
         service_started_us: 2999900, service_gap_us: 100, service_gap_peak_us: 500, last_accepted: null } });
   }
-  const pageWindow = { index, fortressNative: state, fortressNativeReady: true, publishTiming: text => events.console({ text: () => text }),
+  const pageWindow = { index, fortressNative: state, fortressNativeReady: true, fortressNativeProfile: 'fortress-native-d124c890-v1-u32',
+    publishTiming: text => events.console({ text: () => text }),
     set fortressNativeCapture({ id, frames }) {
       if ((index === 1 && control === 'history missing') || (index === 0 && control === 'history rejected first')) return;
       const rows = {}, snapshots = {};

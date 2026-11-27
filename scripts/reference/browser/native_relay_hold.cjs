@@ -18,7 +18,7 @@ const socket = event => `${direction(event)}/${event.lane ?? 'broadcast'}/${even
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const samePacket = (a, b) => a.kind === b.kind && a.lane === b.lane && a.envelope_bytes === b.envelope_bytes && a.payload_sha256 === b.payload_sha256;
 
-function parsePacket(stage, event, page, through) {
+function parsePacket(stage, event, page, through, wireVersion) {
   const { envelope, ordinal, at_ms, epoch, seq, lane, socket_ordinal, hold_gate_match, protocol_reply } = event ?? {};
   const sender = stage === 'send' ? page.local : page.remote;
   const recipient = stage === 'send' ? page.remote : page.local;
@@ -32,7 +32,7 @@ function parsePacket(stage, event, page, through) {
   if (![4, 5].includes(kind) || bytes.length !== (kind === 4 ? 103 : 101)
       || !envelope.startsWith('4653523101' + page.room + sender + recipient)
       || bytes.readUInt32LE(53) !== payload.length || payload.subarray(0, 16).toString('hex') !== page.room
-      || payload.readUInt32LE(16) !== 0x000252f5 || payload.readUInt16LE(20) === 0
+      || payload.readUInt32LE(16) !== (0x52f5 | (wireVersion << 16)) || payload.readUInt16LE(20) === 0
       || (hold_gate_match !== undefined && (stage !== 'raw' || kind !== 5 || hold_gate_match !== true))
       || (protocol_reply !== undefined && (stage !== 'send' || kind !== 5 || protocol_reply?.token !== token
         || !Array.isArray(protocol_reply.candidates) || protocol_reply.candidates.length > 128 || !protocol_reply.candidates.every(stamp)))) return null;
@@ -41,7 +41,7 @@ function parsePacket(stage, event, page, through) {
     hold_gate_match, protocol_reply: protocol_reply?.candidates.map(({ epoch, seq, lane }) => ({ epoch, seq, ...(lane === undefined ? {} : { lane }) })) };
 }
 
-function createRelayHold(room, uuids, cap = RELAY_HOLD_CAP) {
+function createRelayHold(room, uuids, cap = RELAY_HOLD_CAP, wireVersion = 2) {
   const roster = uuids.map(uuid => uuid.replaceAll('-', '')).sort();
   if (!ID.test(room) || roster.length < 2 || roster.length > 8 || new Set(roster).size !== roster.length || roster.some(uuid => !ID.test(uuid)))
     throw new Error('invalid relay hold roster');
@@ -72,7 +72,7 @@ function createRelayHold(room, uuids, cap = RELAY_HOLD_CAP) {
         const history = previous?.streams[stage];
         if (!uint(count, history?.count ?? 0) || !Array.isArray(events) || events.length > cap - (history?.events.length ?? 0)
             || (history?.events.length ?? 0) + events.length > count) throw new Error('invalid relay hold checkpoint packet count');
-        const next = events.map(event => parsePacket(stage, event, page, through_ms));
+        const next = events.map(event => parsePacket(stage, event, page, through_ms, wireVersion));
         let last = history?.events.at(-1);
         for (const event of next) {
           if (!event || (last && (event.ordinal <= last.ordinal || event.at_ms < last.at_ms

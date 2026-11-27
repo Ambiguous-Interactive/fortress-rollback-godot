@@ -149,16 +149,17 @@ function createRelayServerReader(path) {
   };
 }
 
-async function bindRelayServer(ready, scopePath, readReceipt) {
+async function bindRelayServer(ready, scopePath, readReceipt, sourceRevision, wireVersion) {
   const { room_id, session_id: room } = ready[0];
   const roster = ready.map(peer => peer.uuid.replaceAll('-', '')).sort();
   assert.ok(ready.every(peer => peer.room_id === room_id && peer.session_id === room), 'relay scope must bind the same room in every browser');
-  const scope = { room_id, room, roster };
+  const scope = { room_id, room, roster, source_revision: sourceRevision };
   await fs.writeFile(scopePath + '.new', JSON.stringify(scope), { flag: 'wx', mode: 0o600 });
   await fs.rename(scopePath + '.new', scopePath);
   await readReceipt(receipt => {
     assert.equal(receipt.clock, 'server.monotonic');
-    assert.deepEqual({ room_id: receipt.room_id, room: receipt.room, roster: receipt.roster }, scope);
+    assert.deepEqual({ room_id: receipt.room_id, room: receipt.room, roster: receipt.roster, source_revision: receipt.source_revision }, scope);
+    assert.equal(receipt.wire_version, wireVersion, 'relay receipt wire version differs from source revision');
     return receipt;
   });
 }
@@ -262,7 +263,7 @@ async function exerciseRelayRetention(pages, ready, readReceipt) {
   return { sender, recipient, pause: pauseReceipt, request: after.request, pressure, browserTraffic, frontier };
 }
 
-async function exerciseSameLinkRetention(pages, ready, readReceipt) {
+async function exerciseSameLinkRetention(pages, ready, readReceipt, wireVersion = 2) {
   const [sender, recipient] = ready.slice(0, 2).map(peer => peer.uuid.replaceAll('-', ''));
   const [source, reporter] = pages;
   const links = [`${sender}/${recipient}`];
@@ -305,15 +306,15 @@ async function exerciseSameLinkRetention(pages, ready, readReceipt) {
   }
   assert.ok(resumed.resumed_ms < resumed.deadline_ms, 'same-link pressure exhausted its delivery gate');
   const browsers = await Promise.all([source, reporter].map(page => readRelayWireReceipt(page, links)));
-  return checkSameLinkRetention(server, browsers, before, resumed, ordinals);
+  return checkSameLinkRetention(server, browsers, before, resumed, ordinals, wireVersion);
 }
 
-function checkSameLinkRetention(server, browsers, before, resumed, ordinals) {
+function checkSameLinkRetention(server, browsers, before, resumed, ordinals, wireVersion = 2) {
   const [source, reporter] = browsers;
   const [sender, recipient] = [source.local, reporter.local];
   const expected = new Set(ordinals);
   assert.ok(expected.size === ordinals.length && ordinals.every(Number.isSafeInteger), 'invalid same-link send ordinals');
-  const pinned = validateRelayExpiryFrontier(resumed.frontier, sender, recipient, resumed.resumed_ms);
+  const pinned = validateRelayExpiryFrontier(resumed.frontier, sender, recipient, resumed.resumed_ms, wireVersion);
   const joined = joinRelayReceipts(server, browsers, [{ frontier: pinned }]);
   const rows = new Map(joined.rows.map(row => [stampKey(row), row]));
   const frontier = [];
@@ -353,7 +354,7 @@ function checkSameLinkRetention(server, browsers, before, resumed, ordinals) {
   return { request: server.request, before, resumed, pressure, frontier };
 }
 
-function validateRelayExpiryFrontier(frontier, uuid, local, at_ms) {
+function validateRelayExpiryFrontier(frontier, uuid, local, at_ms, wireVersion = 2) {
   const { room, sender, recipient, packets } = frontier ?? {};
   const requireValid = (condition, field) => assert.ok(condition, `invalid native expiry frontier ${field}`);
   requireValid(typeof room === 'string' && /^[0-9a-f]{32}$/.test(room)
@@ -375,7 +376,8 @@ function validateRelayExpiryFrontier(frontier, uuid, local, at_ms) {
     const bytes = Buffer.from(envelope, 'hex');
     const payload = bytes.subarray(57);
     requireValid(bytes.readUInt32LE(53) === payload.length && payload.subarray(0, 16).toString('hex') === room
-      && payload.readUInt32LE(16) === 0x000252f5 && payload.readUInt16LE(20) !== 0 && payload.readUInt32LE(24) === kind, 'native header');
+      && payload.readUInt32LE(16) === (0x52f5 | (wireVersion << 16))
+      && payload.readUInt16LE(20) !== 0 && payload.readUInt32LE(24) === kind, 'native header');
     if (kind === 4) requireValid(bytes.length === 103, 'quality report length');
     else {
       requireValid(bytes.length >= 109, 'input length');
