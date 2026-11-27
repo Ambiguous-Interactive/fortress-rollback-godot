@@ -176,11 +176,13 @@ function traceProxyWrites(upstream, socket, inlet, beforeForward) {
   upstream.pipe(forwarding);
 }
 
-module.exports = { createFrameReader, createRelayProxyTrace, joinRelayReceive, traceProxyWrites };
+module.exports = { createFrameReader, createRelayProxyTrace, joinRelayReceive, relayExpiryTraffic, traceProxyWrites };
+
+function packetKey({ sender, recipient, epoch, seq, envelope_sha256, envelope_bytes }) {
+  return `${sender}/${recipient}/${epoch}/${seq}/${envelope_bytes}/${envelope_sha256}`;
+}
 
 function joinRelayReceive(joined, proxy, pages, room) {
-  const key = ({ sender, recipient, epoch, seq, envelope_sha256, envelope_bytes }) =>
-    `${sender}/${recipient}/${epoch}/${seq}/${envelope_bytes}/${envelope_sha256}`;
   const carriers = new Map();
   const pageStreams = {};
   for (const page of pages ?? []) {
@@ -203,7 +205,7 @@ function joinRelayReceive(joined, proxy, pages, room) {
   const sockets = proxy.sockets.map(({ events, ...coverage }, socket) => {
     for (const { ordinal, inlet_ms, outlet_ms, carrier_sha256, ...packet } of events) {
       if (packet.room !== room) continue;
-      const id = key(packet);
+      const id = packetKey(packet);
       if (!byStamp.has(id)) byStamp.set(id, []);
       byStamp.get(id).push({ socket, ordinal, inlet_ms, outlet_ms, carrier_sha256 });
     }
@@ -212,11 +214,11 @@ function joinRelayReceive(joined, proxy, pages, room) {
   const proxyIncomplete = !sockets.length || proxy.refused > 0 || sockets.some(socket => socket.error || socket.omitted || socket.skipped || socket.rejected);
   const rows = (joined?.rows ?? []).filter(row => row.lane === 'addressed' && row.write.length).map(row => {
     const { sender, recipient, epoch, seq, kind, envelope_sha256, envelope_bytes } = row;
-    const proxyMatches = byStamp.get(key(row)) ?? [];
+    const proxyMatches = byStamp.get(packetKey(row)) ?? [];
     const completed = proxyMatches.filter(event => event.outlet_ms !== null);
     const message = [...new Set(completed.map(event => event.carrier_sha256))].flatMap(digest =>
       (carriers.get(`${recipient}/${digest}`) ?? []).map(({ decoded, ...event }) =>
-        ({ ...event, decoded: decoded !== undefined && key(decoded) === key(row) })));
+        ({ ...event, decoded: decoded !== undefined && packetKey(decoded) === packetKey(row) })));
     const browserCoverage = pageStreams[recipient];
     const ordered = browserCoverage && completed.every(event => event.outlet_ms <= browserCoverage.started_ms);
     let first_unobserved = null;
@@ -241,4 +243,42 @@ function joinRelayReceive(joined, proxy, pages, room) {
       message, first_unobserved, coverage_gap };
   });
   return { clock: proxy.clock, room, refused: proxy.refused, sockets, pages: pageStreams, rows };
+}
+
+function relayExpiryTraffic(expiries, joined, pages, receive) {
+  const rows = joined?.rows ?? [];
+  const messages = new Map((receive?.rows ?? []).map(row => [packetKey(row), row.message]));
+  return expiries.flatMap(({ page_ms, controller_ms, frontier }) => {
+    if (!frontier) return [];
+    const { room, sender, recipient } = frontier;
+    const matchedPages = (pages ?? []).filter(page => page?.room === room && page.local === recipient && page.clock === 'page.performance.now');
+    const page = matchedPages.length === 1 ? matchedPages[0] : null;
+    return frontier.packets.map(packet => {
+      const family = packet.kind === 2 ? 'input' : 'quality';
+      const link = rows.filter(row => row.sender === sender && row.recipient === recipient && row.family === family);
+      const anchor = link.find(row => row.lane === packet.lane && packetKey(row) === packetKey(packet));
+      const anchor_candidates = anchor?.write ?? [];
+      const anchor_write = anchor_candidates.length === 1 ? anchor_candidates[0] : null;
+      const stages = ['raw', 'sdk', 'native'];
+      const marks = stages.map(stage => page?.streams?.[stage]?.[family]?.events);
+      const byOrdinal = Object.fromEntries(stages.map((stage, index) => [stage,
+        new Map((Array.isArray(marks[index]) ? marks[index] : []).map(event => [event?.ordinal, event]))]));
+      const page_coverage = page ? (marks.every(Array.isArray) ? 'retained' : 'partial') : matchedPages.length ? 'ambiguous' : 'unavailable';
+      const following_writes = anchor_write === null ? [] : link.flatMap(row => {
+        const write = row.write.filter(ordinal => ordinal > anchor_write);
+        if (row === anchor || !write.length) return [];
+        const events = { message: page && receive?.room === room && row.lane === 'addressed' ? messages.get(packetKey(row)) ?? [] : [] };
+        for (const stage of stages) events[stage] = row[stage].map(ordinal => byOrdinal[stage].get(ordinal)).filter(Boolean);
+        const partition = before => Object.fromEntries(Object.entries(events).map(([stage, marks]) =>
+          [stage, marks.filter(mark => Number.isFinite(mark.at_ms) && (mark.at_ms < page_ms) === before).map(mark => mark.ordinal)]));
+        const { lane, epoch, seq, kind, envelope_bytes, envelope_sha256 } = row;
+        return [{ lane, epoch, seq, kind, envelope_bytes, envelope_sha256, write, write_candidates: row.write,
+          observation_write_ambiguous: write.length !== row.write.length, before_expiry: partition(true), at_or_after_expiry: partition(false) }];
+      });
+      following_writes.sort((a, b) => a.write[0] - b.write[0]);
+      const { lane, epoch, seq, envelope_sha256 } = packet;
+      return { room, sender, recipient, family, page_ms, controller_ms, lane, epoch, seq, envelope_sha256, anchor_candidates, anchor_write,
+        page_coverage, following_writes };
+    });
+  });
 }

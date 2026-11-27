@@ -13,7 +13,7 @@ PEAK_PLAYERS = {'clean': 8, 'faults': 8, 'mixed': 8, 'mixed-default': 8, 'mixed-
                 'peer-drop': 3, 'peer-drop-corrupt': 3, 'peer-drop-close': 3,
                 'peer-drop-answer': 3, 'peer-drop-relay': 3, 'peer-drop-missing': 3, 'peer-drop-missing-lost': 3,
                 'peer-drop-commit': 3,
-                'peer-drop-second': 3, 'peer-drop-overlap': 4,
+                'peer-drop-second': 3, 'peer-drop-second-after-ack': 3, 'peer-drop-second-last-turn': 3, 'peer-drop-overlap': 4,
                 'peer-drop-rollback': 3, 'peer-drop-foreign': 3, 'peer-drop-room': 3, 'peer-drop-room-continue': 3,
                 'peer-drop-process': 3, 'peer-drop-process-missing': 3, 'peer-drop-room-after-drop': 3,
                 'peer-drop-room-before-drop': 3}
@@ -22,7 +22,7 @@ ROOM_COUNTS = {'clean': 3, 'faults': 3, 'mixed': 3, 'mixed-default': 3, 'mixed-c
                'peer-drop': 1, 'peer-drop-corrupt': 1, 'peer-drop-close': 1,
                'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1, 'peer-drop-missing-lost': 1,
                'peer-drop-commit': 1,
-               'peer-drop-second': 1, 'peer-drop-overlap': 1,
+               'peer-drop-second': 1, 'peer-drop-second-after-ack': 1, 'peer-drop-second-last-turn': 1, 'peer-drop-overlap': 1,
                'peer-drop-rollback': 1, 'peer-drop-foreign': 1, 'peer-drop-room': 1, 'peer-drop-room-continue': 1,
                'peer-drop-process': 1, 'peer-drop-process-missing': 1, 'peer-drop-room-after-drop': 1,
                'peer-drop-room-before-drop': 1}

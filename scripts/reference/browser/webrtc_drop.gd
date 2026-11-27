@@ -2,6 +2,7 @@ extends RefCounted
 
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
+const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Direct = preload("res://addons/fortress_rollback/transport/signalfish_webrtc.gd")
 const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Drop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
@@ -111,6 +112,8 @@ func run(host: Node, count: int) -> bool:
 	var departing_slot: int = host.memberships[0].slot(departing_uuid)
 	var departing_identity: PackedByteArray = host.memberships[0].identity(departing_uuid)
 	var second_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropSecond || false"))
+	var second_boundary: String = JavaScriptBridge.eval("window.fortressSecondBoundary || ''")
+	var final_turn: int = 40 if second_boundary.is_empty() else 44
 	var second_uuid: String = JavaScriptBridge.eval("window.fortressSecondUuid || ''")
 	var second_identity: PackedByteArray = host.memberships[0].identity(second_uuid) if not second_uuid.is_empty() else PackedByteArray()
 	var missing_history: bool = bool(JavaScriptBridge.eval("window.fortressDropMissing || false"))
@@ -268,6 +271,7 @@ func run(host: Node, count: int) -> bool:
 				"departure_sequence": 1,
 				"slot": slot,
 				"frames_submitted": submitted,
+				"session_id": host.memberships[0].handshake_message().session_id.hex_encode(),
 				"held_packets": held_packets,
 				"sent_packets": sent_packets,
 				"uuid": host.clients[0].get_player_id(),
@@ -333,6 +337,28 @@ func run(host: Node, count: int) -> bool:
 	host.stage = "peer_drop_gameplay"
 	var comparisons: int = 0
 	var loop_end: int = 12 if second_departure else 40
+	var serial_ready: Dictionary = {}
+	var serial_release: String = ""
+	if not second_boundary.is_empty():
+		host.stage = "peer_drop_first_commit_ack"
+		# The follower observed COMMIT to reach this point. Only the proposer
+		# has a remaining acknowledgement to receive in this three-page room.
+		if barrier.role == Drop.Role.PROPOSER:
+			if not await host._wait(
+				func() -> bool: return not barrier.broken and barrier.acknowledged.has(barrier.participants[0]), true
+			):
+				return false
+		serial_ready = {
+			"commit_boundary": peer.status().current_frame,
+			"commit_acks": barrier.acknowledged.keys(),
+			"uuid": host.clients[0].get_player_id(),
+			"first_target": departing_uuid,
+			"session_id": host.memberships[0].handshake_message().session_id.hex_encode(),
+			"operation": barrier.operation,
+			"digest": "%016x" % barrier.digest
+		}
+		loop_end = 8 if second_boundary == "after-ack" else 40
+	host.stage = "peer_drop_gameplay"
 	for frame: int in range(8, loop_end):
 		if not await host._wait(
 			func() -> bool:
@@ -356,6 +382,29 @@ func run(host: Node, count: int) -> bool:
 		if not host._service_batch():
 			return false
 		await host.get_tree().create_timer(0.002).timeout
+	if not second_boundary.is_empty():
+		if second_boundary == "last-turn":
+			host.stage = "peer_drop_last_turn_receipt"
+			if not await host._wait(func() -> bool: return peer.status().confirmed_frame == loop_end - 1, true):
+				return false
+		serial_ready["departure_boundary"] = peer.status().current_frame
+		serial_ready["confirmation"] = peer.status().confirmed_frame
+		JavaScriptBridge.eval("document.body.dataset.fortressSerialReady = " + JSON.stringify(JSON.stringify(serial_ready)))
+		if host.local_index == 1:
+			host.stage = "peer_drop_second_release"
+			if not await host._wait(
+				func() -> bool: return JavaScriptBridge.eval("typeof window.fortressSecondRelease === 'string'"), true
+			):
+				return false
+			serial_release = JavaScriptBridge.eval(
+				"(() => { const release = window.fortressSecondRelease; window.fortressSecondRelease = null; return release; })()"
+			)
+			# Receipt confirmation can precede correction of the last sampled
+			# turn. Repair at the held boundary without another local input.
+			var recovered: Driver.StepResult = peer.recover(host.transport_us)
+			if recovered.code != S.Code.OK or recovered.frame_before != loop_end or recovered.frame_after != loop_end:
+				host.errors.append("peer_drop_second_recovery")
+				return false
 	if commit_loss:
 		host.stage = "peer_drop_commit_exchange"
 		if not await host._wait(
@@ -395,7 +444,7 @@ func run(host: Node, count: int) -> bool:
 		"certificate_rows": certificates,
 		"digest": "%016x" % barrier.digest,
 		"departing_slot": departing_slot,
-		"frames_submitted": 40,
+		"frames_submitted": final_turn,
 		"prediction_gap": prediction_gap,
 		"pending_at_detection": pending_at_detection,
 		"freeze_frame": cut,
@@ -430,7 +479,7 @@ func run(host: Node, count: int) -> bool:
 		"commit_retry": str(commit.get("retry", "")),
 		"commit_delay_us": int(commit.get("delay_us", -1)),
 		"minimum_confirmed": peer.status().confirmed_frame,
-		"canonical_comparisons": 38,
+		"canonical_comparisons": final_turn - 2,
 		"active_comparisons": comparisons,
 		"rollback_loads": host.games[0].loads,
 		"foreign_sent": _foreign_sent,
@@ -454,15 +503,21 @@ func run(host: Node, count: int) -> bool:
 			host.errors.append("peer_drop_missing_opening_frontier")
 			return false
 		row["opening_frontier"] = opening_frontier
+	if not serial_ready.is_empty():
+		row["serial_ready"] = serial_ready
 	if second_departure and host.local_index == 1:
-		for frame: int in range(1, 11):
+		var last_comparison: int = 10 if second_boundary.is_empty() else serial_ready.confirmation + 1
+		for frame: int in range(1, last_comparison + 1):
 			if host.games[0].history.get(frame) != expected(host, frame, count, cuts):
 				host.errors.append("peer_drop_canonical_%d" % frame)
 				return false
 		row["departed"] = true
 		row["departure_sequence"] = 2
-		row["frames_submitted"] = 12
-		row["canonical_comparisons"] = 10
+		row["frames_submitted"] = loop_end
+		row["canonical_comparisons"] = last_comparison
+		if not serial_ready.is_empty():
+			row["serial_departure_boundary"] = peer.status().current_frame
+			row["serial_release"] = serial_release
 		row["drop_events"] = dropped_count
 		host.records.append(row)
 		return true
@@ -483,16 +538,17 @@ func run(host: Node, count: int) -> bool:
 			return false
 		cuts[second_slot] = second_cut
 		host.stage = "peer_drop_gameplay"
-		for frame: int in range(12, 40):
+		for frame: int in range(loop_end, final_turn):
 			host._update_transport_clock()
 			var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, frame, PackedByteArray([host._sample(frame, slot)]))]
 			if peer.step(host.transport_us, samples).code != S.Code.OK:
 				return false
 			JavaScriptBridge.eval("document.body.dataset.fortressFrame = '%d'" % frame)
-			if host.games[0].history.get(frame - 2) != expected(host, frame - 2, count, cuts):
-				host.errors.append("peer_drop_canonical_%d" % (frame - 2))
-				return false
-			comparisons += 1
+			if frame >= 10:
+				if host.games[0].history.get(frame - 2) != expected(host, frame - 2, count, cuts):
+					host.errors.append("peer_drop_canonical_%d" % (frame - 2))
+					return false
+				comparisons += 1
 			if not host._service_batch():
 				return false
 			await host.get_tree().create_timer(0.002).timeout
@@ -514,14 +570,29 @@ func run(host: Node, count: int) -> bool:
 		row["second_slot"] = second_slot
 		row["second_freeze_frame"] = second_cut
 		row["second_frontier"] = second_frontier
-		row["second_frozen_value"] = PackedByteArray([host._sample(second_cut, second_slot)]).hex_encode()
 	host.stage = "final_confirmation"
-	if not await host._wait(func() -> bool: return peer.status().confirmed_frame >= 38, true):
+	if not await host._wait(func() -> bool: return peer.status().confirmed_frame >= final_turn - 2, true):
 		return false
-	for frame: int in range(1, 39):
-		if host.games[0].history.get(frame) != expected(host, frame, count, cuts):
+	if second_departure:
+		var frozen_row: S.FrameInputs = peer.confirmed_inputs(int(row["second_freeze_frame"]) + 1)
+		if frozen_row == null:
+			host.errors.append("peer_drop_second_frozen_row")
+			return false
+		var frozen: S.InputResult = frozen_row.read(int(row["second_slot"]))
+		if frozen.code != S.Code.OK or frozen.status != Queue.Status.DISCONNECTED:
+			host.errors.append("peer_drop_second_value")
+			return false
+		row["second_frozen_value"] = frozen.bytes.hex_encode()
+	var serial_canonical: PackedStringArray = []
+	for frame: int in range(1, final_turn - 1):
+		var actual: PackedByteArray = host.games[0].history.get(frame, PackedByteArray())
+		if actual != expected(host, frame, count, cuts):
 			host.errors.append("peer_drop_canonical_%d" % frame)
 			return false
+		if not serial_ready.is_empty():
+			serial_canonical.append(actual.hex_encode())
+	if not serial_ready.is_empty():
+		row["serial_canonical"] = serial_canonical
 	for event: Dictionary in events:
 		if event.kind == "peer_drop_unconfirmed":
 			host.errors.append("peer_drop_unconfirmed")

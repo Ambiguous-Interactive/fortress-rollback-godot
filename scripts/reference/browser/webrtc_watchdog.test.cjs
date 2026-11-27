@@ -464,15 +464,19 @@ test('a rejected completed-peer pause prevents same-turn sibling success from ac
   await assert.rejects(running, /completed-peer pause failed/);
 });
 
-// Value: queue-wrap recording uses the existing deadlines without treating frame39 as final.
-test('long recording frame frontier preserves the same absolute gameplay deadline', () => {
-  const watchdog = new ProgressWatchdog(2, 0, 256);
-  watchdog.sample(0, { done: false, frame: 39, progress: null }, 1);
-  assert.equal(watchdog.peers[0].finalStarted, null);
-  watchdog.sample(0, { done: false, frame: 255, progress: null }, 2);
-  assert.equal(watchdog.peers[0].finalStarted, null);
-  watchdog.sample(0, { done: false, frame: 256, progress: { confirmed: 255, received: [256], acked: [255] } }, 3);
-  assert.equal(watchdog.peers[0].finalStarted, 3);
-  assert.throws(() => watchdog.sample(0, { done: false, frame: 257, progress: null }, 4), /frame frontier/);
-  assert.throws(() => new ProgressWatchdog(2, 0, 1000), /final frame/);
-});
+// Value: serial departure and queue-wrap recording preserve the watchdog's real final phase.
+for (const [players, finalFrame] of [[3, 43], [2, 256]]) {
+  test(`gameplay ending on turn ${finalFrame} does not enter the final phase at turn 39`, () => {
+    const watchdog = new ProgressWatchdog(players, 0, finalFrame);
+    watchdog.sample(0, { done: false, frame: 39, progress: null }, 1);
+    assert.equal(watchdog.peers[0].finalStarted, null);
+    watchdog.sample(0, { done: false, frame: finalFrame - 1, progress: null }, 2);
+    assert.equal(watchdog.peers[0].finalStarted, null);
+    const received = Array(players - 1).fill(finalFrame);
+    const acked = Array(players - 1).fill(finalFrame - 1);
+    watchdog.sample(0, { done: false, frame: finalFrame, progress: { confirmed: finalFrame - 1, received, acked } }, 3);
+    assert.equal(watchdog.peers[0].finalStarted, 3);
+    assert.throws(() => watchdog.sample(0, { done: false, frame: finalFrame + 1, progress: null }, 4), /frame frontier/);
+    assert.throws(() => new ProgressWatchdog(players, 0, 1000), /final frame/);
+  });
+}

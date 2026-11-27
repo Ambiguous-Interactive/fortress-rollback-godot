@@ -7,7 +7,7 @@ const LABEL_SECONDS = 1500;
 
 class ProgressWatchdog {
   constructor(players, started, lastFrame = 39) {
-    if (![39, 256].includes(lastFrame)) throw new Error('invalid final frame');
+    if (![39, 43, 256].includes(lastFrame)) throw new Error('invalid final frame');
     this.lastFrame = lastFrame;
     this.players = players;
     this.started = started;

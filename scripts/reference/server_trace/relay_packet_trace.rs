@@ -199,25 +199,33 @@ impl Trace {
             return Ok(None);
         }
 
+        let at_ns = || self.origin.elapsed().as_nanos() as u64;
+        let observed_ns = at_ns();
+
         #[derive(Serialize)]
         struct Snapshot<'a> {
             version: u8,
             request: u64,
-            links: Vec<String>,
+            links: &'a [String],
             clock: &'static str,
             #[serde(flatten)]
             scope: &'a Scope,
             streams: Streams,
         }
 
-        let streams = self.state.lock().map_err(|_| anyhow::anyhow!("relay trace lock poisoned"))?.snapshot(&request.links);
+        let state = self.state.lock().map_err(|_| anyhow::anyhow!("relay trace lock poisoned"))?;
+        let cutoff_ns = at_ns();
+        let streams = state.snapshot(&request.links);
+        drop(state);
+        let snapshot_finished_ns = at_ns();
+        let links: Vec<_> = request.links.iter().map(|&(sender, recipient)| format!("{}/{}", scope.roster[sender], scope.roster[recipient])).collect();
         let mut writer = BufWriter::with_capacity(RECEIPT_WRITE_BUFFER_BYTES, wrap_output(File::create(&paths.scratch)?));
         serde_json::to_writer(
             &mut writer,
             &Snapshot {
                 version: 2,
                 request: request.generation,
-                links: request.links.iter().map(|&(sender, recipient)| format!("{}/{}", scope.roster[sender], scope.roster[recipient])).collect(),
+                links: &links,
                 clock: "server.monotonic",
                 scope,
                 streams,
@@ -225,7 +233,23 @@ impl Trace {
         )?;
         writer.flush()?;
         drop(writer);
-        Ok(paths.commit(scope, &request)?.then_some(request.generation))
+        let serialized_ns = at_ns();
+        let published = paths.commit(scope, &request)?;
+        let commit_finished_ns = at_ns();
+        // The receipt is immutable after rename. Log the observed rename outcome separately.
+        let _ = writeln!(io::stderr().lock(), "relay receipt timing {}", serde_json::json!({
+            "clock": "server.monotonic",
+            "room": scope.room,
+            "request": request.generation,
+            "links": links,
+            "request_observed_ns": observed_ns,
+            "cutoff_ns": cutoff_ns,
+            "snapshot_finished_ns": snapshot_finished_ns,
+            "serialized_ns": serialized_ns,
+            "commit_finished_ns": commit_finished_ns,
+            "published": published,
+        }));
+        Ok(published.then_some(request.generation))
     }
 }
 

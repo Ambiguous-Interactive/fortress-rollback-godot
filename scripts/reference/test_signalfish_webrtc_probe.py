@@ -462,7 +462,8 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                           'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1,
                           'peer-drop-missing-lost': 1,
                           'peer-drop-commit': 1,
-                          'peer-drop-second': 1, 'peer-drop-overlap': 1, 'peer-drop-rollback': 1, 'peer-drop-foreign': 1,
+                          'peer-drop-second': 1, 'peer-drop-overlap': 1, 'peer-drop-second-after-ack': 1, 'peer-drop-second-last-turn': 1,
+                          'peer-drop-rollback': 1, 'peer-drop-foreign': 1,
                           'peer-drop-room': 1, 'peer-drop-room-continue': 1, 'peer-drop-process': 1,
                           'peer-drop-process-missing': 1, 'peer-drop-room-after-drop': 1,
                           'peer-drop-room-before-drop': 1}
@@ -539,7 +540,8 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                                             'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
                                             'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing',
                                             'peer-drop-missing-lost', 'peer-drop-commit', 'peer-drop-second',
-                                            'peer-drop-overlap', 'peer-drop-rollback', 'peer-drop-foreign', 'peer-drop-room',
+                                            'peer-drop-overlap', 'peer-drop-second-after-ack', 'peer-drop-second-last-turn',
+                                            'peer-drop-rollback', 'peer-drop-foreign', 'peer-drop-room',
                                             'peer-drop-room-continue', 'peer-drop-process',
                                             'peer-drop-process-missing', 'peer-drop-room-after-drop',
                                             'peer-drop-room-before-drop'], overlap=True)
@@ -548,6 +550,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                                   ['peer-drop-relay', 'peer-drop-missing'],
                                   ['peer-drop-missing-lost', 'peer-drop-commit'],
                                   ['peer-drop-second', 'peer-drop-overlap'],
+                                  ['peer-drop-second-after-ack', 'peer-drop-second-last-turn'],
                                   ['peer-drop-rollback', 'peer-drop-foreign'],
                                   ['peer-drop-room', 'peer-drop-room-continue'],
                                   ['peer-drop-process', 'peer-drop-process-missing'],

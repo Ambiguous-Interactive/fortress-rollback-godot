@@ -43,6 +43,70 @@ const { once } = require('node:events');
 const { createHash, webcrypto } = require('node:crypto');
 const { createRelayProxyTrace, joinRelayReceive, traceProxyWrites } = require('./native_relay_proxy.cjs');
 const { createRelayWireTrace, decodeRelayDelivery } = require('./native_relay_trace.cjs');
+const { relayExpiryTraffic } = require('./native_relay_proxy.cjs');
+
+test('expiry follow-up orders server writes separately from recipient observations', () => {
+  const packet = (seq, write, sender = 'source', epoch = 1) => ({
+    sender, recipient: 'reporter', epoch, seq, kind: 4, family: 'quality', lane: 'addressed',
+    envelope_sha256: 'digest-' + seq, envelope_bytes: 103, write: [write], raw: [], sdk: [], native: [],
+  });
+  const accepted = packet('900', 20);
+  const earlier = packet('899', 19);
+  const later = { ...packet('1', 21, 'source', 2), raw: [31, 32], sdk: [43], native: [50] };
+  const other = packet('901', 22, 'other');
+  const unwritten = { ...packet('2', 23, 'source', 2), write: [] };
+  const expiry = { page_ms: 100, controller_ms: 18, frontier: { room: 'room', sender: 'source', recipient: 'reporter', packets: [accepted] } };
+  const page = { room: 'room', local: 'reporter', clock: 'page.performance.now', streams: {
+    raw: { quality: { events: [{ ordinal: 31, at_ms: 99 }, { ordinal: 32, at_ms: 101 }] } },
+    sdk: { quality: { events: [{ ordinal: 43, at_ms: 100 }] } },
+    native: { quality: { events: [{ ordinal: 50, at_ms: 102, code: 1 }] } },
+  } };
+  const receive = { room: 'room', rows: [{ ...later, message: [{ ordinal: 17, at_ms: 98 }] }] };
+  const joined = { rows: [earlier, other, later, unwritten, accepted] };
+  const [result] = relayExpiryTraffic([expiry], joined, [page], receive);
+  assert.equal(result.anchor_write, 20);
+  assert.equal(result.following_writes.length, 1);
+  const [record] = result.following_writes;
+  assert.equal(record.epoch, 2);
+  assert.equal(record.seq, '1');
+  assert.deepEqual(record.before_expiry, { message: [17], raw: [31], sdk: [], native: [] });
+  assert.deepEqual(record.at_or_after_expiry, { message: [], raw: [32], sdk: [43], native: [50] });
+  const acrossAnchor = { ...later, write: [19, 21] };
+  const [ambiguous] = relayExpiryTraffic([expiry], { rows: [accepted, acrossAnchor] }, [page], receive);
+  assert.deepEqual(ambiguous.following_writes[0].write, [21]);
+  assert.deepEqual(ambiguous.following_writes[0].write_candidates, [19, 21]);
+  assert.equal(ambiguous.following_writes[0].observation_write_ambiguous, true);
+  assert.deepEqual(record.write_candidates, [21]);
+  assert.equal(record.observation_write_ambiguous, false);
+  const [missingPage] = relayExpiryTraffic([expiry], joined, [{ ...page, room: 'old-room' }], receive);
+  assert.equal(missingPage.page_coverage, 'unavailable');
+  assert.deepEqual(missingPage.following_writes[0].before_expiry, { message: [], raw: [], sdk: [], native: [] });
+  const [missingAnchor] = relayExpiryTraffic([expiry], { rows: [later] }, [page], receive);
+  assert.equal(missingAnchor.anchor_write, null);
+  assert.deepEqual(missingAnchor.following_writes, []);
+});
+
+test('expiry follow-up preserves ambiguous writes and tolerates incomplete page evidence', () => {
+  const accepted = { sender: 'sender', recipient: 'recipient', family: 'input', kind: 2, epoch: 3, seq: '42',
+    envelope_sha256: 'one', envelope_bytes: 116, lane: 'addressed', write: [20, 30], raw: [], sdk: [], native: [] };
+  const later = { ...accepted, seq: '43', envelope_sha256: 'two', write: [21], raw: [7] };
+  const expiry = { page_ms: 20, frontier: { room: 'room', sender: accepted.sender, recipient: accepted.recipient, packets: [accepted] } };
+  const page = { room: 'room', local: accepted.recipient, clock: 'page.performance.now', streams: {
+    raw: { input: { events: [{ ordinal: 7, at_ms: 15 }] } },
+  } };
+  const joined = { rows: [accepted, later] };
+  const [result] = relayExpiryTraffic([expiry], joined, [page]);
+  assert.deepEqual(result.anchor_candidates, [20, 30]);
+  assert.equal(result.anchor_write, null);
+  assert.deepEqual(result.following_writes, []);
+  const unique = { rows: [{ ...accepted, write: [20] }, later] };
+  const [partial] = relayExpiryTraffic([expiry], unique, [page]);
+  assert.equal(partial.page_coverage, 'partial');
+  assert.deepEqual(partial.following_writes[0].before_expiry.raw, [7]);
+  const [ambiguous] = relayExpiryTraffic([expiry], unique, [page, page]);
+  assert.equal(ambiguous.page_coverage, 'ambiguous');
+  assert.deepEqual(ambiguous.following_writes[0].before_expiry.raw, []);
+});
 
 function deliveryWire(sender, recipient, room) {
   const envelope = Buffer.alloc(103);

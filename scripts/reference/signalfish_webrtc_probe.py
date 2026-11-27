@@ -18,7 +18,7 @@ import zipfile
 
 from browser.local_stun import local_port, local_stun
 from browser.webrtc_import import freeze_after_import
-from browser.webrtc_drop import validate_drop_browser
+from browser.webrtc_drop import check_serial_controls, validate_drop_browser
 from browser.webrtc_drop_overlap import check_overlap_order_controls, validate_drop_overlap
 from browser.webrtc_recording import engine_identity, validate_recording, validate_pressure
 from browser.webrtc_runner import room_count, run_browser, run_wave
@@ -44,7 +44,8 @@ HOST_WAIT_SECONDS = 900.0
 PRINT_LOCK = threading.Lock()
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
           'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-missing-lost', 'peer-drop-commit',
-          'peer-drop-second', 'peer-drop-overlap', 'peer-drop-rollback', 'peer-drop-foreign',
+          'peer-drop-second', 'peer-drop-overlap', 'peer-drop-second-after-ack', 'peer-drop-second-last-turn',
+          'peer-drop-rollback', 'peer-drop-foreign',
           'peer-drop-room', 'peer-drop-room-continue', 'peer-drop-process', 'peer-drop-process-missing',
           'peer-drop-room-after-drop', 'peer-drop-room-before-drop', 'recording-pressure')
 
@@ -416,6 +417,10 @@ def main():
                        'peer-drop-process', 'peer-drop-process-events', 'peer-drop-process-missing', 'peer-drop-process-missing-events',
                        'peer-drop-room-after-drop', 'peer-drop-room-after-drop-events',
                        'peer-drop-room-before-drop', 'peer-drop-room-before-drop-events')]
+    serial_labels = {'peer-drop-second-after-ack': 'after-ack', 'peer-drop-second-last-turn': 'last-turn'}
+    owned_logs += [f'{version}-{label}-{kind}' for version in versions for label in serial_labels
+                   for kind in ('control.json', 'events.log')]
+    owned_logs += [f'{version}-{label}.log' for version in versions for label in serial_labels]
     owned_logs += [f'{version}-peer-drop-overlap-control.json' for version in versions]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
@@ -650,7 +655,8 @@ def main():
                                                                missing_history=label in ('peer-drop-missing', 'peer-drop-missing-lost'),
                                                                history_lost=label == 'peer-drop-missing-lost',
                                                                commit_loss=label == 'peer-drop-commit',
-                                                               second_departure=label == 'peer-drop-second',
+                                                               second_departure=label == 'peer-drop-second' or label in serial_labels,
+                                                               second_boundary=serial_labels.get(label, ''),
                                                                rollback_departure=label == 'peer-drop-rollback',
                                                                foreign_proposal=label == 'peer-drop-foreign',
                                                                room_departure=label == 'peer-drop-room',
@@ -659,6 +665,9 @@ def main():
                                                                process_missing=label == 'peer-drop-process-missing',
                                                                room_after_drop=label == 'peer-drop-room-after-drop',
                                                                room_before_drop=label == 'peer-drop-room-before-drop')
+                                if label in serial_labels:
+                                    control = check_serial_controls(result, serial_labels[label])
+                                    (args.output / f'{version}-{label}-control.json').write_text(json.dumps(control) + '\n')
                             elif label == 'recording-pressure':
                                 result = validate_pressure(json.loads(output), recording_engine)
                             elif label in ('corrupt', 'default'):
@@ -712,6 +721,8 @@ def main():
                         'and canonical continuation are required. '
                         'The peer-drop-second label departs a second page after twelve inputs; the single survivor freezes that slot '
                         'on its own confirmed frontier, then continues to 40 inputs with 38 canonical prefix checks. '
+                        'The serial boundary labels stop the second page after the first acknowledgement before turn 8 or after '
+                        'confirming turn 39. The last survivor captures 42 canonical boundaries and the finalized second freeze byte. '
                         'The peer-drop-overlap label certifies the first departure in a fixed four-player room. Its coordinator withholds '
                         'COMMIT to one follower, and another closes its endpoint before dispatching the transmitted COMMIT. Both remaining '
                         'survivors end for participant loss. Only the coordinator retains the certified freeze. '

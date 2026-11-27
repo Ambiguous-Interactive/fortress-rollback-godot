@@ -101,12 +101,104 @@ async function respond() {
   await publish(4, [link]);
   assert.equal((await retry).request, 4);
   await Promise.all([
-    assert.rejects(read(undefined, 3000, [link]), /receipt selected different links/),
+    assert.rejects(read(undefined, 3000, [link]), error => {
+      assert.match(error.message, /receipt selected different links/);
+      assert.equal(error.receiptTiming.outcome, 'scope_error');
+      return true;
+    }),
     (async () => {
       while (await fs.readFile(path + '.request', 'utf8') !== '5\n' + link) await pause(5);
       await publish(5, [link.split('/').reverse().join('/')]);
     })(),
   ]);
+  await publish(6, [link]);
+  assert.equal((await read(undefined, 3000, [link])).request, 6);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(['node', '-e', script, str(ROOT / 'scripts/reference/browser/native_relay_control.cjs'),
+                            str(Path(directory) / 'trace.json')], check=True, timeout=10)
+
+    def test_relay_server_reader_times_current_generation_across_deadline(self):
+        # Value: protects=server publication evidence during receipt timeouts; fails_when=late reads and missing publications look the same; seam=atomic receipt files
+        script = r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const { createRelayServerReader } = require(process.argv[1]);
+const file = process.argv[2];
+const { open, rename } = fs;
+const read = createRelayServerReader(file);
+const publish = async request => {
+  await fs.writeFile(file + '.new', JSON.stringify({ version: 2, request, links: [] }));
+  await fs.rename(file + '.new', file);
+};
+let now = 10;
+Object.defineProperty(globalThis, 'performance', { value: { now: () => now } });
+
+(async () => {
+  fs.rename = async (from, to) => {
+    await rename(from, to);
+    if (to === file + '.request') await publish(1);
+  };
+  fs.open = async (...args) => {
+    const reader = await open(...args);
+    now = 99;
+    return { close: () => reader.close(), readFile: async (...args) => {
+      const text = await reader.readFile(...args);
+      now = 100;
+      return text;
+    } };
+  };
+  await assert.rejects(read(undefined, 90), error => {
+    assert.match(error.message, /relay server receipt deadline/);
+    assert.deepEqual(error.receiptTiming, {
+      clock: 'controller.performance', deadline_ms: 100, generation: 1, links: [],
+      request_started_ms: 10, request_published_ms: 10, open_started_ms: 10,
+      opened_ms: 99, read_ms: 100, parse_started_ms: 100, parsed_ms: 100, observed_generation: 1, outcome: 'late_read',
+    });
+    return true;
+  });
+
+  // A recovery read can consume the same pending request, with its original request stamps.
+  Object.assign(fs, { open, rename });
+  const receipt = await read();
+  assert.equal(receipt.request, 1);
+  assert.equal(receipt.controller_timing.request_published_ms, 10);
+  assert.equal(receipt.controller_timing.outcome, 'selected');
+
+  fs.open = async (...args) => {
+    const reader = await open(...args);
+    now = 150;
+    return reader;
+  };
+  await assert.rejects(read(undefined, 50), error => {
+    assert.match(error.message, /relay server receipt deadline/);
+    assert.equal(error.receiptTiming.generation, 2);
+    assert.equal(error.receiptTiming.observed_generation, 1);
+    assert.equal(error.receiptTiming.outcome, 'generation_not_observed');
+    return true;
+  });
+  fs.open = open;
+  await publish(2);
+  const failure = new Error('selection rejected');
+  await assert.rejects(read(() => { throw failure; }), error => {
+    assert.equal(error, failure);
+    assert.equal(error.receiptTiming.outcome, 'predicate_error');
+    assert.equal(error.receiptTiming.selection_finished_ms, 150);
+    return true;
+  });
+  await publish(3);
+  await read(() => { throw null; }).then(
+    () => assert.fail('selection should reject'), error => assert.equal(error, null));
+  await publish(4);
+  const selected = await read(candidate => {
+    now = 151;
+    return candidate;
+  }, 1);
+  assert.equal(selected.request, 4);
+  assert.equal(selected.controller_timing.parsed_ms, 150);
+  assert.equal(selected.controller_timing.selection_finished_ms, 151);
+  assert.equal(selected.controller_timing.outcome, 'selected');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
         with tempfile.TemporaryDirectory() as directory:
@@ -2820,6 +2912,8 @@ runMain();
                             self.assertEqual([peer.get('checkpoint_error') for peer in report['postRelease']], [None, None])
                             self.assertEqual([(f"{row['sender']}/{row['recipient']}", row['upstream_scope']) for row in report['relayExpiryRows']],
                                              [(link, 'focused'), ('/'.join(reversed(link.split('/'))), 'outside-focus')])
+                            self.assertEqual([(row['anchor_write'], row['page_coverage'], row['following_writes']) for row in report['relayExpiryTraffic']],
+                                             [(None, 'unavailable', []), (None, 'unavailable', [])])
                         if control == 'history staggered':
                             self.assertLess(reporter['native_expiry']['controller_order'],
                                             report['postRelease'][1]['history_published']['controller_order'])

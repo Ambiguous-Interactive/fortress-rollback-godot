@@ -15,8 +15,8 @@ from web_templates import web_template_archive
 # Use both pins' measured label times with the probe's eight-live-page packing.
 # Three-room labels took up to 82 seconds on the merge group; full lanes took up to 146 seconds of browser time.
 TRANSPORT = {
-    'clean': ('clean', 'peer-drop-process-missing', 'peer-drop-room-after-drop'),
-    'faults': ('faults', 'peer-drop-foreign', 'peer-drop-room-before-drop'),
+    'clean': ('clean', 'peer-drop-process-missing', 'peer-drop-room-after-drop', 'peer-drop-second-after-ack'),
+    'faults': ('faults', 'peer-drop-foreign', 'peer-drop-room-before-drop', 'peer-drop-second-last-turn'),
     'mixed': ('mixed', 'corrupt', 'peer-drop-missing', 'peer-drop-second', 'peer-drop-overlap'),
     'mixed-default': ('mixed-default', 'mixed-disabled', 'peer-drop-missing-lost', 'peer-drop-commit'),
     'mixed-close': ('mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-room-continue'),

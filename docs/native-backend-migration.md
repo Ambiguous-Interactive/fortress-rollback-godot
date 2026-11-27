@@ -115,6 +115,28 @@ The browser receipt counts valid native room broadcasts separately from
 addressed packets. Validate the native header before filtering and decode
 sender identity only for the recipient's own traffic.
 
+The per-room server log prints one `relay receipt timing` JSON row for
+each completed publication attempt. Match its request generation and selected
+links to the controller's `controller_timing`. The server row records request
+observation, the locked state cutoff, snapshot completion, buffered JSON
+serialization and the result of rechecking the request and renaming the
+snapshot. A superseded request has `published: false`.
+
+On deadline failure, the browser log retains `relayServerControllerTiming`
+and any `relayServerRecoveryTiming`. The matching generation may have opened
+before the deadline and then missed it during read, close or parse.
+The reader checks its deadline before calling the selection predicate and
+records when that predicate returns.
+A timely open proves the atomically published snapshot was already available. A late open
+or an older generation alone leaves publication timing unresolved. Use the
+server row to locate time spent waiting for the snapshot lock, collecting the
+snapshot, serializing it or publishing it. Compare elapsed intervals within
+each clock and join the observations by generation and links. The interval
+from server request observation to serialization completion is before the
+rename. If it equals or exceeds the controller interval from request start
+to the deadline, the publication missed the deadline. The server can observe
+the request only after the controller starts writing it.
+
 Ordinary receipts include up to 128 records per directed link and stage.
 When a native expiry identifies links to diagnose, the browser and server
 publish only those links. Browser SDK and native histories expand to 512
@@ -131,6 +153,17 @@ These timings use the reporting page's Godot clock. A pre-poll depth of
 A later expiry can fall outside the upstream link
 selection. Its receipt identifies that scope, and its original browser
 observations remain available independently of the general relay trace.
+
+For each pinned packet with a unique retained server write, `relayExpiryTraffic`
+lists subsequent retained writes on the same directed link and packet family.
+The server write ordinals order those writes. The browser observations list
+which message, decoder, SDK and native ordinals came strictly before expiry
+or at or after expiry, using the recipient's page clock. Inspect the joined
+receipt for the corresponding timestamps and native admission codes. Empty
+lists show the limits of retained evidence. Multiple possible anchor writes
+or an unavailable page are reported explicitly. When a packet has possible
+writes on both sides of the anchor, the receipt preserves all candidates and
+marks its observation-to-write association ambiguous.
 
 During the traced gameplay hold, the `relayHold` receipt covers both directions
 between the first two UUIDs in the sorted frozen roster. Each page publishes its
