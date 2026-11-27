@@ -332,6 +332,12 @@ trace comparison and the expanded live fault matrix remain in
 Asymmetric delivery tests preserve and recover the full original suffix before the survivors continue.
 A captured donor journal also survives physical source-ring reuse; a fresh journal refuses the same evicted range.
 These checks do not establish the remaining pinned-source comparison.
+The live missing-history receipt records both survivors' opening confirmation
+frontiers and requires the certified cut to cover them. In Chromium on both
+Godot pins, the two frontiers were 3, the donor supplied original frames 4–6,
+and both survivors froze at 6 and compared 38 canonical prefixes. A deliberately
+unequal live schedule remains under
+[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188).
 
 The agreement runs in real sessions, not only in unit tests. Three peer
 sessions on the deterministic test transport play, one peer stops answering,
@@ -376,6 +382,9 @@ receives both READY reports and withholds COMMIT to one survivor. Another surviv
 direct boundary, closes its endpoint before dispatch, and stops sending. The two remaining survivors end for participant
 loss. The coordinator retains its freeze, while the pending survivor has no freeze. The witness checks the original
 confirmed inputs and rejects a receipt with the withheld COMMIT entry removed.
+Chromium and Firefox passed this cell on both pinned engines. The
+[#442 delivery record](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/442)
+links the source-bound packet receipts and the serial departure control.
 
 The `peer-drop-second` case departs one page after seven inputs and a second page after twelve.
 The remaining survivor certifies the first cut, then observes the second departure and
@@ -433,8 +442,12 @@ room after seven inputs, the survivors observe `player_left`, latch
 further input, and `peer-drop-room-continue` proves a post-fence step fails
 validation with `peer_drop_room_continued`; `peer-drop-process-missing`
 withholds the server event and proves both survivor fence waits fail. The
-remaining boundary schedules stay under
+live barrier checklist is in
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
+The [parent task](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
+owns broader drop qualification. The earliest and latest serial departure
+timings are tracked in
+[#531](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/531).
 
 ## Downloadable observations
 
