@@ -22,7 +22,7 @@ impl Config for Profile { type Input = [u8; 4]; type State = Game; type Address 
 #[derive(Default)]
 struct Buffers {
     incoming: Vec<(String, Message, Option<Value>)>, outgoing: Vec<(String, Message, Option<usize>)>,
-    received: Vec<Value>, order: Arc<Mutex<usize>>
+    received: Vec<Value>, timed_publications: Vec<(usize, u64)>, order: Arc<Mutex<usize>>
 }
 fn next_order(order: &Arc<Mutex<usize>>) -> usize {
     let mut value = order.lock().unwrap();
@@ -30,17 +30,25 @@ fn next_order(order: &Arc<Mutex<usize>>) -> usize {
     *value += 1;
     *value
 }
-struct Socket(Arc<Mutex<Buffers>>);
+struct Socket {
+    buffers: Arc<Mutex<Buffers>>,
+    clock: Option<Arc<Mutex<u64>>>,
+}
 impl NonBlockingSocket<String> for Socket {
     fn send_to(&mut self, message: &Message, address: &String) {
-        let mut queue = self.0.lock().unwrap();
+        let mut queue = self.buffers.lock().unwrap();
         let raw = serde_json::to_value(message).unwrap();
         let control = raw["body"].as_object().is_some_and(|body| body.keys().any(|kind| kind.starts_with("Drop")));
         let order = control.then(|| next_order(&queue.order));
+        if let (Some(clock), Some(order)) = (&self.clock, order) {
+            if raw["body"].get("DropBackfill").is_some() || raw["body"].get("DropAbort").is_some() {
+                queue.timed_publications.push((order, *clock.lock().unwrap()));
+            }
+        }
         queue.outgoing.push((address.clone(), message.clone(), order));
     }
     fn receive_all_messages(&mut self) -> Vec<(String, Message)> {
-        let mut queue = self.0.lock().unwrap();
+        let mut queue = self.buffers.lock().unwrap();
         let messages = std::mem::take(&mut queue.incoming);
         let order = queue.order.clone();
         queue.received.extend(messages.iter().filter_map(|(_, message, control)| control.as_ref().map(|record| {
@@ -91,7 +99,7 @@ fn apply_requests(requests: RequestVec<Profile>, game: &mut Game, states: &mut B
 }
 #[derive(Default)]
 struct Fault {
-    enabled: bool, dropped: Vec<Value>, commit_enabled: bool, dropped_commit: Vec<Value>, ack_enabled: bool, ack_participant: usize,
+    enabled: bool, drop_all_history: bool, dropped: Vec<Value>, commit_enabled: bool, dropped_commit: Vec<Value>, ack_enabled: bool, ack_participant: usize,
     dropped_ack: Vec<Value>, inventory_enabled: bool, dropped_inventory: Vec<Value>, prepare_enabled: bool, dropped_prepare: Vec<Value>,
     hold_decision: bool, held_ready: Option<(String, Message, Value)>, held_commit: Option<(String, Message, Value)>,
 }
@@ -144,7 +152,8 @@ fn route(buffers: &[Arc<Mutex<Buffers>>], missing: bool, silent: bool, control: 
                         fault.dropped_commit.push(packet);
                         continue;
                     }
-                    if fault.enabled && fault.dropped.is_empty() && sender == 1 && recipient == 0 && body.contains_key("DropBackfill") {
+                    if (fault.drop_all_history || (fault.enabled && fault.dropped.is_empty())) && sender == 1 && recipient == 0
+                        && body.contains_key("DropBackfill") {
                         fault.dropped.push(packet);
                         continue;
                     }
@@ -165,7 +174,7 @@ fn settle(sessions: &mut [P2PSession<Profile>], buffers: &[Arc<Mutex<Buffers>>],
     Err("unbounded settlement".into())
 }
 fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit_loss: bool, ack_loss: bool, inventory_loss: bool,
-    prepare_loss: bool, warmup: i32, deadline_offset: Option<i64>) -> Result<Value, String> {
+    prepare_loss: bool, warmup: i32, deadline_offset: Option<i64>, drop_all_history: bool) -> Result<Value, String> {
     let clock = Arc::new(Mutex::new(0_u64));
     let origin = web_time::Instant::now();
     let order = Arc::new(Mutex::new(0_usize));
@@ -187,11 +196,12 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
             builder = builder.add_player(kind, PlayerHandle::new(slot)).map_err(|error| format!("{error:?}"))?;
         }
         let queue = Arc::new(Mutex::new(Buffers { order: order.clone(), ..Default::default() }));
-        sessions.push(builder.start_p2p_session(Socket(queue.clone())).map_err(|error| format!("{error:?}"))?);
+        sessions.push(builder.start_p2p_session(Socket { buffers: queue.clone(), clock: drop_all_history.then(|| clock.clone()) })
+            .map_err(|error| format!("{error:?}"))?);
         buffers.push(queue);
     }
     let mut control = Vec::new();
-    let mut fault = Fault { enabled: loss, commit_enabled: commit_loss, ack_enabled: ack_loss, ack_participant: target_slots,
+    let mut fault = Fault { enabled: loss, drop_all_history, commit_enabled: commit_loss, ack_enabled: ack_loss, ack_participant: target_slots,
         inventory_enabled: inventory_loss, prepare_enabled: prepare_loss, hold_decision: deadline_offset.is_some(), ..Default::default() };
     settle(&mut sessions, &buffers, false, false, &mut control, &mut fault)?;
     for session in &mut sessions {
@@ -222,6 +232,9 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
     }).collect::<Vec<_>>();
     let expired_original_rows = (0..2).map(|peer|
         sessions[peer].confirmed_inputs_for_frame(Frame::new(0)).is_err()).collect::<Vec<_>>();
+    if drop_all_history {
+        return donor_timeout(&mut sessions, &mut games, &mut histories, &buffers, &clock, &mut control, &mut fault, before);
+    }
     let started_at = *clock.lock().unwrap();
     let target = PlayerHandle::new(2 * target_slots);
     for session in sessions.iter_mut().take(2) { session.remove_player(target).map_err(|error| format!("{error:?}"))?; }
@@ -321,6 +334,64 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
     }
     Ok(result)
 }
+fn exposed_rows(session: &P2PSession<Profile>, first: i32, frontier: i32) -> Result<Vec<Value>, String> {
+    (first..=frontier).map(|frame| {
+        let inputs = session.confirmed_inputs_for_frame(Frame::new(frame))
+            .map_err(|error| format!("confirmed row {frame}: {error:?}"))?;
+        Ok(json!({"frame":frame,"inputs":inputs.iter().map(|bytes| hex(bytes)).collect::<Vec<_>>()}))
+    }).collect()
+}
+
+fn donor_timeout(sessions: &mut [P2PSession<Profile>], games: &mut [Game], histories: &mut [BTreeMap<i32, Value>],
+    buffers: &[Arc<Mutex<Buffers>>], clock: &Arc<Mutex<u64>>, control: &mut Vec<Value>, fault: &mut Fault, before: Vec<Value>) -> Result<Value, String> {
+    let target = PlayerHandle::new(4);
+    let started_us = *clock.lock().unwrap();
+    let mut survivors = Vec::new();
+    for (peer, session) in sessions.iter_mut().take(2).enumerate() {
+        let frontier = session.confirmed_frame().as_i32();
+        let first = 3 - peer as i32;
+        survivors.push(json!({"peer":peer, "rows_before":exposed_rows(session, first, frontier)?,
+            "frame_before":session.current_frame().as_i32(), "game_before":hex(&games[peer].bytes())}));
+        session.remove_player(target).map_err(|error| format!("{error:?}"))?;
+    }
+    // Advance only the protocol clock and deliver survivors' control traffic through the normal socket.
+    for _ in 0..=40 {
+        for session in sessions.iter_mut().take(2) { session.poll_remote_clients(); }
+        route(buffers, true, true, control, fault)?;
+        *clock.lock().unwrap() += 50_000;
+    }
+    for (peer, session) in sessions.iter_mut().take(2).enumerate() {
+        let frame = session.current_frame().as_i32();
+        for slot in peer * 2..(peer + 1) * 2 {
+            session.add_local_input(PlayerHandle::new(slot), sample(slot, frame)).map_err(|error| format!("timeout input: {error:?}"))?;
+        }
+        let advance = match session.advance_frame() {
+            Ok(requests) => {
+                apply_requests(requests, &mut games[peer], &mut histories[peer])?;
+                "ok"
+            },
+            Err(FortressError::NotSynchronized) => "not_synchronized",
+            Err(error) => return Err(format!("timeout advance: {error:?}")),
+        };
+        let result = &mut survivors[peer];
+        result["rows_after"] = json!(exposed_rows(session, 3 - peer as i32, session.confirmed_frame().as_i32())?);
+        result["frame_after"] = json!(session.current_frame().as_i32());
+        result["game_after"] = json!(hex(&games[peer].bytes()));
+        result["advance"] = json!(advance);
+        result["state"] = json!(session.current_state().to_string());
+        result["dropped"] = json!(peer_dropped(session));
+        result["connected"] = json!((4..6).map(|slot| session.diagnostic_player_connected(PlayerHandle::new(slot))).collect::<Vec<_>>());
+        result["target_receipts"] = json!((4..6).map(|slot| session.diagnostic_player_receipt_frame(PlayerHandle::new(slot)).map(Frame::as_i32))
+            .collect::<Vec<_>>());
+    }
+    let received = buffers.iter().take(2).flat_map(|queue| queue.lock().unwrap().received.clone()).collect::<Vec<_>>();
+    let mut timed: Vec<_> = buffers.iter().take(2).flat_map(|queue| queue.lock().unwrap().timed_publications.clone()).collect();
+    timed.sort_unstable();
+    let timed_publications: Vec<_> = timed.into_iter().map(|(order, at_us)| json!({"order":order,"at_us":at_us})).collect();
+    Ok(json!({"upstream_revision":REVISION, "before":before, "controls":control, "received_controls":received,
+        "started_us":started_us, "timed_publications":timed_publications, "lost_history":fault.dropped, "survivors":survivors}))
+}
+
 fn peer_dropped(session: &mut P2PSession<Profile>) -> Vec<Value> {
     session.events().filter_map(|event| match event {
         FortressEvent::PeerDropped { handle, addr } => Some(json!({"handle":handle.as_usize(), "address":addr})),
@@ -335,12 +406,19 @@ fn main() {
                 "-1" => -1, "0" => 0, "1" => 1,
                 _ => { eprintln!("drop history: unexpected deadline offset"); std::process::exit(2); }
             };
-            match run(false, 1, 1, false, false, false, false, false, 0, Some(offset)) {
+            match run(false, 1, 1, false, false, false, false, false, 0, Some(offset), false) {
                 Ok(result) => println!("{result}"),
                 Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); }
             }
             return;
         }
+    }
+    if arguments == ["--drop-all-history"] {
+        match run(false, 4, 2, true, false, false, false, false, 0, None, true) {
+            Ok(result) => println!("{result}"),
+            Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); }
+        }
+        return;
     }
     let loss = arguments.contains(&"--drop-first-history".into());
     let multi = arguments.contains(&"--multi-row-history".into());
@@ -355,7 +433,8 @@ fn main() {
         + usize::from(loss) + usize::from(multi) + usize::from(grouped) + usize::from(wrapped) {
         eprintln!("drop history: unexpected argument"); std::process::exit(2);
     }
-    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss, ack_loss, inventory_loss, prepare_loss, if wrapped { 251 } else { 0 }, None) {
+    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss, ack_loss, inventory_loss,
+        prepare_loss, if wrapped { 251 } else { 0 }, None, false) {
         Ok(result) => println!("{result}"),
         Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); }
     }

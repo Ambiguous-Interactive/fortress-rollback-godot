@@ -196,6 +196,8 @@ func _drain(mesh: Dictionary) -> Array[Dictionary]:
 			elif event.kind == "peer_drop_unconfirmed":
 				mesh.unconfirmed += 1
 				mesh.reasons.append(event.reason)
+				if mesh.has("drop_failures"):
+					mesh.drop_failures.append({"peer": source, "target": event.peer.hex_encode(), "reason": event.reason, "at_us": mesh.now})
 	return result
 
 

@@ -58,6 +58,16 @@ test('missing, truncated, duplicate and unbound socket evidence do not imply non
   assert.equal(collect([connection(7), complete, incoming(7, 90, frame)]).status, 'ambiguous');
   assert.equal(collect([connection(7), complete], { ...receive, rows: [{ ...row, proxy: [carrierMatch, carrierMatch] }] }).status, 'ambiguous');
   assert.equal(collect([connection(7), complete], { ...receive, sockets: [address, address] }).status, 'ambiguous');
+
+  const secondAddress = { ...address, browser_endpoint: '127.0.0.1:44002' };
+  const secondConnection = [connection(8, secondAddress.browser_endpoint), { ...complete, source: { id: 8, type: 3 } }];
+  const secondCarrier = { ...carrierMatch, socket: 1 };
+  const secondSocket = { ...receive, sockets: [address, secondAddress], rows: [{ ...row, proxy: [secondCarrier] }] };
+  assert.equal(collect(secondConnection, secondSocket).status, 'ambiguous', 'one page cannot claim two proxy sockets');
+  const separatePage = { ...secondSocket, sockets: [address, { ...secondAddress, page_index: 1 }] };
+  assert.equal(collect(secondConnection, separatePage, [null, recipient]).status, 'observed');
+  assert.equal(collect(secondConnection, separatePage, [recipient, null]).status, 'unavailable', 'socket belongs to an untraced engine');
+  assert.equal(collect(secondConnection, { ...separatePage, refused: 1 }, [null, recipient]).status, 'unavailable');
 });
 
 test('raw capture read is bounded and identifies unfinished or oversized logs', async () => {

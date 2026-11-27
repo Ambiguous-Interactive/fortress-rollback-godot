@@ -176,10 +176,14 @@ function traceProxyWrites(upstream, socket, inlet, beforeForward) {
   upstream.pipe(forwarding);
 }
 
-module.exports = { createFrameReader, createRelayProxyTrace, joinRelayReceive, relayExpiryTraffic, traceProxyWrites };
+module.exports = { createFrameReader, createRelayProxyTrace, joinRelayReceive, refreshRelayReceive, relayExpiryTraffic, traceProxyWrites };
 
 function packetKey({ sender, recipient, epoch, seq, envelope_sha256, envelope_bytes }) {
   return `${sender}/${recipient}/${epoch}/${seq}/${envelope_bytes}/${envelope_sha256}`;
+}
+
+function proxyCaptureIncomplete(sockets, refused) {
+  return !sockets.length || refused > 0 || sockets.some(socket => socket.error || socket.omitted || socket.skipped || socket.rejected);
 }
 
 function joinRelayReceive(joined, proxy, pages, room) {
@@ -211,7 +215,7 @@ function joinRelayReceive(joined, proxy, pages, room) {
     }
     return coverage;
   });
-  const proxyIncomplete = !sockets.length || proxy.refused > 0 || sockets.some(socket => socket.error || socket.omitted || socket.skipped || socket.rejected);
+  const proxyIncomplete = proxyCaptureIncomplete(sockets, proxy.refused);
   const rows = (joined?.rows ?? []).filter(row => row.lane === 'addressed' && row.write.length).map(row => {
     const { sender, recipient, epoch, seq, kind, envelope_sha256, envelope_bytes } = row;
     const proxyMatches = byStamp.get(packetKey(row)) ?? [];
@@ -243,6 +247,22 @@ function joinRelayReceive(joined, proxy, pages, room) {
       message, first_unobserved, coverage_gap };
   });
   return { clock: proxy.clock, room, refused: proxy.refused, sockets, pages: pageStreams, rows };
+}
+
+function refreshRelayReceive(original, joined, proxy) {
+  const settled = joinRelayReceive(joined, proxy, [], original.room);
+  const incomplete = proxyCaptureIncomplete(settled.sockets, settled.refused);
+  // Both joins use the same ordered server rows and stable proxy socket indices.
+  settled.rows = settled.rows.map((row, index) => {
+    const previous = original.rows[index].proxy;
+    if (previous.length > 1) return { ...row, proxy: previous };
+    if (row.proxy.length !== 1) return row;
+    const [old] = previous;
+    const [current] = row.proxy;
+    if (!incomplete && old?.socket === current.socket && old.ordinal === current.ordinal) return row;
+    return { ...row, proxy: [] };
+  });
+  return settled;
 }
 
 function relayExpiryTraffic(expiries, joined, pages, receive) {

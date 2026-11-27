@@ -3792,7 +3792,7 @@ module.exports.firefox=module.exports.chromium;
                      *[(name+'-inspect', True, False, False) for name in ['smoke', 'ownership', 'online', 'webrtc', 'spectator']],
                      ('ownership-diagnostic', False, False, False), ('ownership-diagnostic', False, True, True),
                      ('native_online', True, False, False), ('native_online-chromium-trace', True, False, False),
-                     ('native_online-firefox-trace', True, False, False)]
+                     ('native_online-firefox-trace', True, False, False), ('native_online-mixed-trace', True, False, False)]
             for name, primary, browser_failure, context_failure in cases:
                 opaque = name.endswith('-opaque')
                 custom_inspect = name.endswith('-inspect')
@@ -3818,6 +3818,7 @@ module.exports.firefox=module.exports.chromium;
                     command += {
                         'chromium': ['relay', '4', 'chromium', '--trace-chromium-socket'],
                         'firefox': ['relay', '4', 'chromium-firefox', '--trace-firefox-frames'],
+                        'mixed': ['relay', '4', 'chromium-firefox', '--trace-mixed-receive'],
                     }.get(trace_browser, ['mesh', '2'])
                     if trace:
                         environment.update(FORTRESS_RELAY_TRACE_SCOPE=str(directory / 'scope.json'),
@@ -3844,9 +3845,9 @@ module.exports.firefox=module.exports.chromium;
                         self.assertNotIn('TypeError', child.stderr, 'CLI must not replace the opaque rejection during conversion')
                         self.assertEqual(child.stdout, '')
                         continue
-                    self.assertEqual(log.read_text(encoding='utf-8').splitlines()[-1], 'server closed')
                     if primary:
                         self.assertIn('PRIMARY_FAILURE', child.stderr)
+                    self.assertEqual(log.read_text(encoding='utf-8').splitlines()[-1], 'server closed')
                     if browser_failure:
                         self.assertIn('BROWSER_FAILURE_0', child.stderr)
                     if context_failure:
@@ -3869,16 +3870,21 @@ module.exports.firefox=module.exports.chromium;
                         phase = next(line for line in child.stderr.splitlines() if line.startswith('{"phase":'))
                         self.assertEqual(json.loads(phase)['primary_error'], 'PRIMARY_FAILURE')
                         if trace:
-                            receipt_key = 'relaySocketFailure' if trace_browser == 'chromium' else 'relayFirefoxFailure'
-                            followup = next(line for line in child.stderr.splitlines() if line.startswith('{"' + receipt_key + '":'))
                             self.assertEqual(json.loads(phase)['phase'], 'launch')
-                            evidence = json.loads(followup)[receipt_key]
-                            self.assertEqual(evidence['failure_sha256'], hashlib.sha256(phase.encode()).hexdigest())
-                            if trace_browser == 'chromium':
-                                self.assertEqual(evidence['status'], 'unavailable')
-                            else:
-                                self.assertEqual(evidence['coverage'], 'debugger-callback-dependent')
-                                self.assertEqual((evidence['pages'], evidence['rows']), ([], []))
+                            keys = {'chromium': ['relaySocketFailure'], 'firefox': ['relayFirefoxFailure'],
+                                    'mixed': ['relaySocketFailure', 'relayFirefoxFailure']}
+                            supplements = [json.loads(line) for line in child.stderr.splitlines() if line.startswith('{"relay')]
+                            self.assertEqual([next(iter(row)) for row in supplements], keys[trace_browser])
+                            original_digest = hashlib.sha256(phase.encode()).hexdigest()
+                            for row in supplements:
+                                receipt_key, evidence = next(iter(row.items()))
+                                self.assertEqual(evidence['failure_sha256'], original_digest)
+                                if receipt_key == 'relaySocketFailure':
+                                    self.assertEqual(evidence['status'], 'unavailable')
+                                else:
+                                    self.assertEqual(evidence['coverage'], 'debugger-callback-dependent')
+                                    self.assertEqual((evidence['pages'], evidence['rows']), ([], []))
+                            if trace_browser in ('firefox', 'mixed'):
                                 log.unlink()
                                 with subprocess.Popen(command, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE) as broken:
                                     broken.stderr.close()

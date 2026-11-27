@@ -771,6 +771,27 @@ All three runs preserve the exposed original input row at frame 4 after
 the advancement attempt. Godot's
 own configured deadline likewise refuses the COMMIT at equality and after.
 
+The all-donor-loss comparison begins at unequal confirmed frontiers of four
+and five with two departing slots. Godot applies pending corrections and
+routes the recovery traffic before the barrier opens. The coordinator's
+confirmation then reaches five, so both Godot survivors expose through five
+before the barrier and the pinned source retains the unequal opening.
+Both transports discard every original history packet for
+rows 8–11 after the proposal and inventory receipts. The Godot observer
+binds each routed copy to its accepted publication and checks the 50 ms
+retry intervals. The pinned source records each send on the protocol clock
+and emits a timeout ABORT from each survivor. Its next advance returns
+`NotSynchronized`, both target handles stay connected, and the original
+retained confirmed rows match before and after expiry. Godot reports
+`timeout` when the donor reaches its deadline and the coordinator receives
+the donor's ABORT in the same tick. The coordinator's event drains one tick
+later. Neither survivor advances or freezes either target. It checks every original confirmed row, status and canonical game
+prefix through frame five on each survivor. Both runtimes preserve the recipient's
+target receipts at 7 and the donor's at 11. The paired Godot control applies
+the same pending corrections and exposes the same rows before the barrier,
+then delivers the original donor packet, freezes both slots at 11 and
+continues through twenty canonical prefixes. The retained donor rows remain resident in both runtimes.
+
 This establishes single-target and grouped two-target missing-history donor scenarios
 with clean delivery, one lost original historical backfill, and unequal grouped inventory/COMMIT/ACK loss alone or combined. The two implementations
 use distinct wire formats and different departure triggers. Their retained

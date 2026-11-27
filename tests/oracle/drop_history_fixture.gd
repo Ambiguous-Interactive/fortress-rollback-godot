@@ -8,6 +8,7 @@ var _prepare_emissions: Array[Dictionary] = []
 var _prepare_receipts: Array[Dictionary] = []
 var _history_receipts: Array[Dictionary] = []
 var _history_emissions: Array[Dictionary] = []
+var _history_routing: Array[Dictionary] = []
 var _lost_history: Array[Dictionary] = []
 var _commit_emissions: Array[Dictionary] = []
 var _commit_receipts: Array[Dictionary] = []
@@ -20,6 +21,7 @@ var _drop_first_ack: bool = false
 var _lost_commit: Array[Dictionary] = []
 var _drop_first_commit: bool = false
 var _drop_first_history: bool = false
+var _drop_all_history: bool = false
 var _corrupt_interior_history: bool = false
 var _drop_first_prepare: bool = false
 var _unrouted_prepare: bool = false
@@ -75,7 +77,8 @@ func observe(
 	drop_first_inventory: bool = false,
 	drop_first_prepare: bool = false,
 	unrouted_prepare: bool = false,
-	warmup: int = 0
+	warmup: int = 0,
+	donor_timeout_case: String = ""
 ) -> Dictionary:
 	_warmup_frames = warmup
 	_drop_first_inventory = drop_first_inventory
@@ -84,6 +87,8 @@ func observe(
 	_drop_first_ack = drop_first_ack
 	_drop_first_commit = drop_first_commit
 	_drop_first_history = drop_first_history
+	_drop_all_history = donor_timeout_case == "timeout"
+	_observation.track_history = not donor_timeout_case.is_empty()
 	_corrupt_interior_history = corrupt_interior
 	_mode = "remote_donor"
 	_missing_peer = 0
@@ -115,6 +120,11 @@ func observe(
 	if warmup > 0:
 		for peer: int in range(2):
 			expired_original_rows.append(mesh.peers[peer]._core._queues[2 * _slots].confirmed_input(0).code == Queue.Code.NO_CONFIRMED_INPUT)
+	var opening: Array[Dictionary] = []
+	if not donor_timeout_case.is_empty():
+		opening = _donor_opening(context, mesh)
+		if _drop_all_history:
+			return _donor_timeout(context, mesh, before, opening)
 	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
 	var cuts: Array = []
 	for peer: int in range(2):
@@ -172,10 +182,88 @@ func observe(
 		"failures": context.failures
 	}
 
+	if not opening.is_empty():
+		result.opening = opening
+		result.history_publications = _observation.history_publications
+		result.history_routing = _history_routing
 	if warmup > 0:
 		result.warmup = warmup
 		result.expired_original_rows = expired_original_rows
 	return result
+
+
+func _exposed_rows(context: RefCounted, peer: Peer, game: ObservedGame, frontier: int) -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for frame: int in range(frontier + 1):
+		var row: Types.FrameInputs = peer.confirmed_inputs(frame)
+		context.equal(row != null, true, "public confirmed row remains accessible")
+		if row == null:
+			continue
+		var inputs: Array[Dictionary] = []
+		for slot: int in range(3 * _slots):
+			var input: Types.InputResult = row.read(slot)
+			context.equal(input.code, Types.Code.OK, "public confirmed slot remains accessible")
+			inputs.append({"bytes": input.bytes.hex_encode(), "status": ObservedGame.status_name(input.status)})
+		rows.append({"frame": frame, "inputs": inputs, "state": {"frame": frame, "bytes": game.states[frame].hex_encode(), "inputs": game.applied[frame]}})
+	return rows
+
+
+func _donor_opening(context: RefCounted, mesh: Dictionary) -> Array[Dictionary]:
+	var survivors: Array[Dictionary] = []
+	for index: int in range(2):
+		var result: Driver.StepResult = mesh.peers[index].recover(mesh.now)
+		context.equal(result.code, Types.Code.OK, "apply pending corrections before exposing original rows")
+	_deliver(context, mesh, _without_peer(_drain(mesh), 2))
+	for index: int in range(2):
+		var peer: Peer = mesh.peers[index]
+		var status: Types.Status = peer.status()
+		survivors.append({"peer": index, "rows_before": _exposed_rows(context, peer, mesh.games[index], status.confirmed_frame),
+			"confirmed_before": status.confirmed_frame, "frame_before": status.current_frame, "game_before": mesh.games[index].bytes().hex_encode()})
+	return survivors
+
+
+func _donor_timeout(context: RefCounted, mesh: Dictionary, before: Array[Dictionary], survivors: Array[Dictionary]) -> Dictionary:
+	mesh.drop_failures = []
+	mesh.terminal_ticks = {}
+	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
+	for index: int in range(2):
+		var peer: Peer = mesh.peers[index]
+		var result: Dictionary = survivors[index]
+		var advanced: Driver.StepResult = peer.step(mesh.now, _inputs(mesh, index))
+		var status: Types.Status = peer.status()
+		result.rows_after = _exposed_rows(context, peer, mesh.games[index], result.confirmed_before)
+		result.confirmed_after = status.confirmed_frame
+		result.frame_after = status.current_frame
+		result.game_after = mesh.games[index].bytes().hex_encode()
+		result.advance = advanced.code
+		result.lifecycle = status.lifecycle
+		result.target_receipts = Array(peer._core.received_frames()).slice(2 * _slots)
+		result.started_us = peer._drops.barrier(_id(2).hex_encode()).started_us
+		result.terminal = mesh.terminal_ticks.get(index, {})
+		var cuts: Array[int] = []
+		for slot: int in range(2 * _slots, 3 * _slots):
+			cuts.append(peer._core.frozen_frame(slot))
+		result.cuts = cuts
+	context.equal(_observation.publications.is_empty(), true, "every accepted observed control reaches owned routing")
+	return {"before": before, "survivors": survivors, "terminal_events": mesh.drop_failures, "drop_events": mesh.cuts,
+		"prepare_emissions": _prepare_emissions, "prepare_receipts": _prepare_receipts,
+		"inventory_emissions": _inventory_emissions, "inventory_receipts": _inventory_receipts,
+		"history_publications": _observation.history_publications, "history_routing": _history_routing,
+		"history_emissions": _history_emissions, "history_receipts": _history_receipts, "lost_history": _lost_history,
+		"commit_emissions": _commit_emissions, "commit_receipts": _commit_receipts,
+		"ack_emissions": _ack_emissions, "ack_receipts": _ack_receipts, "failures": context.failures}
+
+
+func _drain(mesh: Dictionary) -> Array[Dictionary]:
+	if mesh.has("terminal_ticks"):
+		for index: int in range(2):
+			_observe_terminal(mesh, index)
+	return super._drain(mesh)
+
+
+func _observe_terminal(mesh: Dictionary, index: int, receive: Variant = null) -> void:
+	if not mesh.terminal_ticks.has(index) and mesh.peers[index].status().lifecycle == Types.Lifecycle.TERMINATED:
+		mesh.terminal_ticks[index] = {"at_us": mesh.now, "receive": receive}
 
 
 func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], terminated: bool = false) -> void:
@@ -200,7 +288,8 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		var prepare_emission: Dictionary = {}
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			var publication_order: int = -1
-			if Observation.tracked(decoded.message.phase, decoded.message.stage):
+			var history: bool = decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY
+			if Observation.tracked(decoded.message.phase, decoded.message.stage) or (_observation.track_history and history):
 				publication_order = _observation.take(packet.from, packet.to, packet.bytes)
 				context.equal(publication_order > 0, true, "match actual accepted barrier publication before routing")
 			# The pinned trace observes survivor-to-survivor controls only, so the
@@ -219,11 +308,13 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 			if decoded.message.phase == Drop.Phase.COMMIT:
 				commit_emission = {"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode(), "emission": _commit_emissions.size(), "order": publication_order}
 				_commit_emissions.append(commit_emission)
-			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
+			if history:
 				history_emission = {
 					"from": packet.from, "to": packet.to, "bytes": decoded.message.bytes.hex_encode(), "packet": packet.bytes.hex_encode(), "emission": _history_emissions.size()
 				}
 				_history_emissions.append(history_emission)
+				if _observation.track_history:
+					_history_routing.append({"emission": history_emission.emission, "order": publication_order, "at_us": mesh.now})
 		if _drop_first_prepare and _lost_prepare.is_empty() and not prepare_emission.is_empty():
 			_lost_prepare.append(prepare_emission)
 			continue
@@ -236,7 +327,7 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		if _drop_first_commit and _lost_commit.is_empty() and not commit_emission.is_empty():
 			_lost_commit.append(commit_emission)
 			continue
-		if _drop_first_history and _lost_history.is_empty() and not history_emission.is_empty():
+		if (_drop_all_history or (_drop_first_history and _lost_history.is_empty())) and not history_emission.is_empty():
 			_lost_history.append(history_emission)
 			continue
 		if _corrupt_interior_history and not history_emission.is_empty() and packet.to == 0:
@@ -252,9 +343,15 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 			history_emission.bytes = decoded.message.bytes.hex_encode()
 			history_emission.packet = packet.bytes.hex_encode()
 		var receipt_order: int = -1
-		if not inventory_emission.is_empty() or not commit_emission.is_empty() or not ack_emission.is_empty():
+		if not inventory_emission.is_empty() or not commit_emission.is_empty() or not ack_emission.is_empty() \
+			or (_observation.track_history and not prepare_emission.is_empty()):
 			receipt_order = _next_order(context)
 		var code: int = mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now)
+		if mesh.has("terminal_ticks"):
+			var receive: Dictionary = {"from": packet.from}
+			if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+				receive.merge({"phase": decoded.message.phase, "reason": decoded.message.reason})
+			_observe_terminal(mesh, packet.to, receive)
 		if terminated and code == I.Code.TERMINATED:
 			continue
 		context.equal(code, I.Code.OK, "deliver actual encoded packet")
@@ -265,7 +362,7 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		if code == I.Code.OK and not commit_emission.is_empty():
 			_commit_receipts.append(_received(commit_emission, receipt_order))
 		if code == I.Code.OK and not prepare_emission.is_empty():
-			_prepare_receipts.append(_received(prepare_emission, _next_order(context)))
+			_prepare_receipts.append(_received(prepare_emission, receipt_order if _observation.track_history else _next_order(context)))
 		if code == I.Code.OK and decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
 				_seen += 1
