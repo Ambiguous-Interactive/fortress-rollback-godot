@@ -106,11 +106,12 @@ func run(host: Node, count: int) -> bool:
 	JavaScriptBridge.eval("document.body.dataset.fortressHandshakeReady = 'true'")
 	if not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressFirstStepReady || false"), true):
 		return false
-	var peer: RefCounted = host.peers[0]
+	var peer: Peer = host.peers[0]
 	var slot: int = host.memberships[0].slot(host.clients[0].get_player_id())
 	var departing_uuid: String = JavaScriptBridge.eval("window.fortressDepartingUuid")
 	var departing_slot: int = host.memberships[0].slot(departing_uuid)
 	var departing_identity: PackedByteArray = host.memberships[0].identity(departing_uuid)
+	var departing_key: String = departing_identity.hex_encode()
 	var second_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropSecond || false"))
 	var second_boundary: String = JavaScriptBridge.eval("window.fortressSecondBoundary || ''")
 	var final_turn: int = 40 if second_boundary.is_empty() else 44
@@ -118,6 +119,10 @@ func run(host: Node, count: int) -> bool:
 	var second_identity: PackedByteArray = host.memberships[0].identity(second_uuid) if not second_uuid.is_empty() else PackedByteArray()
 	var missing_history: bool = bool(JavaScriptBridge.eval("window.fortressDropMissing || false"))
 	var history_lost: bool = bool(JavaScriptBridge.eval("window.fortressDropHistoryLost || false"))
+	var unequal_history: bool = missing_history and not history_lost
+	var opening_expected: int = -1
+	var coordinator_identity: PackedByteArray = PackedByteArray()
+	var exposed_before: String = ""
 	var commit_loss: bool = bool(JavaScriptBridge.eval("window.fortressDropCommit || false"))
 	var rollback_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropRollback || false"))
 	var room_departure: bool = bool(JavaScriptBridge.eval("window.fortressDropRoom || false"))
@@ -132,15 +137,17 @@ func run(host: Node, count: int) -> bool:
 			if transport.has_method("arm_commit_drop"):
 				transport.arm_commit_drop(1)
 	if missing_history:
-		var own_slot: int = host.memberships[0].slot(host.clients[0].get_player_id())
 		var roster: PackedStringArray = host.memberships[0].roster()
-		var recipient_slot: int = 2147483647
-		for candidate: int in range(count):
-			if candidate != own_slot:
-				recipient_slot = mini(recipient_slot, candidate)
+		var recipient_slot: int = 1 if departing_slot == 0 else 0
+		coordinator_identity = host.memberships[0].identity(roster[recipient_slot])
 		if host.local_index == 2:
-			host.transports[0].arm_drop(host.memberships[0].identity(roster[recipient_slot]), 4, 6, own_slot)
+			host.transports[0].arm_drop(coordinator_identity, 4, 6, slot)
 		else:
+			if unequal_history:
+				opening_expected = 2 if slot == recipient_slot else 3
+				# The proposer needs the departing endpoint's receipt for the donor's slot.
+				if slot != recipient_slot:
+					host.transports[0].arm_drop(departing_identity, 3, 6, slot)
 			# The selected donor sends the retained history. Drop its first
 			# chunk so the recipient must retry before it installs the rows.
 			# The lost-history control withholds every chunk until the barrier
@@ -152,7 +159,13 @@ func run(host: Node, count: int) -> bool:
 					transport.arm_history_drop(LOST_HISTORY_DROP_COUNT if history_lost else 1)
 	var steps_taken: int = 0
 	for frame: int in 7:
-		if not missing_history:
+		if unequal_history and frame == 4:
+			# Frame four carries the real receipt for the other side's original frame three.
+			host.stage = "peer_drop_opening_receipts"
+			var receipt_key: String = coordinator_identity.hex_encode() if host.local_index == 2 else departing_key
+			if not await host._wait(func() -> bool: return peer.network_status().peers[receipt_key].last_received_frame >= 3, true):
+				return false
+		if not missing_history or (unequal_history and frame <= 3):
 			if not await host._wait(
 				func() -> bool:
 					for endpoint: Dictionary in peer.network_status().peers.values():
@@ -175,6 +188,22 @@ func run(host: Node, count: int) -> bool:
 		await host.get_tree().create_timer(0.002).timeout
 	if host.drop_overlap:
 		return await host.transports[0].run_overlap(host, departing_uuid)
+	if opening_expected >= 0:
+		host.stage = "peer_drop_before_unequal_frontiers"
+		var target_receipt: int = 3 if opening_expected == 2 else 6
+		if not await host._wait(
+			func() -> bool:
+				return peer.network_status().peers[departing_key].last_received_frame >= target_receipt \
+					and peer.status().confirmed_frame >= opening_expected,
+			true
+		):
+			return false
+		host._update_transport_clock()
+		var recovered: Driver.StepResult = peer.recover(host.transport_us)
+		exposed_before = _exposed_input(peer, opening_expected, departing_slot)
+		if recovered.code != S.Code.OK or peer.status().confirmed_frame != opening_expected or exposed_before.is_empty():
+			host.errors.append("peer_drop_missing_before_exposure")
+			return false
 	JavaScriptBridge.eval("document.body.dataset.fortressDropReady = 'true'")
 	if JavaScriptBridge.eval("window.fortressDropClose || false"):
 		host.stage = "peer_drop_readiness"
@@ -263,7 +292,7 @@ func run(host: Node, count: int) -> bool:
 			submitted = 8
 		var missing_inputs: Dictionary = {}
 		if host.transports[0].has_method("drop_report"):
-			missing_inputs = host.transports[0].drop_report()
+			missing_inputs = host.transports[0].drop_report(unequal_history)
 		host.records.append(
 			{
 				"players": count,
@@ -423,7 +452,6 @@ func run(host: Node, count: int) -> bool:
 	var dropped_count: int = 0
 	var pending_events: int = 0
 	var opening_frontier: int = -1
-	var departing_key: String = departing_identity.hex_encode()
 	for event: Dictionary in events:
 		if event.kind == "peer_dropped":
 			dropped_count += 1
@@ -503,6 +531,14 @@ func run(host: Node, count: int) -> bool:
 			host.errors.append("peer_drop_missing_opening_frontier")
 			return false
 		row["opening_frontier"] = opening_frontier
+		var exposed_after: String = _exposed_input(peer, opening_frontier, departing_slot)
+		if opening_frontier != opening_expected or exposed_before != exposed_after or exposed_after.is_empty():
+			host.errors.append("peer_drop_missing_exposed_input")
+			return false
+		row["exposed_before"] = exposed_before
+		row["exposed_after"] = exposed_after
+		if barrier.role == Drop.Role.FOLLOWER:
+			row["withheld_from_departing"] = host.transports[0].drop_report(true)
 	if not serial_ready.is_empty():
 		row["serial_ready"] = serial_ready
 	if second_departure and host.local_index == 1:
@@ -618,6 +654,14 @@ func run(host: Node, count: int) -> bool:
 ## The donor's retained bytes never reach the recipient. The barrier must
 ## expire and end the match: no survivor freezes the departed slot, installs a
 ## partial interval or continues from an unverified local frontier.
+func _exposed_input(peer: Peer, frame: int, slot: int) -> String:
+	var input_row: S.FrameInputs = peer.confirmed_inputs(frame)
+	if input_row == null:
+		return ""
+	var input: S.InputResult = input_row.read(slot)
+	return input.bytes.hex_encode() if input.code == S.Code.OK and input.status == Queue.Status.CONFIRMED else ""
+
+
 func _run_history_lost(host: Node, count: int, slot: int, departing_slot: int,
 		departing_identity: PackedByteArray, steps_taken: int) -> bool:
 	var peer: RefCounted = host.peers[0]
