@@ -97,7 +97,7 @@ def check_source(source, revision, mode):
     require(type(source['commits']) is list and bool(source['commits']), label + ' delivery commit publications')
     for packet in source['commits']:
         fields(packet, 'at from to body', label + ' commit publication')
-        integer(packet['at'], source['release_at'], 440_000, label + ' commit after original delivery')
+        integer(packet['at'], source['release_at'] + 1, 440_000, label + ' commit after original delivery')
         require(same(packet['body']['cut'], 8) and same(packet['body']['operation'], source['held'][0]['body']['operation']),
                 label + ' certified cut and operation')
     require(type(source['runtime_rows']) is list and len(source['runtime_rows']) == 3
@@ -113,7 +113,7 @@ def controls(cases, revision):
         ('silence', 'changed_original_row', lambda data: data['final_rows'][0][0]['inputs'].__setitem__(0, 'ffffffff'), 'late delivery preserves'),
         ('deliver', 'changed_post_cut_status', lambda data: data['runtime_rows'][1][9]['inputs'][3].update(status='confirmed'), 'canonical continuations'),
         ('hold-live', 'premature_receipt', lambda data: data['before_delay_release'][0].update(target_receipt=8), 'preserves pending recipients'),
-        ('hold-live', 'premature_commit_emission', lambda data: data['commits'][0].update(at=data['release_at'] - 1), 'commit after original delivery'),
+        ('hold-live', 'premature_commit_emission', lambda data: data['commits'][0].update(at=data['release_at']), 'commit after original delivery'),
     ):
         data = deepcopy(cases[mode])
         mutate(data)

@@ -865,11 +865,19 @@ When the donor instead goes silent after the first chunk publication, the
 two recipients enter `Synchronizing` on the 220 ms sampled tick. Their current
 frame remains 6 and confirmation remains at 4. The source publishes no COMMIT
 or ABORT. Both slots stay connected in the logical roster without a certified
-removal. Delivering the original chunk after this transition leaves the original
-rows intact, and both advancement calls return `NotSynchronized`.
+removal.
+
+The source's automatic admission still counts the four-endpoint epoch while
+the two other links are silent, so the remaining pair cannot form a strict
+majority. Its cleanup closes the pending operation.
+[Pinned admission](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sessions/p2p_session.rs#L16647-L16658)
+and [cleanup](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sessions/p2p_session.rs#L5564-L5587).
+
+Delivering the original chunk after this transition leaves the original rows
+intact, and both advancement calls return `NotSynchronized`.
 
 In the Godot fixture, the donor's Goodbye ends the two pending operations
-immediately with `participant_lost`. Both modes verify the same original data
+immediately with `participant_lost`. Both runtimes preserve their original data
 after termination. The clock origins, departure triggers, wire formats and
 terminal signals belong to their respective runtimes. The Rust timing is a
 bound for this sampled schedule. Live transport coverage remains tracked in
