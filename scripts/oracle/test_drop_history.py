@@ -30,6 +30,8 @@ class DropHistoryWireTests(unittest.TestCase):
                 path = Path(command[command.index('--manifest-path') + 1])
                 value = tomllib.loads(path.read_text())['dependencies']['fortress-rollback']['path']
                 self.assertEqual((path.parent / value).resolve(), candidate)
+                self.assertIn('--features', command)
+                self.assertEqual(command[command.index('--features') + 1], 'coordinator-failover')
 
             tools = {'cargo': Path('cargo'), 'rustc': Path('rustc')}
             with patch.multiple(launch, ROOT=root, CACHE=cache), patch.object(launch, 'build', side_effect=verify_manifest) as build:

@@ -47,6 +47,11 @@ struct Socket {
     receipt_clock: Option<Arc<Mutex<u64>>>,
     order_limit: usize,
 }
+impl Socket {
+    fn new(buffers: Arc<Mutex<Buffers>>, order_limit: usize) -> Self {
+        Self { buffers, publication_clock: None, receipt_clock: None, order_limit }
+    }
+}
 impl NonBlockingSocket<String> for Socket {
     fn send_to(&mut self, message: &Message, address: &String) {
         let mut queue = self.buffers.lock().unwrap();
@@ -219,9 +224,9 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
             builder = builder.add_player(kind, PlayerHandle::new(slot)).map_err(|error| format!("{error:?}"))?;
         }
         let queue = Arc::new(Mutex::new(Buffers { order: order.clone(), ..Default::default() }));
-        sessions.push(builder.start_p2p_session(Socket {
-            buffers: queue.clone(), publication_clock: drop_all_history.then(|| clock.clone()), receipt_clock: None, order_limit: 8192,
-        })
+        let mut socket = Socket::new(queue.clone(), 8192);
+        socket.publication_clock = drop_all_history.then(|| clock.clone());
+        sessions.push(builder.start_p2p_session(socket)
             .map_err(|error| format!("{error:?}"))?);
         buffers.push(queue);
     }

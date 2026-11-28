@@ -55,7 +55,7 @@ def check_opening(source, revision, mode, expected):
     held = source['held']
     require(type(held) is list and len(held) == 2, label + ' two addressed donor publications')
     sample = list(bytes.fromhex(expected[8]['inputs'][3]['bytes']))
-    for recipient, packet in zip((0, 2), held):
+    for recipient, packet in zip((0, 2), held, strict=True):
         fields(packet, 'at from to body', label + ' held packet')
         require(same([packet['at'], packet['from'], packet['to']], [source['held_at'], 1, recipient]), label + ' donor route')
         body = packet['body']
@@ -263,7 +263,7 @@ def controls(cases, revision, godot, stdout):
     ):
         data = deepcopy(cases[mode])
         mutate(data)
-        names.append(reject_control(lambda: check_source(data, revision, mode), name, diagnostic))
+        names.append(reject_control(lambda data=data, mode=mode: check_source(data, revision, mode), name, diagnostic))
     without_evidence = '\n'.join(line for line in stdout.splitlines() if not line.startswith(GODOT_PREFIX))
     names.append(reject_control(lambda: read_godot_evidence(without_evidence), 'godot_missing_evidence', 'evidence inventory'))
     altered = deepcopy(godot)

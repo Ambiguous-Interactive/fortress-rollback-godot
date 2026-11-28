@@ -899,6 +899,8 @@ and [#559](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issu
 
 ### Coordinator silence on the version-6 candidate
 
+The ordinary v6 observer build also compiles the coordinator-failover mode.
+
 Run this once with each pinned Godot editor path and a distinct output
 directory. The launcher selects the exact
 archive-verified Fortress revision

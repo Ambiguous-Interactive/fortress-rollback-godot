@@ -71,16 +71,9 @@ impl Mesh {
                 order: order.clone(),
                 ..Default::default()
             }));
-            mesh.sessions.push(
-                builder
-                    .start_p2p_session(Socket {
-                        buffers: buffer.clone(),
-                        publication_clock: None,
-                        receipt_clock: Some(mesh.clock.clone()),
-                        order_limit: ORDER_LIMIT,
-                    })
-                    .unwrap(),
-            );
+            let mut socket = Socket::new(buffer.clone(), ORDER_LIMIT);
+            socket.receipt_clock = Some(mesh.clock.clone());
+            mesh.sessions.push(builder.start_p2p_session(socket).unwrap());
             mesh.buffers.push(buffer);
         }
         mesh

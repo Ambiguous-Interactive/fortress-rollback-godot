@@ -55,3 +55,8 @@ real browser's host lease. Holding the default lease in a controlled run
 reproduced the fixture's 30-second child timeout. A fixture-local capacity
 directory passed the same test in 0.999 seconds while the default lease stayed
 held. Real engine and browser probes retain shared host scheduling.
+
+The hosted review reproduced a compile failure in the optional coordinator
+mode. Its socket used an old initializer, and the ordinary v6 build omitted
+that feature. All three modes now share a socket initializer. The ordinary
+v6 build compiles coordinator failover, and its receipt records that feature.

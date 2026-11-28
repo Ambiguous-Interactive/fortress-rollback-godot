@@ -223,13 +223,17 @@ def select_source(manifest, source_revision, offline):
     return tree, archive['digest']
 
 
-def build_observer(tool_paths, output, source_tree, source_revision, offline, *, coordinator_failover=False):
+def observer_features(source_revision):
+    return ['coordinator-failover'] if source_revision == RECOVERY_REVISION else []
+
+
+def build_observer(tool_paths, output, source_tree, source_revision, offline):
     base = ROOT / 'scripts/oracle/rust/Cargo.toml'
     manifest = prepare_source_build(base, source_tree, source_revision, CACHE)
     adapter_hashes = upstream_inventory(manifest.parent)
     command = [str(tool_paths['cargo']), 'build', '--locked', '--bin', 'drop_history', '--manifest-path', str(manifest)]
-    if coordinator_failover:
-        command += ['--features', 'coordinator-failover']
+    if features := observer_features(source_revision):
+        command += ['--features', ','.join(features)]
     if offline:
         command.append('--offline')
     target = CACHE / 'target'
@@ -277,9 +281,7 @@ def run(args):
     if not engine_version.startswith(('4.3.stable', '4.7.2.stable')):
         raise ValueError('drop history: unsupported engine profile')
     verify_tools(tool_paths, tool_identities)
-    binary, adapter, adapter_hashes = build_observer(
-        tool_paths, args.output, source_tree, source_revision, args.offline,
-        coordinator_failover=args.coordinator_failover)
+    binary, adapter, adapter_hashes = build_observer(tool_paths, args.output, source_tree, source_revision, args.offline)
     verify_tools(tool_paths, tool_identities)
     binary_identity = executable_identity(binary)
 
@@ -300,12 +302,12 @@ def run(args):
             'working_tree_dirty': identity['working_tree_dirty'],
             'engine': engine_version.strip(), 'engine_identity': engine_identity, 'binary_identity': binary_identity,
             'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'tool_identities': tool_identities, 'default_features': False, 'features': [],
-            'execution_identities_unchanged': True}
+            'observer_features': observer_features(source_revision), 'execution_identities_unchanged': True}
 
     if args.coordinator_failover:
         observation = drop_failover_run.observe(engine, binary, args.output, parse_godot, tool_paths, source_tree, args.offline)
         verify_identity()
-        receipt.write_text(json.dumps({**provenance(), 'observer_features': ['coordinator-failover'], **observation}, indent=2) + '\n')
+        receipt.write_text(json.dumps({**provenance(), **observation}, indent=2) + '\n')
         print('coordinator failover: source endpoint 1 certified cut 5; three Godot survivors timed out; all preserved rows 0–4, twice', flush=True)
         print('coordinator failover: exact grace boundary and addressed stale PREPARE and INVENTORY replay passed, twice', flush=True)
         return
