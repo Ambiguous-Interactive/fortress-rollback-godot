@@ -1,3 +1,4 @@
+const { observeChromiumFrames } = require('./native_chromium_frames.cjs');
 const { calibrateChromiumClock, chromiumServiceSamples, createChromiumCapture, proxySocketAddress, readChromiumClock } =
   require('./native_chromium_socket.cjs');
 const { createDepartureClock, CLOSE_HTTPS_PRE_SAMPLES } = require('./native_departure_clock.cjs');
@@ -2061,9 +2062,11 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const traceRetention = control === '--relay-retention-control';
   const traceSameLink = control === '--relay-same-link-control';
   const traceMixedReceive = control === '--trace-mixed-receive';
-  const traceChromiumSocket = traceMixedReceive || control === '--trace-chromium-socket';
+  const traceChromiumFrames = control === '--trace-chromium-frames';
+  const traceChromiumSocket = traceChromiumFrames || traceMixedReceive || control === '--trace-chromium-socket';
   const traceChromiumClock = traceChromiumSocket && process.platform === 'linux';
-  const traceFirefoxFrames = traceMixedReceive || control === '--trace-firefox-frames';
+  const traceFirefoxFrames = traceMixedReceive || control === '--trace-firefox-frames'
+    || (traceChromiumFrames && browserPair.includes('firefox'));
   const traceBrowserReceive = traceChromiumSocket || traceFirefoxFrames;
   const traceRelayWire = control === '--trace-relay-wire' || traceRetention || traceSameLink || traceBrowserReceive;
   const traceScopePath = traceRelayWire && process.env.FORTRESS_RELAY_TRACE_SCOPE;
@@ -2101,6 +2104,8 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const browsers = [];
   const browserPeers = [];
   const firefoxObservers = [];
+  const chromiumObservers = traceChromiumFrames ? [] : undefined;
+  let chromiumFrameSnapshots;
   let chromiumClocks;
   let result;
   let failureReceipt;
@@ -2193,6 +2198,9 @@ async function run(root, endpoint, mode, players, browserPair, control) {
       const traceFirefox = traceFirefoxFrames && name === 'firefox';
       const traceChromium = traceChromiumClock && name === 'chromium';
       if (traceFirefox) firefoxObservers[index] = observeFirefoxFrames(page, pageEndpoint(index, name));
+      if (chromiumObservers && name === 'chromium') {
+        chromiumObservers[index] = await observeChromiumFrames(context, page, pageEndpoint(index, name), { timeout: DIAGNOSTIC_MS });
+      }
       const display = name === 'firefox' ? await placeFirefox(page, index) : null;
       browserPeers.push({ index, name, version: browser.version(), display });
       page.on('pageerror', error => {
@@ -2679,6 +2687,13 @@ async function run(root, endpoint, mode, players, browserPair, control) {
     };
   } finally {
     releaseSignal?.cancel();
+    if (chromiumObservers) {
+      chromiumFrameSnapshots = chromiumObservers.map(observer => observer?.snapshot() ?? null);
+      await Promise.allSettled(chromiumObservers.map((observer, index) => observer && boundedRoom(
+        () => observer.close(), DIAGNOSTIC_MS, `native peer ${index} Chromium observer close`).catch(() => {
+        chromiumFrameSnapshots[index].cleanup_failed = true;
+      })));
+    }
     failures.push(...await closeAll(contexts, context => context.close(), 'context'));
     failures.push(...await closeAll(browsers, owner => owner.close(), 'browser'));
     for (const { socket, upstream } of proxyPairs) {
@@ -2692,7 +2707,7 @@ async function run(root, endpoint, mode, players, browserPair, control) {
   const browserReceive = browserReceipt?.relayReceive && refreshRelayReceive(browserReceipt.relayReceive, browserReceipt.relayJoined, relayProxy.snapshot());
   if (chromiumCapture && browserReceipt) {
     const recipients = roomIdentities?.uuids.map((uuid, index) => browserPeers[index]?.name === 'chromium' ? uuid.replaceAll('-', '') : null);
-    const observed = await chromiumCapture.finish(new URL(origin).host, browserReceive, recipients, chromiumClocks, failureReceipt?.nativeExpiries)
+    const observed = await chromiumCapture.finish(new URL(origin).host, browserReceive, recipients, chromiumClocks, failureReceipt?.nativeExpiries, chromiumFrameSnapshots)
       .catch(() => ({ status: 'unavailable' }));
     if (failureReceipt?.published_ms !== undefined) console.error(JSON.stringify({ relaySocketFailure: { failure_sha256: failureReceipt.sha256, ...observed } }));
     else if (result) result.relaySocketReceive = observed;
@@ -2722,6 +2737,7 @@ if (require.main === module) {
     || profile === 'chromium' && control === '--trace-chromium-socket'
     || browserPair.includes('firefox') && control === '--trace-firefox-frames'
     || profile === 'chromium-firefox' && control === '--trace-mixed-receive'
+    || ['chromium', 'chromium-firefox'].includes(profile) && control === '--trace-chromium-frames'
     || (size === '8' && (['--relay-retention-control', '--relay-same-link-control'].includes(control)
       || profile === 'firefox' && RELEASE_DELAYS.has(control)));
   const validPlain = ['2', '4', '8'].includes(size) && (route === 'relay' ? relayControl : route === 'mesh' && !control);

@@ -3851,7 +3851,8 @@ module.exports.firefox=module.exports.chromium;
                      *[(name+'-inspect', True, False, False) for name in ['smoke', 'ownership', 'online', 'webrtc', 'spectator']],
                      ('ownership-diagnostic', False, False, False), ('ownership-diagnostic', False, True, True),
                      ('native_online', True, False, False), ('native_online-chromium-trace', True, False, False),
-                     ('native_online-firefox-trace', True, False, False), ('native_online-mixed-trace', True, False, False)]
+                     ('native_online-firefox-trace', True, False, False), ('native_online-mixed-trace', True, False, False),
+                     ('native_online-frames-trace', True, False, False)]
             for name, primary, browser_failure, context_failure in cases:
                 opaque = name.endswith('-opaque')
                 custom_inspect = name.endswith('-inspect')
@@ -3878,6 +3879,7 @@ module.exports.firefox=module.exports.chromium;
                         'chromium': ['relay', '4', 'chromium', '--trace-chromium-socket'],
                         'firefox': ['relay', '4', 'chromium-firefox', '--trace-firefox-frames'],
                         'mixed': ['relay', '4', 'chromium-firefox', '--trace-mixed-receive'],
+                        'frames': ['relay', '4', 'chromium-firefox', '--trace-chromium-frames'],
                     }.get(trace_browser, ['mesh', '2'])
                     if trace:
                         environment.update(FORTRESS_RELAY_TRACE_SCOPE=str(directory / 'scope.json'),
@@ -3931,7 +3933,7 @@ module.exports.firefox=module.exports.chromium;
                         if trace:
                             self.assertEqual(json.loads(phase)['phase'], 'launch')
                             keys = {'chromium': ['relaySocketFailure'], 'firefox': ['relayFirefoxFailure'],
-                                    'mixed': ['relaySocketFailure', 'relayFirefoxFailure']}
+                                    'mixed': ['relaySocketFailure', 'relayFirefoxFailure'], 'frames': ['relaySocketFailure', 'relayFirefoxFailure']}
                             supplements = [json.loads(line) for line in child.stderr.splitlines() if line.startswith('{"relay')]
                             self.assertEqual([next(iter(row)) for row in supplements], keys[trace_browser])
                             original_digest = hashlib.sha256(phase.encode()).hexdigest()
@@ -3940,6 +3942,8 @@ module.exports.firefox=module.exports.chromium;
                                 self.assertEqual(evidence['failure_sha256'], original_digest)
                                 if receipt_key == 'relaySocketFailure':
                                     self.assertEqual(evidence['status'], 'unavailable')
+                                    if trace_browser == 'frames':
+                                        self.assertEqual(evidence['renderer']['pages'], [{'index': 0, 'status': 'unavailable'}])
                                 else:
                                     self.assertEqual(evidence['coverage'], 'debugger-callback-dependent')
                                     self.assertEqual((evidence['pages'], evidence['rows']), ([], []))

@@ -67,6 +67,95 @@ test('expiry ordering requires a calibrated document and a unique carrier on the
   assert.equal(observe({ input: { ...receive, rows: [{ ...row, proxy: [carrierMatch, carrierMatch] }] } }).observation, undefined);
 });
 
+// Value: protects=exact Blink carrier on the tagged socket; fails_when=foreign or evicted frames can order expiry; seam=CDP event stream.
+test('Chromium renderer receipts bind the exact tagged connection and preserve timing uncertainty', async () => {
+  const { EventEmitter } = require('node:events');
+  const { observeChromiumFrames } = require('./native_chromium_frames.cjs');
+  const session = new EventEmitter();
+  session.send = async (method, params) => {
+    assert.equal(method, 'Network.enable');
+    assert.deepEqual(params, { maxTotalBufferSize: 0, maxResourceBufferSize: 0 });
+  };
+  const endpoint = 'wss://127.0.0.1:44000/v3/ws?trace_page=0';
+  const observe = await observeChromiumFrames({ newCDPSession: async () => session }, {}, endpoint, { capacity: 2 });
+  const created = (requestId, url = endpoint) => session.emit('Network.webSocketCreated', { requestId, url });
+  const emit = (requestId, at, payload = carrier) => session.emit('Network.webSocketFrameReceived', {
+    requestId, timestamp: at / 1000, response: { opcode: 2, mask: false, payloadData: payload.toString('base64') },
+  });
+  const clock = { page_ms: 20, time_origin_ms: 1700000000000 };
+  const calibration = { start_ms: 60, end_ms: 62, sample: clock };
+  const expiry = { uuid: '11111111-1111-1111-1111-111111111111', page_ms: 59, chromium_service: {
+    before: { ...clock, page_ms: 40 }, after: { ...clock, page_ms: 58 },
+  } };
+  const exact = { ...row, proxy: [{ ...carrierMatch, inlet_ms: 0 }] };
+  const events = [connection(7), incoming(7, 70, Buffer.concat([handshake, frame]))];
+  const collect = (packet = exact, input = receive, since = 0, selected = events, snapshot = observe.snapshot()) => joinChromiumSocket(
+    { constants, events: selected }, 'recorded', host,
+    { ...input, rows: [{ ...packet, proxy: packet.proxy.map(write => ({ ...write, inlet_ms: since })) }] },
+    [recipient], [calibration], [expiry], [snapshot]).rows[0].renderer;
+
+  created('foreign', endpoint + '&other');
+  emit('foreign', 72);
+  assert.equal(collect().status, 'unavailable');
+  created('relay');
+  emit('unowned', 72);
+  emit('relay', 74, Buffer.from('wrong carrier'));
+  assert.equal(collect().status, 'unobserved');
+  emit('relay', 86);
+  const match = collect();
+  assert.equal(match.status, 'observed');
+  assert.equal(match.observation.request_id, 'relay');
+  assert.equal(match.observation.at_ms, 86);
+  assert.equal(match.observation.expiry_timing.order, 'unresolved');
+  assert.equal(collect(exact, receive, 0, [...events, incoming(7, 71, frame)]).status, 'ambiguous', 'the carrier appeared twice at TLS');
+  assert.equal(collect(exact, receive, 0, [connection(8), ...events]).status, 'ambiguous', 'two TLS sources claim the proxy endpoint');
+  assert.equal(collect(exact, { ...receive, sockets: [address, address] }).status, 'ambiguous');
+  assert.equal(collect(exact, { ...receive, refused: 1 }).status, 'unavailable');
+  const snapshot = observe.snapshot();
+  for (const inlet of [snapshot.cutoff_ms, snapshot.cutoff_ms + 1]) {
+    assert.equal(collect(exact, receive, inlet, events, snapshot).status, 'outside_capture');
+  }
+  emit('relay', 95);
+  assert.equal(collect().status, 'ambiguous');
+  emit('relay', 101, Buffer.from('another carrier'));
+  assert.equal(collect().status, 'truncated', 'an omitted candidate can have been written after inlet');
+  const beforeRejected = performance.now();
+  emit('relay', NaN);
+  assert.deepEqual(collect(exact, receive, beforeRejected), { status: 'incomplete', reason: 'rejected_candidates' });
+  assert.equal(collect(exact, receive, performance.now()).status, 'unobserved', 'earlier rejected candidates cannot belong to a later inlet');
+  session.emit('close');
+  assert.deepEqual(collect(exact, receive, performance.now()), { status: 'incomplete', reason: 'session_detached' });
+  created('replacement');
+  assert.equal(collect().status, 'ambiguous');
+});
+
+// Value: protects=bounded optional observer setup; fails_when=late attach enables Network; seam=CDP session lifecycle.
+test('a late Chromium renderer observer detaches without enabling the network domain', async () => {
+  const { EventEmitter } = require('node:events');
+  const { setImmediate: nextTurn } = require('node:timers/promises');
+  const { observeChromiumFrames } = require('./native_chromium_frames.cjs');
+  const session = new EventEmitter();
+  let detach = 0;
+  let enable = 0;
+  session.detach = async () => { detach++; };
+  session.send = async () => { enable++; };
+  const { promise, resolve } = Promise.withResolvers();
+  assert.equal(await observeChromiumFrames({ newCDPSession: () => promise }, {}, '', { timeout: 5 }), null);
+  resolve(session);
+  await nextTurn();
+  assert.equal(detach, 1);
+  assert.equal(enable, 0);
+
+  const enabling = Promise.withResolvers();
+  session.send = async () => { enable++; await enabling.promise; };
+  assert.equal(await observeChromiumFrames({ newCDPSession: async () => session }, {}, '', { timeout: 5 }), null);
+  assert.equal(detach, 2);
+  assert.equal(enable, 1);
+  enabling.resolve();
+  await nextTurn();
+  assert.equal(detach, 2, 'the abandoned session is detached exactly once');
+});
+
 test('missing, truncated, duplicate and unbound socket evidence do not imply non-delivery', async () => {
   assert.deepEqual(await readChromiumLog('/not-a-capture'), { status: 'unavailable' });
   const complete = incoming(7, 70, Buffer.concat([handshake, frame]));
@@ -137,14 +226,16 @@ test('capture cleanup failure preserves the matched socket observation', async t
 });
 
 // Value: protects=TLS completion ordering on the native expiry turn; fails_when=late callback replaces receipt time; why_new=real Chromium clocks; seam=loopback.
-test('Chromium TLS receipts bound expiry while the renderer is busy',
+test('Chromium TLS and assembled renderer receipts distinguish an occupied native service turn',
   { skip: process.platform !== 'linux' || process.env.FORTRESS_TEST_CHROMIUM_SOCKET !== '1', timeout: 20000 }, async () => {
     const { execFileSync } = require('node:child_process');
+    const { EventEmitter } = require('node:events');
     const { mkdir, mkdtemp, readFile, rm } = require('node:fs/promises');
     const { createServer } = require('node:https');
     const { tmpdir } = require('node:os');
     const { join } = require('node:path');
     const { setTimeout: pause } = require('node:timers/promises');
+    const { observeChromiumFrames } = require('./native_chromium_frames.cjs');
     const { calibrateChromiumClock, createChromiumCapture, proxySocketAddress, readChromiumClock } = require('./native_chromium_socket.cjs');
     const { instrumentPostRelease, postReleaseCheckpoint } = require('./native_online.cjs');
     const directory = await mkdtemp(join(tmpdir(), 'fortress-socket-control-'));
@@ -187,10 +278,17 @@ test('Chromium TLS receipts bound expiry while the renderer is busy',
       server = createServer({ key: await readFile(keyPath), cert: await readFile(certPath) }, (request, response) =>
         response.end(request.url === '/' ? html : 'ok'));
       let proxySocket;
+      const inlets = [];
       const send = async index => {
         await pause(75);
-        const value = payloads[index];
-        if (!socket.destroyed) socket.write(Buffer.concat([Buffer.from([0x82, value.length]), Buffer.from(value)]));
+        const bytes = Buffer.from(payloads[index]);
+        if (socket.destroyed) return;
+        inlets[index] = performance.now();
+        if (index === 1) {
+          socket.write(Buffer.concat([Buffer.from([0x02, 3]), bytes.subarray(0, 3)]));
+          await pause(25);
+          if (!socket.destroyed) socket.write(Buffer.concat([Buffer.from([0x80, bytes.length - 3]), bytes.subarray(3)]));
+        } else socket.write(Buffer.concat([Buffer.from([0x82, bytes.length]), bytes]));
       };
       server.on('upgrade', (request, upgraded) => {
         socket = upgraded;
@@ -208,13 +306,36 @@ test('Chromium TLS receipts bound expiry while the renderer is busy',
       const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
       browser = await chromium.launch({ executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE, args: capture.args });
       const page = await browser.newPage({ ignoreHTTPSErrors: true });
+      const cdp = await page.context().newCDPSession(page);
+      const delivery = new EventEmitter();
+      delivery.send = cdp.send.bind(cdp);
+      delivery.detach = cdp.detach.bind(cdp);
+      const frameEvent = 'Network.webSocketFrameReceived';
+      const socketEvent = 'Network.webSocketCreated';
+      cdp.on(socketEvent, event => delivery.emit(socketEvent, event));
+      const firstPayload = Buffer.from(payloads[0]).toString('base64');
+      const lastPayload = Buffer.from(payloads[2]).toString('base64');
+      const lastFrame = Promise.withResolvers();
+      let held, heldAt, expiryReceivedMs;
+      cdp.on(frameEvent, event => {
+        if (event.response.payloadData === firstPayload && expiryReceivedMs === undefined) {
+          held = event;
+          heldAt = performance.now();
+          return;
+        }
+        delivery.emit(frameEvent, event);
+        if (event.response.payloadData === lastPayload) lastFrame.resolve();
+      });
+      const observe = await observeChromiumFrames({ newCDPSession: async () => delivery }, page, `wss://${endpoint}/v3/ws?trace_page=0`);
       await page.addInitScript(`(${instrumentPostRelease})(${JSON.stringify(prefix)}, 40, ${readChromiumClock}, 'chromium_service');`);
       const reporter = {};
       page.on('console', message => {
         const value = message.text();
         if (value === 'relay socket opened') void send(0);
         if (!value.startsWith(prefix)) return;
-        postReleaseCheckpoint(reporter, value, { controller_ms: performance.now(), controller_order: 1 }, [sender, receiver], receiver);
+        expiryReceivedMs = performance.now();
+        postReleaseCheckpoint(reporter, value, { controller_ms: expiryReceivedMs, controller_order: 1 }, [sender, receiver], receiver);
+        if (held) delivery.emit(frameEvent, held);
         void send(2);
       });
       await page.goto(`https://${endpoint}/`);
@@ -223,25 +344,42 @@ test('Chromium TLS receipts bound expiry while the renderer is busy',
         ...payloads.map(value => page.waitForEvent('console', { predicate: msg => msg.text() === value, timeout: 10000 })),
         page.evaluate(() => window.start()),
       ]);
+      await Promise.race([lastFrame.promise, pause(4000, undefined, { ref: false }).then(() => {
+        throw new Error('missing final DevTools frame before capture cutoff');
+      })]);
+      const snapshot = observe.snapshot();
+      await observe.close();
       await browser.close();
       browser = undefined;
       const { log } = await readChromiumLog(capture.args[0].slice('--log-net-log='.length));
       const input = { ...receive, sockets: [proxySocket], rows: digests.map((carrier_sha256, index) => ({ ...row, seq: String(index + 42),
-        proxy: [{ ...carrierMatch, ordinal: index + 3, carrier_sha256 }] })) };
+        proxy: [{ ...carrierMatch, ordinal: index + 3, carrier_sha256, inlet_ms: inlets[index] }] })) };
       assert.ok(reporter.native_expiry, reporter.checkpoint_error);
-      const seen = await capture.finish(endpoint, input, [recipient], [calibration], [reporter.native_expiry]);
+      const seen = await capture.finish(endpoint, input, [recipient], [calibration], [reporter.native_expiry], [snapshot]);
       assert.equal(seen.status, 'recorded');
       assert.equal(seen.expiries[0].status, 'bounded');
       assert.deepEqual(seen.rows.map(row => row.observation?.expiry_timing?.order), ['before', 'unresolved', 'after']);
+      const renderer = seen.rows.map(row => row.renderer?.observation);
+      assert.equal(renderer[0]?.expiry_timing.order, 'before');
+      assert.ok(heldAt < expiryReceivedMs && renderer[0].controller_ms > expiryReceivedMs, 'held debugger delivery follows native expiry receipt');
+      assert.notEqual(renderer[1]?.expiry_timing.order, 'before');
+      assert.equal(renderer[2]?.expiry_timing.order, 'after');
+      assert.equal(renderer[1].carrier_sha256, digest, 'one digest for the complete fragmented binary message');
+      assert.equal(seen.renderer.pages[0].status, 'attached');
+      assert.equal(seen.renderer.pages[0].count, 3, 'one observer event per complete message');
       const [, exact] = seen.rows;
       assert.equal(exact.status, 'observed');
       assert.equal(exact.observation.carrier_sha256, digest);
       const markers = log.events.filter(event => event.type === log.constants.logEventTypes.SSL_SOCKET_BYTES_SENT
         && event.params?.bytes && Buffer.from(event.params.bytes, 'base64').includes('GET /handled-exact-carrier '));
       assert.equal(markers.length, 1);
+      const tlsToRenderer = renderer[1].at_ms - exact.observation.at_ms;
+      assert.ok(tlsToRenderer >= 300, `TLS receipt preceded the renderer by only ${tlsToRenderer} ms`);
       const earlier = Number(markers[0].time) - exact.observation.at_ms;
       assert.ok(earlier >= 300, `TLS receipt preceded the page marker by only ${earlier} ms`);
-      console.log(JSON.stringify({ carrier_timing: seen.rows.map(row => row.observation.expiry_timing), delayed_page_handler_ms: earlier }));
+      console.log(JSON.stringify({ tls_timing: seen.rows.map(row => row.observation.expiry_timing),
+        blink_timing: renderer.map(frame => frame.expiry_timing), delayed_page_handler_ms: earlier,
+        tls_to_blink_ms: tlsToRenderer, debugger_delivery_delay_ms: renderer[0].controller_ms - heldAt }));
     } finally {
       await browser?.close();
       socket?.destroy();
