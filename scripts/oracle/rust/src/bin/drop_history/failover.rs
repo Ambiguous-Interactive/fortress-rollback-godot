@@ -62,7 +62,7 @@ fn build(schedule: &Schedule, clock: &Arc<Mutex<u64>>) -> (Vec<P2PSession<Profil
             builder = builder.add_player(kind, PlayerHandle::new(slot)).unwrap();
         }
         let queue = Arc::new(Mutex::new(Buffers { order: order.clone(), ..Default::default() }));
-        let socket = Socket { buffers: queue.clone(), clock: None, order_limit: 32768 };
+        let socket = Socket::new(queue.clone(), 32_768);
         sessions.push(builder.start_p2p_session(socket).unwrap());
         buffers.push(queue);
     }

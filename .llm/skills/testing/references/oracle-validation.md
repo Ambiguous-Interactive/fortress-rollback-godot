@@ -67,6 +67,7 @@ Capture action order at accepted publication and receipt. Bind each drained pack
 For selective loss, prove negotiation arrived. Record the first terminal transition separately from the event drain.
 When receipt of a peer's abort ends the operation, record that packet alongside the terminal transition.
 Assert departure-driven termination before presenting late work. Compare replay extent and original rows again after refusal.
+Pair donor silence with a live donor that holds the same chunk. Bind commits to its release clock and invoke the advancement API directly after refusal.
 Validate the complete operation identity against the agreed operation before comparing retry payloads; matching malformed identities are insufficient.
 When control packets forward another participant’s certificate, sender direction cannot identify its owner.
 Select acknowledgement-loss faults by the actual participant certificate too, and retain emission/delivery order
@@ -117,6 +118,11 @@ checksum mismatch rather than accepting an unrelated callback failure.
 A corruption control may desync before capture; require its typed cause and independently verified altered bytes.
 
 Keep the observed first failure separate from later cleanup termination. A stopped counterpart cannot replace the required desync or erase canonical history.
+For held packets, keep publication, release and socket consumption clocks separate. Bind a positive COMMIT to its real routes and the recipients' installed history.
+Read typed outcomes and original histories from each runtime. Case names and assertion counts identify the tests and cannot establish runtime outcomes.
+For an exported room with a closed browser page, join original page indices to UUIDs before closing. Start the SDK notice window at the controller action.
+Rebuild speculative snapshots from bounded applied callback inputs. Use the observed delivery history in live cases whose prediction varies with arrival order.
+Give fake engine subprocesses in receipt tests a fixture-local capacity directory. Keep real engine and browser probes on the shared lease.
 
 Fingerprint the inputs to each schedule generator, including its upstream
 source and locked build. Compare hinted and unhinted scenarios with the same

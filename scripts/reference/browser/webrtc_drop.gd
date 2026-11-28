@@ -10,6 +10,7 @@ const Envelope = preload("res://addons/fortress_rollback/transport/signalfish_re
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
+const DonorWitness = preload("res://webrtc_drop_donor.gd")
 const DirectTypes = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_types.gd")
 ## Larger than every resend round inside the live barrier timeout, so the
 ## lost-history control never lets a chunk through after the arm runs out.
@@ -120,6 +121,8 @@ func run(host: Node, count: int) -> bool:
 	var missing_history: bool = bool(JavaScriptBridge.eval("window.fortressDropMissing || false"))
 	var history_lost: bool = bool(JavaScriptBridge.eval("window.fortressDropHistoryLost || false"))
 	var unequal_history: bool = missing_history and not history_lost
+	var donor_uuid: String = ""
+	var history_hold: Dictionary = {}
 	var opening_expected: int = -1
 	var expected_target_receipt: int = -1
 	var coordinator_identity: PackedByteArray = PackedByteArray()
@@ -141,6 +144,10 @@ func run(host: Node, count: int) -> bool:
 		var roster: PackedStringArray = host.memberships[0].roster()
 		var recipient_slot: int = 1 if departing_slot == 0 else 0
 		coordinator_identity = host.memberships[0].identity(roster[recipient_slot])
+		if unequal_history:
+			donor_uuid = roster[3 - departing_slot - recipient_slot]
+			if slot == recipient_slot:
+				host.transports[0].arm_history_receive(donor_uuid)
 		if host.local_index == 2:
 			host.transports[0].arm_drop(coordinator_identity, 4, 6, slot)
 		else:
@@ -312,6 +319,11 @@ func run(host: Node, count: int) -> bool:
 				"missing_inputs": missing_inputs,
 			}
 		)
+		if host.history_donor_process:
+			var target_fence: Dictionary = await DonorWitness.wait_fence(host, donor_uuid)
+			if target_fence.is_empty():
+				return false
+			host.records.back()["donor_fence"] = target_fence
 		return true
 	host._update_transport_clock()
 	var predicted: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, 7, PackedByteArray([host._sample(7, slot)]))]
@@ -320,6 +332,14 @@ func run(host: Node, count: int) -> bool:
 	JavaScriptBridge.eval("document.body.dataset.fortressFrame = '7'")
 	if history_lost:
 		return await _run_history_lost(host, count, slot, departing_slot, departing_identity, steps_taken)
+	if unequal_history and host.memberships[0].identity(host.local_uuid) == coordinator_identity:
+		history_hold = await DonorWitness.hold(host, departing_uuid, donor_uuid)
+		if history_hold.is_empty():
+			return false
+		if host.history_donor_process:
+			return await DonorWitness.finish_fence(host, departing_uuid, donor_uuid, history_hold, events)
+		if not await DonorWitness.release(host, departing_uuid):
+			return false
 	if rollback_departure:
 		host.stage = "peer_drop_rollback"
 		if not await host._wait(func() -> bool: return peer.status().pending_rollback_frame == 7, true):
@@ -531,6 +551,8 @@ func run(host: Node, count: int) -> bool:
 		"mixed": host.mixed.report() if host.mixed_enabled else {}
 	}
 	if missing_history:
+		if not history_hold.is_empty():
+			row["donor_history_hold"] = history_hold
 		if pending_events != 1 or opening_frontier != barrier.upper or dropped_frames.get(departing_key, -1) != cut:
 			host.errors.append("peer_drop_missing_opening_frontier")
 			return false

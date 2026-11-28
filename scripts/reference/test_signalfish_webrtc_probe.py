@@ -460,7 +460,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                           'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1,
                           'peer-drop': 1, 'peer-drop-corrupt': 1, 'peer-drop-close': 1,
                           'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1,
-                          'peer-drop-missing-lost': 1,
+                          'peer-drop-missing-lost': 1, 'peer-drop-donor-process': 1,
                           'peer-drop-commit': 1,
                           'peer-drop-second': 1, 'peer-drop-overlap': 1, 'peer-drop-second-after-ack': 1, 'peer-drop-second-last-turn': 1,
                           'peer-drop-rollback': 1, 'peer-drop-foreign': 1,
@@ -539,7 +539,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         direct = webrtc_runner.label_waves(['clean', 'faults', 'corrupt', 'default', 'mixed-disabled',
                                             'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
                                             'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing',
-                                            'peer-drop-missing-lost', 'peer-drop-commit', 'peer-drop-second',
+                                            'peer-drop-missing-lost', 'peer-drop-donor-process', 'peer-drop-commit', 'peer-drop-second',
                                             'peer-drop-overlap', 'peer-drop-second-after-ack', 'peer-drop-second-last-turn',
                                             'peer-drop-rollback', 'peer-drop-foreign', 'peer-drop-room',
                                             'peer-drop-room-continue', 'peer-drop-process',
@@ -548,13 +548,14 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         self.assertEqual(direct, [['clean'], ['faults'], ['corrupt', 'default', 'mixed-disabled'],
                                   ['peer-drop', 'peer-drop-corrupt'], ['peer-drop-close', 'peer-drop-answer'],
                                   ['peer-drop-relay', 'peer-drop-missing'],
-                                  ['peer-drop-missing-lost', 'peer-drop-commit'],
-                                  ['peer-drop-second', 'peer-drop-overlap'],
-                                  ['peer-drop-second-after-ack', 'peer-drop-second-last-turn'],
-                                  ['peer-drop-rollback', 'peer-drop-foreign'],
-                                  ['peer-drop-room', 'peer-drop-room-continue'],
-                                  ['peer-drop-process', 'peer-drop-process-missing'],
-                                  ['peer-drop-room-after-drop', 'peer-drop-room-before-drop']])
+                                  ['peer-drop-missing-lost', 'peer-drop-donor-process'],
+                                  ['peer-drop-commit', 'peer-drop-second'],
+                                  ['peer-drop-overlap', 'peer-drop-second-after-ack'],
+                                  ['peer-drop-second-last-turn', 'peer-drop-rollback'],
+                                  ['peer-drop-foreign', 'peer-drop-room'],
+                                  ['peer-drop-room-continue', 'peer-drop-process'],
+                                  ['peer-drop-process-missing', 'peer-drop-room-after-drop'],
+                                  ['peer-drop-room-before-drop']])
         mixed = webrtc_runner.label_waves(['mixed', 'mixed-default', 'mixed-close', 'recording-pressure'], overlap=True)
         self.assertEqual(mixed, [['mixed'], ['mixed-default'], ['mixed-close'], ['recording-pressure']])
         for plan in (direct, mixed, serial):

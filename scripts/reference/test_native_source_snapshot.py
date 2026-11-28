@@ -157,7 +157,8 @@ class SourceReceiptControls(unittest.TestCase):
         for mode in ("stable_dirty", "edit", "commit", "replace_snapshot", "transient_edit", "engine_edit", "engine_and_source_edit", "helper_edit"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                environment = fixture_environment()
+                # Shared leases reserve host capacity for real engine runs.
+                environment = dict(fixture_environment(), FORTRESS_HOST_CAPACITY_DIR=str(root / ".cache/capacity"))
                 for source in ("scripts/run_godot_tests.py", "scripts/host_capacity.py", "scripts/changed_suites.py",
                                "scripts/reference/engine_path.py", "scripts/native_source_snapshot.py"):
                     target = root / source

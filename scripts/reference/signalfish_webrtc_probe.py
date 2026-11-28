@@ -19,6 +19,7 @@ import zipfile
 from browser.local_stun import local_port, local_stun
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_drop import check_serial_controls, validate_drop_browser
+from browser.webrtc_drop_donor import check_donor_history_controls, validate_donor_history
 from browser.webrtc_drop_overlap import check_overlap_order_controls, validate_drop_overlap
 from browser.webrtc_recording import engine_identity, validate_recording, validate_pressure
 from browser.webrtc_runner import room_count, run_browser, run_wave
@@ -43,7 +44,7 @@ HOST_WAIT_SECONDS = 900.0
 # each line whole on the shared stderr stream.
 PRINT_LOCK = threading.Lock()
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
-          'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-missing-lost', 'peer-drop-commit',
+          'peer-drop-answer', 'peer-drop-relay', 'peer-drop-missing', 'peer-drop-missing-lost', 'peer-drop-donor-process', 'peer-drop-commit',
           'peer-drop-second', 'peer-drop-overlap', 'peer-drop-second-after-ack', 'peer-drop-second-last-turn',
           'peer-drop-rollback', 'peer-drop-foreign',
           'peer-drop-room', 'peer-drop-room-continue', 'peer-drop-process', 'peer-drop-process-missing',
@@ -393,6 +394,7 @@ def main():
                        'peer-drop', 'peer-drop-events', 'peer-drop-corrupt', 'peer-drop-corrupt-events',
                        'peer-drop-close', 'peer-drop-close-events', 'peer-drop-answer', 'peer-drop-answer-events', 'peer-drop-relay', 'peer-drop-relay-events',
                        'peer-drop-missing', 'peer-drop-missing-events', 'peer-drop-missing-lost', 'peer-drop-missing-lost-events',
+                       'peer-drop-donor-process', 'peer-drop-donor-process-events',
                        'peer-drop-commit', 'peer-drop-commit-events',
                        'peer-drop-second', 'peer-drop-second-events', 'peer-drop-overlap', 'peer-drop-overlap-events',
                        'peer-drop-rollback', 'peer-drop-rollback-events', 'peer-drop-foreign', 'peer-drop-foreign-events',
@@ -404,7 +406,8 @@ def main():
     owned_logs += [f'{version}-{label}-{kind}' for version in versions for label in serial_labels
                    for kind in ('control.json', 'events.log')]
     owned_logs += [f'{version}-{label}.log' for version in versions for label in serial_labels]
-    owned_logs += [f'{version}-peer-drop-overlap-control.json' for version in versions]
+    owned_logs += [f'{version}-{label}-control.json' for version in versions
+                   for label in ('peer-drop-overlap', 'peer-drop-donor-process')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -427,6 +430,8 @@ def main():
                'recording': ROOT / 'scripts/reference/browser/webrtc_recording.gd',
                'recording_validator': ROOT / 'scripts/reference/browser/webrtc_recording.py',
                'drop': ROOT / 'scripts/reference/browser/webrtc_drop.gd',
+               'drop_donor': ROOT / 'scripts/reference/browser/webrtc_drop_donor.gd',
+               'drop_donor_validator': ROOT / 'scripts/reference/browser/webrtc_drop_donor.py',
                'drop_overlap': ROOT / 'scripts/reference/browser/webrtc_drop_overlap.gd',
                'drop_validator': ROOT / 'scripts/reference/browser/webrtc_drop.py',
                'drop_overlap_validator': ROOT / 'scripts/reference/browser/webrtc_drop_overlap.py',
@@ -582,7 +587,7 @@ def main():
                     shutil.copytree(sdk / 'addons/signal_fish', project / 'addons/signal_fish')
                     for key, filename in [('host', 'host.gd'), ('game', 'webrtc_game.gd'), ('setup', 'webrtc_setup.gd'),
                                           ('mixed', 'webrtc_mixed.gd'), ('recording', 'webrtc_recording.gd'), ('drop', 'webrtc_drop.gd'),
-                                          ('drop_overlap', 'webrtc_drop_overlap.gd'),
+                                          ('drop_overlap', 'webrtc_drop_overlap.gd'), ('drop_donor', 'webrtc_drop_donor.gd'),
                                           ('clock_test', 'clock_test.gd'), ('clock_fixture', 'clock_fixture.gd')]:
                         shutil.copyfile(sources[key], project / filename)
                     (project / 'project.godot').write_text(
@@ -598,7 +603,8 @@ def main():
                     executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish',
                                 'host': project / 'host.gd', 'game': project / 'webrtc_game.gd', 'setup': project / 'webrtc_setup.gd', 'project': project / 'project.godot',
                                 'mixed': project / 'webrtc_mixed.gd', 'recording': project / 'webrtc_recording.gd', 'drop': project / 'webrtc_drop.gd',
-                                'drop_overlap': project / 'webrtc_drop_overlap.gd', 'clock_test': project / 'clock_test.gd', 'clock_fixture': project / 'clock_fixture.gd',
+                                'drop_overlap': project / 'webrtc_drop_overlap.gd', 'drop_donor': project / 'webrtc_drop_donor.gd',
+                                'clock_test': project / 'clock_test.gd', 'clock_fixture': project / 'clock_fixture.gd',
                                 'scene': project / 'main.tscn', 'preset': project / 'export_presets.cfg', 'certificate': certificate, 'private_key': tls_private_key}
                     frozen = inventory(executed)
                     command = [str(engine), '--headless', '--path', str(project)]
@@ -632,6 +638,10 @@ def main():
                                 result = validate_drop_overlap(json.loads(output))
                                 control = check_overlap_order_controls(result)
                                 (args.output / f'{version}-{label}-control.json').write_text(json.dumps(control) + '\n')
+                            elif label == 'peer-drop-donor-process':
+                                result = validate_donor_history(json.loads(output), True)
+                                control = check_donor_history_controls(result)
+                                (args.output / f'{version}-{label}-control.json').write_text(json.dumps(control) + '\n')
                             elif label.startswith('peer-drop'):
                                 result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt', label == 'peer-drop-close',
                                                                label == 'peer-drop-answer', label == 'peer-drop-relay',
@@ -648,6 +658,8 @@ def main():
                                                                process_missing=label == 'peer-drop-process-missing',
                                                                room_after_drop=label == 'peer-drop-room-after-drop',
                                                                room_before_drop=label == 'peer-drop-room-before-drop')
+                                if label == 'peer-drop-missing':
+                                    validate_donor_history(result, False)
                                 if label in serial_labels:
                                     control = check_serial_controls(result, serial_labels[label])
                                     (args.output / f'{version}-{label}-control.json').write_text(json.dumps(control) + '\n')
@@ -696,6 +708,9 @@ def main():
                         'The peer-drop-missing label withholds the departing page original input frames four through six on one direct link; '
                         'the complete survivor transfers the missing rows into the recipient, and its first retained-history chunk is '
                         'withheld on its own real link so the donor resends chunk zero before certification. '
+                        'The peer-drop-donor-process label closes the selected donor context while its original packet waits at the recipient. '
+                        'SignalFish reports the donor departure, the adapter refuses the held packet after the restart fence, '
+                        'and the recipient keeps its pending operation and confirmed replay. The matched delivery installs the held bytes. '
                         'The peer-drop-missing-lost label withholds every retained-history chunk on the donor real link; the barrier '
                         'expires, both survivors terminate without a freeze or a local continuation, the recipient never installs the '
                         'interval, each survivor compares its pre-cut confirmed prefix with reconstructed original inputs, and a post-terminal step must not advance the frame. '

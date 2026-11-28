@@ -851,7 +851,55 @@ under [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/is
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
 and [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 
+### Selected history donor leaves
+
+The v6 drop-history launcher also compares a four-endpoint schedule. Rust
+opens target removal through its public API. Godot delivers the target's
+Goodbye. Only the selected non-coordinator donor has the missing original
+frame 8, and the observer keeps its first addressed chunk for each recipient.
+
+The Rust delivery control and the control that holds the chunk for 300 ms
+with the donor still active both certify cut 8. Both original chunks reach
+the addressed sockets before the coordinator broadcasts COMMIT. The recipients
+install the missing row and report the target dropped before gameplay advances.
+The remote recipient's socket reads the coordinator's original COMMIT before
+its first installed sample. The source confirmation accessor temporarily
+reports frame 3 at installation and returns to 5 before advancement. The
+source documents this non-monotonic accessor.
+All three survivors then match canonical inputs, disconnected status and
+state through frame 16.
+When the donor instead goes silent after the first chunk publication, the
+two recipients enter `Synchronizing` on the 220 ms sampled tick. Their current
+frame remains 6 and confirmation remains at 4. The source publishes no COMMIT
+or ABORT. Both slots stay connected in the logical roster without a certified
+removal.
+
+The source's automatic admission still counts the four-endpoint epoch while
+the two other links are silent, so the remaining pair cannot form a strict
+majority. Its cleanup closes the pending operation.
+[Pinned admission](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sessions/p2p_session.rs#L16647-L16658)
+and [cleanup](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sessions/p2p_session.rs#L5564-L5587).
+
+Both original chunks reach their sockets at 426 ms on the source clock,
+after release at 425 ms and both terminal samples. The original rows stay
+intact, and both advancement calls return `NotSynchronized`.
+
+In the Godot fixture, the donor's Goodbye ends the two pending operations
+with `participant_lost` at the Goodbye tick. The receipt records the
+original replay rows, the unchanged snapshots, and the actual refusal codes
+for late delivery and gameplay. Its delivery control certifies cut 8 and
+checks all three canonical histories through frame 19. The clock origins,
+departure triggers, wire formats and terminal signals belong to their
+respective runtimes. The Rust timing is a bound for this sampled schedule.
+The exported [three-player SignalFish witness](peer-lifecycle.md#unequal-confirmation-frontiers)
+checks the room restart when the selected donor's browser closes. The remaining
+missing-history cases are tracked in
+[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188)
+and [#559](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/559).
+
 ### Coordinator silence on the version-6 candidate
+
+The ordinary v6 observer build also compiles the coordinator-failover mode.
 
 Run this once with each pinned Godot editor path and a distinct output
 directory. The launcher selects the exact

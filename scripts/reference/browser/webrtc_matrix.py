@@ -19,7 +19,17 @@ def validate_identity(result, pair, pins):
             or result.get('browser') != '/'.join(pair) or result.get('version') != expected[0]['version']):
         raise ValueError('browser process identities differ from the selected pinned pair')
     for record in result.get('records', []):
-        for index, peer in enumerate(record.get('peers', [])):
+        peers = record.get('peers', [])
+        if result.get('dropDonorProcess') is True:
+            closed = record.get('donorHistory', {}).get('donor_index')
+            if type(closed) is not int or closed not in (0, 1) or len(peers) != 2:
+                raise ValueError('closed donor browser allocation differs')
+            indexed = zip((index for index in range(3) if index != closed), peers)
+        else:
+            indexed = enumerate(peers)
+        for index, peer in indexed:
+            if result.get('dropDonorProcess') is True and (type(peer.get('page_index')) is not int or peer['page_index'] != index):
+                raise ValueError('surviving donor-room browser allocation differs')
             display = peer.get('display')
             if pair[index % 2] == 'firefox':
                 if (not isinstance(display, dict) or display.get('x') != 80 * index or type(display.get('x')) is not int

@@ -19,6 +19,7 @@ from drop_history_contract import same, wrapped_evidence_controls
 from drop_history_deadline import check_commit_deadline, deadline_controls
 from drop_history_timeout import check_delivery_control, check_timeout, timeout_controls
 import drop_failover_run
+import drop_history_donor_departure
 from drop_history_ack_controls import controls as ack_loss_evidence_controls
 from drop_history_inventory_controls import controls as inventory_loss_evidence_controls
 from source_build import prepare_source_build
@@ -30,6 +31,7 @@ PREFIX = 'FORTRESS_DROP_HISTORY_RESULT '
 def inventory():
     files = [*source_files(), ROOT / 'project.godot', ROOT / 'scripts/oracle/rust/src/bin/drop_history.rs',
              *(ROOT / 'tests/unit').glob('*.gd'), *(ROOT / 'tests/runner').glob('*.gd'),
+             ROOT / 'scripts/oracle/rust/src/bin/drop_history/donor_departure.rs',
              drop_failover_run.SCHEDULE, drop_failover_run.PROBES, drop_failover_run.RUST_OBSERVER]
     return {str(path.relative_to(ROOT)): digest(path) for path in sorted(set(files))}
 
@@ -221,13 +223,17 @@ def select_source(manifest, source_revision, offline):
     return tree, archive['digest']
 
 
-def build_observer(tool_paths, output, source_tree, source_revision, offline, *, coordinator_failover=False):
+def observer_features(source_revision):
+    return ['coordinator-failover'] if source_revision == RECOVERY_REVISION else []
+
+
+def build_observer(tool_paths, output, source_tree, source_revision, offline):
     base = ROOT / 'scripts/oracle/rust/Cargo.toml'
     manifest = prepare_source_build(base, source_tree, source_revision, CACHE)
     adapter_hashes = upstream_inventory(manifest.parent)
     command = [str(tool_paths['cargo']), 'build', '--locked', '--bin', 'drop_history', '--manifest-path', str(manifest)]
-    if coordinator_failover:
-        command += ['--features', 'coordinator-failover']
+    if features := observer_features(source_revision):
+        command += ['--features', ','.join(features)]
     if offline:
         command.append('--offline')
     target = CACHE / 'target'
@@ -275,9 +281,7 @@ def run(args):
     if not engine_version.startswith(('4.3.stable', '4.7.2.stable')):
         raise ValueError('drop history: unsupported engine profile')
     verify_tools(tool_paths, tool_identities)
-    binary, adapter, adapter_hashes = build_observer(
-        tool_paths, args.output, source_tree, source_revision, args.offline,
-        coordinator_failover=args.coordinator_failover)
+    binary, adapter, adapter_hashes = build_observer(tool_paths, args.output, source_tree, source_revision, args.offline)
     verify_tools(tool_paths, tool_identities)
     binary_identity = executable_identity(binary)
 
@@ -298,12 +302,12 @@ def run(args):
             'working_tree_dirty': identity['working_tree_dirty'],
             'engine': engine_version.strip(), 'engine_identity': engine_identity, 'binary_identity': binary_identity,
             'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'tool_identities': tool_identities, 'default_features': False, 'features': [],
-            'execution_identities_unchanged': True}
+            'observer_features': observer_features(source_revision), 'execution_identities_unchanged': True}
 
     if args.coordinator_failover:
         observation = drop_failover_run.observe(engine, binary, args.output, parse_godot, tool_paths, source_tree, args.offline)
         verify_identity()
-        receipt.write_text(json.dumps({**provenance(), 'observer_features': ['coordinator-failover'], **observation}, indent=2) + '\n')
+        receipt.write_text(json.dumps({**provenance(), **observation}, indent=2) + '\n')
         print('coordinator failover: source endpoint 1 certified cut 5; three Godot survivors timed out; all preserved rows 0–4, twice', flush=True)
         print('coordinator failover: exact grace boundary and addressed stale PREPARE and INVENTORY replay passed, twice', flush=True)
         return
@@ -380,11 +384,23 @@ def run(args):
     controls.extend(rejected_deadlines)
     timeout, timeout_summary, rejected_timeouts = donor_timeout_evidence(engine, binary, args.output, source_revision)
     controls.extend(rejected_timeouts)
+    comparison = {**observed[0], 'commit-deadline': deadline, 'donor-timeout': timeout}
+    donor_summary = {}
+    if source_revision == RECOVERY_REVISION:
+        departure, rejected_departures = drop_history_donor_departure.observe(engine, binary, ROOT, args.output, source_revision, parse_godot)
+        comparison['donor-departure'] = departure
+        controls.extend(rejected_departures)
+        silent = departure['source']['silence']
+        delivered = departure['source']['deliver']
+        godot = departure['godot_evidence'][drop_history_donor_departure.REFUSAL_CASE]['outcome']
+        donor_summary = {'donor_departure': {'source_first_terminal_offset_us': silent['terminal']['0']['offset'],
+                                            'source_abort_emissions': len(silent['aborts']),
+                                            'control_cut': delivered['commits'][0]['body']['cut'], 'godot_refusal': godot['failures'][0]['reason']}}
     verify_identity()
     records = args.output / 'comparison.json'
-    records.write_text(json.dumps({**observed[0], 'commit-deadline': deadline, 'donor-timeout': timeout}, indent=2) + '\n')
+    records.write_text(json.dumps(comparison, indent=2) + '\n')
     receipt.write_text(json.dumps({**provenance(), 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),
-        'evidence': evidence, 'commit_deadline': {offset: outcome['advance'] for offset, outcome in deadline['source'].items()},
+        **donor_summary, 'evidence': evidence, 'commit_deadline': {offset: outcome['advance'] for offset, outcome in deadline['source'].items()},
         'donor_timeout_retries_discarded': timeout_summary, 'negative_controls': controls,
         'scope': ('Paired one/four-row single-target and four-row two-target clean/lost-first-history three-endpoint original-history/cut scenarios: source explicit removal; '
                   'Godot elapsed timeout; equal and unequal exposed frontiers; first-prepare loss alone; first-inventory/COMMIT/ACK loss alone or combined with donor data; '
@@ -396,6 +412,10 @@ def run(args):
           'one/four-row single/two-target donor recovery and lost inventory/commits/acknowledgements, twice', flush=True)
     print('drop history: source and Godot commit before the deadline and refuse at equality and after', flush=True)
     print(f'drop history: all donor retries lost ({timeout_summary}); both survivors preserve exposed history and refuse advancement', flush=True)
+    if donor_summary:
+        evidence = donor_summary['donor_departure']
+        print(f"donor departure: Rust stops both recipients {evidence['source_first_terminal_offset_us']} us after donor silence. "
+              f"Godot Goodbye reports {evidence['godot_refusal']}. Both preserve original rows.", flush=True)
 
 
 if __name__ == '__main__':

@@ -9,6 +9,9 @@ use std::{collections::BTreeMap, sync::{Arc, Mutex}, time::Duration};
 #[path = "drop_history/failover.rs"]
 mod failover;
 
+#[path = "drop_history/donor_departure.rs"]
+mod donor_departure;
+
 const REVISION: &str = match option_env!("FORTRESS_DROP_ORACLE_REVISION") {
     Some(revision) => revision,
     None => "d124c89080004d96971a629bb0427056ee1805e3",
@@ -40,8 +43,14 @@ fn next_order(order: &Arc<Mutex<usize>>, limit: usize) -> usize {
 }
 struct Socket {
     buffers: Arc<Mutex<Buffers>>,
-    clock: Option<Arc<Mutex<u64>>>,
+    publication_clock: Option<Arc<Mutex<u64>>>,
+    receipt_clock: Option<Arc<Mutex<u64>>>,
     order_limit: usize,
+}
+impl Socket {
+    fn new(buffers: Arc<Mutex<Buffers>>, order_limit: usize) -> Self {
+        Self { buffers, publication_clock: None, receipt_clock: None, order_limit }
+    }
 }
 impl NonBlockingSocket<String> for Socket {
     fn send_to(&mut self, message: &Message, address: &String) {
@@ -53,7 +62,7 @@ impl NonBlockingSocket<String> for Socket {
         }
         let control = raw["body"].as_object().is_some_and(|body| body.keys().any(|kind| kind.starts_with("Drop")));
         let order = control.then(|| next_order(&queue.order, self.order_limit));
-        if let (Some(clock), Some(order)) = (&self.clock, order) {
+        if let (Some(clock), Some(order)) = (&self.publication_clock, order) {
             if raw["body"].get("DropBackfill").is_some() || raw["body"].get("DropAbort").is_some() {
                 queue.timed_publications.push((order, *clock.lock().unwrap()));
             }
@@ -68,6 +77,9 @@ impl NonBlockingSocket<String> for Socket {
             let mut received = record.clone();
             received["order"] = json!(next_order(&order, self.order_limit));
             received["body"] = serde_json::to_value(message).unwrap()["body"].clone();
+            if let Some(clock) = &self.receipt_clock {
+                received["received_at"] = json!(*clock.lock().unwrap());
+            }
             received
         })));
         messages.into_iter().map(|(sender, message, _)| (sender, message)).collect()
@@ -212,7 +224,9 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
             builder = builder.add_player(kind, PlayerHandle::new(slot)).map_err(|error| format!("{error:?}"))?;
         }
         let queue = Arc::new(Mutex::new(Buffers { order: order.clone(), ..Default::default() }));
-        sessions.push(builder.start_p2p_session(Socket { buffers: queue.clone(), clock: drop_all_history.then(|| clock.clone()), order_limit: 8192 })
+        let mut socket = Socket::new(queue.clone(), 8192);
+        socket.publication_clock = drop_all_history.then(|| clock.clone());
+        sessions.push(builder.start_p2p_session(socket)
             .map_err(|error| format!("{error:?}"))?);
         buffers.push(queue);
     }
@@ -438,6 +452,14 @@ fn main() {
                 eprintln!("drop history: coordinator failover requires the v6 observer build");
                 std::process::exit(2);
             }
+        }
+        if mode == "--donor-departure" {
+            if fortress_rollback::PROTOCOL_VERSION != 6 || !matches!(offset.as_str(), "deliver" | "hold-live" | "silence") {
+                eprintln!("drop history: donor departure requires v6 and a supported schedule");
+                std::process::exit(2);
+            }
+            println!("{}", donor_departure::run(offset));
+            return;
         }
         if mode == "--commit-deadline" {
             let offset = match offset.as_str() {
