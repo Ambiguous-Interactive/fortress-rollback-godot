@@ -248,7 +248,7 @@ Order writes by server ordinal and page observations by the recipient's clock.
 Stamp validated history synchronously in the console listener with the expiry's controller ordinal.
 Await the original failure write before browser cleanup. Bound the wait and handle both the write callback and stream error.
 Bind supplemental socket evidence to the acknowledged failure line by digest, with one tagged socket per frozen recipient.
-Recheck proxy coverage after teardown. Require strict source bounds on the reporting page and refuse omitted or tied Firefox inlet candidates.
+Recheck proxy coverage after teardown. Require reporting-page source bounds, reject omitted or tied inlets, and classify inlets at or after the observer cutoff as outside capture.
 On Linux Chromium, check the document origin and keep the NetLog millisecond interval. Validate each clock sample before subtraction to catch overflow and cancellation.
 Prove ordering between clocks by holding the original socket's FIFO until
 both exact raw stamps arrive and the controller reads their successful writes.

@@ -163,17 +163,21 @@ and delay two; and loss, reorder/duplicate, prediction stall/recovery and retry
 cases for 2, 4 and 8 peers. Loss drops the first input and ACK flight. Retry
 checks exactly 200000 microseconds versus 200001, then drops ACKs and checks the
 next exact interval and interval-plus-one. Duplicate packets do not manufacture
-new input progress. Five two-peer scenarios exercise windows 2, 3, 5, 6 and 7.
-Each stalls at the configured frame before confirmation and again after frame
-zero is confirmed. The stalled retry submits the same bytes and sends no new
-input packet. Releasing the held flights triggers rollback loads and both peers
-resume confirmation. Four additional scenarios hold the maximum compared
-prediction window eight: `mesh_2_window_8`, `mesh_4_window_8` and
-`mesh_8_window_8` compare ordinary schedules at the deepest configured rollback
-boundary, and `mesh_2_window_8_stall` runs the stall schedule that exceeds
-window four, where the six undelivered rounds predict through and recover
-through one deep rollback instead of stalling at the window-four prediction
-boundary. Four multi-local layout scenarios compare couch co-op machines that
+new input progress. Seven two-peer scenarios exercise every compared window from two through eight.
+For each window, the receipt names the last admissible speculative advance,
+the first blocked call and its first staged input packet, and a blocked
+retry that sends nothing. The receipt links the remote frame-zero sample
+to its original packet, delivery and acknowledgement. The peer stays at
+the cap even with frame zero confirmed. The requests load frame zero and
+resimulate exactly the withheld prefix. The first resumed step loads
+frame one, consumes the staged sample once and ends at the next frame.
+Both peers confirm through at least the last initially speculative input
+frame. Full mesh receipts require these observations from both runtimes
+once per window, alongside canonical-state and packet comparison.
+Controls reject premature advancement, early or duplicate publication,
+an incorrect delivery, a missing LOAD and an extra resumed advance.
+The three `mesh_<2,4,8>_window_8` schedules separately compare ordinary
+delivery at the largest compared window. Four multi-local layout scenarios compare couch co-op machines that
 own several local slots: `mesh_4_couch_2x2` and `mesh_6_split_2x2x2` compare
 ordinary schedules where every machine's advance happens on the step that
 completes its local row, `mesh_4_couch_loss` recovers dropped round-zero

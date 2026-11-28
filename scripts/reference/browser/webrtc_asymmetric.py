@@ -1,9 +1,10 @@
-"""Validate asymmetric Chromium steps, physical relay holds and original recordings."""
+"""Validate asymmetric browser steps, physical relay holds and original recordings."""
 
 from copy import deepcopy
 import re
 import struct
 
+from browser.webrtc_matrix import PAIRS
 from browser.webrtc_recording import _addressed_payload, validate_pressure, validate_pressure_teardown
 from wire import decode_relay_carrier, original_sample, validate_original_input
 
@@ -139,10 +140,11 @@ def _validate_phase(phase, events, base, limit, receiver, remote_slot, original,
         return
     repaired = receiver and not neutral
     callbacks = _callback_history(base, limit, remote_slot, original, neutral, correcting=True)[0] if repaired else []
+    last_submitted = limit if stalls else limit - 1
     if (type(after) is not dict or after.get('frame') != limit or after.get('received') != limit - 1
             or after.get('loads') != held['loads'] + int(repaired)
             or any(type(after.get(key)) is not int for key in ('turn', 'binary', 'acked', 'confirmed'))
-            or not held['acked'] <= after['acked'] <= limit - 1 or not held['confirmed'] <= after['confirmed'] <= limit - 1
+            or not held['acked'] <= after['acked'] <= last_submitted or not held['confirmed'] <= after['confirmed'] <= limit - 1
             or after['turn'] < held['turn'] or after['binary'] < held['binary']
             or (receiver and (after['turn'] <= held['turn'] or after['binary'] <= held['binary']))):
         raise ValueError('asymmetric recovery changed boundary or lacks original receipt/correction')
@@ -298,13 +300,13 @@ def _validate_released_prefix(deliveries, route, base, limit, recovery_turn, hel
         raise ValueError('asymmetric required original input arrived ahead of the held chunk')
 
 
-def _validate_room(room, mode, result, expected_engine):
+def _validate_room(room, mode, result, expected_engine, pair):
     if type(room) is not dict or type(room.get('players')) is not int or room['players'] != 2 or room.get('recordingMode') != mode:
         raise ValueError('asymmetric browser room inventory differs from schedule')
     peers = room.get('peers')
-    if (type(peers) is not list or len(peers) != 2 or any(type(peer) is not dict or peer.get('browser') != 'chromium'
+    if (type(peers) is not list or len(peers) != 2 or any(type(peer) is not dict or peer.get('browser') != browser
             or type(peer.get('result')) is not dict or peer['result'].get('passed') is not True
-            or type(peer['result'].get('records')) is not list or len(peer['result']['records']) != 1 for peer in peers)):
+            or type(peer['result'].get('records')) is not list or len(peer['result']['records']) != 1 for peer, browser in zip(peers, pair))):
         raise ValueError('asymmetric browser peer inventory incomplete')
     rows = [peer['result']['records'][0] for peer in peers]
     if any(type(row) is not dict or type(row.get('mixed')) is not dict for row in rows):
@@ -342,19 +344,20 @@ def _validate_room(room, mode, result, expected_engine):
                 raise ValueError('asymmetric original canonical history differs')
 
 
-def validate_asymmetric(result, expected_engine=None):
+def validate_asymmetric(result, expected_engine=None, *, pair=PAIRS['chromium']):
     if (type(result) is not dict or result.get('passed') is not True or result.get('errors') != []
-            or result.get('browser') != 'chromium/chromium' or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2
+            or pair not in PAIRS.values() or result.get('browser') != '/'.join(pair)
+            or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2
             or result.get('recordingAsymmetric') is not True or result.get('recordingPressure') is not True
             or result.get('mixed') is not True or result.get('faults') is not False or result.get('corrupt') is not False
             or type(result.get('records')) is not list or len(result['records']) != len(MODES)):
-        raise ValueError('asymmetric Chromium execution incomplete')
+        raise ValueError('asymmetric browser execution incomplete')
     for room, mode in zip(result['records'], MODES):
-        _validate_room(room, mode, result, expected_engine)
+        _validate_room(room, mode, result, expected_engine, pair)
     return result
 
 
-def check_asymmetric_controls(result, engine):
+def check_asymmetric_controls(result, engine, *, pair=PAIRS['chromium']):
     """Reject changes to the actual exported browser receipt at their first mismatch."""
     substitutions = (
         ('symmetric prefix', ('asymmetric', 0, 'held', 'received'), 150,
@@ -368,6 +371,10 @@ def check_asymmetric_controls(result, engine):
     )
     rows = ('records', 0, 'peers', 0, 'result', 'records', 0)
     recording = result['records'][0]['peers'][0]['result']['records'][0]['recording']
+    staged_ack = deepcopy(result)
+    recovery = staged_ack['records'][0]['peers'][0]['result']['records'][0]['asymmetric'][0]['after']
+    recovery['acked'] = PHASES[0][1]
+    validate_asymmetric(staged_ack, engine, pair=pair)
     raw = bytearray.fromhex(recording['hex'])
     offset = 24
     for _ in range(5):
@@ -390,13 +397,18 @@ def check_asymmetric_controls(result, engine):
         forged_chunk[event['end'] - 1] ^= 0x40
     messages_path = ('records', 0, 'peers', 0, 'rtc', 'recordingPhaseMessages')
     messages = room['peers'][0]['rtc']['recordingPhaseMessages']
+    other_browser = 'chromium' if pair[0] == 'firefox' else 'firefox'
     controls.extend((
+        ('wrong peer browser', [(('records', 0, 'peers', 0, 'browser'), other_browser)],
+         'asymmetric browser peer inventory incomplete'),
         ('extra terminal save', [(rows + ('callbacks',), row['callbacks'] + [row['callbacks'][-1]])],
          'asymmetric callback has an extra save at boundary 257'),
         ('shifted phase loads', [(rows + ('asymmetric', 0, 'held', 'loads'), held['loads'] + 1),
                                  (rows + ('asymmetric', 0, 'after', 'loads'), after['loads'] + 1)],
          'asymmetric held LOAD count differs from the callback prefix'),
-        ('out-of-range acknowledgement', [(rows + ('asymmetric', 0, 'after', 'acked'), 257)],
+        ('acknowledgement beyond stalled sample', [(rows + ('asymmetric', 0, 'after', 'acked'), PHASES[0][1] + 1)],
+         'asymmetric recovery changed boundary or lacks original receipt/correction'),
+        ('acknowledgement beyond unstalled samples', [(rows + ('asymmetric', 1, 'after', 'acked'), PHASES[1][1])],
          'asymmetric recovery changed boundary or lacks original receipt/correction'),
         ('added pending byte', [(hold_path + ('pending_bytes',), hold['pending_bytes'] + 1)],
          'asymmetric physical relay hold byte count differs from the pending TCP chunk'),
@@ -412,6 +424,10 @@ def check_asymmetric_controls(result, engine):
                                        (hold_path + ('events', 0, 'end'), 1), (hold_path + ('events', 0, 'tail_bytes'), 0)],
          'asymmetric held TCP bytes do not complete the original carrier'),
     ))
+    if pair[0] != pair[1]:
+        controls.append(('swapped peer browsers', [(('records', 0, 'peers', 0, 'browser'), pair[1]),
+                                                   (('records', 0, 'peers', 1, 'browser'), pair[0])],
+                         'asymmetric browser peer inventory incomplete'))
     diagnostics = {}
     for label, changes, wanted in controls:
         value = deepcopy(result)
@@ -421,7 +437,7 @@ def check_asymmetric_controls(result, engine):
                 target = target[part]
             target[path[-1]] = replacement
         try:
-            validate_asymmetric(value, engine)
+            validate_asymmetric(value, engine, pair=pair)
         except ValueError as failure:
             if str(failure) != wanted:
                 raise ValueError(f'{label} rejected outside its expected diagnostic: {failure}') from failure

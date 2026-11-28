@@ -361,10 +361,7 @@ def main():
         parser.error('--browser-pair applies to the transport witness; online example currently requires Chromium')
     if args.online_example and args.label:
         parser.error('--label applies to the transport witness')
-    if args.label and 'recording-asymmetric' in args.label and args.browser_pair != 'chromium':
-        parser.error('recording-asymmetric requires two Chromium endpoints')
-    labels = [label for label in LABELS if label in (args.label or LABELS)
-              and (label != 'recording-asymmetric' or args.browser_pair == 'chromium')]
+    labels = [label for label in LABELS if label in (args.label or LABELS)]
     stun_tool = None
     if args.browser_pair == 'chromium-firefox':
         stun = os.environ.get('FORTRESS_STUN_EXECUTABLE') or shutil.which('turnserver')
@@ -674,8 +671,8 @@ def main():
                                     control = check_serial_controls(result, serial_labels[label])
                                     (args.output / f'{version}-{label}-control.json').write_text(json.dumps(control) + '\n')
                             elif label == 'recording-asymmetric':
-                                result = validate_asymmetric(json.loads(output), recording_engine)
-                                controls = check_asymmetric_controls(result, recording_engine)
+                                result = validate_asymmetric(json.loads(output), recording_engine, pair=pair)
+                                controls = check_asymmetric_controls(result, recording_engine, pair=pair)
                                 (args.output / f'{version}-{label}-control.json').write_text(json.dumps(controls) + '\n')
                             elif label == 'recording-pressure':
                                 result = validate_pressure(json.loads(output), recording_engine)

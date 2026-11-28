@@ -134,6 +134,11 @@ func _qualify(addresses: PackedInt32Array, abort_on_correction: bool = false) ->
 			if step.code not in [Types.Code.OK, Types.Code.NOT_SYNCHRONIZED, Types.Code.PREDICTION_STALL]:
 				return _failed(addresses, "step failed (%s)" % Types.reason_text(step.code))
 			if step.code == Types.Code.PREDICTION_STALL and not conflict_checked:
+				for slot: int in local_slots:
+					var retained: Types.InputResult = driver.scheduled_local_input(slot)
+					if retained.code != Types.Code.OK or retained.status != Types.Queue.Status.CONFIRMED:
+						return _failed(addresses, "retained local sample code=%d status=%d expected=%d frame=%d" % [
+							retained.code, retained.status, Types.Queue.Status.CONFIRMED, retained.frame])
 				row[0] = ObservedGame.sample(local_slots[0], frame + 1)
 				var conflict: Driver.StepResult = driver.step_local(tick, row)
 				if conflict.code != Types.Code.INPUT_ALREADY_SUBMITTED or conflict.frame_after != frame:

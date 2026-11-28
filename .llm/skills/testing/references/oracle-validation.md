@@ -121,6 +121,10 @@ Keep the observed first failure separate from later cleanup termination. A stopp
 For held packets, keep publication, release and socket consumption clocks separate. Bind a positive COMMIT to its real routes and the recipients' installed history.
 Fence both browser endpoints at the recovered prefix before releasing new input.
 Join a held relay carrier to its exact browser message. Require a unique candidate for SDK admission when the SDK reports envelope bytes alone.
+When extending a browser witness, run the workflow's actual engine and browser axes.
+Swap the browser assignments in a mixed receipt while preserving its browser inventory.
+For retained local samples, check code, frame, bytes and status on the installed
+backend during a real prediction stall. Check the authored sample independently.
 Read typed outcomes and original histories from each runtime. Case names and assertion counts identify the tests and cannot establish runtime outcomes.
 For an exported room with a closed browser page, join original page indices to UUIDs before closing. Start the SDK notice window at the controller action.
 Rebuild speculative snapshots from bounded applied callback inputs. Use the observed delivery history in live cases whose prediction varies with arrival order.
@@ -135,7 +139,9 @@ whole hint and use its observations only for an exact matching prefix.
 
 At a prediction cap, record both the first blocked call and an identical
 retry. The first call can stage and send the current sample. The retry must
-hold the frame without sending another sample. After actual input arrives,
+hold the frame without sending another sample. Acknowledgement can reach the
+last staged local sample while remote receipt and confirmation remain behind
+the current frame. After actual input arrives,
 compare earlier rollback callbacks separately from forward frame progress.
 Service delayed receipt gossip before treating a stall as the nearest
 reachable retention bound. Record physical slot tags before and after reuse.

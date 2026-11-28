@@ -251,6 +251,23 @@ receipt before cleanup and can append a `relaySocketFailure` receipt after
 Chromium closes. Its `failure_sha256` hashes the exact original JSON line
 without its newline.
 
+Use `--trace-chromium-frames` with the trace server and the `chromium` or
+`chromium-firefox` profile to add a page-scoped DevTools observer. The
+`renderer` receipt in `relaySocketReceive` or `relaySocketFailure` joins the
+complete assembled binary message to the exact carrier on its tagged
+proxy connection. Blink observes it before handing it to the DOM socket.
+The generated room uses bounded relay payloads. After DevTools delivers
+the event, the controller limits payload decoding to 2,048 bytes and
+retains 8,192 digests per page. It records source TimeTicks and controller
+callback time separately and uses the same expiry window as TLS. The
+pre-teardown receipt reports its controller callback cutoff. A proxy
+inlet at or after that cutoff falls outside the capture. A missing
+observer, early detach, rejected candidate or possible eviction leaves
+the renderer stage unresolved. In mixed rooms this mode also collects Gecko frame evidence.
+Use `--trace-mixed-receive` to repeat the mixed profile without the additional
+DevTools observer.
+[Chromium's Blink receive path](https://github.com/chromium/chromium/blob/156.0.8078.4/third_party/blink/renderer/modules/websockets/websocket_channel_impl.cc#L1058-L1087)
+
 Add `--trace-firefox-frames` to an instrumented relay cell with Firefox
 to collect Gecko frame timestamps through the pinned Playwright debugger.
 Each Firefox page retains 8,192 addressed carrier digests. Each match requires

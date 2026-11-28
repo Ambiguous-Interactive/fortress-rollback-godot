@@ -224,6 +224,8 @@ def main():
     retention = parser.add_mutually_exclusive_group()
     retention.add_argument('--trace-chromium-socket', action='store_const', dest='receive_trace', const='--trace-chromium-socket',
                            help='diagnose relay receipt using bounded Chromium socket capture')
+    retention.add_argument('--trace-chromium-frames', action='store_const', dest='receive_trace', const='--trace-chromium-frames',
+                           help='add Chromium renderer receive evidence to a Chromium or mixed relay room')
     retention.add_argument('--trace-firefox-frames', action='store_const', dest='receive_trace', const='--trace-firefox-frames',
                            help='diagnose relay receipt using bounded Firefox frame capture')
     retention.add_argument('--trace-mixed-receive', action='store_const', dest='receive_trace', const='--trace-mixed-receive',
@@ -272,6 +274,8 @@ def main():
         parser.error('relay tracing requires explicit relay cells')
     if args.receive_trace == '--trace-chromium-socket' and (not args.relay_trace_server or browser_pair != ('chromium',)):
         parser.error('--trace-chromium-socket requires --relay-trace-server and --browser-pair chromium')
+    if args.receive_trace == '--trace-chromium-frames' and (not args.relay_trace_server or args.browser_pair not in ('chromium', 'chromium-firefox')):
+        parser.error('--trace-chromium-frames requires --relay-trace-server and a Chromium or chromium-firefox browser profile')
     if args.receive_trace == '--trace-firefox-frames' and (not args.relay_trace_server or 'firefox' not in browser_pair):
         parser.error('--trace-firefox-frames requires --relay-trace-server and a Firefox browser profile')
     if args.receive_trace == '--trace-mixed-receive' and (not args.relay_trace_server or args.browser_pair != 'chromium-firefox'):
@@ -308,12 +312,12 @@ def main():
              'client': BROWSER / 'native_online.cjs', 'host': BROWSER / 'online_host.cjs', 'display': BROWSER / 'webrtc_display.cjs',
              'watchdog': BROWSER / 'webrtc_watchdog.cjs', 'recovery': BROWSER / 'native_recovery.cjs', 'local_stun': BROWSER / 'local_stun.py',
              'relay_proxy': BROWSER / 'native_relay_proxy.cjs', 'chromium_socket': BROWSER / 'native_chromium_socket.cjs',
-             'firefox_frames': BROWSER / 'native_firefox_frames.cjs',
+             'chromium_frames': BROWSER / 'native_chromium_frames.cjs', 'firefox_frames': BROWSER / 'native_firefox_frames.cjs',
              'bridge': BROWSER / 'native_online_bridge.gd', 'sdk': sdk / 'addons/signal_fish', 'relay_wire_trace': BROWSER / 'native_relay_trace.cjs',
              'relay_stage': BROWSER / 'native_relay_stage.py', 'relay_control': BROWSER / 'native_relay_control.cjs',
              'relay_hold': BROWSER / 'native_relay_hold.cjs', 'departure_clock': BROWSER / 'native_departure_clock.cjs',
              'runtime': ROOT / 'addons/fortress_rollback', 'example': ROOT / 'examples'}
-    if args.receive_trace in ('--trace-firefox-frames', '--trace-mixed-receive'):
+    if 'firefox' in browser_pair and args.receive_trace in ('--trace-firefox-frames', '--trace-mixed-receive', '--trace-chromium-frames'):
         resolve_core = "console.log(require('node:module').createRequire(require.resolve(process.argv[1])).resolve('playwright-core/lib/coreBundle'))"
         files['playwright_core'] = Path(subprocess.check_output(
             ['node', '-e', resolve_core, environment['FORTRESS_PLAYWRIGHT_PACKAGE']], env=environment, text=True, timeout=10).strip())

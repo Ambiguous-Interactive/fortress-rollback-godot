@@ -43,11 +43,10 @@ function chromiumExpiryWindow(calibration, expiry) {
   return { status: 'bounded', min_netlog_ms, max_netlog_ms };
 }
 
-function chromiumExpiryTiming(window, at_ms) {
+function chromiumExpiryTiming(window, firstMs, lastMs) {
   if (window.status !== 'bounded') return { order: 'unresolved', reason: window.status };
-  const min_gap_ms = at_ms - window.max_netlog_ms;
-  // NetLog serializes TimeTicks by truncating to whole milliseconds.
-  const max_gap_ms = at_ms + 1 - window.min_netlog_ms;
+  const min_gap_ms = firstMs - window.max_netlog_ms;
+  const max_gap_ms = lastMs - window.min_netlog_ms;
   return { order: max_gap_ms < 0 ? 'before' : min_gap_ms > 0 ? 'after' : 'unresolved', min_gap_ms, max_gap_ms };
 }
 
@@ -75,16 +74,18 @@ async function createChromiumCapture(root) {
   try {
     directory = await mkdtemp(join(dirname(root), '.chromium-netlog-'));
   } catch {
-    return { finish: async () => ({ status: 'unavailable' }) };
+    return { finish: async (host, receive, recipients, calibrations, nativeExpiries, rendererSnapshots) => rendererSnapshots
+      ? joinChromiumSocket(undefined, 'unavailable', host, receive, recipients, calibrations, nativeExpiries, rendererSnapshots)
+      : { status: 'unavailable' } };
   }
   const path = join(directory, 'netlog.json');
   return {
     args: [`--log-net-log=${path}`, '--net-log-capture-mode=Everything', `--net-log-max-size-mb=${LOG_MIB}`],
-    async finish(host, receive, recipients, calibrations, nativeExpiries) {
+    async finish(...inputs) {
       let receipt;
       try {
         const { status, log } = await readChromiumLog(path);
-        receipt = joinChromiumSocket(log, status, host, receive, recipients, calibrations, nativeExpiries);
+        receipt = joinChromiumSocket(log, status, ...inputs);
       } finally {
         try {
           await rm(directory, { recursive: true, force: true });
@@ -103,7 +104,31 @@ function proxySocketAddress(request, socket) {
   return { page_index: Number(page[1]), browser_endpoint: `${socket.remoteAddress}:${socket.remotePort}` };
 }
 
-function joinChromiumSocket(log, status, host, receive, recipients = [], calibrations = [], nativeExpiries = []) {
+// CDP TimeTicks use a fractional second. Two microseconds allow for the
+// source resolution and conversion to JS milliseconds.
+const RENDERER_PRECISION_MS = 0.002;
+
+function rendererEvidence(stream, candidate, expiry, tls) {
+  if (!stream?.sockets || !Number.isFinite(candidate.inlet_ms)) return { status: 'unavailable' };
+  if (stream.sockets !== 1) return { status: 'ambiguous' };
+  if (stream.status === 'detached') return { status: 'incomplete', reason: 'session_detached' };
+  if (candidate.inlet_ms >= stream.cutoff_ms) return { status: 'outside_capture' };
+  const candidates = stream.byDigest.get(candidate.carrier_sha256) ?? [];
+  const matching = candidates.filter(frame => frame.controller_ms >= candidate.inlet_ms);
+  if (matching.length > 1 || matching[0]?.controller_ms === candidate.inlet_ms) return { status: 'ambiguous' };
+  if (stream.omitted && !(stream.omitted_through_ms < candidate.inlet_ms)) return { status: 'truncated' };
+  if (stream.rejected && !(stream.rejected_through_ms < candidate.inlet_ms)) return { status: 'incomplete', reason: 'rejected_candidates' };
+  if (!matching.length) return { status: 'unobserved' };
+  const [frame] = matching;
+  const firstMs = frame.at_ms - RENDERER_PRECISION_MS;
+  const lastMs = frame.at_ms + RENDERER_PRECISION_MS;
+  if (tls && lastMs < tls.at_ms) return { status: 'inconsistent_clock' };
+  const observation = { proxy_ordinal: candidate.ordinal, request_id: stream.request_id, ...frame };
+  if (expiry) observation.expiry_timing = chromiumExpiryTiming(expiry, firstMs, lastMs);
+  return { status: 'observed', observation };
+}
+
+function joinChromiumSocket(log, status, host, receive, recipients = [], calibrations = [], nativeExpiries = [], rendererSnapshots) {
   const clock = 'chromium.netlog.time_ms';
   const types = log?.constants?.logEventTypes;
   const socketType = log?.constants?.logSourceType?.SOCKET;
@@ -116,10 +141,26 @@ function joinChromiumSocket(log, status, host, receive, recipients = [], calibra
     if (!recipient || !expiry) return null;
     return { index, recipient, sender: expiry.uuid.replaceAll('-', ''), ...chromiumExpiryWindow(calibrations[index], expiry) };
   });
+  const rendererPages = rendererSnapshots?.flatMap((snapshot, index) => {
+    if (!snapshot) return [{ index, status: 'unavailable' }];
+    const { frames, ...coverage } = snapshot;
+    const byDigest = new Map();
+    for (const frame of frames) {
+      const matches = byDigest.get(frame.carrier_sha256) ?? [];
+      matches.push(frame);
+      byDigest.set(frame.carrier_sha256, matches);
+    }
+    return [{ index, ...coverage, byDigest }];
+  });
+  const rendererStreams = new Map(rendererPages?.map(page => [page.index, page]));
   const socketPlans = (receive?.sockets ?? []).map(socket => ({ socket, carriers: new Map() }));
   const rows = (receive?.rows ?? []).map(({ proxy, message, first_unobserved, coverage_gap, ...stamp }) => {
     const result = { ...stamp, status: 'unavailable' };
-    if (proxy.length > 1) result.status = 'ambiguous';
+    if (rendererSnapshots && recipients.includes(stamp.recipient)) result.renderer = { status: 'unavailable' };
+    if (proxy.length > 1) {
+      result.status = 'ambiguous';
+      if (result.renderer) result.renderer.status = 'ambiguous';
+    }
     if (proxy.length !== 1) return { result };
     const candidate = proxy[0];
     const plan = socketPlans[candidate.socket];
@@ -127,6 +168,7 @@ function joinChromiumSocket(log, status, host, receive, recipients = [], calibra
     if (socketPlans.some(other => other !== plan && (other.socket.browser_endpoint === plan.socket.browser_endpoint
       || other.socket.page_index === plan.socket.page_index))) {
       result.status = 'ambiguous';
+      if (result.renderer) result.renderer.status = 'ambiguous';
       return { result };
     }
     const match = plan.carriers.get(candidate.carrier_sha256) ?? { count: 0 };
@@ -136,17 +178,24 @@ function joinChromiumSocket(log, status, host, receive, recipients = [], calibra
   if (supported) collectSocketCarriers(log.events, types, socketType, end, host, socketPlans);
   for (const { result, candidate, plan, match } of rows) {
     if (!plan) continue;
+    const pageIndex = plan.socket.page_index;
+    const expiry = expiryWindows[pageIndex]?.sender === result.sender ? expiryWindows[pageIndex] : undefined;
     if (plan.ambiguous || match.count > 1) result.status = 'ambiguous';
     else if (match.count === 1) {
       result.status = 'observed';
       result.observation = { socket: candidate.socket, proxy_ordinal: candidate.ordinal, carrier_sha256: candidate.carrier_sha256,
         netlog_source: plan.source, at_ms: match.at_ms };
-      const expiry = expiryWindows[plan.socket.page_index];
-      if (expiry?.sender === result.sender) result.observation.expiry_timing = chromiumExpiryTiming(expiry, match.at_ms);
+      // NetLog truncates TimeTicks to whole milliseconds.
+      if (expiry) result.observation.expiry_timing = chromiumExpiryTiming(expiry, match.at_ms, match.at_ms + 1);
     } else if (plan.truncated) result.status = 'truncated';
+    if (result.renderer) result.renderer = result.status === 'ambiguous' ? { status: 'ambiguous' }
+      : rendererEvidence(rendererStreams.get(pageIndex), candidate, expiry, result.observation);
   }
   const expiries = expiryWindows.filter(Boolean);
-  return { clock, status: capture, room: receive?.room, ...(expiries.length && { expiries }), rows: rows.map(row => row.result) };
+  const renderer = rendererPages && { clock: 'chromium.cdp.websocket.time_ms', callback_clock: 'controller.performance.now',
+    pages: rendererPages.map(({ byDigest, ...page }) => page) };
+  return { clock, status: capture, room: receive?.room, ...(expiries.length && { expiries }), ...(renderer && { renderer }),
+    rows: rows.map(row => row.result) };
 }
 
 function netlogTime(time) {

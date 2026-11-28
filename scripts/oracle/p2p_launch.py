@@ -21,6 +21,7 @@ import p2p_lifecycle
 import p2p_lifecycle_controls
 import p2p_recovery
 import p2p_capacity
+import p2p_prediction
 import p2p_shrink
 import p2p_wrap
 import p2p_schedule
@@ -97,16 +98,17 @@ def case_builders(binary, observe=source):
             builders[f'mesh_{players}_delay_{delay}'] = partial(build_case, binary, players, delay, 'ordinary', observe=observe)
     for players in (2, 4, 8):
         for mode in ('loss', 'reorder', 'stall', 'retry'):
-            builders[f'mesh_{players}_{mode}'] = partial(build_case, binary, players, 0, mode, observe=observe)
+            builder = partial(build_case, binary, players, 0, mode, observe=observe)
+            builders[f'mesh_{players}_{mode}'] = p2p_prediction.StallCase(4, builder) if players == 2 and mode == 'stall' else builder
     for window in (2, 3, 5, 6, 7):
-        builders[f'mesh_2_window_{window}_stall'] = partial(
-            build_case, binary, 2, 0, 'stall', window=window, opening_steps=max(6, window + 2), observe=observe)
-    # The maximum comparable prediction window: the ordinary cases hold the deepest configured
-    # rollback boundary, and the stall schedule that exceeds window four instead recovers through
-    # a six-frame prediction run, so both the threshold refusal and the deep recovery path compare.
+        builder = partial(build_case, binary, 2, 0, 'stall', window=window, opening_steps=max(6, window + 2), observe=observe)
+        builders[f'mesh_2_window_{window}_stall'] = p2p_prediction.StallCase(window, builder)
+    # Exercise ordinary delivery and the actual cap at the maximum comparable window.
     for players in (2, 4, 8):
         builders[f'mesh_{players}_window_8'] = partial(build_case, binary, players, 0, 'ordinary', window=8, observe=observe)
-    builders['mesh_2_window_8_stall'] = partial(build_case, binary, 2, 0, 'stall', window=8, observe=observe)
+    # Eight admissions, two blocked attempts, then enough receipt turns to confirm the whole speculative prefix.
+    builders['mesh_2_window_8_stall'] = p2p_prediction.StallCase(
+        8, partial(build_case, binary, 2, 0, 'stall', window=8, opening_steps=10, rounds=7, observe=observe))
     # Explicit multi-local endpoint layouts: couch co-op machines owning several local slots.
     for name, (layout, mode) in LAYOUT_CASES.items():
         builders[name] = partial(build_layout_case, binary, layout, mode, observe=observe)
@@ -287,7 +289,7 @@ def build_layout_case(binary, layout, mode, delays=None, *, observe=source):
     return scenario
 
 
-def build_case(binary, players, delay, mode, window=4, width=4, delays=None, *, opening_steps=6, observe=source):
+def build_case(binary, players, delay, mode, window=4, width=4, delays=None, *, opening_steps=6, rounds=6, observe=source):
     scenario = {'format': 1, 'players': players, 'input_delay': delay, 'max_prediction': window, 'operations': []}
     if width != 4:
         scenario['input_width'] = width
@@ -349,7 +351,7 @@ def build_case(binary, players, delay, mode, window=4, width=4, delays=None, *, 
         delivered.update(p['id'] for p in latest['packets'])
         now = 400000; append('poll', peer=0); append('poll', peer=0)
         flush()
-    for frame in range(6):
+    for frame in range(rounds):
         for peer in range(players):
             step(peer)
             for delay in DELAY_CHANGES.get(mode, {}).get((frame, peer), []):
@@ -602,6 +604,7 @@ def run(args, wrap_only):
     if args.case:
         cases = {args.case: cases[args.case]}
     evidence = []
+    builders = case_builders(None)
     for name, scenario in cases.items():
         submitted = args.output / (name + '-scenario.json'); submitted.write_text(json.dumps(scenario, indent=2) + '\n')
         source_results = []
@@ -643,6 +646,11 @@ def run(args, wrap_only):
         if name == p2p_recovery.NAME:
             recovery_evidence = {'source': p2p_recovery.evidence(expected, scenario), 'godot': p2p_recovery.evidence(actuals[0], scenario)}
             controls.extend(p2p_recovery.controls(actuals[0], scenario))
+        prediction_evidence = {}
+        builder = builders.get(name)
+        if isinstance(builder, p2p_prediction.StallCase):
+            prediction_evidence, prediction_controls = builder.qualify(actuals[0], expected, scenario)
+            controls.extend(prediction_controls)
         capacity_evidence = {}
         if name == p2p_capacity.NAME:
             capacity_evidence = {'source': p2p_capacity.evidence(expected, scenario), 'godot': p2p_capacity.evidence(actuals[0], scenario)}
@@ -654,8 +662,12 @@ def run(args, wrap_only):
         evidence.append({'name': name, 'operations': len(scenario['operations']), 'packets': len(expected['packets']),
             'scenario_sha256': digest(submitted), 'source_sha256': digest(raw), 'actual_sha256': digest(path),
             'negative_controls': controls, 'lifecycle_evidence': lifecycle_evidence, 'recovery_evidence': recovery_evidence,
-            'capacity_evidence': capacity_evidence, 'wrap_evidence': wrap_evidence, 'fresh_process_repeat_equal': True})
+            'capacity_evidence': capacity_evidence, 'prediction_evidence': prediction_evidence,
+            'wrap_evidence': wrap_evidence, 'fresh_process_repeat_equal': True})
         print(name + ': actual input/ACK packets, ordered callbacks and confirmation match twice', flush=True)
+    if not wrap_only and args.case is None:
+        p2p_prediction.require_complete_windows(
+            item['prediction_evidence']['godot']['window'] for item in evidence if item['prediction_evidence'])
     process_evidence = process_controls(binary, engine, cases['mesh_2_delay_0'],
         json.loads((args.output / 'mesh_2_delay_0-source.json').read_text()),
         json.loads((args.output / 'mesh_2_delay_0-actual.json').read_text()), args.output, source_revision=source_revision) if 'mesh_2_delay_0' in cases else []
