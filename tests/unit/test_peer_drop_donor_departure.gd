@@ -102,9 +102,13 @@ func run_case(name: String, context: RefCounted) -> void:
 
 func _wrap_boundary(context: RefCounted, mesh: Dictionary) -> Dictionary:
 	var donor: Peer = mesh.peers[DONOR]
-	var queue: Queue = donor._core._queues[TARGET]
-	var old_tag: int = queue._frames[REUSED_INDEX]
-	context.equal(old_tag, REUSED_INDEX, "the donor starts with a live original target slot")
+	var original_index: int = FIRST_MISSING % CAPACITY
+	var initial_tags: Array[Vector2i] = []
+	for player: int in [0, DONOR, 2]:
+		var queue: Queue = mesh.peers[player]._core._queues[TARGET]
+		var tags: Vector2i = Vector2i(queue._frames[REUSED_INDEX], queue._frames[original_index])
+		context.equal(tags, Vector2i(REUSED_INDEX, -1), "each survivor starts with the old target row and an unused missing-row slot")
+		initial_tags.append(tags)
 	# Refresh the last complete receipt while frame seven is still the latest wire row.
 	mesh.now += 2000
 	for player: int in range(4):
@@ -127,16 +131,20 @@ func _wrap_boundary(context: RefCounted, mesh: Dictionary) -> Dictionary:
 		for exchange: int in range(2):
 			_deliver(context, mesh, _drain(mesh))
 	_cut = donor._core.received_frames()[TARGET]
-	var original_index: int = FIRST_MISSING % CAPACITY
 	var eligible: Array[Dictionary] = []
 	for player: int in [0, DONOR, 2]:
 		var peer: Peer = mesh.peers[player]
 		var target_queue: Queue = peer._core._queues[TARGET]
 		var actual: PackedByteArray = peer._core.retained_input(TARGET, FIRST_MISSING)
+		var reused_tag: int = target_queue._frames[REUSED_INDEX]
+		var original_tag: int = target_queue._frames[original_index]
+		context.equal(reused_tag, NEAREST if player == DONOR else REUSED_INDEX, "only the donor physically replaces the earlier target row")
+		context.equal(original_tag, FIRST_MISSING if player == DONOR else -1, "only the donor has a physical tag for the missing row")
 		eligible.append({
 			"peer": player, "current": peer.status().current_frame, "confirmed": peer.status().confirmed_frame,
 			"receipt": peer._core.received_frames()[TARGET], "floor": peer._core.rollback_floor(),
-			"capacity": target_queue._frames.size(), "tag": target_queue._frames[original_index], "original": actual.hex_encode(),
+			"capacity": target_queue._frames.size(), "original": actual.hex_encode(),
+			"reused_tags": [initial_tags[player].x, reused_tag], "original_tags": [initial_tags[player].y, original_tag],
 		})
 		context.equal(target_queue._frames.size(), CAPACITY, "every eligible survivor uses the negotiated minimum capacity")
 		context.equal(peer.status().confirmed_frame, FIRST_MISSING - 1, "each eligible survivor reaches the contiguous receipt bound")
@@ -146,8 +154,6 @@ func _wrap_boundary(context: RefCounted, mesh: Dictionary) -> Dictionary:
 	var target: Peer = mesh.peers[TARGET]
 	context.equal(steps[TARGET], Types.Code.PREDICTION_STALL, "the target reaches its real prediction stop")
 	context.equal([target.status().current_frame, _cut], [NEAREST, NEAREST], "the staged target row reaches the two-window send bound")
-	context.equal(queue._frames[REUSED_INDEX], NEAREST, "the newest target input physically replaces the older row at the same index")
-	context.equal(queue._frames[original_index], FIRST_MISSING, "the original missing row still holds its own slot")
 	var exposed: Array = []
 	var gossip: Array[int] = []
 	for recipient: int in [0, 2]:
@@ -159,7 +165,7 @@ func _wrap_boundary(context: RefCounted, mesh: Dictionary) -> Dictionary:
 		gossip.append(heard)
 		exposed.append(_check_original_replay(context, peer, FIRST_MISSING - 1))
 	return {
-		"eligible": eligible, "old_tag": old_tag, "replacement_tag": queue._frames[REUSED_INDEX],
+		"eligible": eligible,
 		"target_current": target.status().current_frame, "target_confirmed": target.status().confirmed_frame,
 		"target_step": Types.Code.find_key(steps[TARGET]), "gossip": gossip, "exposed": exposed,
 	}
@@ -191,8 +197,10 @@ func _service(context: RefCounted, mesh: Dictionary, active: Array[int]) -> void
 
 func _check_refusal(context: RefCounted, mesh: Dictionary) -> Dictionary:
 	var before: Dictionary = {}
+	var before_receipts: Dictionary = {}
 	for recipient: int in [0, 2]:
 		before[recipient] = _snapshot(mesh, recipient)
+		before_receipts[recipient] = mesh.peers[recipient]._core.received_frames()[TARGET]
 	var goodbye: Array = _send_goodbye(context, mesh, DONOR, true)
 	var goodbye_at: int = mesh.now
 	_drain(mesh)
@@ -208,6 +216,7 @@ func _check_refusal(context: RefCounted, mesh: Dictionary) -> Dictionary:
 		var lifecycle: int = peer.status().lifecycle
 		context.equal(lifecycle, Types.Lifecycle.TERMINATED, "Goodbye alone ends both recipients' matches")
 		var terminal: Array = _snapshot(mesh, recipient)
+		var terminal_receipt: int = peer._core.received_frames()[TARGET]
 		context.equal(terminal, before[recipient], "Goodbye preserves frame, confirmation, state and replay length")
 		var chunk: Dictionary = _held_history[recipient]
 		var receive_code: int = peer.receive(chunk.bytes, _id(DONOR), mesh.now)
@@ -216,12 +225,20 @@ func _check_refusal(context: RefCounted, mesh: Dictionary) -> Dictionary:
 		context.equal(step_code, Types.Code.TERMINATED, "terminal recovery cannot advance gameplay")
 		context.equal(peer._core.frozen_frame(TARGET), -1, "the original target stays unfrozen")
 		context.equal(peer._core.frozen_frame(DONOR), -1, "the donor cannot be removed from the pending certificate")
-		context.equal(peer._core.retained_input(TARGET, FIRST_MISSING).is_empty(), true, "the late chunk installs no original row")
+		var receipts: Array[int] = [before_receipts[recipient], terminal_receipt, peer._core.received_frames()[TARGET]]
+		context.equal(receipts, [FIRST_MISSING - 1, FIRST_MISSING - 1, FIRST_MISSING - 1], "departure and late delivery preserve the contiguous target receipt")
+		var late_rows: Array[String] = []
+		var queue: Queue = peer._core._queues[TARGET]
+		for frame: int in range(FIRST_MISSING, _cut + 1):
+			var lookup: Queue.Result = queue.confirmed_input(frame)
+			context.equal(lookup.code, Queue.Code.NO_CONFIRMED_INPUT, "every late offered row remains physically absent")
+			late_rows.append(lookup.bytes.hex_encode())
 		var after: Array = _snapshot(mesh, recipient)
 		context.equal(after, before[recipient], "the late chunk preserves frame, confirmation, state and replay length")
 		var replay: Array = _check_original_replay(context, peer, mini(before[recipient][0] - 1, before[recipient][1]))
 		peers.append({
 			"peer": recipient, "before": before[recipient], "terminal": terminal, "after": after, "replay": replay,
+			"target_receipts": receipts, "late_rows": late_rows,
 			"lifecycle": Types.Lifecycle.find_key(lifecycle), "receive": I.Code.find_key(receive_code), "step": Types.Code.find_key(step_code),
 			"frozen": [peer._core.frozen_frame(TARGET), peer._core.frozen_frame(DONOR)],
 		})
@@ -271,13 +288,15 @@ func _check_delivery(context: RefCounted, mesh: Dictionary) -> Dictionary:
 		_service(context, mesh, [0, DONOR, 2])
 	var installed: Array[Dictionary] = []
 	for survivor: int in [0, DONOR, 2]:
-		context.equal(mesh.peers[survivor]._core.frozen_frame(TARGET), _cut, "all survivors certify the receipt-raised cut")
+		var peer: Peer = mesh.peers[survivor]
+		var cut: int = peer._core.frozen_frame(TARGET)
+		context.equal(cut, _cut, "all survivors certify the receipt-raised cut")
+		var rows: PackedByteArray = PackedByteArray()
 		for frame: int in range(FIRST_MISSING, _cut + 1):
-			context.equal(mesh.peers[survivor]._core.retained_input(TARGET, frame), _sample(TARGET, frame), "all survivors install every original donor row")
-		installed.append({
-			"peer": survivor, "cut": mesh.peers[survivor]._core.frozen_frame(TARGET),
-			"bytes": mesh.peers[survivor]._core.retained_input(TARGET, _cut).hex_encode(),
-		})
+			var actual: PackedByteArray = peer._core.retained_input(TARGET, frame)
+			context.equal(actual, _sample(TARGET, frame), "all survivors install every original donor row")
+			rows.append_array(actual)
+		installed.append({"peer": survivor, "cut": cut, "bytes": rows.hex_encode()})
 	_play(context, mesh, 16, true, [0, DONOR, 2], TARGET)
 	var through: int = mesh.peers[DONOR].status().confirmed_frame - 1
 	for recipient: int in [0, 2]:

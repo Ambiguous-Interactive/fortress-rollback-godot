@@ -916,8 +916,9 @@ With zero delay, a recipient can stage a last input at its stalled current
 frame, 15. As the target includes its receipt for that slot, target confirmation
 is at most 15 and the target can stage frame 23 at its own prediction stall.
 Godot reaches both bounds. The donor's real frame-23 input replaces tag 5
-and its frame-8 tag still contains `6d6e6f70`. Frame 26 would be required to
-reuse its slot. The pinned Rust schedule stops the target at current 22 and
+and its frame-8 tag still contains `6d6e6f70`. Both recipient rings retain tag 5
+and have empty frame-8 slots. The receipt records both tags before and after
+for each survivor. Frame 26 would be required to reuse the donor's frame-8 slot. The pinned Rust schedule stops the target at current 22 and
 confirmation 14. Its donor's retained interval moves from [4, 7] to [6, 22],
 which spans frame 8. The source receipt derives its reclaim floor from the
 observed current frame and configured window, while Godot reads the floor
@@ -936,8 +937,9 @@ frames 8–23, certifies cut 23 and keeps three survivors in canonical agreement
 through frame 28. Delivering the donor's Goodbye first excludes the only holder.
 The departed donor still owns frame 8. Neither recipient certifies locally or
 publishes READY before the transfer, and no peer publishes COMMIT. Both recipients
-leave both slots unfrozen, refuse the late chunk and keep their exposed replay
-through frame 7. This membership transition is distinct from physical eviction.
+leave both slots unfrozen and keep their exposed replay through frame 7. Every
+offered row from 8 through 23 stays absent after late delivery, and both target
+receipts stay at 7. This membership transition is distinct from physical eviction.
 
 Run the pinned comparison once with each Godot editor and a separate output
 directory. The comparison records physical observations, original wire bytes and replay
