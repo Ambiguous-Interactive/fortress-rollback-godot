@@ -121,6 +121,10 @@ Keep the observed first failure separate from later cleanup termination. A stopp
 For held packets, keep publication, release and socket consumption clocks separate. Bind a positive COMMIT to its real routes and the recipients' installed history.
 Fence both browser endpoints at the recovered prefix before releasing new input.
 Join a held relay carrier to its exact browser message. Require a unique candidate for SDK admission when the SDK reports envelope bytes alone.
+When extending a browser witness, run the workflow's actual engine and browser axes.
+Swap the browser assignments in a mixed receipt while preserving its browser inventory.
+For retained local samples, check code, frame, bytes and status on the installed
+backend during a real prediction stall. Check the authored sample independently.
 Read typed outcomes and original histories from each runtime. Case names and assertion counts identify the tests and cannot establish runtime outcomes.
 For an exported room with a closed browser page, join original page indices to UUIDs before closing. Start the SDK notice window at the controller action.
 Rebuild speculative snapshots from bounded applied callback inputs. Use the observed delivery history in live cases whose prediction varies with arrival order.
