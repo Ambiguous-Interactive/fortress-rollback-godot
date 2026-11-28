@@ -75,6 +75,41 @@ async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly
   } finally { active = false; }
 }
 
+async function resolveDonorHistory(pages, contexts, closeDonor) {
+  const uuids = await Promise.all(pages.map(page => page.evaluate(() => document.body.dataset.fortressUuid)));
+  if (uuids.length !== 3 || uuids.some(uuid => !uuid) || new Set(uuids).size !== 3)
+    throw new Error('donor history room identities missing');
+  const recipient = uuids[0] < uuids[1] ? 0 : 1;
+  const donor = 1 - recipient;
+  const heldHandle = await pages[recipient].waitForFunction(
+    () => document.body.dataset.fortressDonorHistoryHeld, null, { timeout: 30000 });
+  const held = JSON.parse(await heldHandle.jsonValue());
+  await heldHandle.dispose();
+  if (held.recipient !== uuids[recipient] || held.donor !== uuids[donor] || held.target !== uuids[2])
+    throw new Error('selected history donor differs from its live browser identity');
+  const observed = await pages[donor].evaluate(() => ({
+    uuid: document.body.dataset.fortressUuid,
+    ready: document.body.dataset.fortressDropReady === 'true',
+    frame: Number(document.body.dataset.fortressFrame),
+    room: document.body.dataset.fortressRoom,
+    open_sockets: window.fortressSockets.filter(record => record.socket.readyState === WebSocket.OPEN).length,
+    first_history: document.body.dataset.fortressDonorFirstHistory,
+    rtc_sent: window.fortressRtc.sent,
+    rtc_received: window.fortressRtc.received,
+    outcome: document.body.dataset.fortressWebrtc ?? null,
+  }));
+  if (observed.uuid !== held.donor || !observed.ready || observed.frame !== 7 || !observed.room
+    || observed.first_history !== held.packet || observed.open_sockets !== 1 || observed.rtc_sent < 1 || observed.rtc_received < 1 || observed.outcome !== null)
+    throw new Error('selected donor stopped before the controller action: ' + JSON.stringify(observed));
+  if (closeDonor) {
+    await contexts[donor].close();
+    if (!pages[donor].isClosed()) throw new Error('selected donor browser context stayed open');
+  } else {
+    await pages[recipient].evaluate(() => { window.fortressReleaseDonorHistory = true; });
+  }
+  return { held, observed, action: closeDonor ? 'context_closed' : 'history_released', donor_index: donor };
+}
+
 async function releaseRecordingTail(pages) {
   await Promise.all(pages.map(page => page.waitForFunction(
     () => document.body.dataset.fortressRecordingTailReady === 'true', null, { timeout: 120000 })));
@@ -86,7 +121,8 @@ async function releaseRecordingTail(pages) {
 
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault,
   disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false, dropClose = false,
-  dropAnswer = false, dropRelay = false, dropMissing = false, dropHistoryLost = false, dropCommit = false, dropSecond = false, dropRollback = false, dropForeign = false,
+  dropAnswer = false, dropRelay = false, dropMissing = false, dropHistoryLost = false, dropDonorProcess = false, dropCommit = false,
+  dropSecond = false, dropRollback = false, dropForeign = false,
   dropRoom = false, dropRoomContinue = false, dropProcess = false, dropProcessMissing = false,
   dropRoomAfterDrop = false, dropRoomBeforeDrop = false, dropOverlap = false, recordingPressure = false, secondBoundary = '' }) {
   window.fortressRecordingPressure = recordingPressure;
@@ -103,6 +139,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   window.fortressPeerDrop = peerDrop;
   window.fortressDropMissing = dropMissing;
   window.fortressDropHistoryLost = dropHistoryLost;
+  window.fortressDropDonorProcess = dropDonorProcess;
   window.fortressDropCommit = dropCommit;
   window.fortressDropSecond = dropSecond;
   window.fortressSecondBoundary = secondBoundary;
@@ -433,7 +470,7 @@ async function main() {
     'peer-drop-second-last-turn': 'last-turn',
   }[process.argv[4]] || '';
   const peerDrop = ['peer-drop', 'peer-drop-corrupt', 'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay',
-    'peer-drop-missing', 'peer-drop-missing-lost', 'peer-drop-commit', 'peer-drop-second', 'peer-drop-second-after-ack', 'peer-drop-second-last-turn',
+    'peer-drop-missing', 'peer-drop-missing-lost', 'peer-drop-donor-process', 'peer-drop-commit', 'peer-drop-second', 'peer-drop-second-after-ack', 'peer-drop-second-last-turn',
     'peer-drop-rollback', 'peer-drop-foreign',
     'peer-drop-room', 'peer-drop-room-continue', 'peer-drop-process', 'peer-drop-process-missing',
     'peer-drop-room-after-drop', 'peer-drop-room-before-drop', 'peer-drop-overlap'].includes(process.argv[4]);
@@ -444,7 +481,8 @@ async function main() {
   const dropRoomAfterDrop = process.argv[4] === 'peer-drop-room-after-drop';
   const dropRoomBeforeDrop = process.argv[4] === 'peer-drop-room-before-drop';
   const dropHistoryLost = process.argv[4] === 'peer-drop-missing-lost';
-  const dropMissing = process.argv[4] === 'peer-drop-missing' || dropHistoryLost;
+  const dropDonorProcess = process.argv[4] === 'peer-drop-donor-process';
+  const dropMissing = process.argv[4] === 'peer-drop-missing' || dropHistoryLost || dropDonorProcess;
   const dropCommit = process.argv[4] === 'peer-drop-commit';
   const dropSecond = Boolean(secondBoundary) || process.argv[4] === 'peer-drop-second';
   const dropOverlap = process.argv[4] === 'peer-drop-overlap';
@@ -512,6 +550,7 @@ async function main() {
       let survivorUuids = null;
       let teardown;
       let serialDispatch;
+      let donorHistory;
       try {
         await boundedRoom(async () => {
         await boundedRoom(async () => {
@@ -532,7 +571,7 @@ async function main() {
           });
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
             faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop,
-            dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, dropHistoryLost, dropCommit, dropSecond, dropRollback, dropForeign,
+            dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, dropHistoryLost, dropDonorProcess, dropCommit, dropSecond, dropRollback, dropForeign,
             dropRoom, dropRoomContinue, dropProcess, dropProcessMissing, dropRoomAfterDrop, dropRoomBeforeDrop, dropOverlap, recordingPressure, secondBoundary });
           await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
         }
@@ -668,6 +707,10 @@ async function main() {
               } else await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
             }
           }
+          if (dropMissing && !dropHistoryLost) {
+            donorHistory = await resolveDonorHistory(pages, contexts, dropDonorProcess);
+            if (dropDonorProcess) evidencePages = pages.filter((_, index) => index !== donorHistory.donor_index);
+          }
           if (secondBoundary) {
             const ready = await Promise.all(pages.slice(0, 2).map(async page => {
               const handle = await page.waitForFunction(() => document.body.dataset.fortressSerialReady
@@ -683,11 +726,14 @@ async function main() {
               window.fortressSecondRelease = JSON.stringify(release);
             }, serialDispatch);
           }
-          if (!dropRoom && !dropRoomContinue && !dropRoomAfterDrop && !dropRoomBeforeDrop && !dropProcess && !dropProcessMissing) {
+          if (!dropRoom && !dropRoomContinue && !dropRoomAfterDrop && !dropRoomBeforeDrop && !dropProcess && !dropProcessMissing && !dropDonorProcess) {
             const gameplay = waitGameplay(pages, undefined, undefined, recordingPressure ? 256 : secondBoundary ? 43 : 39);
             if (recordingPressure) await Promise.all([gameplay, releaseRecordingTail(pages)]);
             else await gameplay;
           }
+          if (dropDonorProcess) await Promise.all(evidencePages.map(page => page.waitForFunction(
+            () => document.body.dataset.fortressGameplayDone === 'true' || document.body.dataset.fortressWebrtc !== undefined,
+            null, { timeout: 30000 })));
           await Promise.all(evidencePages.map(page => page.evaluate(() => { window.fortressTeardownArmed = true; })));
           await Promise.all(evidencePages.map(page => page.waitForFunction(() => document.body.dataset.fortressTeardownArmed === 'true',
             null, { timeout: 10000 })));
@@ -741,8 +787,12 @@ async function main() {
           if (failed.length !== 2 || passed.length !== 1 || !failed.every(peer => isRoomContinueFailure(peer.result)))
             throw new Error(JSON.stringify({ control: 'wrong_room_fence_boundary', peers }));
         }
-        peers.forEach((peer, index) => { peer.browser = browserPair[index % 2]; peer.display = displays[index]; });
-        records.push({ players: count, peers, departedUuid, processClosed, processHeld, survivorUuids, serialDispatch });
+        peers.forEach((peer, index) => {
+          const pageIndex = pages.indexOf(evidencePages[index]);
+          peer.browser = browserPair[pageIndex % 2];
+          peer.display = displays[pageIndex];
+        });
+        records.push({ players: count, peers, departedUuid, processClosed, processHeld, survivorUuids, serialDispatch, donorHistory });
         });
       } catch (error) {
         roomFailures.push(error);
@@ -767,7 +817,7 @@ async function main() {
       browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })),
       version: browsers[0].version(), browser_instances: 2, firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
       faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose,
-      dropAnswer, dropRelay, dropMissing, dropHistoryLost, dropCommit, dropSecond, dropRollback, dropForeign, dropRoom, dropRoomContinue,
+      dropAnswer, dropRelay, dropMissing, dropHistoryLost, dropDonorProcess, dropCommit, dropSecond, dropRollback, dropForeign, dropRoom, dropRoomContinue,
       dropProcess, dropProcessMissing, dropRoomAfterDrop, dropRoomBeforeDrop, dropOverlap, recordingPressure, secondBoundary, records, errors }));
   } catch (error) {
     failures.push(error);

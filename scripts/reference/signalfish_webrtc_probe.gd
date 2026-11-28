@@ -59,6 +59,7 @@ var pressure_service_turn: int = 0
 var mixed: Mixed = Mixed.new()
 var drop_enabled: bool = false
 var history_lost: bool = false
+var history_donor_process: bool = false
 var drop_overlap: bool = false
 var room_departure: bool = false
 var room_player_left: Array[String] = []
@@ -78,6 +79,7 @@ func _ready() -> void:
 	drop_enabled = JavaScriptBridge.eval("window.fortressPeerDrop || false")
 	drop_overlap = JavaScriptBridge.eval("window.fortressDropOverlap || false")
 	history_lost = JavaScriptBridge.eval("window.fortressDropHistoryLost || false")
+	history_donor_process = JavaScriptBridge.eval("window.fortressDropDonorProcess || false")
 	room_departure = JavaScriptBridge.eval("window.fortressDropRoom || false")
 	process_missing = JavaScriptBridge.eval("window.fortressDropProcessMissing || false")
 	second_departure = JavaScriptBridge.eval("window.fortressDropSecond || false")
@@ -95,17 +97,17 @@ func _run() -> void:
 	if not clients.is_empty():
 		local_uuid = clients[0].get_player_id()
 	if ok: ok = await _play(player_count)
-	if not room_departure and not history_lost and not drop_overlap:
+	if not (room_departure or history_lost or history_donor_process or drop_overlap):
 		ok = ok and _healthy(true)
 	var control: bool = JavaScriptBridge.eval("window.fortressCorrupt || window.fortressDefaultFactory || window.fortressDropCorrupt || window.fortressDropRoomContinue || false")
-	if room_departure or history_lost or drop_overlap:
+	if room_departure or history_lost or history_donor_process or drop_overlap:
 		if ok or control:
 			JavaScriptBridge.eval("document.body.dataset.fortressGameplayDone = 'true'")
 			# The fence and the lost-history expiry are terminal states; the
 			# generic lifetime checks would reject the deliberate termination.
 			# Membership changes during the shared teardown are expected once
 			# the terminal witness has already published its own rows.
-			if history_lost:
+			if history_lost or history_donor_process:
 				tearing_down = true
 			if ok and (not await _wait_room_teardown() or (drop_overlap and not _healthy())):
 				ok = false
@@ -407,6 +409,9 @@ func _observe_client(client: SDK) -> void:
 	for signal_name: String in MEMBERSHIP_SIGNALS:
 		client.connect(signal_name, func(_first: Variant = null, _second: Variant = null) -> void:
 			if membership_frozen:
+				if history_donor_process and signal_name == "player_left" and _first is String:
+					room_player_left.append(_first)
+					return
 				if room_departure and signal_name == "player_left" and _first is String:
 					if local_index != 2:
 						room_player_left.append(_first)

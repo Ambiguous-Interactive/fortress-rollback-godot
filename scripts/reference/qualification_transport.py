@@ -19,7 +19,7 @@ TRANSPORT = {
     'faults': ('faults', 'peer-drop-foreign', 'peer-drop-room-before-drop', 'peer-drop-second-last-turn'),
     'mixed': ('mixed', 'corrupt', 'peer-drop-missing', 'peer-drop-second', 'peer-drop-overlap'),
     'mixed-default': ('mixed-default', 'mixed-disabled', 'peer-drop-missing-lost', 'peer-drop-commit'),
-    'mixed-close': ('mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-room-continue'),
+    'mixed-close': ('mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-room-continue', 'peer-drop-donor-process'),
     'departures': ('default', 'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay', 'peer-drop-rollback',
                    'peer-drop-room', 'peer-drop-process', 'recording-pressure'),
 }

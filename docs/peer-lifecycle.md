@@ -403,6 +403,16 @@ a failed barrier, `timeout` on both survivors, no `peer_dropped` event, no froze
 interval, every donor journal chunk dropped at least twice, an unchanged pre-cut confirmed prefix
 against the independently reconstructed original inputs, and no frame advance from a post-terminal
 step or poll. A committed, frozen or continued receipt fails the control.
+The `peer-drop-donor-process` cell uses the `peer-drop-missing` schedule in
+a three-player room. The recipient holds the donor's exact original chunk
+after it arrives over WebRTC. The delivery control dispatches that chunk,
+installs the original rows and commits cut 6. The physical case closes the
+selected donor's browser context at the same hold. Both remaining sockets
+receive SignalFish `player_left` for the donor and the adapters detach their
+meshes and require a restart. The recipient's adapter refuses the exact
+held chunk. Its rollback barrier remains pending, with the same confirmed
+simulation and replay prefix and neither slot frozen.
+
 The `peer-drop-overlap` case uses four exported clients in a fixed room. After the first peer goes silent, the coordinator
 receives both READY reports and withholds COMMIT to one survivor. Another survivor receives the original COMMIT at the
 direct boundary, closes its endpoint before dispatch, and stops sending. The two remaining survivors end for participant

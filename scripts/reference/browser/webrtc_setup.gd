@@ -149,7 +149,7 @@ func run(host: Node, count: int) -> bool:
 		config.sync_test = false
 		config.check_distance = 0
 		config.max_snapshot_bytes = 4 + 4 * count
-		if host.mixed_enabled:
+		if host.mixed_enabled or JavaScriptBridge.eval("window.fortressDropMissing && !window.fortressDropHistoryLost"):
 			config.replay_max_frames = host.frame_count
 			config.diagnostic_version = "fortress-webrtc-integer-v1"
 			config.diagnostic_seed = "0"
@@ -201,6 +201,13 @@ class DropDirect:
 	## The missing-history witness withholds only the departing slot's original
 	## input rows on one selected link. Every other packet keeps the production
 	## transport path.
+	var _witness_peer: Peer
+	var _clock: int = 0
+	var _history_sender: String
+	var _held_history: PackedByteArray = PackedByteArray()
+	var _held_sender: String
+	var _history_armed: bool = false
+	var _observe_history: bool = false
 	var _drop_identity: PackedByteArray = PackedByteArray()
 	var _drop_slot: int = -1
 	var _drop_from: int = -1
@@ -231,6 +238,33 @@ class DropDirect:
 	var _commit_retry_us: int = -1
 	var _commit_retry_slot: int = -1
 
+	func configure(mesh: Object, membership: Membership, adapter: Adapter, peer: Peer, options: DirectTypes.Options = null) -> int:
+		_witness_peer = peer
+		_observe_history = bool(JavaScriptBridge.eval("window.fortressDropMissing && !window.fortressDropHistoryLost"))
+		if _observe_history:
+			return configure_packet_receiver(mesh, membership, adapter, _receive_history_boundary, options)
+		return super.configure(mesh, membership, adapter, peer, options)
+
+	func arm_history_receive(sender: String) -> void:
+		_history_sender = sender
+		_history_armed = true
+
+	func held_history() -> PackedByteArray:
+		return _held_history.duplicate()
+
+	func release_history(now_us: int) -> int:
+		_history_armed = false
+		return _adapter.receive_mesh(_witness_peer, _held_history, Membership.uuid_to_peer_id(_held_sender), now_us)
+
+	func _receive_history_boundary(sender: String, bytes: PackedByteArray) -> int:
+		if _history_armed and sender == _history_sender and bytes.size() >= 46 \
+			and bytes[6] == T.Kind.DROP_BARRIER and bytes[44] == Drop.Phase.BACKFILL and bytes[45] == Drop.Stage.HISTORY:
+			if _held_history.is_empty():
+				_held_history = bytes
+				_held_sender = sender
+			return I.Code.OK
+		return _adapter.receive_mesh(_witness_peer, bytes, Membership.uuid_to_peer_id(sender), _clock, _token)
+
 	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int, slot: int) -> void:
 		_drop_identity = identity.duplicate()
 		_drop_from = from_frame
@@ -248,6 +282,7 @@ class DropDirect:
 		_commit_remaining = count
 
 	func poll(now_us: int, next_token_factory: Callable = Callable()) -> DirectTypes.Result:
+		_clock = now_us
 		_withhold_missing_inputs()
 		_withhold_history()
 		var retries: Array[Dictionary] = _withhold_commit(now_us)
@@ -370,6 +405,8 @@ class DropDirect:
 			if _history_remaining > 0:
 				_history_remaining -= 1
 				_history_dropped += 1
+				if _observe_history and _history_dropped == 1:
+					JavaScriptBridge.eval("document.body.dataset.fortressDonorFirstHistory = " + JSON.stringify(packet.bytes.hex_encode()))
 				_history_drop_chunk = int(decoded.message.chunk_index)
 				_history_drop_operation = int(decoded.message.operation)
 				_history_drop_count = int(decoded.message.chunk_count)
@@ -388,9 +425,9 @@ class DropDirect:
 		_pending = kept
 
 	func _withhold_missing_inputs() -> void:
-		if _drop_identity.is_empty() or _membership == null or _peer == null:
+		if _drop_identity.is_empty() or _membership == null or _witness_peer == null:
 			return
-		var current: int = _peer.status().current_frame - 1
+		var current: int = _witness_peer.status().current_frame - 1
 		if current < _drop_from or current > _drop_through:
 			return
 		var limits: T.Limits = T.Limits.new()
