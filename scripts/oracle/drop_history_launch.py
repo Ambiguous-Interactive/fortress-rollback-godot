@@ -393,9 +393,16 @@ def run(args):
         silent = departure['source']['silence']
         delivered = departure['source']['deliver']
         godot = departure['godot_evidence'][drop_history_donor_departure.REFUSAL_CASE]['outcome']
-        donor_summary = {'donor_departure': {'source_first_terminal_offset_us': silent['terminal']['0']['offset'],
-                                            'source_abort_emissions': len(silent['aborts']),
-                                            'control_cut': delivered['commits'][0]['body']['cut'], 'godot_refusal': godot['failures'][0]['reason']}}
+        wrapped = departure['godot_evidence'][drop_history_donor_departure.WRAPPED_DELIVERY]
+        wrapped_refusal = departure['godot_evidence'][drop_history_donor_departure.WRAPPED_REFUSAL]
+        donor_summary = {
+            'donor_departure': {'source_first_terminal_offset_us': silent['terminal']['0']['offset'],
+                                'source_abort_emissions': len(silent['aborts']),
+                                'control_cut': delivered['commits'][0]['body']['cut'], 'godot_refusal': godot['failures'][0]['reason']},
+            'donor_retention': {'godot_donor': wrapped['retention']['eligible'][1], 'source_donor': departure['source_retention']['eligible'][1],
+                                'godot_cut': wrapped['opening'][0]['cut'], 'godot_replaced_tag': wrapped['retention']['old_tag'],
+                                'godot_refusal': wrapped_refusal['outcome']['failures'][0]['reason']},
+        }
     verify_identity()
     records = args.output / 'comparison.json'
     records.write_text(json.dumps(comparison, indent=2) + '\n')
@@ -416,6 +423,10 @@ def run(args):
         evidence = donor_summary['donor_departure']
         print(f"donor departure: Rust stops both recipients {evidence['source_first_terminal_offset_us']} us after donor silence. "
               f"Godot Goodbye reports {evidence['godot_refusal']}. Both preserve original rows.", flush=True)
+        retention = donor_summary['donor_retention']
+        print(f"donor retention: Godot replaces tag {retention['godot_replaced_tag']} with {retention['godot_cut']} and retains tag "
+              f"{retention['godot_donor']['tag']}; Rust retains {retention['source_donor']['retained']}. Both donor floors reach 7. "
+              f"Godot certifies cut {retention['godot_cut']} with the donor and refuses after donor Goodbye, twice.", flush=True)
 
 
 if __name__ == '__main__':

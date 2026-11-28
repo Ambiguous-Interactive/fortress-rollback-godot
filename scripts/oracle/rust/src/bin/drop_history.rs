@@ -473,6 +473,10 @@ fn main() {
             return;
         }
     }
+    if arguments == ["--donor-retention-boundary"] && OBSERVE_CHECKSUMS {
+        println!("{}", donor_departure::retention_boundary());
+        return;
+    }
     if arguments == ["--drop-all-history"] {
         match run(false, 4, 2, true, false, false, false, false, 0, None, true) {
             Ok(result) => println!("{result}"),

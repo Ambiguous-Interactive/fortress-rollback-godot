@@ -12,17 +12,19 @@ SUITE = 'res://tests/unit/test_peer_drop_donor_departure.gd'
 GODOT_PREFIX = 'FORTRESS_DONOR_DEPARTURE '
 DELIVERY_CASE = 'original_donor_chunk_arrives'
 REFUSAL_CASE = 'chosen_donor_leaves_before_history'
-CASES = {DELIVERY_CASE, REFUSAL_CASE}
+WRAPPED_DELIVERY = 'wrapped_donor_retains_history'
+WRAPPED_REFUSAL = 'wrapped_donor_leaves_before_history'
+CASES = {DELIVERY_CASE, REFUSAL_CASE, WRAPPED_DELIVERY, WRAPPED_REFUSAL}
 
 
-def original_rows():
+def original_rows(limit=20, cut=8):
     totals = [0] * 4
     rows = []
-    for frame in range(20):
+    for frame in range(limit):
         inputs = []
         for player in range(4):
-            disconnected = player == 3 and frame > 8
-            original_frame = 8 if disconnected else frame
+            disconnected = player == 3 and frame > cut
+            original_frame = cut if disconnected else frame
             sample = bytes((original_frame * 11 + player * 7 + index) % 251 for index in range(4))
             totals[player] += sum(sample)
             inputs.append({'bytes': sample.hex(), 'status': 'disconnected' if disconnected else 'confirmed'})
@@ -191,34 +193,72 @@ def read_godot_evidence(stdout):
         if not line.startswith(GODOT_PREFIX):
             continue
         record = decode_trace(line[len(GODOT_PREFIX):])
-        fields(record, 'case opening outcome', 'Godot donor departure case')
-        require(type(record['case']) is str and record['case'] in records, 'Godot donor departure case name')
+        case = record.get('case')
+        require(type(case) is str and case in records, 'Godot donor departure case name')
+        fields(record, 'case opening outcome retention' if case in (WRAPPED_DELIVERY, WRAPPED_REFUSAL) else 'case opening outcome',
+               'Godot donor departure case')
         records[record['case']].append(record)
     require(all(len(runs) == 2 and same(*runs) for runs in records.values()), 'Godot donor departure evidence inventory and repeat')
     return {case: runs[0] for case, runs in records.items()}
 
 
-def check_godot(evidence):
+def check_source_retention(source, revision):
+    label = 'source donor retention'
+    fields(source, 'revision capacity eligible initial_range target_current target_confirmed original advanced', label)
+    require(same([source['revision'], source['capacity'], source['initial_range']], [revision, 18, [4, 7]]), label + ' pinned ring start')
+    require(same([source['target_current'], source['target_confirmed'], source['advanced']], [22, 14, [False] * 4]), label + ' prediction stop')
+    require(same(source['eligible'], [
+        {'peer': peer, 'current': 14 + donor, 'confirmed': 6 + donor, 'floor': 6 + donor, 'window': 8, 'target_connected': True,
+         'receipt': 22 if donor else 7, 'retained': [6, 22] if donor else [5, 7]}
+        for peer, donor in enumerate((False, True, False))
+    ]), label + ' receipt, reclaim floor and physical range')
+    expected = [{'frame': row['frame'], 'inputs': [item['bytes'] for item in row['inputs']]} for row in original_rows(7)]
+    require(same(source['original'], [expected] * 2), label + ' earlier original exposure')
+
+
+def check_godot_retention(delivery, refusal):
+    label = 'Godot donor retention'
+    retention = delivery['retention']
+    require(same(retention, refusal['retention']), label + ' identical partition schedule')
+    fields(retention, 'eligible old_tag replacement_tag target_current target_confirmed target_step gossip exposed', label)
+    require(same([retention[key] for key in ('old_tag', 'replacement_tag', 'target_current', 'target_confirmed', 'target_step', 'gossip')],
+                 [5, 23, 23, 15, 'PREDICTION_STALL', [7, 7]]), label + ' actual slot replacement and nearest reachable boundary')
+    missing = original_rows(9)[8]['inputs'][3]['bytes']
+    require(same(retention['eligible'], [
+        {'peer': peer, 'current': 15, 'confirmed': 7, 'floor': 7, 'capacity': 18, 'receipt': 23 if donor else 7,
+         'tag': 8 if donor else -1, 'original': missing if donor else ''}
+        for peer, donor in enumerate((False, True, False))
+    ]), label + ' each eligible survivor and original row tag')
+    expected = [{key: row[key] for key in ('frame', 'inputs')} for row in original_rows(8)]
+    require(same(retention['exposed'], [expected] * 2), label + ' earlier original replay')
+
+
+def check_godot(evidence, wrapped=False):
     label = 'Godot donor departure'
-    expected = original_rows()
-    sample = expected[8]['inputs'][3]['bytes']
-    delivery = evidence[DELIVERY_CASE]
-    refusal = evidence[REFUSAL_CASE]
+    cut, length, exposed = (23, 29, 8) if wrapped else (8, 20, 5)
+    expected = original_rows(length, cut)
+    history = ''.join(row['inputs'][3]['bytes'] for row in expected[8:cut + 1])
+    sample = expected[cut]['inputs'][3]['bytes']
+    delivery = evidence[WRAPPED_DELIVERY if wrapped else DELIVERY_CASE]
+    refusal = evidence[WRAPPED_REFUSAL if wrapped else REFUSAL_CASE]
+    if wrapped:
+        check_godot_retention(delivery, refusal)
     require(same(delivery['opening'], refusal['opening']), label + ' shared original plan')
     opening = delivery['opening']
     require(type(opening) is list and len(opening) == 2, label + ' opening recipients')
     operation = opening[0].get('operation') if type(opening[0]) is dict else None
     integer(operation, 1, (1 << 53) - 1, label + ' operation')
     require(same(opening, [{'peer': peer, 'donor': 1, 'coordinator': 0, 'receipt': 7, 'first': 8,
-                            'cut': 8, 'operation': operation, 'bytes': sample} for peer in (0, 2)]), label + ' original held plan')
+                            'cut': cut, 'operation': operation, 'bytes': history} for peer in (0, 2)]), label + ' original held plan')
     accepted = delivery['outcome']
     fields(accepted, 'cuts installed canonical', label + ' delivery')
-    require(same(accepted['cuts'], {'0': 8, '1': 8, '2': 8})
-            and same(accepted['installed'], [{'peer': peer, 'cut': 8, 'bytes': sample} for peer in (0, 1, 2)]), label + ' certified cut and bytes')
+    require(same(accepted['cuts'], {'0': cut, '1': cut, '2': cut})
+            and same(accepted['installed'], [{'peer': peer, 'cut': cut, 'bytes': sample} for peer in (0, 1, 2)]), label + ' certified cut and bytes')
     require(same(accepted['canonical'], [{'frame': row['frame'], 'states': [row['bytes']] * 3} for row in expected]), label + ' canonical continuation')
     stopped = refusal['outcome']
-    fields(stopped, 'goodbye goodbye_at late_at failures peers cuts', label + ' refusal')
+    fields(stopped, 'goodbye goodbye_at late_at failures peers cuts commit_publications', label + ' refusal')
     require(same(stopped['goodbye'], [0, 2]) and same(stopped['cuts'], {}), label + ' Goodbye routes and no cuts')
+    integer(stopped['commit_publications'], 0, 0, label + ' no certificate publication')
     integer(stopped['goodbye_at'], 1, 100_000, label + ' Goodbye clock')
     integer(stopped['late_at'], stopped['goodbye_at'] + 1000, stopped['goodbye_at'] + 1000, label + ' late delivery clock')
     require(same(stopped['failures'], [{'at_us': stopped['goodbye_at'], 'peer': peer,
@@ -228,9 +268,9 @@ def check_godot(evidence):
         fields(row, 'peer before terminal after replay lifecycle receive step frozen', label + ' terminal peer')
         require(same([row[key] for key in ('peer', 'lifecycle', 'receive', 'step', 'frozen')],
                      [peer, 'TERMINATED', 'TERMINATED', 'TERMINATED', [-1, -1]]), label + ' terminal refuses late chunk and advancement')
-        snapshot = [6, 4, predicted_snapshot(expected, 5, peer), 5]
+        snapshot = [15, 7, original_rows(15, 7)[-1]['bytes'], exposed] if wrapped else [6, 4, predicted_snapshot(expected, 5, peer), exposed]
         require(all(same(row[key], snapshot) for key in ('before', 'terminal', 'after')), label + ' preserved original snapshot')
-        require(same(row['replay'], [{key: row[key] for key in ('frame', 'inputs')} for row in expected[:5]]), label + ' preserved original replay')
+        require(same(row['replay'], [{key: row[key] for key in ('frame', 'inputs')} for row in expected[:exposed]]), label + ' preserved original replay')
 
 
 def reject_control(check, name, diagnostic):
@@ -273,6 +313,16 @@ def controls(cases, revision, godot, stdout):
     for key in ('before', 'terminal', 'after'):
         altered[REFUSAL_CASE]['outcome']['peers'][0][key][2] = '00' * 40
     names.append(reject_control(lambda: check_godot(altered), 'godot_changed_game', 'preserved original snapshot'))
+    altered = deepcopy(godot)
+    for case in (WRAPPED_DELIVERY, WRAPPED_REFUSAL):
+        altered[case]['retention']['eligible'][1]['tag'] = 26
+    names.append(reject_control(lambda: check_godot(altered, wrapped=True), 'godot_substituted_original_tag', 'original row tag'))
+    altered = deepcopy(godot)
+    altered[WRAPPED_REFUSAL]['outcome']['cuts'] = {'0': 23}
+    names.append(reject_control(lambda: check_godot(altered, wrapped=True), 'godot_partial_freeze_after_wrap', 'no cuts'))
+    altered = deepcopy(godot)
+    altered[WRAPPED_REFUSAL]['outcome']['peers'][1]['replay'][7]['inputs'][3]['bytes'] = 'ffffffff'
+    names.append(reject_control(lambda: check_godot(altered, wrapped=True), 'godot_changed_exposed_replay_after_wrap', 'preserved original replay'))
     return names
 
 
@@ -286,11 +336,15 @@ def observe(engine, binary, root, output, revision, parse_godot):
             cases[mode] = decode_trace(stdout)
             check_source(cases[mode], revision, mode)
         require(all(same(cases['silence']['held'], cases[mode]['held']) for mode in MODES), 'donor departure shared original publication')
+        stdout, stderr = execute([str(binary), '--donor-retention-boundary'], output / f'source-donor-retention-{repeat}.log')
+        require(not stderr.strip(), 'source donor retention stderr')
+        retention = decode_trace(stdout)
+        check_source_retention(retention, revision)
         stdout, stderr = execute([str(engine), '--headless', '--path', str(root), '--script', 'res://tests/runner/run_tests.gd',
                                   '--', '--category', 'unit', '--suite', SUITE, '--seed', '1701'], output / f'godot-donor-departure-{repeat}.log')
         godot = parse_godot(stdout, stderr, 'FORTRESS_TEST_RESULT ')
-        require(godot.get('passed') is True and godot.get('complete') is True and same(godot.get('count'), 2)
-                and same(godot.get('errors'), []) and len(godot['records']) == 2
+        require(godot.get('passed') is True and godot.get('complete') is True and same(godot.get('count'), len(CASES))
+                and same(godot.get('errors'), []) and len(godot['records']) == len(CASES)
                 and {record['case'] for record in godot['records']} == CASES, 'Godot donor departure case inventory')
         for record in godot['records']:
             require(record['suite'] == SUITE and record['seed'] == '1701' and len(record['runs']) == 2
@@ -298,6 +352,7 @@ def observe(engine, binary, root, output, revision, parse_godot):
                     'Godot donor departure repeat and assertions')
         evidence = read_godot_evidence(stdout)
         check_godot(evidence)
-        runs.append({'source': cases, 'godot': godot, 'godot_evidence': evidence})
+        check_godot(evidence, wrapped=True)
+        runs.append({'source': cases, 'source_retention': retention, 'godot': godot, 'godot_evidence': evidence})
     require(same(*runs), 'donor departure fresh-process repeat mismatch')
     return runs[0], controls(runs[0]['source'], revision, runs[0]['godot_evidence'], stdout)

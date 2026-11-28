@@ -7,14 +7,22 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 const DONOR: int = 1
 const TARGET: int = 3
-const CUT: int = 8
+const FIRST_MISSING: int = 8
+const CAPACITY: int = 18
+const WINDOW: int = 8
+const NEAREST: int = FIRST_MISSING - 1 + 2 * WINDOW
+const REUSED_INDEX: int = NEAREST % CAPACITY
 
+var _cut: int = FIRST_MISSING
 var _hold_history: bool = false
 var _held_history: Dictionary = {}
+var _commit_publications: int = 0
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["original_donor_chunk_arrives", "chosen_donor_leaves_before_history"])
+	return PackedStringArray([
+		"original_donor_chunk_arrives", "chosen_donor_leaves_before_history", "wrapped_donor_retains_history", "wrapped_donor_leaves_before_history",
+	])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -22,10 +30,17 @@ func run_case(name: String, context: RefCounted) -> void:
 	_missing_peer = -1
 	_hold_history = true
 	_held_history.clear()
-	var mesh: Dictionary = _recording_mesh(context, 64, Callable(), 18, 4)
+	_commit_publications = 0
+	var wrapped: bool = name.begins_with("wrapped_")
+	_cut = FIRST_MISSING
+	var mesh: Dictionary = _recording_mesh(context, 64, Callable(), CAPACITY, 4)
 	mesh.drop_failures = []
-	_play(context, mesh, 6, true)
-	_leave(context, mesh, TARGET)
+	_play(context, mesh, FIRST_MISSING if wrapped else 6, true)
+	var retention: Dictionary = {}
+	if wrapped:
+		retention = _wrap_boundary(context, mesh)
+	else:
+		_leave(context, mesh, TARGET)
 	_send_goodbye(context, mesh, TARGET)
 	for turn: int in range(32):
 		_service(context, mesh, [0, DONOR, 2])
@@ -46,7 +61,7 @@ func run_case(name: String, context: RefCounted) -> void:
 			return
 		context.equal(barrier.state, Drop.PENDING, "both recipients wait for the donor")
 		context.equal(barrier.history.donor, DONOR, "both participants adopted the original donor plan")
-		context.equal([barrier.history.first, barrier.history.cut], [CUT, CUT], "the adopted plan names exactly the missing row")
+		context.equal([barrier.history.first, barrier.history.cut], [FIRST_MISSING, _cut], "the adopted plan names the missing interval")
 		var decoded: T.Result = Codec.decode(_held_history[recipient].bytes, _limits(mesh.count))
 		var chunk: T.Message = decoded.message
 		context.equal([chunk.operation, chunk.coordinator, chunk.coordinator_generation], [barrier.operation, barrier.coordinator, barrier.coordinator_generation],
@@ -56,21 +71,94 @@ func run_case(name: String, context: RefCounted) -> void:
 		context.equal(chunk.data, PackedByteArray([TARGET, barrier.generations[0] & 255, barrier.generations[0] >> 8]),
 			"the held chunk carries the original target and era")
 		context.equal(chunk.available_through, DONOR, "the held chunk names the selected donor")
-		context.equal(mesh.peers[recipient]._core.received_frames()[TARGET], CUT - 1, "the recipient lacks the original target row")
+		context.equal(mesh.peers[recipient]._core.received_frames()[TARGET], FIRST_MISSING - 1, "the recipient lacks the original target row")
 		opening.append({
 			"peer": recipient, "donor": barrier.history.donor, "coordinator": barrier.coordinator, "operation": barrier.operation,
 			"receipt": mesh.peers[recipient]._core.received_frames()[TARGET], "first": barrier.history.first,
 			"cut": barrier.history.cut, "bytes": chunk.bytes.hex_encode(),
 		})
-	context.equal(mesh.peers[DONOR]._core.retained_input(TARGET, CUT), _sample(TARGET, CUT), "the donor retains the exact missing input")
+	context.equal(mesh.peers[DONOR]._core.retained_input(TARGET, _cut), _sample(TARGET, _cut), "the donor retains the exact missing input")
 	_hold_history = false
 	var outcome: Dictionary
-	if name == "chosen_donor_leaves_before_history":
+	if name.ends_with("leaves_before_history"):
 		outcome = _check_refusal(context, mesh)
 	else:
 		outcome = _check_delivery(context, mesh)
-	print("FORTRESS_DONOR_DEPARTURE " + JSON.stringify({"case": name, "opening": opening, "outcome": outcome}))
+	if wrapped:
+		for index: int in range(2):
+			var after: Array = outcome.peers[index].replay if outcome.has("peers") \
+				else _check_original_replay(context, mesh.peers[index * 2], FIRST_MISSING - 1)
+			context.equal(after, retention.exposed[index], "both outcomes preserve the earlier exposed original replay")
+	var receipt: Dictionary = {"case": name, "opening": opening, "outcome": outcome}
+	if wrapped:
+		receipt.retention = retention
+	print("FORTRESS_DONOR_DEPARTURE " + JSON.stringify(receipt))
 	context.finish()
+
+
+func _wrap_boundary(context: RefCounted, mesh: Dictionary) -> Dictionary:
+	var donor: Peer = mesh.peers[DONOR]
+	var queue: Queue = donor._core._queues[TARGET]
+	var old_tag: int = queue._frames[REUSED_INDEX]
+	context.equal(old_tag, REUSED_INDEX, "the donor starts with a live original target slot")
+	# Refresh the last complete receipt while frame seven is still the latest wire row.
+	mesh.now += 2000
+	for player: int in range(4):
+		context.equal(mesh.peers[player].recover(mesh.now).code, Types.Code.OK, "gossip the latest complete receipt before losing target inputs")
+	for exchange: int in range(2):
+		_deliver(context, mesh, _drain(mesh))
+	var steps: Array[int] = []
+	for turn: int in range(20):
+		mesh.now += 2000
+		for player: int in range(4):
+			context.equal(mesh.peers[player].recover(mesh.now).code, Types.Code.OK, "service delayed receipts at the prediction boundary")
+		for exchange: int in range(2):
+			_deliver(context, mesh, _drain(mesh))
+		mesh.now += 1000
+		steps.clear()
+		for player: int in range(4):
+			var code: int = mesh.peers[player].step(mesh.now, _inputs(mesh, player)).code
+			context.equal(code in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "the mesh runs to its actual prediction stop")
+			steps.append(code)
+		for exchange: int in range(2):
+			_deliver(context, mesh, _drain(mesh))
+	_cut = donor._core.received_frames()[TARGET]
+	var original_index: int = FIRST_MISSING % CAPACITY
+	var eligible: Array[Dictionary] = []
+	for player: int in [0, DONOR, 2]:
+		var peer: Peer = mesh.peers[player]
+		var target_queue: Queue = peer._core._queues[TARGET]
+		var actual: PackedByteArray = peer._core.retained_input(TARGET, FIRST_MISSING)
+		eligible.append({
+			"peer": player, "current": peer.status().current_frame, "confirmed": peer.status().confirmed_frame,
+			"receipt": peer._core.received_frames()[TARGET], "floor": peer._core.rollback_floor(),
+			"capacity": target_queue._frames.size(), "tag": target_queue._frames[original_index], "original": actual.hex_encode(),
+		})
+		context.equal(target_queue._frames.size(), CAPACITY, "every eligible survivor uses the negotiated minimum capacity")
+		context.equal(peer.status().confirmed_frame, FIRST_MISSING - 1, "each eligible survivor reaches the contiguous receipt bound")
+		context.equal(peer._core.rollback_floor(), FIRST_MISSING - 1, "the prediction limit makes the rollback floor reach the receipt bound")
+		context.equal(steps[player], Types.Code.PREDICTION_STALL, "each eligible survivor reaches its actual prediction stop")
+		context.equal(actual, _sample(TARGET, FIRST_MISSING) if player == DONOR else PackedByteArray(), "only the eligible donor holds the original row")
+	var target: Peer = mesh.peers[TARGET]
+	context.equal(steps[TARGET], Types.Code.PREDICTION_STALL, "the target reaches its real prediction stop")
+	context.equal([target.status().current_frame, _cut], [NEAREST, NEAREST], "the staged target row reaches the two-window send bound")
+	context.equal(queue._frames[REUSED_INDEX], NEAREST, "the newest target input physically replaces the older row at the same index")
+	context.equal(queue._frames[original_index], FIRST_MISSING, "the original missing row still holds its own slot")
+	var exposed: Array = []
+	var gossip: Array[int] = []
+	for recipient: int in [0, 2]:
+		var peer: Peer = mesh.peers[recipient]
+		var heard: int = donor._peers[_id(recipient).hex_encode()]._peer_received_frame(TARGET)
+		context.equal(heard, FIRST_MISSING - 1, "the donor received the live recipient's contiguous target receipt")
+		context.equal(peer.confirmed_inputs(FIRST_MISSING - 1) != null, true, "the live recipient already exposes its last original confirmed row")
+		context.equal(peer.confirmed_inputs(FIRST_MISSING) == null, true, "the live recipient cannot expose the missing row")
+		gossip.append(heard)
+		exposed.append(_check_original_replay(context, peer, FIRST_MISSING - 1))
+	return {
+		"eligible": eligible, "old_tag": old_tag, "replacement_tag": queue._frames[REUSED_INDEX],
+		"target_current": target.status().current_frame, "target_confirmed": target.status().confirmed_frame,
+		"target_step": Types.Code.find_key(steps[TARGET]), "gossip": gossip, "exposed": exposed,
+	}
 
 
 func _send_goodbye(context: RefCounted, mesh: Dictionary, peer: int, terminal: bool = false) -> Array:
@@ -124,7 +212,7 @@ func _check_refusal(context: RefCounted, mesh: Dictionary) -> Dictionary:
 		context.equal(step_code, Types.Code.TERMINATED, "terminal recovery cannot advance gameplay")
 		context.equal(peer._core.frozen_frame(TARGET), -1, "the original target stays unfrozen")
 		context.equal(peer._core.frozen_frame(DONOR), -1, "the donor cannot be removed from the pending certificate")
-		context.equal(peer._core.retained_input(TARGET, CUT).is_empty(), true, "the late chunk installs no original row")
+		context.equal(peer._core.retained_input(TARGET, FIRST_MISSING).is_empty(), true, "the late chunk installs no original row")
 		var after: Array = _snapshot(mesh, recipient)
 		context.equal(after, before[recipient], "the late chunk preserves frame, confirmation, state and replay length")
 		var replay: Array = _check_original_replay(context, peer, mini(before[recipient][0] - 1, before[recipient][1]))
@@ -134,8 +222,14 @@ func _check_refusal(context: RefCounted, mesh: Dictionary) -> Dictionary:
 			"frozen": [peer._core.frozen_frame(TARGET), peer._core.frozen_frame(DONOR)],
 		})
 	_drain(mesh)
+	context.equal(_commit_publications, 0, "no survivor publishes a certificate without the original history")
 	context.equal(mesh.cuts.is_empty(), true, "no survivor publishes a partial freeze")
-	return {"goodbye": goodbye, "goodbye_at": goodbye_at, "late_at": mesh.now, "failures": mesh.drop_failures, "peers": peers, "cuts": mesh.cuts}
+	context.equal(mesh.peers[DONOR]._core.retained_input(TARGET, FIRST_MISSING), _sample(TARGET, FIRST_MISSING),
+		"the departed donor still owns the row but can no longer contribute to the certificate")
+	return {
+		"goodbye": goodbye, "goodbye_at": goodbye_at, "late_at": mesh.now, "failures": mesh.drop_failures,
+		"peers": peers, "cuts": mesh.cuts, "commit_publications": _commit_publications,
+	}
 
 
 func _snapshot(mesh: Dictionary, peer_index: int) -> Array:
@@ -172,22 +266,23 @@ func _check_delivery(context: RefCounted, mesh: Dictionary) -> Dictionary:
 		_service(context, mesh, [0, DONOR, 2])
 	var installed: Array[Dictionary] = []
 	for survivor: int in [0, DONOR, 2]:
-		context.equal(mesh.peers[survivor]._core.frozen_frame(TARGET), CUT, "all survivors certify the receipt-raised cut")
-		context.equal(mesh.peers[survivor]._core.retained_input(TARGET, CUT), _sample(TARGET, CUT), "all survivors retain the original cut bytes")
+		context.equal(mesh.peers[survivor]._core.frozen_frame(TARGET), _cut, "all survivors certify the receipt-raised cut")
+		for frame: int in range(FIRST_MISSING, _cut + 1):
+			context.equal(mesh.peers[survivor]._core.retained_input(TARGET, frame), _sample(TARGET, frame), "all survivors install every original donor row")
 		installed.append({
 			"peer": survivor, "cut": mesh.peers[survivor]._core.frozen_frame(TARGET),
-			"bytes": mesh.peers[survivor]._core.retained_input(TARGET, CUT).hex_encode(),
+			"bytes": mesh.peers[survivor]._core.retained_input(TARGET, _cut).hex_encode(),
 		})
 	_play(context, mesh, 16, true, [0, DONOR, 2], TARGET)
 	var through: int = mesh.peers[DONOR].status().confirmed_frame - 1
 	for recipient: int in [0, 2]:
 		through = mini(through, mesh.peers[recipient].status().confirmed_frame - 1)
-	context.equal(through > CUT, true, "the delivery control continues confirmed play")
+	context.equal(through > _cut, true, "the delivery control continues confirmed play")
 	var expected: WideGame = WideGame.new(4)
 	var canonical: Array = []
 	for frame: int in range(through + 1):
 		for slot: int in range(4):
-			for byte: int in _sample(slot, mini(frame, CUT) if slot == TARGET else frame):
+			for byte: int in _sample(slot, mini(frame, _cut) if slot == TARGET else frame):
 				expected.values[slot] += byte
 		expected.frame = frame + 1
 		var states: Array = []
@@ -199,18 +294,30 @@ func _check_delivery(context: RefCounted, mesh: Dictionary) -> Dictionary:
 	return {"installed": installed, "cuts": mesh.cuts, "canonical": canonical}
 
 
+func _drain(mesh: Dictionary) -> Array[Dictionary]:
+	var packets: Array[Dictionary] = super._drain(mesh)
+	for packet: Dictionary in packets:
+		var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER and decoded.message.phase == Drop.Phase.COMMIT:
+			_commit_publications += 1
+	return packets
+
+
 func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], terminated: bool = false) -> void:
 	var accepted: Array[Dictionary] = []
 	for packet: Dictionary in packets:
 		var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
 		if decoded.code == T.Code.OK:
 			var message: T.Message = decoded.message
-			if packet.from == TARGET and packet.to != DONOR and message.kind == T.Kind.INPUT and message.start_frame + message.frame_count > CUT:
+			if packet.from == TARGET and packet.to != DONOR and message.kind == T.Kind.INPUT and message.start_frame + message.frame_count > FIRST_MISSING:
 				continue
 			if _hold_history and packet.from == DONOR and packet.to in [0, 2] and message.kind == T.Kind.DROP_BARRIER \
 				and message.phase == Drop.Phase.BACKFILL and message.stage == Drop.Stage.HISTORY:
-				context.equal([message.bound, message.cut, message.chunk_index, message.chunk_count], [CUT, CUT, 0, 1], "the held chunk spans exactly the missing row")
-				context.equal(message.bytes, _sample(TARGET, CUT), "the held chunk carries the original target row")
+				context.equal([message.bound, message.cut, message.chunk_index, message.chunk_count], [FIRST_MISSING, _cut, 0, 1], "the held chunk spans the missing interval")
+				var original: PackedByteArray = PackedByteArray()
+				for frame: int in range(FIRST_MISSING, _cut + 1):
+					original.append_array(_sample(TARGET, frame))
+				context.equal(message.bytes, original, "the held chunk carries the original target rows")
 				if _held_history.has(packet.to):
 					context.equal(packet.bytes, _held_history[packet.to].bytes, "a duplicate preserves the first original chunk")
 				else:
