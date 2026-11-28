@@ -371,6 +371,10 @@ def check_asymmetric_controls(result, engine, *, pair=PAIRS['chromium']):
     )
     rows = ('records', 0, 'peers', 0, 'result', 'records', 0)
     recording = result['records'][0]['peers'][0]['result']['records'][0]['recording']
+    staged_ack = deepcopy(result)
+    recovery = staged_ack['records'][0]['peers'][0]['result']['records'][0]['asymmetric'][0]['after']
+    recovery['acked'] = PHASES[0][1]
+    validate_asymmetric(staged_ack, engine, pair=pair)
     raw = bytearray.fromhex(recording['hex'])
     offset = 24
     for _ in range(5):
