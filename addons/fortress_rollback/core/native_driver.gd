@@ -183,6 +183,7 @@ func scheduled_local_input(slot: int) -> Types.InputResult:
 		result.code = Types.Code.OK
 		result.frame = _status.current_frame
 		result.bytes = _retained.slice(index * INPUT_BYTES, (index + 1) * INPUT_BYTES)
+		result.status = Types.Queue.Status.CONFIRMED
 	return result
 
 

@@ -34,6 +34,8 @@
 
 ### Fixed
 
+- Fix the native driver status for retained local samples.
+
 - Fix missing frame and request details when a rollback snapshot is unavailable.
 
 - Fix native WebRTC Leave so the match stops sending gameplay before closing peer connections. [Online example](docs/online-example.md#leave-and-restart)
