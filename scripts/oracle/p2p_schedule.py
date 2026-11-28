@@ -15,7 +15,7 @@ def generation_inputs():
     oracle = root / 'scripts/oracle'
     # The corpus builders and source trace validators share this adapter and locked build.
     paths = ('contract.py', 'p2p_capacity.py', 'p2p_contract.py', 'p2p_launch.py', 'p2p_lifecycle.py',
-             'p2p_lifecycle_corpus.py', 'p2p_recovery.py', 'p2p_schedule.py', 'source_build.py', 'source_wire.py',
+             'p2p_lifecycle_corpus.py', 'p2p_prediction.py', 'p2p_recovery.py', 'p2p_schedule.py', 'source_build.py', 'source_wire.py',
              'rust/src/bin/p2p.rs', 'rust/src/bin/p2p/unique_json.rs', 'rust/src/source_revision.rs',
              'rust/Cargo.lock', 'rust/Cargo.toml', 'rust/rust-toolchain.toml')
     inputs = {str((oracle / path).relative_to(root)): hashlib.sha256((oracle / path).read_bytes()).hexdigest() for path in paths}

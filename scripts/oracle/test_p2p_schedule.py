@@ -23,14 +23,37 @@ class ScheduleHintTests(unittest.TestCase):
 
     # Value: protects=stall-family receipt coverage; fails_when=matched traces omit or duplicate a window; why_new=hint inventory only checks schedule names; seam=none
     def test_complete_prediction_windows(self):
-        from p2p_prediction import CASES, require_complete_windows
+        from p2p_launch import case_builders
+        from p2p_prediction import StallCase, require_complete_windows
 
-        windows = list(CASES.values())
+        windows = sorted(builder.window for builder in case_builders(None).values() if isinstance(builder, StallCase))
         self.assertEqual(windows, list(range(2, 9)))
         require_complete_windows(reversed(windows))
         for incomplete in ([], windows[:-1], [*windows, windows[0]], [*windows[1:], windows[-1]]):
             with self.subTest(windows=incomplete), self.assertRaisesRegex(ValueError, 'prediction witness inventory'):
                 require_complete_windows(incomplete)
+
+    # Value: protects=focused and full witness dispatch under renaming; fails_when=case labels define prediction intent; why_new=inventory alone misses focused runs; seam=none
+    def test_renamed_prediction_builder_keeps_qualification(self):
+        from p2p_launch import case_builders
+        from p2p_prediction import StallCase, require_complete_windows
+
+        builders = case_builders(None)
+        selected = 'renamed_two_peer_stall'
+        builders[selected] = builders.pop('mesh_2_window_8_stall')
+        actual, expected, scenario = object(), object(), object()
+        with patch('p2p_prediction.evidence', side_effect=lambda _trace, _scenario, window, **_args: {'window': window}) as evidence:
+            with patch('p2p_prediction.controls', return_value=['control']) as controls:
+                renamed, checks = builders[selected].qualify(actual, expected, scenario)
+                self.assertEqual(renamed, {'source': {'window': 8}, 'godot': {'window': 8}})
+                self.assertEqual(checks, ['control'])
+                self.assertEqual(evidence.call_count, 2)
+                evidence.assert_any_call(expected, scenario, 8, source=True)
+                evidence.assert_any_call(actual, scenario, 8)
+                controls.assert_called_once_with(actual, scenario, 8)
+                results = [builder.qualify(actual, expected, scenario)[0]['godot']['window']
+                           for builder in builders.values() if isinstance(builder, StallCase)]
+        require_complete_windows(results)
 
     # Value: protects=hint reuse across SignalFish upgrades; fails_when=unrelated pins invalidate hints; why_new=prefix tests omit input identity; seam=none
     def test_hint_identity_tracks_p2p_generation_inputs(self):
@@ -74,7 +97,7 @@ class ScheduleHintTests(unittest.TestCase):
                 pins.write_text(json.dumps(changed), encoding='utf-8')
                 self.assertEqual(p2p_schedule.schedule_hints(), {})
                 pins.write_text(json.dumps(manifest), encoding='utf-8')
-                for name in ('p2p_lifecycle_corpus.py', 'rust/src/bin/p2p.rs', 'rust/Cargo.toml', 'rust/Cargo.lock'):
+                for name in ('p2p_lifecycle_corpus.py', 'p2p_prediction.py', 'rust/src/bin/p2p.rs', 'rust/Cargo.toml', 'rust/Cargo.lock'):
                     with self.subTest(generator=name):
                         path = oracle / name
                         original = path.read_bytes()

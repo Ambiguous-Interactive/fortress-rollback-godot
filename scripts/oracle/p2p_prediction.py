@@ -1,12 +1,26 @@
 """Require the exact prediction boundary in the two-peer stall schedules."""
+from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import dataclass
 
 
 WINDOWS = range(2, 9)
-CASES = {
-    f'mesh_2_window_{window}_stall' if window != 4 else 'mesh_2_stall': window
-    for window in WINDOWS
-}
+
+
+@dataclass(frozen=True)
+class StallCase:
+    window: int
+    build: Callable[[], dict]
+
+    def __call__(self):
+        return self.build()
+
+    def qualify(self, actual, expected, scenario):
+        return (
+            {'source': evidence(expected, scenario, self.window, source=True),
+             'godot': evidence(actual, scenario, self.window)},
+            controls(actual, scenario, self.window),
+        )
 
 
 def require_complete_windows(windows):

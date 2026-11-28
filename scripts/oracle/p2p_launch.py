@@ -98,15 +98,17 @@ def case_builders(binary, observe=source):
             builders[f'mesh_{players}_delay_{delay}'] = partial(build_case, binary, players, delay, 'ordinary', observe=observe)
     for players in (2, 4, 8):
         for mode in ('loss', 'reorder', 'stall', 'retry'):
-            builders[f'mesh_{players}_{mode}'] = partial(build_case, binary, players, 0, mode, observe=observe)
+            builder = partial(build_case, binary, players, 0, mode, observe=observe)
+            builders[f'mesh_{players}_{mode}'] = p2p_prediction.StallCase(4, builder) if players == 2 and mode == 'stall' else builder
     for window in (2, 3, 5, 6, 7):
-        builders[f'mesh_2_window_{window}_stall'] = partial(
-            build_case, binary, 2, 0, 'stall', window=window, opening_steps=max(6, window + 2), observe=observe)
+        builder = partial(build_case, binary, 2, 0, 'stall', window=window, opening_steps=max(6, window + 2), observe=observe)
+        builders[f'mesh_2_window_{window}_stall'] = p2p_prediction.StallCase(window, builder)
     # Exercise ordinary delivery and the actual cap at the maximum comparable window.
     for players in (2, 4, 8):
         builders[f'mesh_{players}_window_8'] = partial(build_case, binary, players, 0, 'ordinary', window=8, observe=observe)
     # Eight admissions, two blocked attempts, then enough receipt turns to confirm the whole speculative prefix.
-    builders['mesh_2_window_8_stall'] = partial(build_case, binary, 2, 0, 'stall', window=8, opening_steps=10, rounds=7, observe=observe)
+    builders['mesh_2_window_8_stall'] = p2p_prediction.StallCase(
+        8, partial(build_case, binary, 2, 0, 'stall', window=8, opening_steps=10, rounds=7, observe=observe))
     # Explicit multi-local endpoint layouts: couch co-op machines owning several local slots.
     for name, (layout, mode) in LAYOUT_CASES.items():
         builders[name] = partial(build_layout_case, binary, layout, mode, observe=observe)
@@ -602,6 +604,7 @@ def run(args, wrap_only):
     if args.case:
         cases = {args.case: cases[args.case]}
     evidence = []
+    builders = case_builders(None)
     for name, scenario in cases.items():
         submitted = args.output / (name + '-scenario.json'); submitted.write_text(json.dumps(scenario, indent=2) + '\n')
         source_results = []
@@ -644,11 +647,10 @@ def run(args, wrap_only):
             recovery_evidence = {'source': p2p_recovery.evidence(expected, scenario), 'godot': p2p_recovery.evidence(actuals[0], scenario)}
             controls.extend(p2p_recovery.controls(actuals[0], scenario))
         prediction_evidence = {}
-        if name in p2p_prediction.CASES:
-            window = p2p_prediction.CASES[name]
-            prediction_evidence = {'source': p2p_prediction.evidence(expected, scenario, window, source=True),
-                                   'godot': p2p_prediction.evidence(actuals[0], scenario, window)}
-            controls.extend(p2p_prediction.controls(actuals[0], scenario, window))
+        builder = builders.get(name)
+        if isinstance(builder, p2p_prediction.StallCase):
+            prediction_evidence, prediction_controls = builder.qualify(actuals[0], expected, scenario)
+            controls.extend(prediction_controls)
         capacity_evidence = {}
         if name == p2p_capacity.NAME:
             capacity_evidence = {'source': p2p_capacity.evidence(expected, scenario), 'godot': p2p_capacity.evidence(actuals[0], scenario)}
