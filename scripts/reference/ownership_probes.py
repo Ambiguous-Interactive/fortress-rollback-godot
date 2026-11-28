@@ -328,6 +328,7 @@ FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_externa
 FILES += ['tests/unit/test_peer_drop_overlap.gd']
 FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd', 'tests/unit/test_peer_drop_replay.gd']
 FILES += ['tests/unit/test_peer_drop_history_pressure.gd', 'tests/unit/test_peer_drop_donor_fairness.gd']
+FILES += ['tests/unit/test_peer_drop_donor_departure.gd']
 FILES += ['tests/unit/test_peer_drop_plan_fairness.gd']
 FILES += ['tests/unit/test_peer_drop_ready_pressure.gd', 'tests/unit/test_peer_drop_remote_donor_pressure.gd']
 FILES += ['tests/unit/test_peer_drop_late_ack.gd', 'tests/unit/test_peer_drop_commit.gd']
@@ -435,6 +436,7 @@ const DropReplay = preload("res://tests/unit/test_peer_drop_replay.gd")
 const DropEviction = preload("res://tests/unit/test_peer_drop_eviction.gd")
 const DropHistoryPressure = preload("res://tests/unit/test_peer_drop_history_pressure.gd")
 const DropDonorFairness = preload("res://tests/unit/test_peer_drop_donor_fairness.gd")
+const DropDonorDeparture = preload("res://tests/unit/test_peer_drop_donor_departure.gd")
 const DropPlanFairness = preload("res://tests/unit/test_peer_drop_plan_fairness.gd")
 const DropReadyPressure = preload("res://tests/unit/test_peer_drop_ready_pressure.gd")
 const DropRemoteDonorPressure = preload("res://tests/unit/test_peer_drop_remote_donor_pressure.gd")
@@ -476,6 +478,7 @@ func _run_suites() -> void:
 		ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, SpectatorHistory, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropReplay, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
+		DropDonorDeparture,
 		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit, DropOverlap,
 		DriverInputPolicy, DriverTermination, PeerExampleOwnership, ExampleSceneExit, ExampleShortcuts, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation,
 		FallbackFailure, SpectatorRecordingFeedback, DriverLifecycleParity, AdapterReentry, OfflineSceneControls, PeerSceneControls, SpectatorHostStep, PlayerRelay]
