@@ -102,12 +102,15 @@ async function resolveDonorHistory(pages, contexts, closeDonor) {
     || observed.first_history !== held.packet || observed.open_sockets !== 1 || observed.rtc_sent < 1 || observed.rtc_received < 1 || observed.outcome !== null)
     throw new Error('selected donor stopped before the controller action: ' + JSON.stringify(observed));
   if (closeDonor) {
+    await Promise.all([pages[recipient], pages[2]].map(page => page.evaluate(uuid => {
+      window.fortressDonorActionReady = uuid;
+    }, held.donor)));
     await contexts[donor].close();
     if (!pages[donor].isClosed()) throw new Error('selected donor browser context stayed open');
   } else {
     await pages[recipient].evaluate(() => { window.fortressReleaseDonorHistory = true; });
   }
-  return { held, observed, action: closeDonor ? 'context_closed' : 'history_released', donor_index: donor };
+  return { held, observed, action: closeDonor ? 'context_closed' : 'history_released', donor_index: donor, page_uuids: uuids };
 }
 
 async function releaseRecordingTail(pages) {
@@ -791,6 +794,7 @@ async function main() {
           const pageIndex = pages.indexOf(evidencePages[index]);
           peer.browser = browserPair[pageIndex % 2];
           peer.display = displays[pageIndex];
+          if (donorHistory) peer.page_index = pageIndex;
         });
         records.push({ players: count, peers, departedUuid, processClosed, processHeld, survivorUuids, serialDispatch, donorHistory });
         });

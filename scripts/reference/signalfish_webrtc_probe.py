@@ -19,7 +19,7 @@ import zipfile
 from browser.local_stun import local_port, local_stun
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_drop import check_serial_controls, validate_drop_browser
-from browser.webrtc_drop_donor import validate_donor_history
+from browser.webrtc_drop_donor import check_donor_history_controls, validate_donor_history
 from browser.webrtc_drop_overlap import check_overlap_order_controls, validate_drop_overlap
 from browser.webrtc_recording import engine_identity, validate_recording, validate_pressure
 from browser.webrtc_runner import room_count, run_browser, run_wave
@@ -406,7 +406,8 @@ def main():
     owned_logs += [f'{version}-{label}-{kind}' for version in versions for label in serial_labels
                    for kind in ('control.json', 'events.log')]
     owned_logs += [f'{version}-{label}.log' for version in versions for label in serial_labels]
-    owned_logs += [f'{version}-peer-drop-overlap-control.json' for version in versions]
+    owned_logs += [f'{version}-{label}-control.json' for version in versions
+                   for label in ('peer-drop-overlap', 'peer-drop-donor-process')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -639,6 +640,8 @@ def main():
                                 (args.output / f'{version}-{label}-control.json').write_text(json.dumps(control) + '\n')
                             elif label == 'peer-drop-donor-process':
                                 result = validate_donor_history(json.loads(output), True)
+                                control = check_donor_history_controls(result)
+                                (args.output / f'{version}-{label}-control.json').write_text(json.dumps(control) + '\n')
                             elif label.startswith('peer-drop'):
                                 result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt', label == 'peer-drop-close',
                                                                label == 'peer-drop-answer', label == 'peer-drop-relay',

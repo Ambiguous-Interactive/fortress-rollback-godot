@@ -1,4 +1,5 @@
 """Validate the live selected donor packet and the controller's two outcomes."""
+from copy import deepcopy
 import re
 import struct
 
@@ -34,11 +35,12 @@ def _packet(held, donor_slot, target_slot, recipient_slot):
 
 
 def _prefix(state):
-    _require(isinstance(state, dict) and state.get('frame') == 8 and type(state.get('confirmed')) is int
+    _require(isinstance(state, dict) and type(state.get('frame')) is int and state['frame'] == 8 and type(state.get('confirmed')) is int
              and 2 <= state['confirmed'] <= 3
              and isinstance(state.get('state'), str) and re.fullmatch(r'[0-9a-f]{32}', state['state'])
              and isinstance(state.get('replay_sha256'), str) and re.fullmatch(r'[0-9a-f]{64}', state['replay_sha256']),
              'recipient boundary invalid')
+    _require(state['state'][:8] == struct.pack('<I', state['frame']).hex(), 'recipient state frame header differs')
     replay = state.get('replay')
     _require(isinstance(replay, list) and len(replay) == state['confirmed'] + 1, 'replay extent differs')
     values = [0, 0, 0]
@@ -53,7 +55,7 @@ def _prefix(state):
 
 def _fence(fence, donor, live, previous=None):
     _require(isinstance(fence, dict) and fence.get('route') == 'restart_required' and fence.get('error') == 2
-             and fence.get('events') == [donor] and sorted(fence.get('live_roster', [])) == live
+             and fence.get('action_ready') == donor and fence.get('events') == [donor] and sorted(fence.get('live_roster', [])) == live
              and fence.get('connected') is True and fence.get('authenticated') is True and fence.get('mesh_detached') is True
              and type(fence.get('revision')) is int and fence['revision'] > 0
              and (previous is None or fence['revision'] == previous + 1), 'SDK player-left and adapter fence differ')
@@ -75,6 +77,10 @@ def validate_donor_history(result, physical_close):
         _peer_id(uuid)
     _require(len({donor, target, recipient}) == 3 and recipient < donor, 'role identities differ')
     roster = sorted((donor, target, recipient))
+    donor_index = controller['donor_index']
+    page_uuids = controller.get('page_uuids')
+    _require(isinstance(page_uuids, list) and len(page_uuids) == 3 and page_uuids[donor_index] == donor
+             and page_uuids[1 - donor_index] == recipient and page_uuids[2] == target, 'controller original page identities differ')
     _require(held.get('roster') == roster and type(held.get('revision')) is int and held['revision'] >= 0
              and isinstance(held.get('session_id'), str) and re.fullmatch(r'[0-9a-f]{32}', held['session_id']), 'hold identity differs')
     donor_slot, target_slot, recipient_slot = (roster.index(uuid) for uuid in (donor, target, recipient))
@@ -91,13 +97,16 @@ def validate_donor_history(result, physical_close):
     pages = rooms[0].get('peers')
     _require(isinstance(pages, list) and len(pages) == (2 if physical_close else 3), 'browser outcome count differs')
     rows = {}
-    for page in pages:
+    page_indexes = [index for index in range(3) if not physical_close or index != donor_index]
+    for index, page in zip(page_indexes, pages, strict=True):
         _, witness = _room_physical(page)
         records = witness.get('records', [])
         _require(witness.get('passed') is True and len(records) == 1 and isinstance(records[0], dict), 'browser outcome missing')
-        rows[records[0].get('uuid')] = records[0]
+        uuid = page_uuids[index]
+        _require(type(page.get('page_index')) is int and page['page_index'] == index and records[0].get('uuid') == uuid,
+                 'browser outcome page identity differs')
+        rows[uuid] = records[0]
     live = sorted((target, recipient))
-    _require(sorted(rows) == (live if physical_close else roster), 'donor closure or retained identities differ')
     _require(_withheld_input_range(rows[target].get('missing_inputs'), 4, target_slot, _peer_id(recipient))
              and rows[target].get('roster') == roster and rows[target].get('session_id') == held['session_id'],
              'target withheld range differs')
@@ -114,3 +123,33 @@ def validate_donor_history(result, physical_close):
                  and result_row.get('state') == 'committed' and result_row.get('freeze_frame') == 6
                  and rows[donor].get('certified') is True, 'held packet delivery did not certify')
     return result
+
+
+
+def check_donor_history_controls(result):
+    control = deepcopy(result)
+    room = control['records'][0]
+    controller = room['donorHistory']
+    diagnostics = []
+
+    def reject(expected):
+        try:
+            validate_donor_history(control, True)
+        except ValueError as error:
+            if str(error) != f'peer-drop donor history {expected}':
+                raise
+            diagnostics.append(str(error))
+        else:
+            raise ValueError(f'peer-drop donor history control passed with changed {expected}')
+
+    original = controller['donor_index']
+    controller['donor_index'] = 1 - original
+    reject('controller original page identities differ')
+    controller['donor_index'] = original
+    room['peers'].reverse()
+    reject('browser outcome page identity differs')
+    room['peers'].reverse()
+    state = controller['held']['state']
+    state['state'] = struct.pack('<I', state['frame'] + 1).hex() + state['state'][8:]
+    reject('recipient state frame header differs')
+    return {'diagnostics': diagnostics}

@@ -206,6 +206,7 @@ class DropDirect:
 	var _history_sender: String
 	var _held_history: PackedByteArray = PackedByteArray()
 	var _held_sender: String
+	var _held_token: Variant = null  # The core receive token is nullable.
 	var _history_armed: bool = false
 	var _observe_history: bool = false
 	var _drop_identity: PackedByteArray = PackedByteArray()
@@ -254,7 +255,9 @@ class DropDirect:
 
 	func release_history(now_us: int) -> int:
 		_history_armed = false
-		return _adapter.receive_mesh(_witness_peer, _held_history, Membership.uuid_to_peer_id(_held_sender), now_us)
+		var code: int = _dispatch_packet(_held_sender, _held_history, now_us, _held_token)
+		_held_token = null
+		return code
 
 	func _receive_history_boundary(sender: String, bytes: PackedByteArray) -> int:
 		if _history_armed and sender == _history_sender and bytes.size() >= 46 \
@@ -262,8 +265,13 @@ class DropDirect:
 			if _held_history.is_empty():
 				_held_history = bytes
 				_held_sender = sender
+				_held_token = _token.duplicate() if _token is PackedByteArray else null
 			return I.Code.OK
-		return _adapter.receive_mesh(_witness_peer, bytes, Membership.uuid_to_peer_id(sender), _clock, _token)
+		return _dispatch_packet(sender, bytes, _clock, _token)
+
+	# The adapter accepts either an owned handshake token or null.
+	func _dispatch_packet(sender: String, bytes: PackedByteArray, now_us: int, token: Variant) -> int:
+		return _adapter.receive_mesh(_witness_peer, bytes, Membership.uuid_to_peer_id(sender), now_us, token)
 
 	func arm_drop(identity: PackedByteArray, from_frame: int, through_frame: int, slot: int) -> void:
 		_drop_identity = identity.duplicate()

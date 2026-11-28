@@ -28,6 +28,8 @@ def validate_identity(result, pair, pins):
         else:
             indexed = enumerate(peers)
         for index, peer in indexed:
+            if result.get('dropDonorProcess') is True and (type(peer.get('page_index')) is not int or peer['page_index'] != index):
+                raise ValueError('surviving donor-room browser allocation differs')
             display = peer.get('display')
             if pair[index % 2] == 'firefox':
                 if (not isinstance(display, dict) or display.get('x') != 80 * index or type(display.get('x')) is not int

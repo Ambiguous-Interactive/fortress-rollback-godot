@@ -8,6 +8,9 @@ const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.
 const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
 const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
+# The controller has 30 seconds to witness the held packet before selecting its action.
+const ACTION_WAIT_US: int = 35000000
+const SDK_NOTICE_WAIT_US: int = 10000000
 
 
 static func hold(host: Node, target: String, donor: String) -> Dictionary:
@@ -65,9 +68,11 @@ static func release(host: Node, target: String) -> bool:
 
 
 static func wait_fence(host: Node, donor: String) -> Dictionary:
+	if not await _wait_action(host, donor):
+		return {}
 	host.stage = "peer_drop_donor_membership_fence"
 	var started: int = Time.get_ticks_usec()
-	while Time.get_ticks_usec() - started < 10000000:
+	while Time.get_ticks_usec() - started < SDK_NOTICE_WAIT_US:
 		host.clients[0].poll()
 		var status: Dictionary = host.adapters[0].status()
 		if host.room_player_left.has(donor) and status.route == "restart_required":
@@ -75,7 +80,7 @@ static func wait_fence(host: Node, donor: String) -> Dictionary:
 			for player: RefCounted in host.clients[0].get_players():
 				roster.append(player.id)
 			return {
-				"events": host.room_player_left.duplicate(), "live_roster": roster,
+				"action_ready": donor, "events": host.room_player_left.duplicate(), "live_roster": roster,
 				"revision": status.lifetime_revision, "route": status.route, "error": status.error,
 				"connected": host.clients[0].is_connected_to_server(), "authenticated": host.clients[0].is_authenticated(),
 				"mesh_detached": host.meshes[0].get_multiplayer_peer() == null,
@@ -83,6 +88,21 @@ static func wait_fence(host: Node, donor: String) -> Dictionary:
 		await host._wait_turn()
 	host.errors.append("peer_drop_donor_membership_fence_missing")
 	return {}
+
+
+static func _wait_action(host: Node, donor: String) -> bool:
+	host.stage = "peer_drop_donor_action"
+	var started: int = Time.get_ticks_usec()
+	while Time.get_ticks_usec() - started < ACTION_WAIT_US:
+		if JavaScriptBridge.eval("window.fortressDonorActionReady") == donor:
+			return true
+		host.clients[0].poll()
+		if not host.errors.is_empty() or not host.room_player_left.is_empty() or host.adapters[0].status().route != "mesh":
+			host.errors.append("peer_drop_donor_membership_changed_before_action")
+			return false
+		await host._wait_turn()
+	host.errors.append("peer_drop_donor_action_missing")
+	return false
 
 
 static func finish_fence(host: Node, target: String, donor: String, held: Dictionary, events: Array[Dictionary]) -> bool:
@@ -138,7 +158,10 @@ static func _snapshot(host: Node) -> Dictionary:
 		rows.append(samples)
 		var saved: PackedByteArray = host.games[0].history.get(frame + 1, PackedByteArray())
 		canonical.append(saved.hex_encode())
+	var replay_hash: HashingContext = HashingContext.new()
+	replay_hash.start(HashingContext.HASH_SHA256)
+	replay_hash.update(replay.to_bytes())
 	return {
 		"frame": status.current_frame, "confirmed": status.confirmed_frame, "state": host.games[0].bytes().hex_encode(),
-		"replay_sha256": replay.to_bytes().hex_encode().sha256_text(), "replay": rows, "canonical": canonical,
+		"replay_sha256": replay_hash.finish().hex_encode(), "replay": rows, "canonical": canonical,
 	}
