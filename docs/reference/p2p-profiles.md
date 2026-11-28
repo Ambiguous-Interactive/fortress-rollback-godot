@@ -51,7 +51,7 @@ example the qualification run of PR
 | --- | --- | --- |
 | Roster size | every supported count 2–8, each at input delay 0 and 2 | `mesh_<n>_delay_<d>` |
 | Packet faults | loss, reorder/duplicate, prediction stall/recovery, retry timing at exact interval boundaries | `mesh_<2,4,8>_<loss,reorder,stall,retry>` |
-| Prediction window | windows 2–7 at the stall boundary, and window 8 under ordinary and withheld delivery | `mesh_2_stall`, `mesh_2_window_<2,3,5,6,7,8>_stall`, `mesh_<n>_window_8` |
+| Prediction window | windows 2–8 at the stall boundary both before confirmation and with frame zero confirmed, plus window 8 under ordinary delivery | `mesh_2_stall`, `mesh_2_window_<2,3,5,6,7,8>_stall`, `mesh_<n>_window_8` |
 | Construction delay profiles | heterogeneous per-peer schedules `[2,0]`, `[2,1,0]` (under loss), `[2,0,2,0]`, couch `[2,2]`, plus the profile-plus-raise differential and its pinned minimized regression | `mesh_*_delays_*`, `mesh_2_delays_2_0_raise[_min]` |
 | Runtime delay changes | raise, repeat, refused decrease and too-large values under loss, rapid churn and stall, compared after each peer's first step | `mesh_*_delay_change_*` |
 | Endpoint layouts | solo machines; couch `[2,2]` and `[3,1]`; three-machine split `[2,1,1]` and `[2,2,2]`; couch loss and reversed-withheld stall recovery | `mesh_*_couch_*`, `mesh_*_split_*` |
