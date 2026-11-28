@@ -4,7 +4,7 @@ from copy import deepcopy
 import re
 import struct
 
-from browser.webrtc_recording import _addressed_payload, validate_pressure
+from browser.webrtc_recording import _addressed_payload, validate_pressure, validate_pressure_teardown
 from wire import decode_relay_carrier, original_sample, validate_original_input
 
 MODES = ('changing', 'neutral', 'withheld')
@@ -242,6 +242,7 @@ def _validate_hold(hold, base, limit, receiver, routes, deliveries, phases, mode
     sender = 1 - receiver
     route = routes[sender]
     last_completion = 0
+    held_ordinals = []
     for event in hold['events']:
         carrier = event.get('carrier') if type(event) is dict else None
         raw = _hex_bytes(carrier, 134, 2048)
@@ -265,6 +266,9 @@ def _validate_hold(hold, base, limit, receiver, routes, deliveries, phases, mode
             if (len(eligible) != 1 or admission is None or admission['release'] != base
                     or not receiver_phase['held']['turn'] <= admission['turn'] <= receiver_phase['after']['turn']):
                 raise ValueError('asymmetric held server stamp lacks its unique browser message and SDK admission')
+            held_ordinals.append(admission['ordinal'])
+    if held_ordinals:
+        _validate_released_prefix(deliveries[receiver], route, base, limit, phases[receiver]['after']['turn'], held_ordinals)
     for source, route in enumerate(routes):
         actual = {frame for start, end, _, _, delivered in route.values() if base < end <= limit and delivered
                   for frame in range(max(start, base), end)}
@@ -276,6 +280,22 @@ def _validate_hold(hold, base, limit, receiver, routes, deliveries, phases, mode
                     for frame in range(max(start, base), end)}
     if acknowledged != set(range(base, limit)):
         raise ValueError('asymmetric sender delivery lacks the original receiver acknowledgement frontier')
+
+
+def _validate_released_prefix(deliveries, route, base, limit, recovery_turn, held_ordinals):
+    if any(left >= right for left, right in zip(held_ordinals, held_ordinals[1:])):
+        raise ValueError('asymmetric browser admissions are reordered relative to held TCP completions')
+    first_supplier = {}
+    for wire, admission in deliveries.values():
+        start, end, _, _, _ = route[wire]
+        if admission is not None and base < end <= limit and admission['turn'] <= recovery_turn:
+            for frame in range(max(start, base), end):
+                first_supplier.setdefault(frame, admission['ordinal'])
+    if first_supplier.keys() != set(range(base, limit)):
+        raise ValueError('asymmetric SDK admissions lack the required prefix at recovery')
+    # The first needed row on this socket must arrive in the released chunk.
+    if min(first_supplier.values()) != held_ordinals[0]:
+        raise ValueError('asymmetric required original input arrived ahead of the held chunk')
 
 
 def _validate_room(room, mode, result, expected_engine):
@@ -294,8 +314,11 @@ def _validate_room(room, mode, result, expected_engine):
         raise ValueError('asymmetric peer identity invalid')
     if mode != 'withheld':
         validate_pressure({**result, 'records': [room]}, expected_engine, neutral=mode == 'neutral')
-    elif any(row.get('frames_submitted') != 151 or 'recording' in row or 'history' in row for row in rows):
-        raise ValueError('asymmetric withheld control advanced beyond the stall or exported')
+    else:
+        for peer in peers:
+            validate_pressure_teardown(peer.get('rtc', {}))
+        if any(row.get('frames_submitted') != 151 or 'recording' in row or 'history' in row for row in rows):
+            raise ValueError('asymmetric withheld control advanced beyond the stall or exported')
     schedule = PHASES[:1] if mode == 'withheld' else PHASES
     holds = room.get('recordingHolds')
     if type(holds) is not list or len(holds) != len(schedule) or any(type(row.get('asymmetric')) is not list
@@ -383,6 +406,8 @@ def check_asymmetric_controls(result, engine):
          'asymmetric held server stamp lacks its unique browser message and SDK admission'),
         ('ambiguous browser stamp', [(messages_path, messages + [{'carrier': carrier.hex(), 'wire': event['envelope'], 'admission': None}])],
          'asymmetric held server stamp lacks its unique browser message and SDK admission'),
+        ('unclosed withheld WebSocket', [(('records', 2, 'peers', 0, 'rtc', 'teardown', 'websockets'), 0)],
+         'recording pressure browser resources survived teardown'),
         ('empty completion fragment', [(hold_path + ('pending_bytes',), 1), (hold_path + ('chunk',), '00'),
                                        (hold_path + ('events', 0, 'end'), 1), (hold_path + ('events', 0, 'tail_bytes'), 0)],
          'asymmetric held TCP bytes do not complete the original carrier'),

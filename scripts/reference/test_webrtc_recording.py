@@ -4,6 +4,7 @@ import hashlib
 import struct
 import unittest
 
+from browser.webrtc_asymmetric import _validate_released_prefix
 from browser.webrtc_recording import engine_identity, validate_recording, validate_pressure
 from wire import INPUT_HEADER
 
@@ -42,6 +43,30 @@ def pressure_input(sender, recipient, index, start):
 
 
 class RecordingTests(unittest.TestCase):
+    def test_held_chunk_starts_the_recovered_prefix_in_tcp_order(self):
+        route = {
+            'first': (144, 145, 150, 10, True),
+            'redundant': (144, 145, 150, 11, True),
+            'rest': (144, 151, 150, 11, True),
+        }
+        deliveries = {
+            'stamp1': ('first', {'ordinal': 1, 'turn': 20}),
+            'stamp2': ('redundant', {'ordinal': 2, 'turn': 20}),
+            'stamp3': ('rest', {'ordinal': 3, 'turn': 21}),
+        }
+        _validate_released_prefix(deliveries, route, 144, 151, 21, [1, 2])
+        with self.assertRaisesRegex(ValueError, 'reordered relative to held TCP completions'):
+            _validate_released_prefix(deliveries, route, 144, 151, 21, [2, 1])
+        earlier = {
+            'stamp3': ('rest', {'ordinal': 1, 'turn': 20}),
+            'stamp1': ('first', {'ordinal': 2, 'turn': 20}),
+            'stamp2': ('redundant', {'ordinal': 3, 'turn': 20}),
+        }
+        with self.assertRaisesRegex(ValueError, 'arrived ahead of the held chunk'):
+            _validate_released_prefix(earlier, route, 144, 151, 21, [2, 3])
+        with self.assertRaisesRegex(ValueError, 'lack the required prefix at recovery'):
+            _validate_released_prefix(deliveries, route, 144, 151, 20, [1, 2])
+
     def test_native_engine_identity(self):
         for version in ('4.3', '4.7.2'):
             identity = '.'.join((version.split('.') + ['0'])[:3]) + '.stable ' + 'a' * 40

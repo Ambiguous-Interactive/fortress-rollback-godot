@@ -146,6 +146,17 @@ def _validate_pressure_routes(peers, identities, neutral):
         _validate_recording_tail(source, destination_row, sender, recipient, slot, index, neutral)
 
 
+def validate_pressure_teardown(rtc):
+    teardown = rtc.get('teardown')
+    if type(teardown) is not dict or type(teardown.get('websockets_created')) is not int or teardown['websockets_created'] != 1:
+        raise ValueError('recording pressure expected one WebSocket per endpoint')
+    if (type(teardown.get('channels')) is not int or teardown['channels'] != 3 or type(teardown.get('connections_created')) is not int
+            or teardown['connections_created'] < 1 or type(teardown.get('connections')) is not int
+            or teardown['connections'] != teardown['connections_created']
+            or type(teardown.get('websockets')) is not int or teardown['websockets'] != 1):
+        raise ValueError('recording pressure browser resources survived teardown')
+
+
 def validate_pressure(result, expected_engine=None, neutral=False):
     """Require actual socket receipt, repeated post-wrap refusal and original decoded history."""
     if (type(result) is not dict or result.get('passed') is not True or result.get('recordingPressure') is not True
@@ -190,14 +201,7 @@ def validate_pressure(result, expected_engine=None, neutral=False):
         for key in ('relayBlockedReads', 'relayPostWrapBlockedReads'):
             if type(rtc.get(key)) is not int or rtc[key] < 2:
                 raise ValueError('recording pressure physical socket refusal control missing')
-        teardown = rtc.get('teardown', {})
-        if type(teardown.get('websockets_created')) is not int or teardown['websockets_created'] != 1:
-            raise ValueError('recording pressure expected one WebSocket per endpoint')
-        if (type(teardown.get('channels')) is not int or teardown['channels'] != 3 or type(teardown.get('connections_created')) is not int
-                or teardown['connections_created'] < 1 or type(teardown.get('connections')) is not int
-                or teardown['connections'] != teardown['connections_created']
-                or type(teardown.get('websockets')) is not int or teardown['websockets'] != 1):
-            raise ValueError('recording pressure browser resources survived teardown')
+        validate_pressure_teardown(rtc)
         channels = rtc.get('channels')
         if (type(channels) is not list or len(channels) != 3 or any(type(channel.get('id')) is not int for channel in channels)
                 or sorted(channel['id'] for channel in channels) != [1, 2, 3]):
