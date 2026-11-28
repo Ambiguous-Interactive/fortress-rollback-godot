@@ -37,3 +37,15 @@ The first installed sample also showed a documented transient decrease in the
 source confirmation accessor. The receipt keeps that sample separate from
 the settled confirmation and checks each predicted snapshot from original
 inputs and the local versus remote prediction rule.
+
+The exported room closes the selected donor's browser context while the
+recipient holds the donor's original WebRTC packet. Both remaining SDKs
+report the same player departure. The adapter requires a room restart and
+refuses the held packet. The pending rollback barrier preserves its replay.
+The paired delivery control installs the same bytes and commits cut 6.
+
+Both Chromium receipts originally accepted the other live page index as
+the selected donor. The browser controller now records every UUID in page
+order. Both pinned receipts reject a changed index or swapped evidence.
+The SDK notice deadline starts on each remaining page's controller marker.
+The earlier wait for history and the controller has its own bound.

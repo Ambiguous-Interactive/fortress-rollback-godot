@@ -120,6 +120,7 @@ A corruption control may desync before capture; require its typed cause and inde
 Keep the observed first failure separate from later cleanup termination. A stopped counterpart cannot replace the required desync or erase canonical history.
 For held packets, keep publication, release and socket consumption clocks separate. Bind a positive COMMIT to its real routes and the recipients' installed history.
 Read typed outcomes and original histories from each runtime. Case names and assertion counts identify the tests and cannot establish runtime outcomes.
+For an exported room with a closed browser page, join original page indices to UUIDs before closing. Start the SDK notice window at the controller action.
 
 Fingerprint the inputs to each schedule generator, including its upstream
 source and locked build. Compare hinted and unhinted scenarios with the same

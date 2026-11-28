@@ -891,8 +891,11 @@ for late delivery and gameplay. Its delivery control certifies cut 8 and
 checks all three canonical histories through frame 19. The clock origins,
 departure triggers, wire formats and terminal signals belong to their
 respective runtimes. The Rust timing is a bound for this sampled schedule.
-Live transport coverage remains tracked in
-[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188).
+The exported [three-player SignalFish witness](peer-lifecycle.md#unequal-confirmation-frontiers)
+checks the room restart when the selected donor's browser closes. The remaining
+missing-history cases are tracked in
+[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188)
+and [#559](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/559).
 
 ### Coordinator silence on the version-6 candidate
 
