@@ -193,8 +193,8 @@ jobs:
                     peer-drop-room-after-drop peer-drop-room-before-drop)
             if [[ "$BROWSER_PAIR" == chromium-firefox ]]; then labels=(clean faults corrupt default mixed-disabled); fi
           else
-            labels=(mixed mixed-default mixed-close recording-pressure)
-            if [[ "$BROWSER_PAIR" == chromium-firefox ]]; then labels=(mixed mixed-default mixed-close); fi
+            labels=(mixed mixed-default mixed-close recording-asymmetric)
+            if [[ "$BROWSER_PAIR" == firefox ]]; then labels+=(recording-pressure); fi
           fi
           xvfb-run -a python3 scripts/reference/signalfish_webrtc_probe.py \
             --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \

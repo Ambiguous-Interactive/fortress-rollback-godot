@@ -8,6 +8,7 @@ fails here. The full engine-job checks stay in
 ``scripts/reference/test_reference_baseline_workflow.py``; this file owns which
 jobs run in which tier.
 """
+import json
 import re
 import subprocess
 import sys
@@ -439,6 +440,35 @@ xvfb-run() {
             if ACQUISITION.search(joined):
                 with self.subTest(job=name):
                     self.assertIn('prepare_ubuntu_apt.sh', joined)
+
+    def test_nightly_mixed_browser_jobs_run_asymmetric_recording(self):
+        transport = '\n'.join(job_blocks(active_lines(read(NIGHTLY)))['signalfish'])
+        step = transport.split('      - name: Verify real browser WebRTC on the pinned engine\n', 1)[1].split('      - uses:', 1)[0]
+        commands = step.split('        run: |\n', 1)[1]
+        mock = 'xvfb-run() { printf "%s\\n" "$@"; }\n'
+        godot = json.loads(read(ROOT / 'docs/reference/pins.json'))['godot']
+        axes = dict(re.findall(r'^        (version|part|pair): \[([^\n]+)\]$', transport, re.MULTILINE))
+        versions = json.loads(f"[{axes['version']}]")
+        parts = axes['part'].split(', ')
+        pairs = axes['pair'].split(', ')
+        self.assertCountEqual(versions, [godot['minimum'], godot['current_stable']])
+        self.assertCountEqual(parts, ['direct', 'mixed'])
+        self.assertCountEqual(pairs, ['firefox', 'chromium-firefox'])
+        self.assertNotIn('        exclude:', transport)
+        self.assertIn('      BROWSER_PAIR: ${{ matrix.pair }}', transport)
+        for version in versions:
+            for pair in pairs:
+                for part in parts:
+                    with self.subTest(version=version, pair=pair, part=part):
+                        run = commands.replace('${{ matrix.part }}', part).replace('${{ matrix.version }}', version)
+                        result = subprocess.run(['bash', '-eu', '-c', mock + run],
+                                                env={'BROWSER_PAIR': pair, 'SERVER_SOURCE': 'pinned-source'},
+                                                check=True, capture_output=True, text=True, timeout=5)
+                        args = result.stdout.splitlines()
+                        self.assertEqual(args[args.index('--browser-pair') + 1], pair)
+                        self.assertEqual(args[args.index('--version') + 1], version)
+                        self.assertEqual(args.count('--label=recording-asymmetric'), int(part == 'mixed'))
+                        self.assertEqual(args.count('--label=recording-pressure'), int(part == 'mixed' and pair == 'firefox'))
 
     def test_nightly_ownership_matrix_rows_and_artifacts_are_unique(self):
         # Both nightly phases reuse the compact -part-N suffixes, so the artifact

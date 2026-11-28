@@ -542,7 +542,7 @@ These witnesses exercise Godot's browser runtime with injected buffer pressure.
 The in-memory [source recovery witness](#asymmetric-delivery-and-final-recovery)
 covers the upstream API separately.
 
-The Chromium-only `recording-asymmetric` label extends this workload with
+The `recording-asymmetric` label extends this workload with
 changing-input, neutral-input and withheld-delivery rooms. Each starts with
 normal mixed-path service. After the input ring has wrapped, a bounded proxy
 pauses a real server-to-browser WebSocket stream on the first original INPUT
@@ -567,3 +567,9 @@ evidence at their specific diagnostics.
 Run both labels on both pinned Godot engines with the
 [fallback witness launcher](signalfish-fallback.md) using
 `--label recording-pressure --label recording-asymmetric`.
+To run the asymmetric workload with Firefox, start the launcher under Xvfb
+with `--browser-pair firefox --label recording-asymmetric`. Use
+`--browser-pair chromium-firefox` for the mixed pair and install Coturn for
+its local STUN listener. Both Firefox-containing pairs run this label in the
+nightly mixed transport jobs. The receipt verifies the selected browser
+process versions, room placement and the browser assigned to each endpoint.
