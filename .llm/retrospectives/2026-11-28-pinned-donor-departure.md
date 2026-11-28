@@ -49,3 +49,9 @@ the selected donor. The browser controller now records every UUID in page
 order. Both pinned receipts reject a changed index or swapped evidence.
 The SDK notice deadline starts on each remaining page's controller marker.
 The earlier wait for history and the controller has its own bound.
+
+Two reference suite runs found the fake engine receipt fixture waiting on a
+real browser's host lease. Holding the default lease in a controlled run
+reproduced the fixture's 30-second child timeout. A fixture-local capacity
+directory passed the same test in 0.999 seconds while the default lease stayed
+held. Real engine and browser probes retain shared host scheduling.
