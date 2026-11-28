@@ -550,7 +550,9 @@ carrier after boundary 144. Peer zero receives through input 143, advances
 seven predicted frames and cannot advance past boundary 151. Peer one receives
 through input 150 and executes those frames using actual inputs. At boundary
 192 the proxy holds the reverse stream for three frames. Recovery replays the
-corrected inputs at the same boundary. The neutral game exercises the same
+corrected inputs at the same boundary. The first stalled step stages local
+input 151. Recovery can receive its acknowledgement while remote receipt and
+confirmation remain at input 150. The neutral game exercises the same
 delivery and prediction stall without any LOAD. The withheld control closes
 the blocked stream at teardown and never advances or exports past the stall.
 

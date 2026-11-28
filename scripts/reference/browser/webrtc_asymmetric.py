@@ -140,10 +140,11 @@ def _validate_phase(phase, events, base, limit, receiver, remote_slot, original,
         return
     repaired = receiver and not neutral
     callbacks = _callback_history(base, limit, remote_slot, original, neutral, correcting=True)[0] if repaired else []
+    last_submitted = limit if stalls else limit - 1
     if (type(after) is not dict or after.get('frame') != limit or after.get('received') != limit - 1
             or after.get('loads') != held['loads'] + int(repaired)
             or any(type(after.get(key)) is not int for key in ('turn', 'binary', 'acked', 'confirmed'))
-            or not held['acked'] <= after['acked'] <= limit - 1 or not held['confirmed'] <= after['confirmed'] <= limit - 1
+            or not held['acked'] <= after['acked'] <= last_submitted or not held['confirmed'] <= after['confirmed'] <= limit - 1
             or after['turn'] < held['turn'] or after['binary'] < held['binary']
             or (receiver and (after['turn'] <= held['turn'] or after['binary'] <= held['binary']))):
         raise ValueError('asymmetric recovery changed boundary or lacks original receipt/correction')
@@ -401,7 +402,9 @@ def check_asymmetric_controls(result, engine, *, pair=PAIRS['chromium']):
         ('shifted phase loads', [(rows + ('asymmetric', 0, 'held', 'loads'), held['loads'] + 1),
                                  (rows + ('asymmetric', 0, 'after', 'loads'), after['loads'] + 1)],
          'asymmetric held LOAD count differs from the callback prefix'),
-        ('out-of-range acknowledgement', [(rows + ('asymmetric', 0, 'after', 'acked'), 257)],
+        ('acknowledgement beyond stalled sample', [(rows + ('asymmetric', 0, 'after', 'acked'), PHASES[0][1] + 1)],
+         'asymmetric recovery changed boundary or lacks original receipt/correction'),
+        ('acknowledgement beyond unstalled samples', [(rows + ('asymmetric', 1, 'after', 'acked'), PHASES[1][1])],
          'asymmetric recovery changed boundary or lacks original receipt/correction'),
         ('added pending byte', [(hold_path + ('pending_bytes',), hold['pending_bytes'] + 1)],
          'asymmetric physical relay hold byte count differs from the pending TCP chunk'),
