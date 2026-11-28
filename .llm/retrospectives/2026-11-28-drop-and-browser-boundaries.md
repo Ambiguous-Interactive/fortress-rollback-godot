@@ -19,6 +19,10 @@ game sum. The final witness records the tags and full intervals on each
 survivor. Both pinned editors rejected 28 focused controls.
 [Donor retention comparison](../../docs/oracle-p2p.md#donor-retention-at-the-live-recipient-bound)
 
+The reference check found two new donor cases missing from the Chromium
+ownership inventory. Adding the case names to the owned inventory restored
+the declaration check and requires both cases in exported results.
+
 Page enumeration placed four archived expiry receipts out of controller
 sequence. A fixture with equal controller timestamps failed with page order
 `[0, 2]` and passed with receipt order `[2, 0]`. All 48 browser cleanup
@@ -27,10 +31,22 @@ failures lack a calibrated Gecko interval. The current mixed attempt found
 a distinct warmup gap after 18 exact Chromium TLS receipts.
 [Warmup follow-up](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/561)
 
+One recording endpoint reached frame 152 while its partner waited for the
+exact original receipt at boundary 151. The controller now waits for both
+pages at the recovered prefix before accepting the next sample. The receipt
+also checks a unique server carrier through the browser message and SDK
+admission. It records the pending TCP chunk and the final WebSocket frame
+header and offsets. The split-stream test compares the preceding bytes
+directly and proves that holding one final byte prevents complete delivery.
+Both Chromium labels passed twice on each pin. The asymmetric receipts
+rejected 13 controls and the completed recording bytes repeated exactly.
+[Recording acceptance](../../docs/oracle-replay.md#exported-mixed-path-recordings)
+
 ## Outcome
 
 State is `findings-acted`. The
 [oracle guidance](../skills/testing/references/oracle-validation.md) now
 requires the complete tracked hint inventory and a physical reuse witness
-after receipt gossip. The [plan](../../PLAN.md) carries the remaining
-pinned operation cases and links the new warmup investigation.
+after receipt gossip. It also requires a shared browser recovery boundary
+and unique relay delivery attribution. The [plan](../../PLAN.md) carries
+the remaining pinned operation and release cases and links the warmup investigation.
