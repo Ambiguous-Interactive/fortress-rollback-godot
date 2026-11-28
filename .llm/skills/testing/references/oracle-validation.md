@@ -121,6 +121,7 @@ Keep the observed first failure separate from later cleanup termination. A stopp
 For held packets, keep publication, release and socket consumption clocks separate. Bind a positive COMMIT to its real routes and the recipients' installed history.
 Read typed outcomes and original histories from each runtime. Case names and assertion counts identify the tests and cannot establish runtime outcomes.
 For an exported room with a closed browser page, join original page indices to UUIDs before closing. Start the SDK notice window at the controller action.
+Rebuild speculative snapshots from bounded applied callback inputs. Use the observed delivery history in live cases whose prediction varies with arrival order.
 Give fake engine subprocesses in receipt tests a fixture-local capacity directory. Keep real engine and browser probes on the shared lease.
 
 Fingerprint the inputs to each schedule generator, including its upstream

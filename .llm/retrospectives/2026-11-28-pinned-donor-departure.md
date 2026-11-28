@@ -60,3 +60,10 @@ The hosted review reproduced a compile failure in the optional coordinator
 mode. Its socket used an old initializer, and the ordinary v6 build omitted
 that feature. All three modes now share a socket initializer. The ordinary
 v6 build compiles coordinator failover, and its receipt records that feature.
+
+The final hosted finding reproduced another matching-state false positive in
+the browser receipt. A single altered accumulator byte passed when copied to
+the controller and both recipient records. The witness now rebuilds the
+speculative tail from bounded callback samples, checking original inputs and
+predictions before applying them. Chromium and Firefox both reject the
+matching corruption on each pinned editor.
