@@ -73,6 +73,8 @@ func _observe_relay(host: Node, capture_recording: bool = false) -> void:
 			if input.code != T.Code.OK: return
 			if capture_recording and _post_wrap_input(input.message):
 				var envelope: String = bytes.hex_encode()
+				if host.asymmetric.is_phase_input(input.message.start_frame + input.message.frame_count):
+					JavaScriptBridge.eval("window.fortressRecordingAdmit(" + JSON.stringify(envelope) + ")")
 				if received_inputs.size() >= 512 and not received_inputs.has(envelope):
 					host.errors.append("recording_pressure_receipt_overflow")
 				else:

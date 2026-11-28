@@ -189,6 +189,14 @@ remain associated with the revision that produced them. Standalone P2P
 validation accepts `--source-revision` with `--source` or `--expected` and
 checks the corresponding raw fields before comparing Godot observations.
 
+When a pin or generator change invalidates the tracked P2P schedules, build
+the observer against the selected source with
+`python3 scripts/oracle/p2p_launch.py --godot "$editor" --case mesh_2_delay_0 --output "$output"`.
+Then run
+`python3 scripts/oracle/p2p_schedule.py --binary .cache/reference/target/debug/p2p`
+and include the generated bundle. `make test-oracle` checks the fingerprint
+and the full mesh and lifecycle inventory.
+
 ### Weekly reporting
 
 The scheduled/manual cadence and its deduplicated issue reporting are M2

@@ -119,20 +119,26 @@ A corruption control may desync before capture; require its typed cause and inde
 
 Keep the observed first failure separate from later cleanup termination. A stopped counterpart cannot replace the required desync or erase canonical history.
 For held packets, keep publication, release and socket consumption clocks separate. Bind a positive COMMIT to its real routes and the recipients' installed history.
+Fence both browser endpoints at the recovered prefix before releasing new input.
+Join a held relay carrier to its exact browser message. Require a unique candidate for SDK admission when the SDK reports envelope bytes alone.
 Read typed outcomes and original histories from each runtime. Case names and assertion counts identify the tests and cannot establish runtime outcomes.
 For an exported room with a closed browser page, join original page indices to UUIDs before closing. Start the SDK notice window at the controller action.
 Rebuild speculative snapshots from bounded applied callback inputs. Use the observed delivery history in live cases whose prediction varies with arrival order.
 Give fake engine subprocesses in receipt tests a fixture-local capacity directory. Keep real engine and browser probes on the shared lease.
 
 Fingerprint the inputs to each schedule generator, including its upstream
-source and locked build. Compare hinted and unhinted scenarios with the same
-live oracle and record subprocess counts and canonical hashes. Revalidate the
+source and locked build. Check that the tracked bundle matches the fingerprint
+and full corpus inventory. Rebuild it with the selected observer when those
+inputs change. Compare hinted and unhinted scenarios with the same live
+oracle and record subprocess counts and canonical hashes. Revalidate the
 whole hint and use its observations only for an exact matching prefix.
 
 At a prediction cap, record both the first blocked call and an identical
 retry. The first call can stage and send the current sample. The retry must
 hold the frame without sending another sample. After actual input arrives,
 compare earlier rollback callbacks separately from forward frame progress.
+Service delayed receipt gossip before treating a stall as the nearest
+reachable retention bound. Record physical slot tags before and after reuse.
 
 Receipt and snapshot tooling binds the working tree at run start and refuses
 drift at the end (`launch.require_unchanged` over `source_files()`,

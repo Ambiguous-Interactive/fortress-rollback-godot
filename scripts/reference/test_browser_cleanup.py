@@ -2448,7 +2448,7 @@ record(6, hold('release_started', 0), 115);
 record(6, hold('release_progress', 16), 115);
 window.fortressNativePostRelease.recordDeparture('native_expiry', 8, JSON.stringify(evidence(702, 3000)));
 record(6, hold('release_completed', 33), 120);
-record(0, {kind: 'native_expiry', endpoint: 8, uuid: uuids[6], page_ms: 5, expiry: evidence(674, null)}, 130, false);
+record(0, {kind: 'native_expiry', endpoint: 8, uuid: uuids[6], page_ms: 5, expiry: evidence(674, null)}, 120, false);
 bindDepartureCheckpoints(peers[0], roster, uuids[0]);
 record(2, {...hold('release_socket_closed', 16), socket_state: 3, socket_stage: 'before_send', held_send: true}, 135);
 record(1, hold('hold_cap', 16), 140);
@@ -2465,9 +2465,10 @@ peers[5].history_received = {frames: 40, controller_ms: 131, controller_order: p
 const report = relayReleaseEvidence(peers, uuids, false, {
   frames: 40, departureCommands: [{phase: 'departure', controller_dispatch_ms: 160}, {phase: 'teardown', controller_dispatch_ms: 170}],
 });
+assert.deepEqual(report.expiries.map(expiry => expiry.reporter_page), [2, 0]);
 assert.deepEqual(report.expiries.map(expiry => expiry.room_checkpoints), [
-  {release_completed_pages: [6], history_received_pages: [1, 2], local_history_published_before_expiry: null},
   {release_completed_pages: [], history_received_pages: [1], local_history_published_before_expiry: true},
+  {release_completed_pages: [6], history_received_pages: [1, 2], local_history_published_before_expiry: null},
 ]);
 assert.deepEqual(report.first_sdk_removal, {reporter_page: 3, uuid: uuids[6], controller_ms: 150});
 assert.equal(report.intentional_leave_dispatch_ms, 160);
@@ -2491,7 +2492,7 @@ assert.deepEqual(report.socket_closed_pages, [2]);
 assert.deepEqual(report.hold_cap_pages, [1]);
 assert.deepEqual(report.expiries.map(({reporter_page, expired_page, last_release_checkpoint, expiry}) =>
   [reporter_page, expired_page, last_release_checkpoint.kind, last_release_checkpoint.released, expiry.sdk_queued, expiry.last_accepted?.accepted_us]),
-  [[0, 6, 'release_completed', 33, 674, undefined], [2, 6, 'release_progress', 16, 702, 3000]]);
+  [[2, 6, 'release_progress', 16, 702, 3000], [0, 6, 'release_completed', 33, 674, undefined]]);
 assert.match(peers[3].checkpoint_error, /invalid native expiry evidence/);
 assert.equal(peers[2].native_expiry.expiry.last_accepted.kind, 4);
 assert.equal(peers[2].native_expiry.expiry.last_accepted.bytes, 46);

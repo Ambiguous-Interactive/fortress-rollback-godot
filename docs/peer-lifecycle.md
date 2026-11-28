@@ -353,7 +353,9 @@ the original chunk to both. Delivering it lets all three survivors certify cut 8
 continue with matching canonical history. Delivering the donor's Goodbye first ends
 both recipients' sessions with `participant_lost` for the pending target operation.
 Neither slot freezes. Late copies of the original chunk install no rows, and both
-recipients keep their exposed frames and confirmed replay samples.
+recipients keep their exposed frames and confirmed replay samples. The same
+delivery and Goodbye outcomes are exercised after physical ring reuse at the
+[prediction limit](oracle-p2p.md#donor-retention-at-the-live-recipient-bound).
 
 The live missing-history receipt requires the proposer to open at confirmed
 frame 2 and the donor at frame 3. Withholding the donor's inputs from the departing

@@ -892,10 +892,63 @@ checks all three canonical histories through frame 19. The clock origins,
 departure triggers, wire formats and terminal signals belong to their
 respective runtimes. The Rust timing is a bound for this sampled schedule.
 The exported [three-player SignalFish witness](peer-lifecycle.md#unequal-confirmation-frontiers)
-checks the room restart when the selected donor's browser closes. The remaining
-missing-history cases are tracked in
-[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188)
-and [#559](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/559).
+checks the room restart when the selected donor's browser closes.
+
+### Donor retention at the live-recipient bound
+
+The four-endpoint witness for [#559](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/559) keeps the target and both
+recipients active while withholding original target inputs to recipients 0 and
+2 starting at frame 8. The three surviving sessions use 18-row rings with an
+eight-frame prediction window and zero input delay. The recipients expose
+original frames 0–7 and still lack frame 8.
+
+For a remote target slot, Godot folds every live endpoint's contiguous receipt.
+A missing frame F limits a donor's confirmation to F−1. Prediction then bounds
+its current frame by F−1 plus the prediction window, so its rollback floor
+cannot pass the missing row. If an append reclaims the floor row's ring slot,
+the queue keeps its original bytes in separate storage. The same mechanism is
+present in the pinned source's [confirmation fold](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sessions/p2p_session.rs#L15532-L15568),
+[prediction gate](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sessions/p2p_session.rs#L6759-L6774),
+[rollback floor](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/sync_layer/mod.rs#L400-L408)
+and [full-ring append](https://github.com/wallstop/fortress-rollback/blob/25e8020d1a5fd40c4f16b37f97b5ec5329a8566d/src/input_queue/mod.rs#L1647-L1675).
+
+With zero delay, a recipient can stage a last input at its stalled current
+frame, 15. As the target includes its receipt for that slot, target confirmation
+is at most 15 and the target can stage frame 23 at its own prediction stall.
+Godot reaches both bounds. The donor's real frame-23 input replaces tag 5
+and its frame-8 tag still contains `6d6e6f70`. Both recipient rings retain tag 5
+and have empty frame-8 slots. The receipt records both tags before and after
+for each survivor. Frame 26 would be required to reuse the donor's frame-8 slot. The pinned Rust schedule stops the target at current 22 and
+confirmation 14. Its donor's retained interval moves from [4, 7] to [6, 22],
+which spans frame 8. The source receipt derives its reclaim floor from the
+observed current frame and configured window, while Godot reads the floor
+and the ring tags directly.
+
+| Runtime | Eligible survivor | Target receipt | Confirmation | Rollback floor | Frame 8 |
+| --- | --- | ---: | ---: | ---: | --- |
+| Godot 4.3 and 4.7.2 | Recipients 0 and 2 | 7 | 7 | 7 | Tag empty |
+| Godot 4.3 and 4.7.2 | Donor 1 | 23 | 7 | 7 | Tag 8 |
+| Pinned Rust | Recipients 0 and 2 | 7 | 6 | 6 | Outside retained [5, 7] |
+| Pinned Rust | Donor 1 | 22 | 7 | 7 | Inside retained [6, 22] |
+
+Both Godot outcomes use the same input and delivery schedule up to the
+donor's addressed history publication. Delivering it installs all original
+frames 8–23, certifies cut 23 and keeps three survivors in canonical agreement
+through frame 28. Delivering the donor's Goodbye first excludes the only holder.
+The departed donor still owns frame 8. Neither recipient certifies locally or
+publishes READY before the transfer, and no peer publishes COMMIT. Both recipients
+leave both slots unfrozen and keep their exposed replay through frame 7. Every
+offered row from 8 through 23 stays absent after late delivery, and both target
+receipts stay at 7. This membership transition is distinct from physical eviction.
+
+Run the pinned comparison once with each Godot editor and a separate output
+directory. The comparison records physical observations, original wire bytes and replay
+rows. It repeats every case in fresh processes.
+
+```sh
+python3 scripts/oracle/drop_history_launch.py --offline --godot "$editor" \
+    --source-revision 25e8020d1a5fd40c4f16b37f97b5ec5329a8566d --output "$output"
+```
 
 ### Coordinator silence on the version-6 candidate
 

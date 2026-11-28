@@ -23,7 +23,7 @@ struct Mesh {
 }
 
 impl Mesh {
-    fn new() -> Self {
+    fn new(queue_capacity: Option<usize>) -> Self {
         let clock = Arc::new(Mutex::new(0_u64));
         let origin = web_time::Instant::now();
         let order = Arc::new(Mutex::new(0_usize));
@@ -63,6 +63,9 @@ impl Mesh {
                 .with_sync_config(sync)
                 .with_disconnect_timeout(Duration::from_millis(200))
                 .with_disconnect_notify_delay(Duration::from_millis(50));
+            if let Some(queue_length) = queue_capacity {
+                builder = builder.with_input_queue_config(fortress_rollback::InputQueueConfig { queue_length });
+            }
             for slot in 0..PEERS {
                 let kind = if slot == peer { PlayerType::Local } else { PlayerType::Remote(slot.to_string()) };
                 builder = builder.add_player(kind, PlayerHandle::new(slot)).unwrap();
@@ -170,7 +173,7 @@ impl Mesh {
 }
 
 pub(super) fn run(mode: &str) -> Value {
-    let mut mesh = Mesh::new();
+    let mut mesh = Mesh::new(None);
     for _ in 0..12 {
         mesh.tick(1000);
     }
@@ -284,4 +287,52 @@ pub(super) fn run(mode: &str) -> Value {
         "installed":installed,"commit_receipts":commit_receipts,
         "final_before":final_before,"received":received,"advance":advance,"runtime_rows":runtime_rows,
         "final_after":RECIPIENTS.map(|peer| mesh.snapshot(peer)), "final_rows":RECIPIENTS.map(|peer| mesh.rows(peer))})
+}
+
+/// Drive the same four-slot, zero-delay input schedule to its prediction limit.
+pub(super) fn retention_boundary() -> Value {
+    const CAPACITY: usize = 18;
+    let mut mesh = Mesh::new(Some(CAPACITY));
+    for _ in 0..12 {
+        mesh.tick(1000);
+    }
+    for _ in 0..8 {
+        for peer in 0..PEERS {
+            mesh.frame(peer).unwrap();
+        }
+        for _ in 0..4 {
+            mesh.tick(250);
+        }
+    }
+    let target = PlayerHandle::new(TARGET);
+    let initial_range = mesh.sessions[DONOR].diagnostic_player_retained_input_range(target)
+        .map(|(first, last)| [first.as_i32(), last.as_i32()]);
+    let original = RECIPIENTS.map(|peer| mesh.rows(peer));
+    mesh.asymmetric = true;
+    let mut advanced = [false; PEERS];
+    for _ in 0..20 {
+        for (peer, advanced) in advanced.iter_mut().enumerate() {
+            let before = mesh.games[peer].frame;
+            mesh.frame(peer).unwrap();
+            *advanced = mesh.games[peer].frame > before;
+        }
+        for _ in 0..4 {
+            mesh.tick(750);
+        }
+    }
+    let eligible = (0..TARGET).map(|peer| {
+        let session = &mesh.sessions[peer];
+        let current = session.current_frame().as_i32();
+        let window = session.max_prediction() as i32;
+        let retained = session.diagnostic_player_retained_input_range(target)
+            .map(|(first, last)| [first.as_i32(), last.as_i32()]);
+        json!({"peer":peer,"current":current,"confirmed":session.confirmed_frame().as_i32(),
+               "floor":(current-window).max(0),"window":window,
+               "receipt":session.diagnostic_player_receipt_frame(target).map(Frame::as_i32),
+               "target_connected":session.diagnostic_player_connected(target),"retained":retained})
+    }).collect::<Vec<_>>();
+    let source = &mesh.sessions[TARGET];
+    json!({"revision":REVISION,"capacity":CAPACITY,"eligible":eligible,"initial_range":initial_range,
+           "target_current":source.current_frame().as_i32(),"target_confirmed":source.confirmed_frame().as_i32(),
+           "advanced":advanced,"original":original})
 }

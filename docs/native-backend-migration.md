@@ -162,9 +162,9 @@ A later expiry can fall outside the upstream link
 selection. Its receipt identifies that scope, and its original browser
 observations remain available independently of the general relay trace.
 
-For each expiry, `releaseEvidence` lists the pages whose release
-completions and target-frame history responses reached the controller
-before its expiry receipt. The reporter's target-frame publication is
+`releaseEvidence.expiries` follows the controller receipt order. Each row
+lists the pages whose release completions and target-frame history responses
+reached the controller before that expiry receipt. The reporter's target-frame publication is
 compared with its own expiry on the page clock, even if the console message
 reaches the controller later. An absent, mismatched or equal-time publication
 leaves that comparison unknown. The same receipt records the first SDK removal

@@ -435,6 +435,7 @@ function relayReleaseEvidence(peers, uuids, correctionDeadlineReached, { frames,
     expiries.push({ reporter_page, expired_page, uuid: expiry.uuid, endpoint: expiry.endpoint,
       expiry: expiry.expiry, controller_ms: expiry.controller_ms, controller_order: expiry.controller_order, last_release_checkpoint, room_checkpoints });
   });
+  expiries.sort((a, b) => a.controller_order - b.controller_order);
   const first_sdk_removal = firstRemoval
     ? { reporter_page: firstRemoval.reporter_page, uuid: firstRemoval.uuid, controller_ms: firstRemoval.controller_ms } : null;
   const intentional_leave_dispatch_ms = departureCommands.find(command => command.phase === 'departure')?.controller_dispatch_ms ?? null;

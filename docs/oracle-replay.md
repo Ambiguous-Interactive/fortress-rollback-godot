@@ -539,7 +539,31 @@ while staying at boundary 257. Both decoded recordings contain every finalized
 input/status row and all 258 original checksum boundaries.
 
 These witnesses exercise Godot's browser runtime with injected buffer pressure.
-Physical relay congestion and the complete asymmetric delivery, stall, neutral
-and withheld-delivery browser controls remain open in #256. The in-memory
-[source recovery witness](#asymmetric-delivery-and-final-recovery) covers the
-upstream API separately.
+The in-memory [source recovery witness](#asymmetric-delivery-and-final-recovery)
+covers the upstream API separately.
+
+The Chromium-only `recording-asymmetric` label extends this workload with
+changing-input, neutral-input and withheld-delivery rooms. Each starts with
+normal mixed-path service. After the input ring has wrapped, a bounded proxy
+pauses a real server-to-browser WebSocket stream on the first original INPUT
+carrier after boundary 144. Peer zero receives through input 143, advances
+seven predicted frames and cannot advance past boundary 151. Peer one receives
+through input 150 and executes those frames using actual inputs. At boundary
+192 the proxy holds the reverse stream for three frames. Recovery replays the
+corrected inputs at the same boundary. The neutral game exercises the same
+delivery and prediction stall without any LOAD. The withheld control closes
+the blocked stream at teardown and never advances or exports past the stall.
+
+The receipt binds the pending TCP completion bytes to the exact server carrier.
+It matches that carrier's delivery stamp to the browser WebSocket message
+and orders SDK callbacks against the socket's received messages. It compares the ordered
+SAVE/LOAD/ADVANCE requests and original input/status rows at both holds,
+all 257 canonical boundaries, each endpoint's decoded recording, and final
+recovery without a new sample. The proxy stresses a real relay stream with a
+bounded write hold. The browser still injects buffer refusal for the
+repeatable send-pressure schedule. Receipt mutations reject lost or changed
+evidence at their specific diagnostics.
+
+Run both labels on both pinned Godot engines with the
+[fallback witness launcher](signalfish-fallback.md) using
+`--label recording-pressure --label recording-asymmetric`.

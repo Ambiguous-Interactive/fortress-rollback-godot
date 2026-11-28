@@ -6,6 +6,8 @@ const net = require('node:net');
 const path = require('node:path');
 const { waitGameplay, waitDefaultSetup, boundedRoom } = require('./webrtc_watchdog.cjs');
 const { placeFirefox } = require('./webrtc_display.cjs');
+const { proxyRecordingSocket, runAsymmetric } = require('./webrtc_asymmetric.cjs');
+const { decodeRelayDelivery } = require('./native_relay_trace.cjs');
 const FIREFOX_PREFS = { 'webgl.force-enabled': true, 'webgl.disabled': false, 'toolkit.shutdown.fastShutdownStage': 0 };
 
 async function closeDepartingRtc(pages, now = () => performance.now(), relayOnly = false) {
@@ -127,7 +129,8 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   dropAnswer = false, dropRelay = false, dropMissing = false, dropHistoryLost = false, dropDonorProcess = false, dropCommit = false,
   dropSecond = false, dropRollback = false, dropForeign = false,
   dropRoom = false, dropRoomContinue = false, dropProcess = false, dropProcessMissing = false,
-  dropRoomAfterDrop = false, dropRoomBeforeDrop = false, dropOverlap = false, recordingPressure = false, secondBoundary = '' }) {
+  dropRoomAfterDrop = false, dropRoomBeforeDrop = false, dropOverlap = false, recordingPressure = false, recordingMode = '', secondBoundary = '' }, decodeRecordingCarrier = null) {
+  window.fortressRecordingAsymmetric = recordingMode;
   window.fortressRecordingPressure = recordingPressure;
   window.fortressEndpoint = endpoint;
   window.fortressPlayers = count;
@@ -166,6 +169,10 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   evidence.relayBlockedReads = 0;
   evidence.relayPostWrapBlockedReads = 0;
   evidence.recordingRelaySends = [];
+  if (recordingMode) {
+    evidence.recordingPhaseSends = [];
+    evidence.recordingPhaseMessages = [];
+  }
   evidence.recordingFinalRelaySend = null;
   evidence.maximumRelayBuffered = 0;
   evidence.captureError = false;
@@ -198,17 +205,38 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
         return nativeBuffered.call(socket);
       } });
     }
-    socket.addEventListener('message', () => { record.received++; });
+    socket.addEventListener('message', event => {
+      record.received++;
+      if (!recordingMode || typeof event.data === 'string') return;
+      const bytes = binaryView(event.data);
+      if (!bytes) { evidence.captureError = true; return; }
+      const delivery = decodeRecordingCarrier(bytes);
+      if (!delivery || !isPhaseInput(recordingInputEnd(delivery.envelope))) return;
+      if (evidence.recordingPhaseMessages.length === 128) { evidence.captureError = true; return; }
+      evidence.recordingPhaseMessages.push({ carrier: hex(bytes), wire: hex(delivery.envelope), admission: null });
+    });
     socket.addEventListener('open', () => { record.opened = true; });
     socket.addEventListener('error', () => { record.failed = true; });
     socket.addEventListener('close', event => { record.close_code = event.code; });
     return socket;
   } });
-  const carriesRecordingTail = view => {
+  const binaryView = bytes => bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
+    : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
+  const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  const isPhaseInput = end => (end > 144 && end <= 151) || (end > 192 && end <= 195);
+  if (recordingMode) {
+    let ordinal = 0;
+    window.fortressRecordingAdmit = wire => {
+      const message = evidence.recordingPhaseMessages.find(item => item.wire === wire && item.admission === null);
+      if (!message) { evidence.captureError = true; return; }
+      message.admission = { ordinal: ++ordinal, turn: window.fortressRecordingTurn, release: window.fortressAsymmetricEnd ?? null };
+    };
+  }
+  const recordingInputEnd = view => {
     const envelopeHeader = 57;
-    if (view.length < 133 || view[0] !== 70 || view[1] !== 83 || view[2] !== 82 || view[3] !== 49 || view[envelopeHeader + 6] !== 3) return false;
+    if (view.length < 133 || view[0] !== 70 || view[1] !== 83 || view[2] !== 82 || view[3] !== 49 || view[envelopeHeader + 6] !== 3) return null;
     const packet = new DataView(view.buffer, view.byteOffset + envelopeHeader, view.byteLength - envelopeHeader);
-    return packet.getInt32(44, true) + packet.getUint16(52, true) === 257;
+    return packet.getInt32(44, true) + packet.getUint16(52, true);
   };
   const websocketSend = WebSocket.prototype.send;
   WebSocket.prototype.send = function(bytes) {
@@ -217,14 +245,19 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
     const trackRetry = track && evidence.recordingRelaySends.length < 2;
     const trackTail = track && evidence.recordingFinalRelaySend === null && Number(document.body?.dataset.fortressFrame) >= 255;
     const result = websocketSend.call(this, bytes);
-    if (trackRetry || trackTail) {
-      const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
-        : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
+    if (trackRetry || trackTail || (track && recordingMode)) {
+      const view = binaryView(bytes);
       if (!view) evidence.captureError = true;
       else if (view.length <= 1081) {
-        const finalInput = trackTail && carriesRecordingTail(view);
-        if (trackRetry || finalInput) {
-          const wire = Array.from(view, byte => byte.toString(16).padStart(2, '0')).join('');
+        const inputEnd = recordingInputEnd(view);
+        const finalInput = trackTail && inputEnd === 257;
+        const phaseInput = recordingMode && isPhaseInput(inputEnd);
+        if (trackRetry || finalInput || phaseInput) {
+          const wire = hex(view);
+          if (phaseInput && !evidence.recordingPhaseSends.some(item => item.wire === wire)) {
+            if (evidence.recordingPhaseSends.length === 128) evidence.captureError = true;
+            else evidence.recordingPhaseSends.push({ wire, turn: window.fortressRecordingTurn });
+          }
           if (finalInput) evidence.recordingFinalRelaySend = { wire, turn: window.fortressRecordingTurn, released: window.fortressRecordingTailReleased === true };
           if (trackRetry && !relaySends.has(wire)) {
             if (relaySends.size >= 1024) evidence.captureError = true;
@@ -496,8 +529,10 @@ async function main() {
   const dropAnswer = process.argv[4] === 'peer-drop-answer';
   const dropRelay = process.argv[4] === 'peer-drop-relay';
   const physicalClose = process.argv[4] === 'mixed-close';
-  const mixed = ['mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop-close', 'peer-drop-relay', 'recording-pressure'].includes(process.argv[4]);
-  const recordingPressure = process.argv[4] === 'recording-pressure';
+  const recordingAsymmetric = process.argv[4] === 'recording-asymmetric';
+  const mixed = recordingAsymmetric || ['mixed', 'mixed-default', 'mixed-disabled', 'mixed-close',
+    'peer-drop-close', 'peer-drop-relay', 'recording-pressure'].includes(process.argv[4]);
+  const recordingPressure = recordingAsymmetric || process.argv[4] === 'recording-pressure';
   const mixedDefault = process.argv[4] === 'mixed-default';
   const disableFallback = process.argv[4] === 'mixed-disabled';
   const errors = [];
@@ -513,6 +548,7 @@ async function main() {
     response.setHeader('Content-Type', mime[path.extname(filename)] || 'application/octet-stream');
     fs.readFile(filename, (error, bytes) => { response.writeHead(error ? 404 : 200); response.end(error ? '' : bytes); });
   });
+  const recordingSockets = new Map();
   server.on('upgrade', (request, socket, head) => {
     const backend = new URL(endpoint);
     const upstream = net.connect(Number(backend.port), '127.0.0.1', () => {
@@ -521,7 +557,15 @@ async function main() {
         headers += `${request.rawHeaders[index]}: ${request.rawHeaders[index + 1]}\r\n`;
       upstream.write(headers + '\r\n');
       if (head.length) upstream.write(head);
-      upstream.pipe(socket);
+      if (recordingAsymmetric) {
+        const page = /^\/v3\/ws\?recording_page=([01])$/.exec(request.url);
+        if (!page || recordingSockets.has(Number(page[1]))) {
+          upstream.destroy();
+          socket.destroy();
+          return;
+        }
+        recordingSockets.set(Number(page[1]), proxyRecordingSocket(upstream, socket));
+      } else upstream.pipe(socket);
       socket.pipe(upstream);
     });
     upstream.on('error', () => socket.destroy());
@@ -541,7 +585,10 @@ async function main() {
     } : { headless: false, timeout: 30000, executablePath: process.env.FORTRESS_FIREFOX_EXECUTABLE,
       firefoxUserPrefs: FIREFOX_PREFS,
     }));
-    for (const count of (recordingPressure ? [2] : dropOverlap ? [4] : peerDrop ? [3] : (corrupt || defaultFactory || disableFallback) ? [2] : [2, 4, 8])) {
+    const counts = recordingPressure ? [2] : dropOverlap ? [4] : peerDrop ? [3] : (corrupt || defaultFactory || disableFallback) ? [2] : [2, 4, 8];
+    const rooms = recordingAsymmetric ? ['changing', 'neutral', 'withheld'].map(mode => ({ count: 2, mode })) : counts.map(count => ({ count, mode: '' }));
+    for (const { count, mode: recordingMode } of rooms) {
+      recordingSockets.clear();
       const contexts = [];
       const pages = [];
       const displays = [];
@@ -554,6 +601,7 @@ async function main() {
       let teardown;
       let serialDispatch;
       let donorHistory;
+      let recordingHolds;
       try {
         await boundedRoom(async () => {
         await boundedRoom(async () => {
@@ -572,10 +620,14 @@ async function main() {
             }
             if (message.type() === 'error') errors.push({ count, index, error: message.text() });
           });
-          await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
+          const route = recordingMode ? `/v3/ws?recording_page=${index}` : '/v3/ws';
+          const options = { endpoint: `wss://127.0.0.1:${server.address().port}${route}`, count, index,
             faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop,
             dropCorrupt, dropClose, dropAnswer, dropRelay, dropMissing, dropHistoryLost, dropDonorProcess, dropCommit, dropSecond, dropRollback, dropForeign,
-            dropRoom, dropRoomContinue, dropProcess, dropProcessMissing, dropRoomAfterDrop, dropRoomBeforeDrop, dropOverlap, recordingPressure, secondBoundary });
+            dropRoom, dropRoomContinue, dropProcess, dropProcessMissing, dropRoomAfterDrop, dropRoomBeforeDrop, dropOverlap, recordingPressure, recordingMode, secondBoundary };
+          if (recordingMode) {
+            await page.addInitScript({ content: `(${instrument})(${JSON.stringify(options)}, (${decodeRelayDelivery}));` });
+          } else await page.addInitScript(instrument, options);
           await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
         }
         await pages[0].waitForFunction(() => document.body.dataset.fortressRoom !== undefined, null, { timeout: 60000 });
@@ -731,8 +783,10 @@ async function main() {
           }
           if (!dropRoom && !dropRoomContinue && !dropRoomAfterDrop && !dropRoomBeforeDrop && !dropProcess && !dropProcessMissing && !dropDonorProcess) {
             const gameplay = waitGameplay(pages, undefined, undefined, recordingPressure ? 256 : secondBoundary ? 43 : 39);
-            if (recordingPressure) await Promise.all([gameplay, releaseRecordingTail(pages)]);
-            else await gameplay;
+            const operations = [gameplay];
+            if (recordingPressure && recordingMode !== 'withheld') operations.push(releaseRecordingTail(pages));
+            if (recordingMode) operations.push(runAsymmetric(pages, recordingSockets, recordingMode).then(value => { recordingHolds = value; }));
+            await Promise.all(operations);
           }
           if (dropDonorProcess) await Promise.all(evidencePages.map(page => page.waitForFunction(
             () => document.body.dataset.fortressGameplayDone === 'true' || document.body.dataset.fortressWebrtc !== undefined,
@@ -740,6 +794,7 @@ async function main() {
           await Promise.all(evidencePages.map(page => page.evaluate(() => { window.fortressTeardownArmed = true; })));
           await Promise.all(evidencePages.map(page => page.waitForFunction(() => document.body.dataset.fortressTeardownArmed === 'true',
             null, { timeout: 10000 })));
+          if (recordingMode === 'withheld') for (const socket of recordingSockets.values()) socket.closeWithheld();
           await Promise.all(evidencePages.map(page => page.evaluate(() => { window.fortressTeardownReady = true; })));
         }
         await Promise.all(evidencePages.map(page => page.waitForFunction(() => document.body.dataset.fortressWebrtc !== undefined,
@@ -796,7 +851,7 @@ async function main() {
           peer.display = displays[pageIndex];
           if (donorHistory) peer.page_index = pageIndex;
         });
-        records.push({ players: count, peers, departedUuid, processClosed, processHeld, survivorUuids, serialDispatch, donorHistory });
+        records.push({ players: count, peers, departedUuid, processClosed, processHeld, survivorUuids, serialDispatch, donorHistory, recordingMode, recordingHolds });
         });
       } catch (error) {
         roomFailures.push(error);
@@ -822,7 +877,7 @@ async function main() {
       version: browsers[0].version(), browser_instances: 2, firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
       faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose,
       dropAnswer, dropRelay, dropMissing, dropHistoryLost, dropDonorProcess, dropCommit, dropSecond, dropRollback, dropForeign, dropRoom, dropRoomContinue,
-      dropProcess, dropProcessMissing, dropRoomAfterDrop, dropRoomBeforeDrop, dropOverlap, recordingPressure, secondBoundary, records, errors }));
+      dropProcess, dropProcessMissing, dropRoomAfterDrop, dropRoomBeforeDrop, dropOverlap, recordingPressure, recordingAsymmetric, secondBoundary, records, errors }));
   } catch (error) {
     failures.push(error);
     try {
