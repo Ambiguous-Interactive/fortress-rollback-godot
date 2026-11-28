@@ -125,14 +125,18 @@ Rebuild speculative snapshots from bounded applied callback inputs. Use the obse
 Give fake engine subprocesses in receipt tests a fixture-local capacity directory. Keep real engine and browser probes on the shared lease.
 
 Fingerprint the inputs to each schedule generator, including its upstream
-source and locked build. Compare hinted and unhinted scenarios with the same
-live oracle and record subprocess counts and canonical hashes. Revalidate the
+source and locked build. Check that the tracked bundle matches the fingerprint
+and full corpus inventory. Rebuild it with the selected observer when those
+inputs change. Compare hinted and unhinted scenarios with the same live
+oracle and record subprocess counts and canonical hashes. Revalidate the
 whole hint and use its observations only for an exact matching prefix.
 
 At a prediction cap, record both the first blocked call and an identical
 retry. The first call can stage and send the current sample. The retry must
 hold the frame without sending another sample. After actual input arrives,
 compare earlier rollback callbacks separately from forward frame progress.
+Service delayed receipt gossip before treating a stall as the nearest
+reachable retention bound. Record physical slot tags before and after reuse.
 
 Receipt and snapshot tooling binds the working tree at run start and refuses
 drift at the end (`launch.require_unchanged` over `source_files()`,

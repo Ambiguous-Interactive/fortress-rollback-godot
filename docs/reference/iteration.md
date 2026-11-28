@@ -156,10 +156,16 @@ The five-minute merge-candidate target still requires a stable 40-candidate wind
 In candidate 46107745858, the relay producer started at 04:29:09 UTC. Its last
 dependent browser job finished at 04:33:36 UTC, 267 seconds later. The Godot 4.3
 ordinary P2P launcher took 454.0 seconds. Its job finished at 04:37:07 UTC, and
-the required verdict finished at 04:37:21 UTC. The launcher's schedule bundle
-had 67 recipes and zero usable fingerprints after the source and observer
-changes. The cases fell back to generating packet schedules in live processes.
+the required verdict finished at 04:37:21 UTC. The source and observer changes
+invalidated the schedule fingerprint, so the launcher bypassed all 67 recipes
+and generated packet schedules in live processes.
 [Candidate job timings](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/46107745858)
+
+Regeneration reproduced all 67 recipes on the pinned source. Building the
+same recipes used 3,724 observer subprocesses with an empty cache and 67
+with the refreshed bundle. On Godot 4.3, the clean before and after
+`p2p_launch.py --offline --mesh-only` receipts contain identical scenarios,
+source and Godot trace digests, 572 record controls and 59 process controls.
 
 ## Reproducing an experiment
 
