@@ -17,6 +17,7 @@ var _cut: int = FIRST_MISSING
 var _hold_history: bool = false
 var _held_history: Dictionary = {}
 var _commit_publications: int = 0
+var _ready_publications: Array[int] = []
 
 
 func cases() -> PackedStringArray:
@@ -31,6 +32,7 @@ func run_case(name: String, context: RefCounted) -> void:
 	_hold_history = true
 	_held_history.clear()
 	_commit_publications = 0
+	_ready_publications.assign([0, 0, 0, 0])
 	var wrapped: bool = name.begins_with("wrapped_")
 	_cut = FIRST_MISSING
 	var mesh: Dictionary = _recording_mesh(context, 64, Callable(), CAPACITY, 4)
@@ -60,6 +62,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			context.finish()
 			return
 		context.equal(barrier.state, Drop.PENDING, "both recipients wait for the donor")
+		var certified: bool = barrier.certified or (barrier.role == Drop.Role.PROPOSER and barrier.digest != 0)
+		context.equal(certified, false, "the recipient has no local certificate while original history is held")
 		context.equal(barrier.history.donor, DONOR, "both participants adopted the original donor plan")
 		context.equal([barrier.history.first, barrier.history.cut], [FIRST_MISSING, _cut], "the adopted plan names the missing interval")
 		var decoded: T.Result = Codec.decode(_held_history[recipient].bytes, _limits(mesh.count))
@@ -75,7 +79,7 @@ func run_case(name: String, context: RefCounted) -> void:
 		opening.append({
 			"peer": recipient, "donor": barrier.history.donor, "coordinator": barrier.coordinator, "operation": barrier.operation,
 			"receipt": mesh.peers[recipient]._core.received_frames()[TARGET], "first": barrier.history.first,
-			"cut": barrier.history.cut, "bytes": chunk.bytes.hex_encode(),
+			"cut": barrier.history.cut, "bytes": chunk.bytes.hex_encode(), "certified": certified,
 		})
 	context.equal(mesh.peers[DONOR]._core.retained_input(TARGET, _cut), _sample(TARGET, _cut), "the donor retains the exact missing input")
 	_hold_history = false
@@ -222,13 +226,14 @@ func _check_refusal(context: RefCounted, mesh: Dictionary) -> Dictionary:
 			"frozen": [peer._core.frozen_frame(TARGET), peer._core.frozen_frame(DONOR)],
 		})
 	_drain(mesh)
-	context.equal(_commit_publications, 0, "no survivor publishes a certificate without the original history")
+	context.equal([_ready_publications[0], _ready_publications[2]], [0, 0], "neither missing recipient publishes READY")
+	context.equal(_commit_publications, 0, "no survivor publishes COMMIT without the complete agreement")
 	context.equal(mesh.cuts.is_empty(), true, "no survivor publishes a partial freeze")
 	context.equal(mesh.peers[DONOR]._core.retained_input(TARGET, FIRST_MISSING), _sample(TARGET, FIRST_MISSING),
 		"the departed donor still owns the row but can no longer contribute to the certificate")
 	return {
 		"goodbye": goodbye, "goodbye_at": goodbye_at, "late_at": mesh.now, "failures": mesh.drop_failures,
-		"peers": peers, "cuts": mesh.cuts, "commit_publications": _commit_publications,
+		"peers": peers, "cuts": mesh.cuts, "commit_publications": _commit_publications, "ready_publications": _ready_publications,
 	}
 
 
@@ -298,8 +303,12 @@ func _drain(mesh: Dictionary) -> Array[Dictionary]:
 	var packets: Array[Dictionary] = super._drain(mesh)
 	for packet: Dictionary in packets:
 		var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
-		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER and decoded.message.phase == Drop.Phase.COMMIT:
+		if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.DROP_BARRIER:
+			continue
+		if decoded.message.phase == Drop.Phase.COMMIT:
 			_commit_publications += 1
+		elif decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage == Drop.Stage.READY:
+			_ready_publications[packet.from] += 1
 	return packets
 
 

@@ -934,8 +934,9 @@ Both Godot outcomes use the same input and delivery schedule up to the
 donor's addressed history publication. Delivering it installs all original
 frames 8–23, certifies cut 23 and keeps three survivors in canonical agreement
 through frame 28. Delivering the donor's Goodbye first excludes the only holder.
-The departed donor still owns frame 8. Neither recipient publishes a certificate,
-freezes either slot or installs the late chunk. Both keep their exposed replay
+The departed donor still owns frame 8. Neither recipient certifies locally or
+publishes READY before the transfer, and no peer publishes COMMIT. Both recipients
+leave both slots unfrozen, refuse the late chunk and keep their exposed replay
 through frame 7. This membership transition is distinct from physical eviction.
 
 Run the pinned comparison once with each Godot editor and a separate output

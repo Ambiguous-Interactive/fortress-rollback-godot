@@ -248,17 +248,22 @@ def check_godot(evidence, wrapped=False):
     require(type(opening) is list and len(opening) == 2, label + ' opening recipients')
     operation = opening[0].get('operation') if type(opening[0]) is dict else None
     integer(operation, 1, (1 << 53) - 1, label + ' operation')
+    require(all(type(peer) is dict and peer.get('certified') is False for peer in opening), label + ' no local certificate while history is held')
     require(same(opening, [{'peer': peer, 'donor': 1, 'coordinator': 0, 'receipt': 7, 'first': 8,
-                            'cut': cut, 'operation': operation, 'bytes': history} for peer in (0, 2)]), label + ' original held plan')
+                            'cut': cut, 'operation': operation, 'bytes': history, 'certified': False} for peer in (0, 2)]), label + ' original held plan')
     accepted = delivery['outcome']
     fields(accepted, 'cuts installed canonical', label + ' delivery')
     require(same(accepted['cuts'], {'0': cut, '1': cut, '2': cut})
             and same(accepted['installed'], [{'peer': peer, 'cut': cut, 'bytes': sample} for peer in (0, 1, 2)]), label + ' certified cut and bytes')
     require(same(accepted['canonical'], [{'frame': row['frame'], 'states': [row['bytes']] * 3} for row in expected]), label + ' canonical continuation')
     stopped = refusal['outcome']
-    fields(stopped, 'goodbye goodbye_at late_at failures peers cuts commit_publications', label + ' refusal')
+    fields(stopped, 'goodbye goodbye_at late_at failures peers cuts commit_publications ready_publications', label + ' refusal')
     require(same(stopped['goodbye'], [0, 2]) and same(stopped['cuts'], {}), label + ' Goodbye routes and no cuts')
-    integer(stopped['commit_publications'], 0, 0, label + ' no certificate publication')
+    ready = stopped['ready_publications']
+    require(type(ready) is list and len(ready) == 4, label + ' READY publication inventory')
+    integer(ready[1], 0, 50_000, label + ' donor READY publication count')
+    require(same([ready[0], ready[2], ready[3]], [0, 0, 0]), label + ' no READY publication from missing recipients or target')
+    integer(stopped['commit_publications'], 0, 0, label + ' no COMMIT publication')
     integer(stopped['goodbye_at'], 1, 100_000, label + ' Goodbye clock')
     integer(stopped['late_at'], stopped['goodbye_at'] + 1000, stopped['goodbye_at'] + 1000, label + ' late delivery clock')
     require(same(stopped['failures'], [{'at_us': stopped['goodbye_at'], 'peer': peer,
@@ -317,6 +322,13 @@ def controls(cases, revision, godot, stdout):
     for case in (WRAPPED_DELIVERY, WRAPPED_REFUSAL):
         altered[case]['retention']['eligible'][1]['tag'] = 26
     names.append(reject_control(lambda: check_godot(altered, wrapped=True), 'godot_substituted_original_tag', 'original row tag'))
+    altered = deepcopy(godot)
+    for case in (WRAPPED_DELIVERY, WRAPPED_REFUSAL):
+        altered[case]['opening'][0]['certified'] = True
+    names.append(reject_control(lambda: check_godot(altered, wrapped=True), 'godot_local_certificate_without_history', 'no local certificate'))
+    altered = deepcopy(godot)
+    altered[WRAPPED_REFUSAL]['outcome']['ready_publications'][2] = 1
+    names.append(reject_control(lambda: check_godot(altered, wrapped=True), 'godot_ready_without_history', 'no READY publication'))
     altered = deepcopy(godot)
     altered[WRAPPED_REFUSAL]['outcome']['cuts'] = {'0': 23}
     names.append(reject_control(lambda: check_godot(altered, wrapped=True), 'godot_partial_freeze_after_wrap', 'no cuts'))

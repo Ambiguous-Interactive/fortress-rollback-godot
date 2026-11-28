@@ -473,7 +473,11 @@ fn main() {
             return;
         }
     }
-    if arguments == ["--donor-retention-boundary"] && OBSERVE_CHECKSUMS {
+    if arguments == ["--donor-retention-boundary"] {
+        if !OBSERVE_CHECKSUMS {
+            eprintln!("drop history: donor retention boundary requires the v6 observer build");
+            std::process::exit(2);
+        }
         println!("{}", donor_departure::retention_boundary());
         return;
     }
