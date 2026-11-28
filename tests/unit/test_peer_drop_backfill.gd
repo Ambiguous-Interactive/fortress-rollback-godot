@@ -165,12 +165,12 @@ func _wide_mesh(context: RefCounted) -> Dictionary:
 	return _recording_mesh(context, 0, Callable())
 
 
-func _recording_mesh(context: RefCounted, replay_frames: int, game_factory: Callable, capacity: int = 0) -> Dictionary:
+func _recording_mesh(context: RefCounted, replay_frames: int, game_factory: Callable, capacity: int = 0, peer_count: int = 3) -> Dictionary:
 	var peers: Array[Peer] = []
 	var games: Array[RefCounted] = []
-	for player: int in range(3):
+	for player: int in range(peer_count):
 		var config: Config = Config.new()
-		config.player_count = 3 * _slots
+		config.player_count = peer_count * _slots
 		config.local_players = PackedInt32Array()
 		for slot: int in range(player * _slots, (player + 1) * _slots):
 			config.local_players.append(slot)
@@ -214,12 +214,12 @@ func _recording_mesh(context: RefCounted, replay_frames: int, game_factory: Call
 		context.equal(peer.configure(config, local, game, handshake, I.Options.new(), controls), I.Code.OK, "configure wide-input production mesh")
 		peers.append(peer)
 		games.append(game)
-	for player: int in range(3):
+	for player: int in range(peer_count):
 		var tokens: Array[PackedByteArray] = []
 		for remote: PackedByteArray in peers[player].peer_ids():
 			tokens.append(_id(remote[0] + player * 8, 16))
 		context.equal(peers[player].begin(0, tokens), I.Code.OK, "begin wide-input handshake")
-	var mesh: Dictionary = {"peers": peers, "games": games, "now": 0, "cuts": {}, "unconfirmed": 0, "reasons": [], "count": 3 * _slots}
+	var mesh: Dictionary = {"peers": peers, "games": games, "now": 0, "cuts": {}, "unconfirmed": 0, "reasons": [], "count": peer_count * _slots}
 	for iteration: int in range(6):
 		_deliver(context, mesh, _drain(mesh))
 	return mesh

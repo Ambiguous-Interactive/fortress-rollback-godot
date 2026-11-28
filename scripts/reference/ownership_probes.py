@@ -199,6 +199,7 @@ EXPECTED['res://tests/unit/test_peer_drop_capacity.gd'] = {
     'refused_prepare_retries_after_drain', 'refused_inventory_retries_after_drain',
     'refused_commit_retries_after_drain', 'partial_prepare_retries_only_refused_link', 'staggered_prepare_retry'}
 EXPECTED['res://tests/unit/test_peer_drop_eviction.gd'] = {'unequal_retained_history', 'retained_history_control', 'journal_after_ring_wrap'}
+EXPECTED['res://tests/unit/test_peer_drop_donor_departure.gd'] = {'original_donor_chunk_arrives', 'chosen_donor_leaves_before_history'}
 EXPECTED['res://tests/unit/test_peer_drop_history_pressure.gd'] = {'partial_history_plan_retry', 'staggered_history_plan_retry', 'complete_history_plan_control'}
 EXPECTED['res://tests/unit/test_peer_drop_donor_fairness.gd'] = {'healthy_donor_destination', 'unpressured_donor_control'}
 EXPECTED['res://tests/unit/test_peer_drop_plan_fairness.gd'] = {
