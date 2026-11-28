@@ -11,6 +11,16 @@ import p2p_schedule
 
 
 class ScheduleHintTests(unittest.TestCase):
+    # Value: protects=qualification reuses schedules; fails_when=a pin or generator invalidates the bundle; why_new=other cases use synthetic fingerprints; seam=none
+    def test_tracked_hints_cover_the_current_corpus(self):
+        from p2p_launch import case_names, p2p_lifecycle_corpus
+
+        hints = p2p_schedule.schedule_hints()
+        self.assertCountEqual(
+            hints, [*case_names(), *p2p_lifecycle_corpus.NAMES],
+            'Regenerate with python3 scripts/oracle/p2p_schedule.py --binary .cache/reference/target/debug/p2p '
+            'after building the P2P observer against the selected pin.')
+
     # Value: protects=hint reuse across SignalFish upgrades; fails_when=unrelated pins invalidate hints; why_new=prefix tests omit input identity; seam=none
     def test_hint_identity_tracks_p2p_generation_inputs(self):
         root = p2p_schedule.HINTS.parents[3]

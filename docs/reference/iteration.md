@@ -146,6 +146,21 @@ verdict. Measure the shared build plus the last dependent browser job
 from their absolute timestamps. Per-job pickup and duration omit time
 spent waiting for prerequisite jobs. [Candidate jobs](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/45930154643)
 
+### November 28 P2P schedule cache
+
+The rollout report through 05:11:22 UTC counted 112 completed PR heads at p95
+269 seconds and 68 completed merge candidates at p95 498 seconds. Matched
+runner-minute ratios were 0.8691 and 0.9440. The aggregate spans layout changes.
+The five-minute merge-candidate target still requires a stable 40-candidate window.
+
+In candidate 46107745858, the relay producer started at 04:29:09 UTC. Its last
+dependent browser job finished at 04:33:36 UTC, 267 seconds later. The Godot 4.3
+ordinary P2P launcher took 454.0 seconds. Its job finished at 04:37:07 UTC, and
+the required verdict finished at 04:37:21 UTC. The launcher's schedule bundle
+had 67 recipes and zero usable fingerprints after the source and observer
+changes. The cases fell back to generating packet schedules in live processes.
+[Candidate job timings](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/46107745858)
+
 ## Reproducing an experiment
 
 Compare CI layouts at the same revision. Across local revisions, match the edits, engine, host capacity, cases and results. Keep cold and warm
