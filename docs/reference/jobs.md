@@ -89,6 +89,8 @@ The `direct` job's 26 labels pack into 14 waves. `clean` and `faults` stay
 exclusive at eight live pages each, `corrupt`, `default` and `mixed-disabled`
 share one wave, and the 21 `peer-drop` labels share 11 waves. The `mixed` job's four labels keep four waves because every eight-page
 label excludes every other; its wall shape is unchanged by this change.
+The merge-group Chromium `mixed` part also runs the three two-page
+`recording-asymmetric` rooms under the same eight-page cap.
 
 Every packed wave member runs under its own cancellation handle (#397). An
 interrupt in the joining caller — the launcher's own watchdog or an

@@ -457,7 +457,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         self.assertEqual(overlap, ast.dump(ast.parse("pair == ('chromium', 'chromium')", mode='eval').body),
                          'only the exact all-chromium pair may overlap; headed pairs must stay serial')
         expected_rooms = {'clean': 3, 'faults': 3, 'mixed': 3, 'mixed-default': 3, 'mixed-close': 3,
-                          'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1,
+                          'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1, 'recording-asymmetric': 3,
                           'peer-drop': 1, 'peer-drop-corrupt': 1, 'peer-drop-close': 1,
                           'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1,
                           'peer-drop-missing-lost': 1, 'peer-drop-donor-process': 1,
@@ -487,13 +487,15 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
 
     def test_room_tables_bind_the_browser_ground_truth(self):
         source = (ROOT / 'scripts/reference/browser/webrtc.cjs').read_text()
-        self.assertIn("for (const count of (recordingPressure ? [2] : dropOverlap ? [4] : peerDrop ? [3] : "
-                      "(corrupt || defaultFactory || disableFallback) ? [2] : [2, 4, 8])) {", source,
-                      'the room ternary changed; revisit PEAK_PLAYERS and ROOM_COUNTS beside it')
+        self.assertIn("const counts = recordingPressure ? [2] : dropOverlap ? [4] : peerDrop ? [3] : "
+                      "(corrupt || defaultFactory || disableFallback) ? [2] : [2, 4, 8];", source)
+        self.assertIn("recordingAsymmetric ? ['changing', 'neutral', 'withheld'].map(mode => ({ count: 2, mode }))", source)
         for label, rooms in webrtc_runner.ROOM_COUNTS.items():
             self.assertIn(label, webrtc_runner.PEAK_PLAYERS)
             peak = webrtc_runner.PEAK_PLAYERS[label]
-            if rooms == 3:
+            if label == 'recording-asymmetric':
+                self.assertEqual((rooms, peak), (3, 2))
+            elif rooms == 3:
                 self.assertEqual(peak, 8, f'{label} runs 2/4/8-player rooms, so its peak is one eight-player room')
             elif label == 'peer-drop-overlap':
                 self.assertEqual(peak, 4, 'the coordinated overlap needs a four-player room')
@@ -505,7 +507,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
             self.assertLessEqual(peak, webrtc_runner.MAX_CONCURRENT_PLAYERS)
 
     def test_direct_label_lists_bind_the_runner_tables(self):
-        expected = sorted(set(webrtc_runner.ROOM_COUNTS) - {'mixed', 'mixed-default', 'mixed-close', 'recording-pressure'})
+        expected = sorted(set(webrtc_runner.ROOM_COUNTS) - {'mixed', 'mixed-default', 'mixed-close', 'recording-pressure', 'recording-asymmetric'})
         import qualification_transport
         self.assertCountEqual([label for labels in qualification_transport.TRANSPORT.values() for label in labels], webrtc_runner.ROOM_COUNTS)
         text = (ROOT / '.github/workflows/nightly.yml').read_text()
@@ -523,7 +525,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
 
     def test_direct_job_counts_documented_in_jobs_md_match_runner_tables(self):
         direct = [label for label in probe.LABELS
-                  if label not in ('mixed', 'mixed-default', 'mixed-close', 'recording-pressure')]
+                  if label not in ('mixed', 'mixed-default', 'mixed-close', 'recording-pressure', 'recording-asymmetric')]
         rooms = sum(webrtc_runner.room_count(label) for label in direct)
         waves = webrtc_runner.label_waves(direct, overlap=True)
         peer_drop = [label for label in direct if label.startswith('peer-drop')]
@@ -556,8 +558,8 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
                                   ['peer-drop-room-continue', 'peer-drop-process'],
                                   ['peer-drop-process-missing', 'peer-drop-room-after-drop'],
                                   ['peer-drop-room-before-drop']])
-        mixed = webrtc_runner.label_waves(['mixed', 'mixed-default', 'mixed-close', 'recording-pressure'], overlap=True)
-        self.assertEqual(mixed, [['mixed'], ['mixed-default'], ['mixed-close'], ['recording-pressure']])
+        mixed = webrtc_runner.label_waves(['mixed', 'mixed-default', 'mixed-close', 'recording-pressure', 'recording-asymmetric'], overlap=True)
+        self.assertEqual(mixed, [['mixed'], ['mixed-default'], ['mixed-close'], ['recording-pressure', 'recording-asymmetric']])
         for plan in (direct, mixed, serial):
             for wave in plan:
                 self.assertLessEqual(sum(webrtc_runner.PEAK_PLAYERS[label] for label in wave),

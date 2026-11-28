@@ -9,7 +9,7 @@ from run import capture
 # runs 2/4/8-player rooms serially inside its own browser process, so its peak
 # is one eight-player room; single-room labels peak at their only room size.
 PEAK_PLAYERS = {'clean': 8, 'faults': 8, 'mixed': 8, 'mixed-default': 8, 'mixed-close': 8,
-                'corrupt': 2, 'default': 2, 'mixed-disabled': 2, 'recording-pressure': 2,
+                'corrupt': 2, 'default': 2, 'mixed-disabled': 2, 'recording-pressure': 2, 'recording-asymmetric': 2,
                 'peer-drop': 3, 'peer-drop-corrupt': 3, 'peer-drop-close': 3,
                 'peer-drop-answer': 3, 'peer-drop-relay': 3, 'peer-drop-missing': 3, 'peer-drop-missing-lost': 3, 'peer-drop-donor-process': 3,
                 'peer-drop-commit': 3,
@@ -18,7 +18,7 @@ PEAK_PLAYERS = {'clean': 8, 'faults': 8, 'mixed': 8, 'mixed-default': 8, 'mixed-
                 'peer-drop-process': 3, 'peer-drop-process-missing': 3, 'peer-drop-room-after-drop': 3,
                 'peer-drop-room-before-drop': 3}
 ROOM_COUNTS = {'clean': 3, 'faults': 3, 'mixed': 3, 'mixed-default': 3, 'mixed-close': 3,
-               'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1,
+               'corrupt': 1, 'default': 1, 'mixed-disabled': 1, 'recording-pressure': 1, 'recording-asymmetric': 3,
                'peer-drop': 1, 'peer-drop-corrupt': 1, 'peer-drop-close': 1,
                'peer-drop-answer': 1, 'peer-drop-relay': 1, 'peer-drop-missing': 1, 'peer-drop-missing-lost': 1, 'peer-drop-donor-process': 1,
                'peer-drop-commit': 1,

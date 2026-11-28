@@ -44,6 +44,7 @@ const { createHash, webcrypto } = require('node:crypto');
 const { createRelayProxyTrace, joinRelayReceive, traceProxyWrites } = require('./native_relay_proxy.cjs');
 const { createRelayWireTrace, decodeRelayDelivery } = require('./native_relay_trace.cjs');
 const { refreshRelayReceive, relayExpiryTraffic } = require('./native_relay_proxy.cjs');
+const { proxyRecordingSocket } = require('./webrtc_asymmetric.cjs');
 
 test('expiry follow-up orders server writes separately from recipient observations', () => {
   const packet = (seq, write, sender = 'source', epoch = 1) => ({
@@ -120,11 +121,81 @@ function deliveryWire(sender, recipient, room) {
   envelope.writeUInt32LE(0x000252f5, 73);
   envelope.writeUInt16LE(1, 77);
   envelope.writeUInt32LE(4, 81);
+  return stampedDelivery(sender, envelope);
+}
+
+function stampedDelivery(sender, envelope) {
   const text = value => Buffer.concat([Buffer.from([0xa0 | value.length]), Buffer.from(value)]);
   const binary = value => Buffer.concat([Buffer.from([0xc4, value.length]), value]);
   return Buffer.concat([Buffer.from([1, 0x85]), text('from_player'), binary(sender), text('encoding'), text('message_pack'),
     text('payload'), binary(envelope), text('epoch'), Buffer.from([3]), text('seq'), Buffer.from([42])]);
 }
+
+for (const action of ['released', 'withheld']) {
+  test(`the recording relay hold ${action} a fragmented input after parsing the full carrier`, { timeout: 1000 }, async t => {
+    const upstream = new PassThrough();
+    const socket = new PassThrough();
+    t.after(() => { socket.destroy(); upstream.destroy(); });
+    const original = Buffer.alloc(133);
+    original.write('FSR1');
+    original[4] = 1;
+    original.fill(17, 21, 37);
+    original.fill(34, 37, 53);
+    original.writeUInt32LE(original.length - 57, 53);
+    original.write('FRGP', 57);
+    original[63] = 3;
+    original.writeInt32LE(144, 101);
+    original.writeUInt16LE(1, 109);
+    const carrier = stampedDelivery(original.subarray(21, 37), original).subarray(1);
+    const parser = createFrameReader();
+    const forwarded = [];
+    const wireBytes = [];
+    socket.on('data', chunk => { wireBytes.push(chunk); forwarded.push(...parser.push(chunk)); });
+    const hold = proxyRecordingSocket(upstream, socket);
+    hold.arm(144, '22222222-2222-2222-2222-222222222222');
+    const prefix = [
+      Buffer.from('HTTP/1.1 101 Switching Protocols\r\n\r\n'),
+      frame(2, carrier.subarray(0, 80)),
+      frame(0x89, Buffer.from('ping')),
+    ];
+    for (const chunk of prefix) {
+      upstream.write(chunk);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(hold.observed(), null);
+    }
+    const suffix = frame(0x80, carrier.subarray(80));
+    const split = action === 'released' ? suffix.length - 1 : 10;
+    upstream.write(suffix.subarray(0, split));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(hold.observed(), null);
+    upstream.write(suffix.subarray(split));
+    await new Promise(resolve => setImmediate(resolve));
+    const observation = hold.observed();
+    assert.equal(observation.paused, true);
+    assert.equal(observation.pending_bytes, suffix.length - split);
+    assert.equal(observation.chunk, suffix.subarray(split).toString('hex'));
+    const event = observation.events[0];
+    assert.equal(event.envelope, original.toString('hex'));
+    assert.equal(event.header, suffix.subarray(0, suffix[1] === 126 ? 4 : 2).toString('hex'));
+    assert.equal(event.end, suffix.length - split);
+    assert.equal(event.tail_bytes, suffix.length - split);
+    assert.equal(event.frame_offset, Buffer.concat(prefix).length);
+    assert.equal(event.chunk_offset, event.frame_offset + split);
+    assert.deepEqual(Buffer.concat(wireBytes), Buffer.concat([...prefix, suffix.subarray(0, split)]));
+    assert.deepEqual(forwarded, []);
+    hold.end(action);
+    if (action === 'withheld') {
+      const closed = once(socket, 'close');
+      hold.closeWithheld();
+      await closed;
+      assert.deepEqual(forwarded, []);
+    } else {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(forwarded, [carrier]);
+    }
+  });
+}
+
 
 test('settled proxy capture keeps original anchors and detects late duplicates', () => {
   const sender = Buffer.alloc(16, 17);

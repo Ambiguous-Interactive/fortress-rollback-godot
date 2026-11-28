@@ -18,6 +18,7 @@ const Game = preload("res://webrtc_game.gd")
 const Mixed = preload("res://webrtc_mixed.gd")
 const DropWitness = preload("res://webrtc_drop.gd")
 const Recording = preload("res://webrtc_recording.gd")
+const Asymmetric = preload("res://webrtc_asymmetric.gd")
 const FAILURE_SIGNALS: PackedStringArray = ["protocol_error", "server_error", "room_join_failed", "authentication_error", "connection_failed",
 	"reconnection_failed", "disconnected", "going_away", "room_left", "reconnected"]
 const MEMBERSHIP_SIGNALS: PackedStringArray = ["room_joined", "player_joined", "player_left", "player_reconnected", "spectator_joined", "new_peer"]
@@ -55,6 +56,7 @@ var tearing_down: bool = false
 var mixed_enabled: bool = false
 var frame_count: int = 40
 var recording_pressure: bool = false
+var asymmetric: Asymmetric = Asymmetric.new()
 var pressure_service_turn: int = 0
 var mixed: Mixed = Mixed.new()
 var drop_enabled: bool = false
@@ -75,6 +77,7 @@ var _service_had_work: bool = false
 
 func _ready() -> void:
 	recording_pressure = JavaScriptBridge.eval("window.fortressRecordingPressure || false")
+	asymmetric.mode = JavaScriptBridge.eval("window.fortressRecordingAsymmetric || ''")
 	frame_count = 257 if recording_pressure else 40
 	drop_enabled = JavaScriptBridge.eval("window.fortressPeerDrop || false")
 	drop_overlap = JavaScriptBridge.eval("window.fortressDropOverlap || false")
@@ -96,6 +99,8 @@ func _run() -> void:
 	var ok: bool = await Setup.new().run(self, player_count)
 	if not clients.is_empty():
 		local_uuid = clients[0].get_player_id()
+	if not asymmetric.mode.is_empty():
+		JavaScriptBridge.eval("document.body.dataset.fortressUuid = " + JSON.stringify(local_uuid))
 	if ok: ok = await _play(player_count)
 	if not (room_departure or history_lost or history_donor_process or drop_overlap):
 		ok = ok and _healthy(true)
@@ -164,8 +169,17 @@ func _play(count: int) -> bool:
 	JavaScriptBridge.eval("document.body.dataset.fortressHandshakeReady = 'true'")
 	if not await _wait(func() -> bool: return JavaScriptBridge.eval("window.fortressFirstStepReady || false"), true): return false
 	stage = "gameplay"
+	games[0].capture_callbacks = not asymmetric.mode.is_empty()
 	JavaScriptBridge.eval("window.fortressFaultActive = true")
 	for frame: int in frame_count:
+		if frame < asymmetric.cursor: continue
+		if asymmetric.is_phase(frame):
+			if not await asymmetric.run(self, frame): return false
+			if asymmetric.mode == "withheld":
+				records.append({"players": count, "frames_submitted": asymmetric.cursor, "asymmetric": asymmetric.phases,
+					"rollback_loads": games[0].loads, "callbacks": games[0].callbacks, "mixed": mixed.report()})
+				return true
+			continue
 		if not await _wait(func() -> bool:
 			for peer: Peer in peers:
 				for endpoint_status: Dictionary in peer.network_status().peers.values():
@@ -175,15 +189,7 @@ func _play(count: int) -> bool:
 			JavaScriptBridge.eval("document.body.dataset.fortressRecordingTailReady = 'true'")
 			if not await _wait(func() -> bool: return JavaScriptBridge.eval("window.fortressRecordingTailStep || false"), true):
 				return false
-		_update_transport_clock()
-		for index: int in clients.size():
-			var slot: int = memberships[index].slot(clients[index].get_player_id())
-			var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, frame, PackedByteArray([_sample(frame, slot)]))]
-			var stepped: Driver.StepResult = peers[index].step(transport_us, samples)
-			if stepped.code != S.Code.OK:
-				errors.append("step_%d_at_%d" % [stepped.code, frame])
-				return false
-		JavaScriptBridge.eval("document.body.dataset.fortressFrame = '%d'" % frame)
+		if not _step_frame(frame): return false
 		if frame == 0 and not await _wait_cleanup("window.fortressFirstDeliveryReady || false"):
 			errors.append("prediction_barrier")
 			return false
@@ -223,12 +229,34 @@ func _play(count: int) -> bool:
 		"mixed": mixed.report() if mixed_enabled else {}}
 	if mixed_enabled:
 		row["recording"] = recording
+	if not asymmetric.mode.is_empty():
+		row["asymmetric"] = asymmetric.phases
+		row["history"] = asymmetric.history(self)
+		row["callbacks"] = games[0].callbacks
 	if recording_pressure:
 		row["recording_tail"] = mixed.recording_tail_result(self)
 	records.append(row)
 	return true
 
-static func _expected(frame: int, count: int) -> PackedByteArray:
+func _attempt_frame(frame: int) -> Driver.StepResult:
+	_update_transport_clock()
+	var slot: int = memberships[0].slot(clients[0].get_player_id())
+	var samples: Array[Driver.LocalInput] = []
+	if asymmetric.retained_sample != frame:
+		samples.append(Driver.LocalInput.new(slot, frame, PackedByteArray([_sample(frame, slot)])))
+	return peers[0].step(transport_us, samples)
+
+
+func _step_frame(frame: int) -> bool:
+	var stepped: Driver.StepResult = _attempt_frame(frame)
+	if stepped.code != S.Code.OK:
+		errors.append("step_%d_at_%d" % [stepped.code, frame])
+		return false
+	JavaScriptBridge.eval("document.body.dataset.fortressFrame = '%d'" % frame)
+	return true
+
+
+func _expected(frame: int, count: int) -> PackedByteArray:
 	var expected: PackedByteArray = PackedByteArray()
 	expected.resize(4 + 4 * count)
 	expected.encode_u32(0, frame)
@@ -482,8 +510,8 @@ func _capture_peer_failure(peer: Peer, index: int, polled: int) -> void:
 	peer_failures.append({"index": index, "stage": stage, "poll_code": polled, "reason": status.reason, "current_frame": status.current_frame,
 		"confirmed_frame": status.confirmed_frame, "pending_rollback_frame": status.pending_rollback_frame, "events": events, "barriers": barriers})
 
-static func _sample(frame: int, slot: int) -> int:
-	return (frame * 17 + slot * 31 + 1) & 255
+func _sample(frame: int, slot: int) -> int:
+	return 0 if asymmetric.mode == "neutral" else (frame * 17 + slot * 31 + 1) & 255
 
 func _cleanup() -> void:
 	tearing_down = true

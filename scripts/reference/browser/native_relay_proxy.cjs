@@ -25,9 +25,13 @@ function createFrameReader() {
   let tooLarge = false;
   let skipped = 0;
   let error = null;
+  let streamOffset = 0;
+  let frameOffset = 0;
 
-  function push(chunk) {
+  function push(chunk, completed) {
     const messages = [];
+    const chunkOffset = streamOffset;
+    streamOffset += chunk.length;
     let offset = 0;
     while (offset < chunk.length && !error) {
       if (handshake) {
@@ -39,6 +43,7 @@ function createFrameReader() {
         continue;
       }
       if (!readingPayload) {
+        if (headerBytes === 0) frameOffset = chunkOffset + offset;
         const bytes = Math.min(headerSize - headerBytes, chunk.length - offset);
         chunk.copy(frameHeader, headerBytes, offset, offset + bytes);
         headerBytes += bytes;
@@ -85,7 +90,12 @@ function createFrameReader() {
       if (remaining) continue;
       if (capture && final) {
         if (tooLarge) skipped++;
-        else messages.push(Buffer.from(payload.subarray(0, size)));
+        else {
+          const message = Buffer.from(payload.subarray(0, size));
+          messages.push(message);
+          completed?.(message, { end: offset, tail_bytes: bytes, chunk_offset: chunkOffset, frame_offset: frameOffset,
+            header: frameHeader.subarray(0, headerSize).toString('hex') });
+        }
       }
       if (opcode === 8) closed = true;
       if (opcode < 8) fragmented = final ? 0 : opcode || fragmented;
@@ -146,10 +156,11 @@ function createRelayProxyTrace(socketAddress) {
   return trace;
 }
 
-function traceProxyWrites(upstream, socket, inlet, beforeForward) {
+function traceProxyWrites(upstream, socket, inlet, beforeForward, highWaterMark) {
   const pending = [];
   const observe = chunk => { pending.push(inlet(chunk)); };
   const forwarding = new Writable({
+    highWaterMark,
     write(chunk, _encoding, done) {
       const events = pending.shift();
       const forward = () => {
@@ -162,7 +173,7 @@ function traceProxyWrites(upstream, socket, inlet, beforeForward) {
         });
       };
       if (!beforeForward || !events.length) forward();
-      else Promise.resolve().then(() => beforeForward(events)).then(forward, done);
+      else Promise.resolve().then(() => beforeForward(events, chunk)).then(forward, done);
     },
     final(done) { socket.end(done); },
   });
@@ -174,6 +185,7 @@ function traceProxyWrites(upstream, socket, inlet, beforeForward) {
   });
   upstream.on('data', observe);
   upstream.pipe(forwarding);
+  return forwarding;
 }
 
 module.exports = { createFrameReader, createRelayProxyTrace, joinRelayReceive, refreshRelayReceive, relayExpiryTraffic, traceProxyWrites };

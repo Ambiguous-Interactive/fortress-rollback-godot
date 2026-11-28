@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const { pauseElapsed, registerOnlineInit, collectDiagnostics, measured } = require('./online.cjs');
+const { runAsymmetric } = require('./webrtc_asymmetric.cjs');
 
 // Value: a fast endpoint cannot release the final original until the slower one also completes its prediction.
 test('recording tail release waits for both readiness and both completed predictions', async () => {
@@ -43,6 +44,45 @@ test('recording tail release waits for both readiness and both completed predict
   await arrive(1, 1, 'fortressRecordingTail', '257');
   await release;
   assert.ok(pages.every(page => page.sandbox.window.fortressRecordingTailReleased === true));
+});
+
+// Value: the live sender cannot deliver a newer input before the recipient proves recovery at the held boundary.
+test('asymmetric relay recovery waits for each endpoint before resuming gameplay', async () => {
+  const milestones = [0, 1].map(() => {
+    let release;
+    const waiting = new Promise(resolve => { release = resolve; });
+    return { waiting, release };
+  });
+  const pages = [0, 1].map(index => {
+    const commands = [];
+    return {
+      commands,
+      async evaluate(_operation, argument) {
+        if (argument) commands.push(argument);
+        else return `0000000${index}-0000-0000-0000-000000000000`;
+      },
+      async waitForFunction(_predicate, [key, base]) {
+        if (key === 'fortressAsymmetricRecovered' && base === 144) await milestones[index].waiting;
+        return { jsonValue: async () => true, dispose: async () => {} };
+      },
+    };
+  });
+  const sockets = new Map([0, 1].map(index => [index, {
+    arm() {},
+    observed: () => ({ paused: true, pending_bytes: 214 }),
+    end() {},
+  }]));
+  const run = runAsymmetric(pages, sockets, 'changing');
+  const has = (page, key) => page.commands.some(command => command[0] === key && command[1] === 144);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(pages.every(page => has(page, 'fortressAsymmetricEnd')));
+  assert.ok(pages.every(page => !has(page, 'fortressAsymmetricContinue')));
+  milestones[1].release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(pages.every(page => !has(page, 'fortressAsymmetricContinue')));
+  milestones[0].release();
+  await run;
+  assert.ok(pages.every(page => has(page, 'fortressAsymmetricContinue')));
 });
 
 // Value: download latency cannot extend gameplay; the real collector accepts only retained offline matches and restores storage methods on failure.

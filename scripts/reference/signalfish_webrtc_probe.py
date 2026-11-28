@@ -23,6 +23,7 @@ from browser.webrtc_drop_donor import check_donor_history_controls, validate_don
 from browser.webrtc_drop_overlap import check_overlap_order_controls, validate_drop_overlap
 from browser.webrtc_recording import engine_identity, validate_recording, validate_pressure
 from browser.webrtc_runner import room_count, run_browser, run_wave
+from browser.webrtc_asymmetric import check_asymmetric_controls, validate_asymmetric
 from browser.webrtc_matrix import PAIRS, prepare_firefox, validate_identity
 from browser.owned_server import OwnedServer
 from fetch import CACHE, ROOT, digest, fetch, load_manifest, prepare_zip
@@ -48,7 +49,7 @@ LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mi
           'peer-drop-second', 'peer-drop-overlap', 'peer-drop-second-after-ack', 'peer-drop-second-last-turn',
           'peer-drop-rollback', 'peer-drop-foreign',
           'peer-drop-room', 'peer-drop-room-continue', 'peer-drop-process', 'peer-drop-process-missing',
-          'peer-drop-room-after-drop', 'peer-drop-room-before-drop', 'recording-pressure')
+          'peer-drop-room-after-drop', 'peer-drop-room-before-drop', 'recording-pressure', 'recording-asymmetric')
 
 
 def validate_engine(engine, expected):
@@ -360,7 +361,10 @@ def main():
         parser.error('--browser-pair applies to the transport witness; online example currently requires Chromium')
     if args.online_example and args.label:
         parser.error('--label applies to the transport witness')
-    labels = [label for label in LABELS if label in (args.label or LABELS)]
+    if args.label and 'recording-asymmetric' in args.label and args.browser_pair != 'chromium':
+        parser.error('recording-asymmetric requires two Chromium endpoints')
+    labels = [label for label in LABELS if label in (args.label or LABELS)
+              and (label != 'recording-asymmetric' or args.browser_pair == 'chromium')]
     stun_tool = None
     if args.browser_pair == 'chromium-firefox':
         stun = os.environ.get('FORTRESS_STUN_EXECUTABLE') or shutil.which('turnserver')
@@ -389,8 +393,8 @@ def main():
     owned_logs = ['server.log', 'stun.log', 'tls-certificate.log', 'instrument-controls.log'] + [f'{version}-{suffix}.log' for version in versions
         for suffix in ('version', 'import', 'clock-test', 'export', 'clean', 'faults', 'corrupt', 'clean-events',
                        'faults-events', 'corrupt-events', 'default', 'default-events', 'mixed', 'mixed-events',
-                       'recording-pressure', 'recording-pressure-events', 'mixed-default', 'mixed-default-events', 'mixed-disabled',
-                       'mixed-disabled-events', 'mixed-close', 'mixed-close-events',
+                       'recording-pressure', 'recording-pressure-events', 'recording-asymmetric', 'recording-asymmetric-events',
+                       'mixed-default', 'mixed-default-events', 'mixed-disabled', 'mixed-disabled-events', 'mixed-close', 'mixed-close-events',
                        'peer-drop', 'peer-drop-events', 'peer-drop-corrupt', 'peer-drop-corrupt-events',
                        'peer-drop-close', 'peer-drop-close-events', 'peer-drop-answer', 'peer-drop-answer-events', 'peer-drop-relay', 'peer-drop-relay-events',
                        'peer-drop-missing', 'peer-drop-missing-events', 'peer-drop-missing-lost', 'peer-drop-missing-lost-events',
@@ -407,7 +411,7 @@ def main():
                    for kind in ('control.json', 'events.log')]
     owned_logs += [f'{version}-{label}.log' for version in versions for label in serial_labels]
     owned_logs += [f'{version}-{label}-control.json' for version in versions
-                   for label in ('peer-drop-overlap', 'peer-drop-donor-process')]
+                   for label in ('peer-drop-overlap', 'peer-drop-donor-process', 'recording-asymmetric')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -428,6 +432,11 @@ def main():
                'game': ROOT / 'scripts/reference/browser/webrtc_game.gd', 'import_helper': ROOT / 'scripts/reference/browser/webrtc_import.py',
                'mixed': ROOT / 'scripts/reference/browser/webrtc_mixed.gd',
                'recording': ROOT / 'scripts/reference/browser/webrtc_recording.gd',
+               'asymmetric': ROOT / 'scripts/reference/browser/webrtc_asymmetric.gd',
+               'asymmetric_validator': ROOT / 'scripts/reference/browser/webrtc_asymmetric.py',
+               'asymmetric_controller': ROOT / 'scripts/reference/browser/webrtc_asymmetric.cjs',
+               'relay_stream': ROOT / 'scripts/reference/browser/native_relay_proxy.cjs',
+               'relay_carrier': ROOT / 'scripts/reference/browser/native_relay_trace.cjs',
                'recording_validator': ROOT / 'scripts/reference/browser/webrtc_recording.py',
                'drop': ROOT / 'scripts/reference/browser/webrtc_drop.gd',
                'drop_donor': ROOT / 'scripts/reference/browser/webrtc_drop_donor.gd',
@@ -586,7 +595,7 @@ def main():
                     shutil.copytree(sources['addon'], project / 'addons/fortress_rollback')
                     shutil.copytree(sdk / 'addons/signal_fish', project / 'addons/signal_fish')
                     for key, filename in [('host', 'host.gd'), ('game', 'webrtc_game.gd'), ('setup', 'webrtc_setup.gd'),
-                                          ('mixed', 'webrtc_mixed.gd'), ('recording', 'webrtc_recording.gd'), ('drop', 'webrtc_drop.gd'),
+                                          ('mixed', 'webrtc_mixed.gd'), ('recording', 'webrtc_recording.gd'), ('asymmetric', 'webrtc_asymmetric.gd'), ('drop', 'webrtc_drop.gd'),
                                           ('drop_overlap', 'webrtc_drop_overlap.gd'), ('drop_donor', 'webrtc_drop_donor.gd'),
                                           ('clock_test', 'clock_test.gd'), ('clock_fixture', 'clock_fixture.gd')]:
                         shutil.copyfile(sources[key], project / filename)
@@ -603,6 +612,7 @@ def main():
                     executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish',
                                 'host': project / 'host.gd', 'game': project / 'webrtc_game.gd', 'setup': project / 'webrtc_setup.gd', 'project': project / 'project.godot',
                                 'mixed': project / 'webrtc_mixed.gd', 'recording': project / 'webrtc_recording.gd', 'drop': project / 'webrtc_drop.gd',
+                                'asymmetric': project / 'webrtc_asymmetric.gd',
                                 'drop_overlap': project / 'webrtc_drop_overlap.gd', 'drop_donor': project / 'webrtc_drop_donor.gd',
                                 'clock_test': project / 'clock_test.gd', 'clock_fixture': project / 'clock_fixture.gd',
                                 'scene': project / 'main.tscn', 'preset': project / 'export_presets.cfg', 'certificate': certificate, 'private_key': tls_private_key}
@@ -663,6 +673,10 @@ def main():
                                 if label in serial_labels:
                                     control = check_serial_controls(result, serial_labels[label])
                                     (args.output / f'{version}-{label}-control.json').write_text(json.dumps(control) + '\n')
+                            elif label == 'recording-asymmetric':
+                                result = validate_asymmetric(json.loads(output), recording_engine)
+                                controls = check_asymmetric_controls(result, recording_engine)
+                                (args.output / f'{version}-{label}-control.json').write_text(json.dumps(controls) + '\n')
                             elif label == 'recording-pressure':
                                 result = validate_pressure(json.loads(output), recording_engine)
                             elif label in ('corrupt', 'default'):

@@ -3,7 +3,7 @@ import hashlib
 import re
 import struct
 
-from wire import validate_original_input
+from wire import original_sample, validate_original_input
 
 
 MAX_BYTES = 65536
@@ -18,7 +18,7 @@ def engine_identity(output, version, cli_version):
     return identities[0]
 
 
-def validate_recording(value, count, expected_engine=None, frames=40):
+def validate_recording(value, count, expected_engine=None, frames=40, neutral=False):
     if (type(value) is not dict or type(value.get('hex')) is not str
             or not re.fullmatch(r'(?:[0-9a-f]{2}){24,' + str(MAX_BYTES) + '}', value['hex'])):
         raise ValueError('mixed recording missing or exceeds its byte bound')
@@ -43,7 +43,7 @@ def validate_recording(value, count, expected_engine=None, frames=40):
         raise ValueError('mixed recording metadata differs from the executed game or engine')
     values = [0] * count
     for frame in range(frames):
-        samples = bytes((frame * 17 + slot * 31 + 1) & 255 for slot in range(count))
+        samples = bytes(original_sample(frame, slot, neutral) for slot in range(count))
         if raw[cursor:cursor + count] != samples:
             raise ValueError(f'mixed recording original input mismatch at frame {frame}')
         if raw[cursor + count:cursor + 2 * count] != bytes([1] * count):
@@ -81,20 +81,20 @@ def _addressed_payload(envelope, sender, recipient, label):
     return data[57:]
 
 
-def _validate_recording_tail(source, row, sender, recipient, slot, source_index):
+def _validate_recording_tail(source, row, sender, recipient, slot, source_index, neutral):
     tail = row.get('recording_tail')
     if type(tail) is not dict or any(type(tail.get(key)) is not dict for key in ('held', 'receipt', 'after')):
         raise ValueError('recording pressure final receipt inventory incomplete')
     held, receipt, after = (tail[key] for key in ('held', 'receipt', 'after'))
     if (any(type(value) is not int for value in (held.get('frame'), held.get('received_frame'), held.get('turn'), held.get('loads')))
-            or held['frame'] != 257 or held['received_frame'] != 255 or held['turn'] < 1 or held['loads'] < 1):
+            or held['frame'] != 257 or held['received_frame'] != 255 or held['turn'] < 1 or held['loads'] < int(not neutral)):
         raise ValueError('recording pressure final input was not held at boundary 257')
     if (type(receipt.get('frame')) is not int or receipt['frame'] != 257 or type(receipt.get('turn')) is not int
             or receipt['turn'] < held['turn'] or receipt.get('stage') not in ('final_confirmation', 'recording_confirmation')):
         raise ValueError('recording pressure final addressed receipt missing after the hold')
     envelope = receipt.get('envelope')
     payload = _addressed_payload(envelope, sender, recipient, 'recording pressure final addressed receipt')
-    start = validate_original_input(payload, 2, sender, slot, source_index, 257, (129, 257), 'recording pressure final receipt')
+    start = validate_original_input(payload, 2, sender, slot, source_index, 257, (129, 257), 'recording pressure final receipt', neutral)
     if start + struct.unpack_from('<H', payload, 52)[0] != 257 or envelope not in row['mixed']['received_inputs']:
         raise ValueError('recording pressure final addressed receipt lacks original input 256')
     physical = source['rtc'].get('recordingFinalRelaySend')
@@ -103,12 +103,12 @@ def _validate_recording_tail(source, row, sender, recipient, slot, source_index)
     if (type(physical) is not dict or physical.get('wire') != envelope or physical.get('released') is not True
             or type(physical.get('turn')) is not int or type(source_held_turn) is not int or physical['turn'] <= source_held_turn):
         raise ValueError('recording pressure final addressed receipt missing matching physical send')
-    wanted = {'frame': 257, 'received_frame': 256, 'confirmed_frame': 256, 'loads': held['loads'] + 1}
+    wanted = {'frame': 257, 'received_frame': 256, 'confirmed_frame': 256, 'loads': held['loads'] + int(not neutral)}
     if any(type(after.get(key)) is not int or after[key] != value for key, value in wanted.items()) or after['loads'] != row['rollback_loads']:
         raise ValueError('recording pressure final recovery did not correct input 256 at boundary 257')
 
 
-def _validate_pressure_routes(peers, identities):
+def _validate_pressure_routes(peers, identities, neutral):
     for index, (sender, recipient) in enumerate((identities, identities[::-1])):
         source, destination = peers[index], peers[1 - index]
         sent, retried = source['rtc'].get('recordingRelaySends'), source['result']['records'][0]['mixed'].get('retried_inputs')
@@ -135,7 +135,7 @@ def _validate_pressure_routes(peers, identities):
                 raise ValueError('recording pressure attributed retry socket read invalid')
             envelope = retry.get('envelope')
             payload = _addressed_payload(envelope, sender, recipient, 'recording pressure attributed retry')
-            if validate_original_input(payload, 2, sender, slot, index, 257, (129, frame), 'recording pressure') != start or start in starts:
+            if validate_original_input(payload, 2, sender, slot, index, 257, (129, frame), 'recording pressure', neutral) != start or start in starts:
                 raise ValueError('recording pressure attributed retry original range invalid')
             if physical.get('first') is not True:
                 raise ValueError('recording pressure attributed retry first physical send missing')
@@ -143,10 +143,10 @@ def _validate_pressure_routes(peers, identities):
                 raise ValueError('recording pressure attributed retry missing physical send or addressed receipt')
             starts.add(start)
             last_retry, last_read = retry_turn, read
-        _validate_recording_tail(source, destination_row, sender, recipient, slot, index)
+        _validate_recording_tail(source, destination_row, sender, recipient, slot, index, neutral)
 
 
-def validate_pressure(result, expected_engine=None):
+def validate_pressure(result, expected_engine=None, neutral=False):
     """Require actual socket receipt, repeated post-wrap refusal and original decoded history."""
     if (type(result) is not dict or result.get('passed') is not True or result.get('recordingPressure') is not True
             or result.get('mixed') is not True or result.get('faults') is not False or result.get('corrupt') is not False
@@ -168,7 +168,7 @@ def validate_pressure(result, expected_engine=None):
         for key, wanted in [('players', 2), ('frames_submitted', 257), ('canonical_comparisons', 255)]:
             if type(row.get(key)) is not int or row[key] != wanted:
                 raise ValueError('recording pressure original canonical inventory incomplete')
-        for key, minimum in [('minimum_confirmed', 255), ('active_comparisons', 254), ('rollback_loads', 1)]:
+        for key, minimum in [('minimum_confirmed', 255), ('active_comparisons', 254), ('rollback_loads', int(not neutral))]:
             if type(row.get(key)) is not int or row[key] < minimum:
                 raise ValueError('recording pressure original active history unverified')
         state = row.get('mixed', {})
@@ -209,8 +209,10 @@ def validate_pressure(result, expected_engine=None):
                 or channel.get('maxRetransmits') is not None or type(channel.get('sent')) is not int or channel['sent'] < 1
                 or type(channel.get('received')) is not int or channel['received'] < 1):
             raise ValueError('recording pressure direct send refusal or original delivery missing')
-        validate_recording(row.get('recording'), 2, expected_engine, frames=257)
+        if neutral and row['rollback_loads'] != 0:
+            raise ValueError('neutral recording performed a rollback')
+        validate_recording(row.get('recording'), 2, expected_engine, frames=257, neutral=neutral)
     if len(set(identities)) != 2:
         raise ValueError('recording pressure endpoints share an identity')
-    _validate_pressure_routes(peers, identities)
+    _validate_pressure_routes(peers, identities, neutral)
     return result
