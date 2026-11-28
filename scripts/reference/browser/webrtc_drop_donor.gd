@@ -164,4 +164,5 @@ static func _snapshot(host: Node) -> Dictionary:
 	return {
 		"frame": status.current_frame, "confirmed": status.confirmed_frame, "state": host.games[0].bytes().hex_encode(),
 		"replay_sha256": replay_hash.finish().hex_encode(), "replay": rows, "canonical": canonical,
+		"applied_tail": host.games[0].applied_inputs.slice(replay.frame_count(), status.current_frame),
 	}

@@ -34,7 +34,7 @@ def _packet(held, donor_slot, target_slot, recipient_slot):
              and int.from_bytes(packet[104:112], 'little') != 0, 'packet lacks the original target samples')
 
 
-def _prefix(state):
+def _validate_state(state, recipient_slot, target_slot):
     _require(isinstance(state, dict) and type(state.get('frame')) is int and state['frame'] == 8 and type(state.get('confirmed')) is int
              and 2 <= state['confirmed'] <= 3
              and isinstance(state.get('state'), str) and re.fullmatch(r'[0-9a-f]{32}', state['state'])
@@ -51,6 +51,25 @@ def _prefix(state):
         values = [(value * 33 + sample) & 0xffffffff for value, sample in zip(values, source)]
         canonical.append(struct.pack('<4I', frame + 1, *values).hex())
     _require(state.get('canonical') == canonical, 'confirmed simulation differs from original inputs')
+
+    tail = state.get('applied_tail')
+    _require(isinstance(tail, list) and len(tail) == state['frame'] - len(replay), 'applied input tail extent differs')
+    last_actual = [_sample(state['confirmed'], slot) for slot in range(3)]
+    for frame, row in enumerate(tail, len(replay)):
+        _require(isinstance(row, list) and len(row) == 3, 'applied input row invalid')
+        for slot, sample in enumerate(row):
+            _require(isinstance(sample, list) and len(sample) == 2 and all(type(value) is int for value in sample),
+                     'applied input sample invalid')
+            byte, status = sample
+            if status == 1:
+                _require(byte == _sample(frame, slot) and (slot != target_slot or frame < 4),
+                         'applied actual input differs from original history')
+                last_actual[slot] = byte
+            else:
+                _require(status == 2 and slot != recipient_slot and byte == last_actual[slot],
+                         'applied predicted input differs from last actual input')
+            values[slot] = (33 * values[slot] + byte) & 0xffffffff
+    _require(state['state'] == struct.pack('<4I', state['frame'], *values).hex(), 'speculative simulation differs from applied inputs')
 
 
 def _fence(fence, donor, live, previous=None):
@@ -85,7 +104,7 @@ def validate_donor_history(result, physical_close):
              and isinstance(held.get('session_id'), str) and re.fullmatch(r'[0-9a-f]{32}', held['session_id']), 'hold identity differs')
     donor_slot, target_slot, recipient_slot = (roster.index(uuid) for uuid in (donor, target, recipient))
     _packet(held, donor_slot, target_slot, recipient_slot)
-    _prefix(held.get('state'))
+    _validate_state(held.get('state'), recipient_slot, target_slot)
 
     observed = controller.get('observed')
     _require(isinstance(observed, dict) and observed.get('uuid') == donor and observed.get('ready') is True
@@ -150,6 +169,13 @@ def check_donor_history_controls(result):
     reject('browser outcome page identity differs')
     room['peers'].reverse()
     state = controller['held']['state']
-    state['state'] = struct.pack('<I', state['frame'] + 1).hex() + state['state'][8:]
+    original_state = state['state']
+    state['state'] = struct.pack('<I', state['frame'] + 1).hex() + original_state[8:]
     reject('recipient state frame header differs')
+    altered = bytearray.fromhex(original_state)
+    altered[4] ^= 1
+    recipient = next(page['result']['records'][0] for page in room['peers'] if page['result']['records'][0]['uuid'] == controller['held']['recipient'])
+    for snapshot in (state, recipient['held']['state'], recipient['after']):
+        snapshot['state'] = altered.hex()
+    reject('speculative simulation differs from applied inputs')
     return {'diagnostics': diagnostics}

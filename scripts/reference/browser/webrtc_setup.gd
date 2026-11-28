@@ -143,18 +143,19 @@ func run(host: Node, count: int) -> bool:
 				)
 			)
 	host.stage = "configure_rollback"
+	var observe_donor_history: bool = bool(JavaScriptBridge.eval("window.fortressDropMissing && !window.fortressDropHistoryLost"))
 	for index: int in host.clients.size():
 		var config: Config = Config.new()
 		config.player_count = count
 		config.sync_test = false
 		config.check_distance = 0
 		config.max_snapshot_bytes = 4 + 4 * count
-		if host.mixed_enabled or JavaScriptBridge.eval("window.fortressDropMissing && !window.fortressDropHistoryLost"):
+		if host.mixed_enabled or observe_donor_history:
 			config.replay_max_frames = host.frame_count
 			config.diagnostic_version = "fortress-webrtc-integer-v1"
 			config.diagnostic_seed = "0"
 		config.storage_budget_bytes = 1048576
-		var game: Game = Game.new(count, JavaScriptBridge.eval("window.fortressCorrupt || false"))
+		var game: Game = Game.new(count, JavaScriptBridge.eval("window.fortressCorrupt || false"), 8 if observe_donor_history else 0)
 		host.games.append(game)
 		var peer: Peer = Peer.new()
 		host.peers.append(peer)

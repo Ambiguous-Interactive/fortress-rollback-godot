@@ -3,11 +3,13 @@ const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 var frame: int = 0
 var values: PackedInt64Array = PackedInt64Array()
 var history: Dictionary = {}
+var applied_inputs: Array[Array] = []
 var loads: int = 0
 var corrupt_restore: bool = false
 var corrupt_continuation: bool = false
-func _init(count: int, corrupt: bool = false) -> void:
+func _init(count: int, corrupt: bool = false, capture_input_frames: int = 0) -> void:
 	values.resize(count)
+	applied_inputs.resize(capture_input_frames)
 	corrupt_restore = corrupt
 func bytes() -> PackedByteArray:
 	var result: PackedByteArray = PackedByteArray()
@@ -32,12 +34,17 @@ func load_state(_frame: int, reader: RefCounted) -> bool:
 		values[slot] = result.bytes.decode_u32(4 + slot * 4)
 	if corrupt_restore: values[0] ^= 1
 	return true
-func simulate_frame(_frame: int, inputs: RefCounted) -> bool:
+func simulate_frame(input_frame: int, inputs: RefCounted) -> bool:
+	var capture: bool = input_frame < applied_inputs.size()
+	if capture:
+		applied_inputs[input_frame] = []
 	for slot: int in values.size():
 		var input: RefCounted = inputs.read(slot)
 		if input.bytes.size() != 1:
 			return false
 		values[slot] = (values[slot] * 33 + input.bytes[0]) & 0xffffffff
+		if capture:
+			applied_inputs[input_frame].append([input.bytes[0], input.status])
 	if corrupt_continuation: values[0] ^= 1
 	frame += 1
 	history[frame] = bytes()
