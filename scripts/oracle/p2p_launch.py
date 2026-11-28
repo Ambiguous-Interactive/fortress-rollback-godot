@@ -663,6 +663,9 @@ def run(args, wrap_only):
             'capacity_evidence': capacity_evidence, 'prediction_evidence': prediction_evidence,
             'wrap_evidence': wrap_evidence, 'fresh_process_repeat_equal': True})
         print(name + ': actual input/ACK packets, ordered callbacks and confirmation match twice', flush=True)
+    if not wrap_only and args.case is None:
+        p2p_prediction.require_complete_windows(
+            item['prediction_evidence']['godot']['window'] for item in evidence if item['prediction_evidence'])
     process_evidence = process_controls(binary, engine, cases['mesh_2_delay_0'],
         json.loads((args.output / 'mesh_2_delay_0-source.json').read_text()),
         json.loads((args.output / 'mesh_2_delay_0-actual.json').read_text()), args.output, source_revision=source_revision) if 'mesh_2_delay_0' in cases else []

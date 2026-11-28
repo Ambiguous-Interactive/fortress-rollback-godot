@@ -21,6 +21,17 @@ class ScheduleHintTests(unittest.TestCase):
             'Regenerate with python3 scripts/oracle/p2p_schedule.py --binary .cache/reference/target/debug/p2p '
             'after building the P2P observer against the selected pin.')
 
+    # Value: protects=stall-family receipt coverage; fails_when=matched traces omit or duplicate a window; why_new=hint inventory only checks schedule names; seam=none
+    def test_complete_prediction_windows(self):
+        from p2p_prediction import CASES, require_complete_windows
+
+        windows = list(CASES.values())
+        self.assertEqual(windows, list(range(2, 9)))
+        require_complete_windows(reversed(windows))
+        for incomplete in ([], windows[:-1], [*windows, windows[0]], [*windows[1:], windows[-1]]):
+            with self.subTest(windows=incomplete), self.assertRaisesRegex(ValueError, 'prediction witness inventory'):
+                require_complete_windows(incomplete)
+
     # Value: protects=hint reuse across SignalFish upgrades; fails_when=unrelated pins invalidate hints; why_new=prefix tests omit input identity; seam=none
     def test_hint_identity_tracks_p2p_generation_inputs(self):
         root = p2p_schedule.HINTS.parents[3]

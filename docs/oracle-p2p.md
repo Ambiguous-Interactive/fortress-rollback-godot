@@ -165,15 +165,17 @@ checks exactly 200000 microseconds versus 200001, then drops ACKs and checks the
 next exact interval and interval-plus-one. Duplicate packets do not manufacture
 new input progress. Seven two-peer scenarios exercise every compared window from two through eight.
 For each window, the receipt names the last admissible speculative advance,
-the first blocked call and its original staged input packet, and a blocked
-retry that sends nothing. After the original remote frame-zero input arrives,
-the peer stays at the cap even with frame zero confirmed. The requests load
-frame zero and resimulate exactly the withheld prefix. The first resumed
-advance consumes the staged sample once. Both peers confirm through at least
-the last initially speculative input frame. Source and Godot receipts each
-have to pass these checks in addition to the canonical-state and packet
-comparisons. Coverage controls reject a premature advance at either cap, a
-retry that publishes the staged sample again, and a repair missing its LOAD.
+the first blocked call and its first staged input packet, and a blocked
+retry that sends nothing. The receipt links the remote frame-zero sample
+to its original packet, delivery and acknowledgement. The peer stays at
+the cap even with frame zero confirmed. The requests load frame zero and
+resimulate exactly the withheld prefix. The first resumed step loads
+frame one, consumes the staged sample once and ends at the next frame.
+Both peers confirm through at least the last initially speculative input
+frame. Full mesh receipts require these observations from both runtimes
+once per window, alongside canonical-state and packet comparison.
+Controls reject premature advancement, early or duplicate publication,
+an incorrect delivery, a missing LOAD and an extra resumed advance.
 The three `mesh_<2,4,8>_window_8` schedules separately compare ordinary
 delivery at the largest compared window. Four multi-local layout scenarios compare couch co-op machines that
 own several local slots: `mesh_4_couch_2x2` and `mesh_6_split_2x2x2` compare
