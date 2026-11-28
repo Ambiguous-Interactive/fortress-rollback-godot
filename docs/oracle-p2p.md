@@ -862,6 +862,10 @@ The Rust delivery control and the control that holds the chunk for 300 ms
 with the donor still active both certify cut 8. Both original chunks reach
 the addressed sockets before the coordinator broadcasts COMMIT. The recipients
 install the missing row and report the target dropped before gameplay advances.
+The remote recipient's socket reads the coordinator's original COMMIT before
+its first installed sample. The source confirmation accessor temporarily
+reports frame 3 at installation and returns to 5 before advancement. The
+source documents this non-monotonic accessor.
 All three survivors then match canonical inputs, disconnected status and
 state through frame 16.
 When the donor instead goes silent after the first chunk publication, the

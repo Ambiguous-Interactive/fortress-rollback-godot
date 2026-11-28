@@ -33,3 +33,7 @@ requires the real coordinator broadcast, installation and public drop before
 continuation. Socket reads record their own clock and unique order. The Godot
 test emits the observed Goodbye, failure reason, replay rows and refusal codes
 for independent comparison. Mutations of those records prove the new checks.
+The first installed sample also showed a documented transient decrease in the
+source confirmation accessor. The receipt keeps that sample separate from
+the settled confirmation and checks each predicted snapshot from original
+inputs and the local versus remote prediction rule.

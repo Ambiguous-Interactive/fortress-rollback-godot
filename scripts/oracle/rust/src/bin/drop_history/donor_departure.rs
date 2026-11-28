@@ -5,6 +5,7 @@ const PEERS: usize = 4;
 const DONOR: usize = 1;
 const TARGET: usize = 3;
 const RECIPIENTS: [usize; 2] = [0, 2];
+const ORDER_LIMIT: usize = 50_000;
 
 struct Mesh {
     sessions: Vec<P2PSession<Profile>>,
@@ -76,7 +77,7 @@ impl Mesh {
                         buffers: buffer.clone(),
                         publication_clock: None,
                         receipt_clock: Some(mesh.clock.clone()),
-                        order_limit: 50000,
+                        order_limit: ORDER_LIMIT,
                     })
                     .unwrap(),
             );
@@ -107,14 +108,19 @@ impl Mesh {
             }
         }
         for (from, buffer) in self.buffers.iter().enumerate() {
-            for (address, message, _) in std::mem::take(&mut buffer.lock().unwrap().outgoing) {
+            for (address, message, order) in std::mem::take(&mut buffer.lock().unwrap().outgoing) {
                 let to: usize = address.parse().unwrap();
                 let wire = serde_json::to_value(&message).unwrap();
+                let mut receipt = None;
                 if let Some(body) = wire["body"].get("DropAbort") {
                     self.aborts.push(json!({"at":self.now(),"from":from,"to":to,"body":body}));
                 }
                 if let Some(body) = wire["body"].get("DropCommit") {
-                    self.commits.push(json!({"at":self.now(),"from":from,"to":to,"body":body}));
+                    let record = json!({"at":self.now(),"from":from,"to":to,"body":body,"publication_order":order.unwrap()});
+                    if (from, to) == (0, 2) {
+                        receipt = Some(record.clone());
+                    }
+                    self.commits.push(record);
                 }
                 if !self.active(from) || !self.active(to) || (self.asymmetric && from == TARGET && RECIPIENTS.contains(&to) && wire["body"].get("Input").is_some()) {
                     continue;
@@ -126,7 +132,7 @@ impl Mesh {
                         continue;
                     }
                 }
-                self.buffers[to].lock().unwrap().incoming.push((from.to_string(), message, None));
+                self.buffers[to].lock().unwrap().incoming.push((from.to_string(), message, receipt));
             }
         }
     }
@@ -219,6 +225,7 @@ pub(super) fn run(mode: &str) -> Value {
         mesh.donor_present = false;
     }
     let mut terminal = BTreeMap::new();
+    let mut installed = BTreeMap::new();
     let mut before_delay_release = None;
     for tick in 0..40 {
         if mode == "hold-live" && tick == 30 {
@@ -230,6 +237,10 @@ pub(super) fn run(mode: &str) -> Value {
         for peer in RECIPIENTS {
             if mesh.sessions[peer].current_state().to_string() != "Running" && !terminal.contains_key(&peer) {
                 terminal.insert(peer, json!({"offset":mesh.now()-started,"state":mesh.snapshot(peer),"rows":mesh.rows(peer)}));
+            }
+            if mesh.sessions[peer].diagnostic_player_connected(PlayerHandle::new(TARGET)) == Some(false) && !installed.contains_key(&peer) {
+                let order = next_order(&mesh.buffers[peer].lock().unwrap().order, ORDER_LIMIT);
+                installed.insert(peer, json!({"at":mesh.now(),"order":order,"state":mesh.snapshot(peer)}));
             }
         }
     }
@@ -248,7 +259,18 @@ pub(super) fn run(mode: &str) -> Value {
             }
         }
     }
-    let received = RECIPIENTS.map(|peer| mesh.buffers[peer].lock().unwrap().received.clone());
+    let mut commit_receipts = Vec::new();
+    let received = RECIPIENTS.map(|peer| {
+        let packets = std::mem::take(&mut mesh.buffers[peer].lock().unwrap().received);
+        packets.into_iter().filter_map(|packet| {
+            if packet["body"].get("DropCommit").is_some() {
+                commit_receipts.push(packet);
+                None
+            } else {
+                Some(packet)
+            }
+        }).collect::<Vec<_>>()
+    });
     let advance = if !silence {
         Vec::new()
     } else {
@@ -266,6 +288,7 @@ pub(super) fn run(mode: &str) -> Value {
     };
     json!({"revision":REVISION,"mode":mode,"opening":opening,"opening_rows":rows,"held":held,"planned":planned,
         "held_at":started,"release_at":release_at,"terminal":terminal,"before_delay_release":before_delay_release,"aborts":mesh.aborts,"commits":mesh.commits,
+        "installed":installed,"commit_receipts":commit_receipts,
         "final_before":final_before,"received":received,"advance":advance,"runtime_rows":runtime_rows,
         "final_after":RECIPIENTS.map(|peer| mesh.snapshot(peer)), "final_rows":RECIPIENTS.map(|peer| mesh.rows(peer))})
 }
