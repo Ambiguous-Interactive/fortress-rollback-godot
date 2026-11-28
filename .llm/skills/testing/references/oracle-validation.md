@@ -139,7 +139,9 @@ whole hint and use its observations only for an exact matching prefix.
 
 At a prediction cap, record both the first blocked call and an identical
 retry. The first call can stage and send the current sample. The retry must
-hold the frame without sending another sample. After actual input arrives,
+hold the frame without sending another sample. Acknowledgement can reach the
+last staged local sample while remote receipt and confirmation remain behind
+the current frame. After actual input arrives,
 compare earlier rollback callbacks separately from forward frame progress.
 Service delayed receipt gossip before treating a stall as the nearest
 reachable retention bound. Record physical slot tags before and after reuse.
