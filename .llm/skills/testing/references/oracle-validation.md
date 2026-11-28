@@ -67,6 +67,7 @@ Capture action order at accepted publication and receipt. Bind each drained pack
 For selective loss, prove negotiation arrived. Record the first terminal transition separately from the event drain.
 When receipt of a peer's abort ends the operation, record that packet alongside the terminal transition.
 Assert departure-driven termination before presenting late work. Compare replay extent and original rows again after refusal.
+Pair donor silence with a live donor that holds the same chunk. Bind commits to its release clock and invoke the advancement API directly after refusal.
 Validate the complete operation identity against the agreed operation before comparing retry payloads; matching malformed identities are insufficient.
 When control packets forward another participant’s certificate, sender direction cannot identify its owner.
 Select acknowledgement-loss faults by the actual participant certificate too, and retain emission/delivery order

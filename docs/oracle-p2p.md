@@ -851,6 +851,30 @@ under [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/is
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
 and [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 
+### Selected history donor leaves
+
+The v6 drop-history launcher also compares a four-endpoint schedule. Rust
+opens target removal through its public API. Godot delivers the target's
+Goodbye. Only the selected non-coordinator donor has the missing original
+frame 8, and the observer keeps its first addressed chunk for each recipient.
+
+The Rust delivery control and the control that holds the chunk for 300 ms
+with the donor still active both certify cut 8. All three survivors then
+match canonical inputs, disconnected status and state through frame 16.
+When the donor instead goes silent after the first chunk publication, the
+two recipients enter `Synchronizing` on the 220 ms sampled tick. Their current
+frame remains 6 and confirmation remains at 4. The source publishes no COMMIT
+or ABORT. Both slots stay connected in the logical roster without a certified
+removal. Delivering the original chunk after this transition leaves the original
+rows intact, and both advancement calls return `NotSynchronized`.
+
+In the Godot fixture, the donor's Goodbye ends the two pending operations
+immediately with `participant_lost`. Both modes verify the same original data
+after termination. The clock origins, departure triggers, wire formats and
+terminal signals belong to their respective runtimes. The Rust timing is a
+bound for this sampled schedule. Live transport coverage remains tracked in
+[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188).
+
 ### Coordinator silence on the version-6 candidate
 
 Run this once with each pinned Godot editor path and a distinct output

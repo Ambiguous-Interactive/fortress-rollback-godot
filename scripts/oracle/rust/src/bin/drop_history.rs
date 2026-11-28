@@ -9,6 +9,9 @@ use std::{collections::BTreeMap, sync::{Arc, Mutex}, time::Duration};
 #[path = "drop_history/failover.rs"]
 mod failover;
 
+#[path = "drop_history/donor_departure.rs"]
+mod donor_departure;
+
 const REVISION: &str = match option_env!("FORTRESS_DROP_ORACLE_REVISION") {
     Some(revision) => revision,
     None => "d124c89080004d96971a629bb0427056ee1805e3",
@@ -438,6 +441,14 @@ fn main() {
                 eprintln!("drop history: coordinator failover requires the v6 observer build");
                 std::process::exit(2);
             }
+        }
+        if mode == "--donor-departure" {
+            if fortress_rollback::PROTOCOL_VERSION != 6 || !matches!(offset.as_str(), "deliver" | "hold-live" | "silence") {
+                eprintln!("drop history: donor departure requires v6 and a supported schedule");
+                std::process::exit(2);
+            }
+            println!("{}", donor_departure::run(offset));
+            return;
         }
         if mode == "--commit-deadline" {
             let offset = match offset.as_str() {
