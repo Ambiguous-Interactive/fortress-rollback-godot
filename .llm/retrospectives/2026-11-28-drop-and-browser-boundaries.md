@@ -42,6 +42,11 @@ Both Chromium labels passed twice on each pin. The asymmetric receipts
 rejected 13 controls and the completed recording bytes repeated exactly.
 [Recording acceptance](../../docs/oracle-replay.md#exported-mixed-path-recordings)
 
+Hosted review found missing links between the held write and recovery.
+The validator now checks browser admission order, requires the released
+chunk to start the recovered prefix, and checks resource closure in
+withheld rooms through the same teardown validation.
+
 ## Outcome
 
 State is `findings-acted`. The
