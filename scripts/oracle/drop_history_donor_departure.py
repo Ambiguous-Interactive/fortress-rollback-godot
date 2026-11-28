@@ -9,13 +9,16 @@ from source_wire import decode_trace
 
 MODES = ('deliver', 'hold-live', 'silence')
 SUITE = 'res://tests/unit/test_peer_drop_donor_departure.gd'
-CASES = {'original_donor_chunk_arrives', 'chosen_donor_leaves_before_history'}
+GODOT_PREFIX = 'FORTRESS_DONOR_DEPARTURE '
+DELIVERY_CASE = 'original_donor_chunk_arrives'
+REFUSAL_CASE = 'chosen_donor_leaves_before_history'
+CASES = {DELIVERY_CASE, REFUSAL_CASE}
 
 
 def original_rows():
     totals = [0] * 4
     rows = []
-    for frame in range(17):
+    for frame in range(20):
         inputs = []
         for player in range(4):
             disconnected = player == 3 and frame > 8
@@ -30,7 +33,7 @@ def original_rows():
 def check_opening(source, revision, mode, expected):
     label = 'source donor departure'
     fields(source, 'revision mode opening opening_rows held planned held_at release_at terminal before_delay_release aborts commits final_before '
-           'late_observed advance runtime_rows final_after final_rows', label)
+           'received advance runtime_rows final_after final_rows', label)
     require(same([source['revision'], source['mode']], [revision, mode]), label + ' source and mode')
     integer(source['held_at'], 25_000, 25_000, label + ' first publication clock')
     require(type(source['opening']) is list and len(source['opening']) == 2 and same(source['planned'], source['opening']),
@@ -60,6 +63,57 @@ def check_opening(source, revision, mode, expected):
     require(same(held[0]['body'], held[1]['body']), label + ' matching operation and bytes')
 
 
+def check_receipts(source, mode, label):
+    received = source['received']
+    require(type(received) is list and len(received) == 2, label + ' socket recipient inventory')
+    order = 0
+    read_clock = source['release_at'] + (1000 if mode == 'silence' else 10_000)
+    for packet, observations in zip(source['held'], received, strict=True):
+        require(type(observations) is list and len(observations) == 1, label + ' socket delivery inventory')
+        observation = observations[0]
+        fields(observation, 'at received_at from to body order', label + ' socket delivery')
+        integer(observation['order'], order + 1, 50_000, label + ' socket order')
+        order = observation['order']
+        integer(observation['received_at'], read_clock, read_clock, label + ' socket read clock')
+        require(same({key: observation[key] for key in ('at', 'from', 'to', 'body')},
+                     {**packet, 'body': {'DropBackfill': packet['body']}}), label + ' socket matches held packet')
+    return read_clock
+
+
+def check_delivery(source, expected, read_clock, label):
+    require(type(source['commits']) is list and bool(source['commits']), label + ' delivery commit publications')
+    routes = []
+    digest = None
+    for packet in source['commits']:
+        fields(packet, 'at from to body', label + ' commit publication')
+        integer(packet['at'], read_clock + 1, 440_000, label + ' commit after original delivery')
+        integer(packet['from'], 0, 2, label + ' commit route sender')
+        integer(packet['to'], 0, 3, label + ' commit route recipient')
+        require(packet['from'] != packet['to'], label + ' commit route loops')
+        body = packet['body']
+        fields(body, 'cut cut_digest operation', label + ' commit body')
+        require(same(body['cut'], 8) and same(body['operation'], source['held'][0]['body']['operation']),
+                label + ' certified cut and operation')
+        integer(body['cut_digest'], 1, (1 << 64) - 1, label + ' cut digest')
+        if digest is None:
+            digest = body['cut_digest']
+        require(body['cut_digest'] == digest, label + ' shared cut digest')
+        routes.append((packet['at'], packet['from'], packet['to']))
+    first_commit = min(at for at, _, _ in routes)
+    require({(sender, recipient) for at, sender, recipient in routes if at == first_commit} == {(0, 1), (0, 2), (0, 3)},
+            label + ' first commit coordinator and recipients')
+    certified = [{**peer, 'confirmed': 5, 'target_receipt': 8, 'connected': [False, True],
+                  'dropped': [{'address': '3', 'handle': 3}]} for peer in source['opening']]
+    require(same(source['final_before'], certified), label + ' installed target receipt and public drop')
+    require(type(source['final_after']) is list and len(source['final_after']) == 2, label + ' final recipients')
+    for peer, before in zip(source['final_after'], certified, strict=True):
+        fields(peer, 'state current confirmed target_receipt connected dropped game', label + ' final status')
+        require(same(peer, {**before, 'confirmed': 16, 'current': 18, 'dropped': [], 'game': peer['game']}), label + ' continued public status')
+    require(same(source['runtime_rows'], [expected] * 3), label + ' three canonical continuations and statuses')
+    rows = [{'frame': row['frame'], 'inputs': [item['bytes'] for item in row['inputs']]} for row in expected]
+    require(same(source['final_rows'], [rows, rows]), label + ' continued exposed original rows')
+
+
 def check_source(source, revision, mode):
     label = 'source donor departure'
     expected = original_rows()
@@ -67,6 +121,7 @@ def check_source(source, revision, mode):
     require(same(source['aborts'], []), label + ' no emitted abort')
     expected_release = source['held_at'] + {'deliver': 0, 'hold-live': 300_000, 'silence': 400_000}[mode]
     integer(source['release_at'], expected_release, expected_release, label + ' original delivery clock')
+    read_clock = check_receipts(source, mode, label)
     if mode == 'silence':
         require(source['before_delay_release'] is None and same(source['commits'], []), label + ' no release or commit before terminal')
         fields(source['terminal'], '0 2', label + ' terminal recipients')
@@ -75,6 +130,7 @@ def check_source(source, revision, mode):
             transition = source['terminal'][address]
             fields(transition, 'offset state rows', label + ' terminal transition')
             integer(transition['offset'], 220_000, 220_000, label + ' first terminal sample')
+            require(source['held_at'] + transition['offset'] < source['release_at'] < read_clock, label + ' terminal before late socket read')
             target = {**source['opening'][index], 'state': 'Synchronizing'}
             require(same(transition['state'], target) and same(transition['rows'], source['opening_rows'][index]),
                     label + ' terminal preserves exposed original history')
@@ -82,48 +138,93 @@ def check_source(source, revision, mode):
         require(same(source['final_before'], states) and same(source['final_after'], states)
                 and same(source['final_rows'], source['opening_rows']), label + ' late delivery preserves state and original rows')
         require(same(source['advance'], [{'Err': 'NotSynchronized'}] * 2) and same(source['runtime_rows'], []), label + ' terminal rejects advancement')
-        require(type(source['late_observed']) is list and len(source['late_observed']) == 2, label + ' late recipient inventory')
-        for packet, observations in zip(source['held'], source['late_observed'], strict=True):
-            require(type(observations) is list and len(observations) == 1, label + ' late socket delivery inventory')
-            observation = observations[0]
-            fields(observation, 'at from to body order', label + ' late socket delivery')
-            integer(observation['order'], 1, 50_000, label + ' late socket order')
-            require(same({key: observation[key] for key in ('at', 'from', 'to', 'body')},
-                         {**packet, 'body': {'DropBackfill': packet['body']}}), label + ' late socket matches held packet')
         return
-    require(same(source['terminal'], {}) and same(source['advance'], []) and same(source['late_observed'], [[], []]), label + ' delivery stays running')
+    require(same(source['terminal'], {}) and same(source['advance'], []), label + ' delivery stays running')
     require(same(source['before_delay_release'], source['opening'] if mode == 'hold-live' else None),
             label + ' live delayed donor preserves pending recipients')
-    require(type(source['commits']) is list and bool(source['commits']), label + ' delivery commit publications')
-    for packet in source['commits']:
-        fields(packet, 'at from to body', label + ' commit publication')
-        integer(packet['at'], source['release_at'] + 1, 440_000, label + ' commit after original delivery')
-        require(same(packet['body']['cut'], 8) and same(packet['body']['operation'], source['held'][0]['body']['operation']),
-                label + ' certified cut and operation')
-    require(type(source['runtime_rows']) is list and len(source['runtime_rows']) == 3
-            and all(type(rows) is list and same(rows, expected) for rows in source['runtime_rows']),
-            label + ' three canonical continuations and statuses')
+    check_delivery(source, expected[:17], read_clock, label)
 
 
-def controls(cases, revision):
+def read_godot_evidence(stdout):
+    records = {case: [] for case in CASES}
+    for line in stdout.splitlines():
+        if not line.startswith(GODOT_PREFIX):
+            continue
+        record = decode_trace(line[len(GODOT_PREFIX):])
+        fields(record, 'case opening outcome', 'Godot donor departure case')
+        require(type(record['case']) is str and record['case'] in records, 'Godot donor departure case name')
+        records[record['case']].append(record)
+    require(all(len(runs) == 2 and same(*runs) for runs in records.values()), 'Godot donor departure evidence inventory and repeat')
+    return {case: runs[0] for case, runs in records.items()}
+
+
+def check_godot(evidence, source):
+    label = 'Godot donor departure'
+    expected = original_rows()
+    sample = expected[8]['inputs'][3]['bytes']
+    delivery = evidence[DELIVERY_CASE]
+    refusal = evidence[REFUSAL_CASE]
+    require(same(delivery['opening'], refusal['opening']), label + ' shared original plan')
+    opening = delivery['opening']
+    require(type(opening) is list and len(opening) == 2, label + ' opening recipients')
+    operation = opening[0].get('operation') if type(opening[0]) is dict else None
+    integer(operation, 1, (1 << 53) - 1, label + ' operation')
+    require(same(opening, [{'peer': peer, 'donor': 1, 'coordinator': 0, 'receipt': 7, 'first': 8,
+                            'cut': 8, 'operation': operation, 'bytes': sample} for peer in (0, 2)]), label + ' original held plan')
+    accepted = delivery['outcome']
+    fields(accepted, 'cuts installed canonical', label + ' delivery')
+    require(same(accepted['cuts'], {'0': 8, '1': 8, '2': 8})
+            and same(accepted['installed'], [{'peer': peer, 'cut': 8, 'bytes': sample} for peer in (0, 1, 2)]), label + ' certified cut and bytes')
+    require(same(accepted['canonical'], [{'frame': row['frame'], 'states': [row['bytes']] * 3} for row in expected]), label + ' canonical continuation')
+    stopped = refusal['outcome']
+    fields(stopped, 'goodbye goodbye_at late_at failures peers cuts', label + ' refusal')
+    require(same(stopped['goodbye'], [0, 2]) and same(stopped['cuts'], {}), label + ' Goodbye routes and no cuts')
+    integer(stopped['goodbye_at'], 1, 100_000, label + ' Goodbye clock')
+    integer(stopped['late_at'], stopped['goodbye_at'] + 1000, stopped['goodbye_at'] + 1000, label + ' late delivery clock')
+    require(same(stopped['failures'], [{'at_us': stopped['goodbye_at'], 'peer': peer,
+                                       'reason': 'participant_lost', 'target': '0400000000000000'} for peer in (0, 2)]), label + ' failure on Goodbye')
+    require(type(stopped['peers']) is list and len(stopped['peers']) == 2, label + ' terminal recipients')
+    for peer, old, row in zip((0, 2), source['opening'], stopped['peers'], strict=True):
+        fields(row, 'peer before terminal after replay lifecycle receive step frozen', label + ' terminal peer')
+        require(same([row[key] for key in ('peer', 'lifecycle', 'receive', 'step', 'frozen')],
+                     [peer, 'TERMINATED', 'TERMINATED', 'TERMINATED', [-1, -1]]), label + ' terminal refuses late chunk and advancement')
+        snapshot = [old['current'], old['confirmed'], old['game'], 5]
+        require(all(same(row[key], snapshot) for key in ('before', 'terminal', 'after')), label + ' preserved original snapshot')
+        require(same(row['replay'], [{key: row[key] for key in ('frame', 'inputs')} for row in expected[:5]]), label + ' preserved original replay')
+
+
+def reject_control(check, name, diagnostic):
+    try:
+        check()
+    except ValueError as error:
+        require(diagnostic in str(error), 'donor departure control failed at the wrong assertion: ' + name)
+    else:
+        raise ValueError('donor departure control accepted: ' + name)
+    return 'donor-departure:' + name
+
+
+def controls(cases, revision, godot, stdout):
     names = []
     for mode, name, mutate, diagnostic in (
         ('silence', 'wrong_terminal_sample', lambda data: data['terminal']['0'].update(offset=210_000), 'first terminal sample'),
-        ('silence', 'substituted_late_byte', lambda data: data['late_observed'][1][0]['body']['DropBackfill']['bytes'].__setitem__(0, 0), 'late socket matches'),
+        ('silence', 'substituted_late_byte', lambda data: data['received'][1][0]['body']['DropBackfill']['bytes'].__setitem__(0, 0), 'socket matches'),
         ('silence', 'changed_original_row', lambda data: data['final_rows'][0][0]['inputs'].__setitem__(0, 'ffffffff'), 'late delivery preserves'),
+        ('silence', 'duplicate_socket_order', lambda data: data['received'][1][0].update(order=data['received'][0][0]['order']), 'socket order'),
+        ('silence', 'early_socket_read', lambda data: data['received'][0][0].update(received_at=data['release_at']), 'socket read clock'),
         ('deliver', 'changed_post_cut_status', lambda data: data['runtime_rows'][1][9]['inputs'][3].update(status='confirmed'), 'canonical continuations'),
+        ('deliver', 'foreign_commit_route', lambda data: data['commits'][0].update({'from': 99}), 'commit route sender'),
+        ('deliver', 'uninstalled_target_receipt', lambda data: data['final_before'][1].update(target_receipt=7), 'installed target receipt'),
         ('hold-live', 'premature_receipt', lambda data: data['before_delay_release'][0].update(target_receipt=8), 'preserves pending recipients'),
         ('hold-live', 'premature_commit_emission', lambda data: data['commits'][0].update(at=data['release_at']), 'commit after original delivery'),
     ):
         data = deepcopy(cases[mode])
         mutate(data)
-        try:
-            check_source(data, revision, mode)
-        except ValueError as error:
-            require(diagnostic in str(error), 'donor departure control failed at the wrong assertion: ' + name)
-        else:
-            raise ValueError('donor departure control accepted: ' + name)
-        names.append('donor-departure:' + name)
+        names.append(reject_control(lambda: check_source(data, revision, mode), name, diagnostic))
+    without_evidence = '\n'.join(line for line in stdout.splitlines() if not line.startswith(GODOT_PREFIX))
+    names.append(reject_control(lambda: read_godot_evidence(without_evidence), 'godot_missing_evidence', 'evidence inventory'))
+    altered = deepcopy(godot)
+    altered[REFUSAL_CASE]['outcome']['failures'][0]['reason'] = 'timeout'
+    names.append(reject_control(lambda: check_godot(altered, cases['silence']), 'godot_substituted_failure', 'failure on Goodbye'))
     return names
 
 
@@ -147,6 +248,8 @@ def observe(engine, binary, root, output, revision, parse_godot):
             require(record['suite'] == SUITE and record['seed'] == '1701' and len(record['runs']) == 2
                     and same(*record['runs']) and record['runs'][0]['assertions'] > 0 and same(record['runs'][0]['failures'], []),
                     'Godot donor departure repeat and assertions')
-        runs.append({'source': cases, 'godot': godot})
+        evidence = read_godot_evidence(stdout)
+        check_godot(evidence, cases['silence'])
+        runs.append({'source': cases, 'godot': godot, 'godot_evidence': evidence})
     require(same(*runs), 'donor departure fresh-process repeat mismatch')
-    return runs[0], controls(runs[0]['source'], revision)
+    return runs[0], controls(runs[0]['source'], revision, runs[0]['godot_evidence'], stdout)

@@ -43,7 +43,8 @@ fn next_order(order: &Arc<Mutex<usize>>, limit: usize) -> usize {
 }
 struct Socket {
     buffers: Arc<Mutex<Buffers>>,
-    clock: Option<Arc<Mutex<u64>>>,
+    publication_clock: Option<Arc<Mutex<u64>>>,
+    receipt_clock: Option<Arc<Mutex<u64>>>,
     order_limit: usize,
 }
 impl NonBlockingSocket<String> for Socket {
@@ -56,7 +57,7 @@ impl NonBlockingSocket<String> for Socket {
         }
         let control = raw["body"].as_object().is_some_and(|body| body.keys().any(|kind| kind.starts_with("Drop")));
         let order = control.then(|| next_order(&queue.order, self.order_limit));
-        if let (Some(clock), Some(order)) = (&self.clock, order) {
+        if let (Some(clock), Some(order)) = (&self.publication_clock, order) {
             if raw["body"].get("DropBackfill").is_some() || raw["body"].get("DropAbort").is_some() {
                 queue.timed_publications.push((order, *clock.lock().unwrap()));
             }
@@ -71,6 +72,9 @@ impl NonBlockingSocket<String> for Socket {
             let mut received = record.clone();
             received["order"] = json!(next_order(&order, self.order_limit));
             received["body"] = serde_json::to_value(message).unwrap()["body"].clone();
+            if let Some(clock) = &self.receipt_clock {
+                received["received_at"] = json!(*clock.lock().unwrap());
+            }
             received
         })));
         messages.into_iter().map(|(sender, message, _)| (sender, message)).collect()
@@ -215,7 +219,9 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
             builder = builder.add_player(kind, PlayerHandle::new(slot)).map_err(|error| format!("{error:?}"))?;
         }
         let queue = Arc::new(Mutex::new(Buffers { order: order.clone(), ..Default::default() }));
-        sessions.push(builder.start_p2p_session(Socket { buffers: queue.clone(), clock: drop_all_history.then(|| clock.clone()), order_limit: 8192 })
+        sessions.push(builder.start_p2p_session(Socket {
+            buffers: queue.clone(), publication_clock: drop_all_history.then(|| clock.clone()), receipt_clock: None, order_limit: 8192,
+        })
             .map_err(|error| format!("{error:?}"))?);
         buffers.push(queue);
     }

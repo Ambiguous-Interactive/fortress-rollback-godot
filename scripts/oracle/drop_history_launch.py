@@ -390,9 +390,10 @@ def run(args):
         controls.extend(rejected_departures)
         silent = departure['source']['silence']
         delivered = departure['source']['deliver']
+        godot = departure['godot_evidence'][drop_history_donor_departure.REFUSAL_CASE]['outcome']
         donor_summary = {'donor_departure': {'source_first_terminal_offset_us': silent['terminal']['0']['offset'],
                                             'source_abort_emissions': len(silent['aborts']),
-                                            'control_cut': delivered['commits'][0]['body']['cut'], 'godot_refusal': 'participant_lost'}}
+                                            'control_cut': delivered['commits'][0]['body']['cut'], 'godot_refusal': godot['failures'][0]['reason']}}
     verify_identity()
     records = args.output / 'comparison.json'
     records.write_text(json.dumps(comparison, indent=2) + '\n')
@@ -410,7 +411,9 @@ def run(args):
     print('drop history: source and Godot commit before the deadline and refuse at equality and after', flush=True)
     print(f'drop history: all donor retries lost ({timeout_summary}); both survivors preserve exposed history and refuse advancement', flush=True)
     if donor_summary:
-        print('donor departure: Rust stops both recipients 220000 us after donor silence; Godot Goodbye refuses immediately; both preserve original rows', flush=True)
+        evidence = donor_summary['donor_departure']
+        print(f"donor departure: Rust stops both recipients {evidence['source_first_terminal_offset_us']} us after donor silence. "
+              f"Godot Goodbye reports {evidence['godot_refusal']}. Both preserve original rows.", flush=True)
 
 
 if __name__ == '__main__':

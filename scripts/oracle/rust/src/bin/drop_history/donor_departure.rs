@@ -74,7 +74,8 @@ impl Mesh {
                 builder
                     .start_p2p_session(Socket {
                         buffers: buffer.clone(),
-                        clock: None,
+                        publication_clock: None,
+                        receipt_clock: Some(mesh.clock.clone()),
                         order_limit: 50000,
                     })
                     .unwrap(),
@@ -92,10 +93,10 @@ impl Mesh {
         *self.clock.lock().unwrap()
     }
 
-    fn deliver_held(&mut self, observe: bool) {
+    fn deliver_held(&mut self) {
         self.hold_history = false;
         for (to, (message, packet)) in std::mem::take(&mut self.held) {
-            self.buffers[to].lock().unwrap().incoming.push((DONOR.to_string(), message, observe.then_some(packet)));
+            self.buffers[to].lock().unwrap().incoming.push((DONOR.to_string(), message, Some(packet)));
         }
     }
 
@@ -213,7 +214,7 @@ pub(super) fn run(mode: &str) -> Value {
     let mut release_at = None;
     if mode == "deliver" {
         release_at = Some(mesh.now());
-        mesh.deliver_held(false);
+        mesh.deliver_held();
     } else if silence {
         mesh.donor_present = false;
     }
@@ -223,7 +224,7 @@ pub(super) fn run(mode: &str) -> Value {
         if mode == "hold-live" && tick == 30 {
             before_delay_release = Some(RECIPIENTS.map(|peer| mesh.snapshot(peer)));
             release_at = Some(mesh.now());
-            mesh.deliver_held(false);
+            mesh.deliver_held();
         }
         mesh.tick(10_000);
         for peer in RECIPIENTS {
@@ -235,7 +236,7 @@ pub(super) fn run(mode: &str) -> Value {
     let final_before = RECIPIENTS.map(|peer| mesh.snapshot(peer));
     if silence {
         release_at = Some(mesh.now());
-        mesh.deliver_held(true);
+        mesh.deliver_held();
         mesh.tick(1000);
     } else {
         for _ in 0..12 {
@@ -247,7 +248,7 @@ pub(super) fn run(mode: &str) -> Value {
             }
         }
     }
-    let late_observed = RECIPIENTS.map(|peer| mesh.buffers[peer].lock().unwrap().received.clone());
+    let received = RECIPIENTS.map(|peer| mesh.buffers[peer].lock().unwrap().received.clone());
     let advance = if !silence {
         Vec::new()
     } else {
@@ -265,6 +266,6 @@ pub(super) fn run(mode: &str) -> Value {
     };
     json!({"revision":REVISION,"mode":mode,"opening":opening,"opening_rows":rows,"held":held,"planned":planned,
         "held_at":started,"release_at":release_at,"terminal":terminal,"before_delay_release":before_delay_release,"aborts":mesh.aborts,"commits":mesh.commits,
-        "final_before":final_before,"late_observed":late_observed,"advance":advance,"runtime_rows":runtime_rows,
+        "final_before":final_before,"received":received,"advance":advance,"runtime_rows":runtime_rows,
         "final_after":RECIPIENTS.map(|peer| mesh.snapshot(peer)), "final_rows":RECIPIENTS.map(|peer| mesh.rows(peer))})
 }

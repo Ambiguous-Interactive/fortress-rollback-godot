@@ -25,3 +25,11 @@ State is `findings-acted`. The [evidence guidance](../skills/testing/references/
 records the paired hold and direct advancement checks. The
 [comparison guide](../../docs/oracle-p2p.md#selected-history-donor-leaves)
 keeps the live transport scope under #188.
+
+The delivery review exposed two accepted false positives in the carried-forward
+validator. A COMMIT from endpoint 99 passed with no installed history, and
+duplicate late socket order passed with no read clock. The comparison now
+requires the real coordinator broadcast, installation and public drop before
+continuation. Socket reads record their own clock and unique order. The Godot
+test emits the observed Goodbye, failure reason, replay rows and refusal codes
+for independent comparison. Mutations of those records prove the new checks.
